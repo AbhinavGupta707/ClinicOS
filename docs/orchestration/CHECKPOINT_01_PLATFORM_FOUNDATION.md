@@ -31,6 +31,8 @@ Build the deployable ClinicOS skeleton: web/API/worker/mobile app foundation, lo
 
 Codex app visibility note: CP1 lanes were kept pinned for operator visibility after the user reported that unpinned worker sessions were not visible under the saved `ClinicOS` project. Before Checkpoint 2, run a dedicated project-scoped worktree-thread launch test using `target.type = "project"` and `environment.type = "worktree"` and record whether the thread appears under the project without pinning. Do not launch CP2 lanes until that sidebar behavior is verified or a pinned fallback is explicitly documented.
 
+Post-CP1 visibility test result: `create_thread` with `target.type = "project"`, project id `/Users/abhinavgupta/Desktop/ClinicOS`, and `environment.type = "worktree"` created thread `019f399c-96bc-7e50-90a4-c5b2fc83497f` at `/Users/abhinavgupta/.codex/worktrees/d332/ClinicOS`. Screenshot `/var/folders/dp/vpvxrph17r3fqqj5bk3cjbb80000gn/T/codex-shot-2026-07-06_23-47-42.png` shows the unpinned thread under the `ClinicOS` project. Use this exact launch path for Checkpoint 2 and later lanes.
+
 ## Merge Order
 
 1. Data/Auth

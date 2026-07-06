@@ -41,3 +41,14 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Mobile app shell web export: `/private/tmp/clinicos-mobile-app-cdp-390.png`.
 - API smoke: local fixture `/health/ready` and `/v1/me` passed on `127.0.0.1:4100`.
 - Before Checkpoint 2: run a project-scoped Codex worktree thread visibility test using `target.type = "project"` and `environment.type = "worktree"`; do not launch CP2 lanes until that is recorded.
+
+## Project-Scoped Worktree Visibility Test - 2026-07-06
+
+- Launch shape: `create_thread` with `target.type = "project"`, `projectId = "/Users/abhinavgupta/Desktop/ClinicOS"`, and `environment.type = "worktree"`.
+- Pending worktree id: `local:baf9fdfd-a4a6-47d5-b90d-ab78e679c233`.
+- Resolved thread id: `019f399c-96bc-7e50-90a4-c5b2fc83497f`.
+- Resolved worktree path: `/Users/abhinavgupta/.codex/worktrees/d332/ClinicOS`.
+- Thread title: `Verify CP2 worktree visibility`.
+- Thread report: detached `HEAD`, clean status, running inside a Codex-managed worktree path.
+- UI evidence: `/var/folders/dp/vpvxrph17r3fqqj5bk3cjbb80000gn/T/codex-shot-2026-07-06_23-47-42.png` shows the unpinned test thread under the `ClinicOS` project in the Codex sidebar.
+- Result: use this exact project-scoped worktree launch path for Checkpoint 2+ worker lanes. Pinning is not required for project-sidebar visibility, but may still be used only if the user wants prominence.
