@@ -27,6 +27,31 @@ Supported `NEXT_PUBLIC_CLINIC_OS_DEV_ROLE` values are `owner`, `doctor`, `assist
 
 The fixture is intentionally limited to user, tenant, clinic, role, and permission context. It does not include synthetic patients, queues, clinical records, payments, or analytics.
 
+Checkpoint 2 adds a separate local-only workflow fixture for browser smoke before the backend/API
+lane is merged:
+
+```sh
+NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_USE_CP2_WORKFLOW_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_ENV=local \
+NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=assistant \
+npm run dev --workspace apps/web
+```
+
+The CP2 fixture uses explicitly synthetic, non-PHI leads, patients, appointments, and queue rows. In
+live mode the workflow calls the CP2 API boundary:
+
+- `GET /v1/appointments?date=`
+- `GET /v1/queue?date=`
+- `GET /v1/leads?status=`
+- `GET /v1/patients?query=&phone=&source=`
+- `POST /v1/leads`
+- `POST /v1/patients`
+- `POST /v1/leads/{id}/match-patient`
+- `POST /v1/leads/{id}/convert-to-appointment`
+- `POST /v1/appointments/{appointmentId}/confirm`
+- `POST /v1/appointments/{appointmentId}/check-in`
+
 ## `/me` contract expectation
 
 Until `packages/api-contracts` owns generated types, the web shell keeps a local mirror in `apps/web/lib/me.ts`. The expected shape is:
