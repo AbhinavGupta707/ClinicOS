@@ -50,4 +50,25 @@ Codex app visibility note: these lanes use Codex-managed worktrees under `$CODEX
 
 ## Current Status
 
-Launched. Awaiting lane handoffs.
+Data/Auth merged into `main` at `a7fb7dc` after master-side verification.
+
+### Data/Auth Evidence
+
+- Lane commit: `0da382d Build checkpoint 1 data auth foundation`.
+- Merge commit: `a7fb7dc merge: checkpoint 1 data auth lane`.
+- Lane scope remained inside `apps/api`, `packages/auth`, `packages/db`, `packages/domain`, and `packages/security`.
+- Master checks after merge:
+  - `git diff --check HEAD~1..HEAD` passed.
+  - `npm install --no-package-lock` restored root workspace links and reported 0 vulnerabilities.
+  - `npm run check` passed.
+  - `npm run test --workspace apps/api --if-present` passed.
+  - `npm run test --workspace packages/auth --if-present` passed.
+  - `npm run test --workspace packages/domain --if-present` passed.
+  - `npm run test --workspace packages/db --if-present` passed.
+  - `npm run test --workspace packages/security --if-present` passed.
+  - `npm run typecheck --workspace apps/api --if-present` passed.
+  - `npm run typecheck --workspace packages/auth --if-present` passed.
+  - `npm run typecheck --workspace packages/domain --if-present` passed.
+- Lane-reported user/runtime evidence: temporary PostgreSQL 16 migration and seed applied cleanly; non-superuser RLS smoke showed tenant A saw 1 patient, tenant B saw 1 patient, and mismatched tenant/clinic context saw 0.
+
+Awaiting Runtime/Workflow merge verification.
