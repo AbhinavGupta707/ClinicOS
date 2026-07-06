@@ -2,6 +2,14 @@
   "name": "@clinic-os/db",
   "version": "0.0.0",
   "private": true,
-  "description": "Database schema, migrations, seeds, and query helpers."
+  "description": "Database schema, migrations, seeds, and query helpers.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "node --check src/index.ts",
+    "lint": "node --check src/index.ts",
+    "test": "node --test test/*.test.ts"
+  }
 }
-
