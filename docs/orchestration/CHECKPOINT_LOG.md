@@ -24,7 +24,20 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 
 ## Checkpoints
 
-| Checkpoint | Status | Base commit | Result commit | Notes |
-|---|---|---:|---:|---|
-| 0 - Git and orchestration preflight | Complete | repository root | `main` HEAD | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured and pushed. |
-| 1 - Production platform foundation | In progress | `447206a` | `bb9b522` partial | Data/Auth, Runtime/Workflow, and Repo/DevEx lanes merged after master-side checks. Web Shell lane is pending merge verification. |
+| Checkpoint                          | Status   |     Base commit | Result commit | Notes                                                                                                                                                                                                                                                                          |
+| ----------------------------------- | -------- | --------------: | ------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0 - Git and orchestration preflight | Complete | repository root |   `main` HEAD | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured and pushed.                                                                                                                                                 |
+| 1 - Production platform foundation  | Complete |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
+
+## Checkpoint 1 Closeout - 2026-07-06
+
+- Final code commit: `be619cd`.
+- Full CI: `npm run ci` passed. High-severity audit gate passed with moderate advisories remaining.
+- Local stack: `npm run local:up` passed from clean Docker volumes; `npm run local:ps` showed Postgres/Redis healthy and Keycloak/Temporal/Temporal UI running.
+- User checks:
+  - Web desktop shell: `/private/tmp/clinicos-desktop-cdp-shell.png`.
+  - Web mobile shell: `/private/tmp/clinicos-mobile-cdp-390.png`.
+  - Web mobile unavailable Lead inbox: `/private/tmp/clinicos-mobile-cdp-lead-inbox-390.png`.
+  - Mobile app shell web export: `/private/tmp/clinicos-mobile-app-cdp-390.png`.
+- API smoke: local fixture `/health/ready` and `/v1/me` passed on `127.0.0.1:4100`.
+- Before Checkpoint 2: run a project-scoped Codex worktree thread visibility test using `target.type = "project"` and `environment.type = "worktree"`; do not launch CP2 lanes until that is recorded.

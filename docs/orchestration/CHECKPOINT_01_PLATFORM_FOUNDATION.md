@@ -22,14 +22,14 @@ Build the deployable ClinicOS skeleton: web/API/worker/mobile app foundation, lo
 
 ## Lanes
 
-| Lane | Thread ID | Worktree | Ownership |
-|---|---|---|---|
-| Data/Auth | `019f3963-7282-7921-94ba-a6e6bc4739ad` | `/Users/abhinavgupta/.codex/worktrees/cd95/ClinicOS` | `packages/db`, `packages/domain`, `packages/auth`, `packages/security`, `apps/api` |
+| Lane             | Thread ID                              | Worktree                                             | Ownership                                                                              |
+| ---------------- | -------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------- |
+| Data/Auth        | `019f3963-7282-7921-94ba-a6e6bc4739ad` | `/Users/abhinavgupta/.codex/worktrees/cd95/ClinicOS` | `packages/db`, `packages/domain`, `packages/auth`, `packages/security`, `apps/api`     |
 | Runtime/Workflow | `019f3963-7347-7212-b548-4c218a37e4ae` | `/Users/abhinavgupta/.codex/worktrees/f914/ClinicOS` | `apps/worker`, `packages/workflow`, `packages/observability`, narrow runtime contracts |
-| Repo/DevEx | `019f3963-74b4-7dd3-92a4-638484ae51fc` | `/Users/abhinavgupta/.codex/worktrees/d6f6/ClinicOS` | root scripts/config, CI, local stack, `packages/config`, infra runbooks |
-| Web Shell | `019f3963-74d6-7f61-bf80-7aa882e1ddaa` | `/Users/abhinavgupta/.codex/worktrees/df8c/ClinicOS` | `apps/web`, `packages/ui` |
+| Repo/DevEx       | `019f3963-74b4-7dd3-92a4-638484ae51fc` | `/Users/abhinavgupta/.codex/worktrees/d6f6/ClinicOS` | root scripts/config, CI, local stack, `packages/config`, infra runbooks                |
+| Web Shell        | `019f3963-74d6-7f61-bf80-7aa882e1ddaa` | `/Users/abhinavgupta/.codex/worktrees/df8c/ClinicOS` | `apps/web`, `packages/ui`                                                              |
 
-Codex app visibility note: these lanes use Codex-managed worktrees under `$CODEX_HOME/worktrees`, so they may not render as children under the saved `ClinicOS` project in the sidebar. Search for `CP1 Lane` in Codex or open the thread IDs directly. The documented app path for long-lived sidebar-visible worktrees is a permanent worktree created from the project menu, which appears as its own project. Until an app/tool-supported project-child worktree flow is available, orchestration lanes should be pinned immediately after launch so they remain visible in the sidebar while preserving managed-worktree isolation.
+Codex app visibility note: CP1 lanes were kept pinned for operator visibility after the user reported that unpinned worker sessions were not visible under the saved `ClinicOS` project. Before Checkpoint 2, run a dedicated project-scoped worktree-thread launch test using `target.type = "project"` and `environment.type = "worktree"` and record whether the thread appears under the project without pinning. Do not launch CP2 lanes until that sidebar behavior is verified or a pinned fallback is explicitly documented.
 
 ## Merge Order
 
@@ -49,6 +49,8 @@ Codex app visibility note: these lanes use Codex-managed worktrees under `$CODEX
 - Provider checks use simulators for this checkpoint.
 
 ## Current Status
+
+Checkpoint 1 is complete on `main` through `be619cd` after master integration fixes for web mobile responsiveness, API/mobile boot surfaces, and local Docker stack startup.
 
 Data/Auth merged into `main` at `a7fb7dc` after master-side verification.
 
@@ -118,6 +120,48 @@ Repo/DevEx merged into `main` at `bb9b522` after conflict resolution and merged-
   - `npm run security:audit` passed at the configured high threshold with 9 moderate Temporal/protobuf advisories.
   - `docker compose config` passed.
   - `git diff --check` passed.
-- User/runtime evidence gap: Docker services were syntax-validated but not started yet. A local stack boot and worker health check remain for the master integration pass.
+- User/runtime evidence gap was closed by the master integration pass.
 
-Awaiting Web Shell merge verification.
+Web Shell merged into `main` at `663fd0b`; the master integration pass added responsive hardening at `ca55b12`.
+
+### Web Shell Evidence
+
+- Lane commit: `35602f5 feat(web): add checkpoint 1 clinic shell`.
+- Merge commit: `663fd0b merge: checkpoint 1 web shell lane`.
+- Responsive fix commit: `ca55b12 fix(web): prevent mobile shell overflow`.
+- Merge conflicts were limited to `apps/web/README.md` and `apps/web/package.json`; resolution preserved the real Next.js scripts and DevEx root command documentation.
+- Focused web checks passed:
+  - `npm --workspace @clinic-os/web run typecheck`
+  - `npm --workspace @clinic-os/web run lint`
+  - `npm --workspace @clinic-os/web run test`
+  - `npm --workspace @clinic-os/web run build`
+- Browser evidence with local synthetic assistant fixture:
+  - `GET /` and `GET /surface/lead-inbox` returned 200 from the local Next.js dev server.
+  - Desktop shell CDP screenshot: `/private/tmp/clinicos-desktop-cdp-shell.png`; metrics `vw=1350`, `scrollWidth=1350`.
+  - Mobile shell CDP screenshot: `/private/tmp/clinicos-mobile-cdp-390.png`; metrics `vw=390`, `scrollWidth=390`.
+  - Mobile unavailable Lead inbox CDP screenshot: `/private/tmp/clinicos-mobile-cdp-lead-inbox-390.png`; metrics `vw=390`, `scrollWidth=390`.
+
+### Master Integration Evidence
+
+- API/mobile boot commit: `d015ad5 feat(platform): complete checkpoint 1 app boot surfaces`.
+  - API now boots a Node HTTP process with `GET /health/live`, `GET /health/ready`, and `GET /v1/me`.
+  - API verifies Keycloak RS256 bearer tokens through the realm JWKS endpoint; `CLINIC_OS_API_USE_DEV_AUTH_FIXTURE=true` is local/dev-only for synthetic boot checks.
+  - Local API smoke passed on `127.0.0.1:4100`: `/health/ready` returned `ready`, and `/v1/me` returned the synthetic assistant tenant/clinic/permission context.
+  - Mobile now boots as an Expo Router app shell with active session context and explicit unavailable capture workflows; no patient media, recordings, offline queues, or clinical data are stored in CP1.
+  - Mobile web export passed and rendered at a true 390px viewport: `/private/tmp/clinicos-mobile-app-cdp-390.png`; metrics `vw=390`, `scrollWidth=390`.
+- Local stack boot commit: `be619cd fix(devex): boot local temporal and keycloak stack`.
+  - `npm run local:up` started Postgres, Redis, Temporal, Temporal UI, and Keycloak from clean Docker volumes.
+  - `npm run local:ps` showed Postgres and Redis healthy, Temporal up on `7233`, Temporal UI up on `8088`, and Keycloak up on `8080`.
+  - Keycloak OIDC discovery succeeded at `http://127.0.0.1:8080/realms/clinic-os-local/.well-known/openid-configuration`.
+  - Temporal UI served HTML from `http://127.0.0.1:8088/`.
+- Full verification:
+  - `npm run ci` passed end-to-end after API/mobile integration. The high-severity audit gate passed; remaining advisories were moderate for Next/PostCSS, Temporal/protobuf, and Expo/xcode/uuid.
+  - `npm run check` passed after Docker/Keycloak fixes.
+  - `docker compose config` passed after Docker/Keycloak fixes.
+  - `git diff --check` passed.
+
+### Remaining External Gaps
+
+- GitHub CLI auth remains invalid, so remote push/Actions evidence is deferred until reauthentication.
+- AWS auth remains unavailable, so live cloud apply checks are deferred.
+- Live WhatsApp, payments, telephony, AI transcription/LLM, Google Business Profile, and ABDM credentials are absent; later checkpoints must continue using simulator contracts unless live credentials are added.
