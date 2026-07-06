@@ -214,6 +214,38 @@ If a live provider credential is unavailable but a contract-tested simulator is 
 
 See `21_EXECUTION_INPUTS_AND_CREDENTIALS.md` for what the user may need to provide before or during orchestration.
 
+### Full-Chain Launch Contract
+
+When the user launches the full chain, use this contract:
+
+```text
+Start from current clean `main`
+  -> run credential/input preflight
+  -> launch Checkpoint 1
+  -> continue through Checkpoint 10 autonomously
+  -> stop only for true blockers
+```
+
+Credential/input preflight means:
+
+- Check whether `.secrets/orchestration.env` exists.
+- Check whether provider credentials needed for later live checks are present.
+- Check whether local/browser/mobile tooling needed for user-perspective checks is available.
+- Record which checks will run live and which will run against contract simulators.
+
+The absence of a live provider credential should not block earlier checkpoints. It should block only a checkpoint whose stated exit criteria require live provider verification and no simulator/substitute evidence is acceptable.
+
+The master session should maintain a visible checkpoint log and include, for every checkpoint:
+
+- lanes launched,
+- merge order,
+- code checks,
+- browser/app/user checks,
+- provider simulation/live checks,
+- screenshots or evidence location where applicable,
+- remaining gaps,
+- next checkpoint launch decision.
+
 ## 8. Checkpoint 0 - Git And Orchestration Preflight
 
 ### Outcome

@@ -10,6 +10,7 @@ Do not commit secrets to the repository.
 
 Use one of these patterns:
 
+- preferred for local autonomous runs: `.secrets/orchestration.env`,
 - local `.env.local` / `.env` files excluded by `.gitignore`,
 - GitHub Actions secrets,
 - cloud secrets manager,
@@ -17,6 +18,25 @@ Use one of these patterns:
 - temporary sandbox credentials that can be rotated.
 
 Do not paste production PHI, patient data, live payment secrets, or long-lived production credentials into Markdown files.
+
+## 1.1 Recommended Local Handoff
+
+For the autonomous checkpoint chain, use:
+
+```text
+.secrets/orchestration.env
+```
+
+This directory is ignored by Git. Use `docs/orchestration/orchestration.env.example` as the template.
+
+Rules:
+
+- Use sandbox/test credentials wherever possible.
+- Use production credentials only when explicitly needed and revocable.
+- Prefer already-authenticated CLI/browser sessions for GitHub/AWS where practical.
+- Rotate credentials after long autonomous runs.
+- Never place real patient data in this file.
+- Store sample clinic data as synthetic CSV/PDF files unless the clinic has explicitly approved real exports for testing.
 
 ## 2. Needed Before Checkpoint 0
 
@@ -221,3 +241,25 @@ The agent can proceed autonomously with:
 - Expo web/mobile simulator checks when available.
 
 Live end-to-end provider verification needs the relevant sandbox/live credentials above.
+
+## 11. Full Autonomous Launch Inputs
+
+Before launching Checkpoint 1 through Checkpoint 10 unattended, provide as much of this as possible:
+
+| Category | Required for full live verification? | Can use simulator if missing? |
+|---|---:|---:|
+| GitHub push access | Yes | No |
+| Local package install/build access | Yes | No |
+| Browser automation / Playwright install | Yes for UI checkpoints | Limited manual/code evidence only |
+| Expo/mobile simulator tooling | Yes for mobile-native checks | Expo web only |
+| Razorpay sandbox | Yes for live payment checks | Yes, until payment hardening |
+| WhatsApp/BSP sandbox | Yes for live messaging checks | Yes, until live integration hardening |
+| Telephony sandbox | Optional for first full run | Yes |
+| AI provider key | Yes for live AI checks | Yes, deterministic AI fixtures |
+| AWS access | Yes for pilot-prod infra apply | Terraform plan/local infra only |
+| ABDM sandbox | Yes for ABDM live checks | FHIR synthetic export only |
+| Google Business Profile access | Optional early | Source/link simulation |
+| Practo/PMS exports | Optional early | Synthetic import samples |
+| Pilot clinic templates/data | Yes for realistic release candidate | Synthetic clinic fixtures |
+
+If these are incomplete, the orchestrator can still run the chain, but it must mark live verification gaps clearly in the checkpoint log.

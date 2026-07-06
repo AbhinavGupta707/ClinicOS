@@ -7,6 +7,10 @@ build/
 coverage/
 .turbo/
 .cache/
+.secrets/
+playwright-report/
+test-results/
+artifacts/
 .env
 .env.*
 !.env.example
@@ -15,4 +19,3 @@ yarn-debug.log*
 yarn-error.log*
 pnpm-debug.log*
 *.tsbuildinfo
-
