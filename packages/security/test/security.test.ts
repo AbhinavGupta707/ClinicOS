@@ -24,15 +24,44 @@ test("audit classifications mark sensitive access", () => {
 test("checkpoint 2 workflow audit actions are PHI-linked where patient state changes", () => {
   for (const action of [
     "appointment.created",
+    "appointment.confirmation_requested",
     "appointment.confirmed",
+    "appointment.no_show",
     "patient.checked_in",
     "queue.entry_created",
-    "lead.matched_to_patient"
+    "queue.entry_updated",
+    "lead.matched_to_patient",
+    "lead.converted_to_appointment"
   ] as const) {
     const classification = classifyAuditAction(action);
     assert.equal(classification.phiInvolved, true);
     assert.equal(classification.requiresPatientId, true);
   }
+});
+
+test("CP2 audit classifications cover lead appointment and queue events", () => {
+  const leadCreated = classifyAuditAction("lead.created");
+  assert.equal(leadCreated.phiInvolved, true);
+  assert.equal(leadCreated.requiresPatientId, false);
+
+  const leadMatched = classifyAuditAction("lead.matched_to_patient");
+  assert.equal(leadMatched.riskLevel, "high");
+  assert.equal(leadMatched.requiresPatientId, true);
+
+  const noShow = classifyAuditAction("appointment.no_show");
+  assert.equal(noShow.category, "phi_access");
+  assert.equal(noShow.riskLevel, "high");
+
+  assert.throws(
+    () =>
+      createAuditEvent({
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000002",
+        actor: { type: "user", id: "10000000-0000-4000-8000-000000001001" },
+        action: "patient.checked_in"
+      }),
+    /requires patientId/
+  );
 });
 
 test("PHI redaction masks nested patient and free-text identifiers", () => {
