@@ -5,8 +5,8 @@ import { Menu, RefreshCw, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { AssistantWorkflow, isCp2WorkflowSurface } from "@/components/assistant-workflow";
 import { AuthStatusPanel } from "@/components/auth-status-panel";
-import { ClinicDay } from "@/components/clinic-day";
 import { SurfaceView } from "@/components/surface-view";
 import { loadMe, type MeState } from "@/lib/me";
 import {
@@ -179,8 +179,12 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
         </header>
 
         <main className="clinic-main" id="clinic-main">
-          {activeSurface.id === "today" ? (
-            <ClinicDay profile={profile} setActiveSurfaceId={setActiveSurfaceId} />
+          {isCp2WorkflowSurface(activeSurface.id) ? (
+            <AssistantWorkflow
+              activeSurfaceId={activeSurface.id}
+              profile={profile}
+              setActiveSurfaceId={setActiveSurfaceId}
+            />
           ) : (
             <SurfaceView profile={profile} surface={activeSurface} />
           )}

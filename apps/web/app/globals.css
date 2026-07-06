@@ -57,17 +57,27 @@ textarea {
 
 .skip-link {
   background: var(--ink);
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
   color: #fff;
+  height: 1px;
   left: 16px;
+  overflow: hidden;
   padding: 10px 14px;
   position: fixed;
   top: 12px;
   transform: translateY(-160%);
+  white-space: nowrap;
+  width: 1px;
   z-index: 1000;
 }
 
-.skip-link:focus {
+.skip-link:focus-visible {
+  clip: auto;
+  clip-path: none;
+  height: auto;
   transform: translateY(0);
+  width: auto;
 }
 
 .ui-button,
@@ -690,6 +700,464 @@ textarea {
   margin-top: 18px;
 }
 
+.cp2-workflow {
+  gap: 14px;
+}
+
+.workflow-tabs {
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 4px;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: 5px;
+}
+
+.workflow-tab,
+.segment {
+  align-items: center;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--ink-soft);
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 0.84rem;
+  font-weight: 800;
+  gap: 7px;
+  justify-content: center;
+  min-height: 36px;
+  padding: 8px 10px;
+}
+
+.workflow-tab--active,
+.segment--active {
+  background: var(--sky-soft);
+  color: #17456f;
+}
+
+.workflow-tab:focus-visible,
+.segment:focus-visible,
+.lead-row:focus-visible,
+.duplicate-item:focus-visible {
+  outline: 3px solid rgba(39, 94, 159, 0.35);
+  outline-offset: 2px;
+}
+
+.segmented-control {
+  background: #eef3f7;
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px;
+  padding: 3px;
+}
+
+.dashboard-metrics {
+  display: grid;
+  gap: 10px;
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
+.workflow-metric {
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+  padding: 13px;
+}
+
+.workflow-metric span,
+.workflow-metric small {
+  color: var(--ink-soft);
+  font-size: 0.78rem;
+  font-weight: 800;
+  overflow-wrap: anywhere;
+}
+
+.workflow-metric strong {
+  font-size: 1.55rem;
+  line-height: 1;
+}
+
+.workflow-grid {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+
+.workflow-grid--dashboard {
+  grid-template-columns: minmax(0, 1.35fr) minmax(320px, 0.65fr);
+}
+
+.workflow-grid--split {
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.82fr);
+}
+
+.workflow-list {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.workflow-list--dense {
+  gap: 6px;
+}
+
+.appointment-row,
+.patient-row,
+.queue-entry {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 0;
+}
+
+.appointment-row {
+  grid-template-columns: 86px minmax(0, 1fr) auto;
+}
+
+.patient-row,
+.queue-entry {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.appointment-row:last-child,
+.patient-row:last-child,
+.queue-entry:last-child {
+  border-bottom: 0;
+}
+
+.appointment-row time {
+  color: var(--ink);
+  font-size: 0.84rem;
+  font-weight: 900;
+}
+
+.appointment-row__main,
+.patient-row div,
+.queue-entry div {
+  min-width: 0;
+}
+
+.appointment-row strong,
+.patient-row strong,
+.queue-entry strong,
+.lead-row strong,
+.duplicate-item strong {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.appointment-row span,
+.patient-row span,
+.queue-entry span,
+.lead-row span,
+.duplicate-item span {
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
+.appointment-row__actions {
+  justify-content: flex-end;
+}
+
+.lead-row {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: block;
+  min-width: 0;
+  padding: 11px;
+  text-align: left;
+  width: 100%;
+}
+
+.lead-row--active,
+.lead-row:hover {
+  border-color: #a9c7ec;
+  box-shadow: inset 3px 0 0 var(--sky);
+}
+
+.meta-line,
+.action-row,
+.attribution-line {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+  margin-top: 7px;
+  min-width: 0;
+}
+
+.source-badge,
+.state-pill {
+  align-items: center;
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.72rem !important;
+  font-weight: 900;
+  line-height: 1;
+  min-height: 24px;
+  padding: 5px 8px;
+  white-space: nowrap;
+}
+
+.source-badge {
+  background: var(--mint-soft);
+  border: 1px solid #bce8e1;
+  color: #06584f !important;
+}
+
+.source-badge--muted {
+  background: #eef3f7;
+  border-color: var(--border);
+  color: var(--ink-soft) !important;
+}
+
+.state-pill {
+  background: var(--warning-soft);
+  border: 1px solid #f2ce84;
+  color: #684002 !important;
+}
+
+.state-pill--waiting,
+.state-pill--called {
+  background: var(--sky-soft);
+  border-color: #c9def7;
+  color: #17456f !important;
+}
+
+.state-pill--with_doctor {
+  background: var(--mint-soft);
+  border-color: #bce8e1;
+  color: #06584f !important;
+}
+
+.lead-detail {
+  display: grid;
+  gap: 14px;
+}
+
+.detail-strip {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  overflow: hidden;
+}
+
+.detail-strip div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 11px;
+}
+
+.detail-strip div + div {
+  border-left: 1px solid var(--border);
+}
+
+.detail-strip span {
+  color: var(--ink-soft);
+  font-size: 0.73rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.detail-strip strong {
+  overflow-wrap: anywhere;
+}
+
+.subsection {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 10px;
+  padding-top: 13px;
+}
+
+.subsection h3 {
+  font-size: 0.9rem;
+  line-height: 1.2;
+  margin: 0;
+}
+
+.form-grid {
+  display: grid;
+  gap: 11px;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.form-grid h3,
+.form-submit {
+  grid-column: 1 / -1;
+}
+
+.form-grid label {
+  display: grid;
+  gap: 5px;
+  min-width: 0;
+}
+
+.form-grid label span {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.form-grid input,
+.form-grid select {
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--ink);
+  min-height: 38px;
+  min-width: 0;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.form-grid input:focus-visible,
+.form-grid select:focus-visible {
+  outline: 3px solid rgba(39, 94, 159, 0.28);
+  outline-offset: 1px;
+}
+
+.lead-capture {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 12px;
+  padding: 12px;
+}
+
+.duplicate-list {
+  display: grid;
+  gap: 7px;
+}
+
+.duplicate-item {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  display: block;
+  min-width: 0;
+  padding: 10px;
+  text-align: left;
+  width: 100%;
+}
+
+button.duplicate-item {
+  cursor: pointer;
+}
+
+.duplicate-item--selected,
+.duplicate-item:hover {
+  border-color: var(--mint);
+  box-shadow: inset 3px 0 0 var(--mint);
+}
+
+.empty-inline,
+.empty-state,
+.loading-row {
+  align-items: center;
+  color: var(--ink-soft);
+  display: flex;
+  gap: 9px;
+  line-height: 1.4;
+  min-width: 0;
+}
+
+.empty-state {
+  border: 1px dashed var(--border-strong);
+  border-radius: 8px;
+  justify-content: center;
+  min-height: 78px;
+  padding: 16px;
+  text-align: center;
+}
+
+.empty-state--large {
+  border-style: solid;
+  display: grid;
+  justify-items: start;
+  margin-bottom: 14px;
+  text-align: left;
+}
+
+.empty-state--large h2 {
+  font-size: 1.05rem;
+  margin: 0;
+}
+
+.empty-state--large p {
+  color: var(--ink-soft);
+  margin: 0;
+}
+
+.endpoint-table {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  margin-bottom: 14px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.endpoint-row {
+  display: grid;
+  grid-template-columns: minmax(210px, 0.45fr) minmax(0, 1fr);
+}
+
+.endpoint-row span {
+  border-bottom: 1px solid var(--border);
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: 10px 12px;
+}
+
+.endpoint-row--head {
+  background: #eef3f7;
+  color: var(--ink-soft);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.endpoint-table .endpoint-row:last-child span {
+  border-bottom: 0;
+}
+
+.inline-alert--success {
+  background: var(--mint-soft);
+  border-color: #bce8e1;
+  color: #06584f;
+}
+
+.inline-alert--error {
+  background: var(--danger-soft);
+  border-color: #ffc9c4;
+  color: var(--danger);
+}
+
+.inline-alert--info {
+  background: var(--sky-soft);
+  border-color: #c9def7;
+  color: #17456f;
+}
+
 @keyframes pulse {
   0% {
     background-position: 100% 0;
@@ -701,6 +1169,15 @@ textarea {
 
 @media (max-width: 980px) {
   .clinic-shell {
+    grid-template-columns: 1fr;
+  }
+
+  .dashboard-metrics {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .workflow-grid--dashboard,
+  .workflow-grid--split {
     grid-template-columns: 1fr;
   }
 
@@ -781,6 +1258,37 @@ textarea {
   .surface-row {
     grid-template-columns: minmax(0, 1fr) 110px 72px;
   }
+
+  .workflow-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .dashboard-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .appointment-row {
+    align-items: start;
+    grid-template-columns: 76px minmax(0, 1fr);
+  }
+
+  .appointment-row__actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+  }
+
+  .detail-strip {
+    grid-template-columns: 1fr;
+  }
+
+  .detail-strip div + div {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+  }
+
+  .endpoint-row {
+    grid-template-columns: 1fr;
+  }
 }
 
 @media (max-width: 560px) {
@@ -815,6 +1323,38 @@ textarea {
 
   .surface-row {
     min-width: 430px;
+  }
+
+  .workflow-tabs,
+  .dashboard-metrics,
+  .form-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .workflow-tab {
+    justify-content: flex-start;
+  }
+
+  .appointment-row,
+  .patient-row,
+  .queue-entry {
+    grid-template-columns: 1fr;
+  }
+
+  .appointment-row time {
+    background: #eef3f7;
+    border-radius: 6px;
+    display: inline-flex;
+    justify-self: start;
+    padding: 5px 7px;
+  }
+
+  .segmented-control {
+    width: 100%;
+  }
+
+  .segment {
+    flex: 1 1 42%;
   }
 }
 

@@ -44,46 +44,56 @@ const ALL_CLINIC_ROLES: ClinicRole[] = [
 export const SURFACES: SurfaceRegistration[] = [
   {
     availability: "active",
-    checkpoint: 1,
-    description: "Clinic day readiness and role-scoped operating queues.",
+    checkpoint: 2,
+    description: "Assistant day-start dashboard with leads, appointments, confirmations, and queue.",
     href: "/",
     icon: Home,
     id: "today",
     label: "Today",
-    requiredApis: ["GET /v1/me"],
+    requiredApis: ["GET /v1/me", "GET /v1/appointments", "GET /v1/leads", "GET /v1/queue"],
     roles: ALL_CLINIC_ROLES
   },
   {
-    availability: "registered_unavailable",
+    availability: "active",
     checkpoint: 2,
     description: "Lead intake, message triage, patient match, and conversion status.",
     href: "/surface/lead-inbox",
     icon: Inbox,
     id: "lead-inbox",
     label: "Lead inbox",
-    requiredApis: ["GET /v1/leads", "POST /v1/leads/{id}/convert-to-appointment"],
+    requiredApis: [
+      "POST /v1/leads",
+      "GET /v1/leads",
+      "POST /v1/leads/{id}/match-patient",
+      "POST /v1/leads/{id}/convert-to-appointment"
+    ],
     roles: ["owner", "assistant", "receptionist"]
   },
   {
-    availability: "registered_unavailable",
+    availability: "active",
     checkpoint: 2,
     description: "Appointments, confirmations, queue, and check-in.",
     href: "/surface/appointments",
     icon: CalendarDays,
     id: "appointments",
     label: "Appointments",
-    requiredApis: ["GET /v1/appointments", "GET /v1/queue"],
+    requiredApis: [
+      "GET /v1/appointments",
+      "POST /v1/appointments/{appointmentId}/confirm",
+      "POST /v1/appointments/{appointmentId}/check-in",
+      "GET /v1/queue"
+    ],
     roles: ["owner", "doctor", "assistant", "receptionist"]
   },
   {
-    availability: "registered_unavailable",
+    availability: "active",
     checkpoint: 2,
     description: "Patient search, registration, duplicate review, and timeline access.",
     href: "/surface/patients",
     icon: UsersRound,
     id: "patients",
     label: "Patients",
-    requiredApis: ["GET /v1/patients", "GET /v1/patients/{patientId}/timeline"],
+    requiredApis: ["GET /v1/patients", "POST /v1/patients"],
     roles: ["owner", "doctor", "assistant", "receptionist"]
   },
   {
