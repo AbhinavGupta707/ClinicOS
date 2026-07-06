@@ -30,3 +30,14 @@ The identity repository is an interface from `@clinic-os/db`; production code mu
 - `GET /v1/me` resolves authenticated tenant, clinic, role, permission, and audit context.
 
 By default `/v1/me` verifies Keycloak RS256 bearer tokens against the realm JWKS endpoint. For local synthetic boot checks only, set `CLINIC_OS_API_USE_DEV_AUTH_FIXTURE=true`; this accepts `x-clinic-os-dev-subject` values such as `seed-assistant` and is blocked for production-like environments.
+
+## Checkpoint 2 Operations Contract
+
+CP2 adds tenant/clinic-scoped handlers for:
+
+- `GET/POST /v1/patients`, `GET/PATCH /v1/patients/{patientId}`, and `GET /v1/patients/{patientId}/timeline`
+- `GET/POST /v1/leads`, `POST /v1/leads/{leadId}/match-patient`, `POST /v1/leads/{leadId}/convert-to-appointment`, and `PATCH /v1/leads/{leadId}/status`
+- `GET/POST /v1/appointments`, `PATCH /v1/appointments/{appointmentId}`, `POST /v1/appointments/{appointmentId}/confirm`, `POST /v1/appointments/{appointmentId}/check-in`, and `POST /v1/appointments/{appointmentId}/mark-no-show`
+- `GET /v1/appointment-types`, `GET /v1/chairs`, `GET /v1/provider-schedules`, `GET/PATCH /v1/queue`, and `GET /v1/dashboard/morning`
+
+Production-like runtime uses PostgreSQL-backed repositories. The in-memory local operations repository is only wired when `CLINIC_OS_API_USE_DEV_AUTH_FIXTURE=true`; it exists for deterministic local/test flows and must not be used as production data.

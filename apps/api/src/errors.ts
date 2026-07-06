@@ -1,4 +1,10 @@
-export type ApiErrorCode = "UNAUTHENTICATED" | "PERMISSION_DENIED" | "NOT_FOUND" | "CONFIGURATION_ERROR";
+export type ApiErrorCode =
+  | "UNAUTHENTICATED"
+  | "PERMISSION_DENIED"
+  | "NOT_FOUND"
+  | "VALIDATION_ERROR"
+  | "CONFLICT"
+  | "CONFIGURATION_ERROR";
 
 export interface ApiErrorBody {
   error: {

@@ -2,17 +2,58 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import { safeParseClinicOsEnv, type ClinicOsConfig } from "@clinic-os/config";
-import { AuthenticationError, type KeycloakAccessTokenClaims } from "@clinic-os/auth";
-import type { IdentityRepository } from "@clinic-os/db";
+import {
+  AuthenticationError,
+  AuthorizationError,
+  buildAccessContext,
+  principalFromVerifiedKeycloakClaims,
+  type AccessContext,
+  type KeycloakAccessTokenClaims
+} from "@clinic-os/auth";
+import {
+  PostgresAuditEventSink,
+  PostgresClinicOperationsRepository,
+  PostgresIdentityRepository,
+  type ClinicOperationsRepository,
+  type IdentityRepository
+} from "@clinic-os/db";
+import { isUuid, type UUID } from "@clinic-os/domain";
 import type { AuditEventRecord } from "@clinic-os/security";
+import { Pool } from "pg";
 import { ApiError, toApiErrorBody } from "./errors.ts";
 import { KeycloakJwtVerifier } from "./keycloak-verifier.ts";
 import {
   createLocalFixtureClaims,
   InMemoryAuditSink,
+  LocalFixtureClinicOperationsRepository,
   LocalFixtureIdentityRepository
 } from "./local-fixture.ts";
 import { getMe } from "./me.ts";
+import {
+  checkInAppointment,
+  confirmAppointment,
+  convertLeadToAppointment,
+  createAppointment,
+  createLead,
+  createPatient,
+  getMorningDashboard,
+  getPatient,
+  getPatientTimeline,
+  listAppointmentTypes,
+  listAppointments,
+  listChairs,
+  listLeads,
+  listPatients,
+  listProviderSchedules,
+  listQueue,
+  markAppointmentNoShow,
+  matchLeadToPatient,
+  updateAppointment,
+  updateLeadStatus,
+  updatePatient,
+  updateQueueEntry,
+  type OperationsRequestContext
+} from "./operations.ts";
 
 interface AuditSink {
   appendAuditEvent(event: AuditEventRecord): Promise<void>;
@@ -27,6 +68,7 @@ interface TokenVerifier {
 export interface ClinicOsApiServerOptions {
   config: ClinicOsConfig;
   identityRepository: IdentityRepository;
+  operationsRepository?: ClinicOperationsRepository;
   auditSink?: AuditSink;
   tokenVerifier?: TokenVerifier;
   useLocalAuthFixture?: boolean;
@@ -108,6 +150,28 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
         return sendJson(response, result.status, result.body);
       }
 
+      if (request.url?.startsWith("/v1/")) {
+        if (!options.operationsRepository) {
+          throw new ApiError(503, "CONFIGURATION_ERROR", "ClinicOS operations repository is not configured.");
+        }
+
+        const result = await routeOperationsRequest({
+          request,
+          requestId,
+          tokenVerifier,
+          expectedIssuer,
+          acceptedAudience,
+          config: options.config,
+          identityRepository: options.identityRepository,
+          repository: options.operationsRepository,
+          auditSink: options.auditSink,
+          useLocalAuthFixture: options.useLocalAuthFixture ?? false,
+          fixtureSubject: options.fixtureSubject
+        });
+
+        return sendJson(response, result.status, result.body);
+      }
+
       throw new ApiError(404, "NOT_FOUND", "Route not found.", {
         method: request.method,
         path: request.url
@@ -141,14 +205,20 @@ export function createRuntimeApiServer(env: NodeJS.ProcessEnv = process.env): Ru
     );
   }
 
-  const identityRepository = new LocalFixtureIdentityRepository();
-  const auditSink = new InMemoryAuditSink();
+  const repositorySet = useLocalAuthFixture
+    ? {
+        identityRepository: new LocalFixtureIdentityRepository(),
+        operationsRepository: new LocalFixtureClinicOperationsRepository(),
+        auditSink: new InMemoryAuditSink()
+      }
+    : createPostgresRepositorySet(parsed.data);
   const port = parsePort(env.PORT ?? env.API_PORT);
 
   const serverOptions: ClinicOsApiServerOptions = {
     config: parsed.data,
-    identityRepository,
-    auditSink,
+    identityRepository: repositorySet.identityRepository,
+    operationsRepository: repositorySet.operationsRepository,
+    auditSink: repositorySet.auditSink,
     useLocalAuthFixture
   };
 
@@ -159,6 +229,222 @@ export function createRuntimeApiServer(env: NodeJS.ProcessEnv = process.env): Ru
   return {
     port,
     server: createClinicOsApiServer(serverOptions)
+  };
+}
+
+async function routeOperationsRequest(input: {
+  request: IncomingMessage;
+  requestId: string;
+  tokenVerifier: TokenVerifier;
+  expectedIssuer: string;
+  acceptedAudience: string;
+  config: ClinicOsConfig;
+  identityRepository: IdentityRepository;
+  repository: ClinicOperationsRepository;
+  auditSink?: AuditSink;
+  useLocalAuthFixture: boolean;
+  fixtureSubject?: string | undefined;
+}) {
+  const url = new URL(input.request.url ?? "/", "http://clinic-os.local");
+  const pathname = url.pathname;
+  const accessContext = await resolveAccessContext(input);
+  const operationsContext: OperationsRequestContext = {
+    requestId: input.requestId,
+    accessContext,
+    clinicId: resolveClinicId(input.request, accessContext),
+    ipAddress: input.request.socket.remoteAddress ?? null,
+    userAgent: headerValue(input.request, "user-agent") ?? null,
+    idempotencyKey: headerValue(input.request, "idempotency-key") ?? null
+  };
+  const dependencies = {
+    repository: input.repository,
+    auditSink: input.auditSink
+  };
+  const body = ["POST", "PATCH", "PUT"].includes(input.request.method ?? "")
+    ? await readJsonBody(input.request)
+    : undefined;
+
+  if (input.request.method === "GET" && pathname === "/v1/patients") {
+    return listPatients(operationsContext, dependencies, {
+      query: url.searchParams.get("query"),
+      phone: url.searchParams.get("phone"),
+      source: url.searchParams.get("source")
+    });
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/patients") {
+    return createPatient(operationsContext, dependencies, body);
+  }
+
+  const patientMatch = pathname.match(/^\/v1\/patients\/([^/]+)$/);
+  if (patientMatch) {
+    const patientId = pathUuid(patientMatch[1], "patientId");
+    if (input.request.method === "GET") return getPatient(operationsContext, dependencies, patientId);
+    if (input.request.method === "PATCH") return updatePatient(operationsContext, dependencies, patientId, body);
+  }
+
+  const timelineMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/timeline$/);
+  if (timelineMatch && input.request.method === "GET") {
+    return getPatientTimeline(operationsContext, dependencies, pathUuid(timelineMatch[1], "patientId"));
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/leads") {
+    return listLeads(operationsContext, dependencies, {
+      source: url.searchParams.get("source"),
+      status: url.searchParams.get("status")
+    });
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/leads") {
+    return createLead(operationsContext, dependencies, body);
+  }
+
+  const leadMatchPatientMatch = pathname.match(/^\/v1\/leads\/([^/]+)\/match-patient$/);
+  if (leadMatchPatientMatch && input.request.method === "POST") {
+    return matchLeadToPatient(operationsContext, dependencies, pathUuid(leadMatchPatientMatch[1], "leadId"), body);
+  }
+
+  const leadConvertMatch = pathname.match(/^\/v1\/leads\/([^/]+)\/convert-to-appointment$/);
+  if (leadConvertMatch && input.request.method === "POST") {
+    return convertLeadToAppointment(operationsContext, dependencies, pathUuid(leadConvertMatch[1], "leadId"), body);
+  }
+
+  const leadStatusMatch = pathname.match(/^\/v1\/leads\/([^/]+)\/status$/);
+  if (leadStatusMatch && input.request.method === "PATCH") {
+    return updateLeadStatus(operationsContext, dependencies, pathUuid(leadStatusMatch[1], "leadId"), body);
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/appointments") {
+    return listAppointments(operationsContext, dependencies, {
+      date: url.searchParams.get("date"),
+      providerId: url.searchParams.get("providerId"),
+      status: url.searchParams.get("status")
+    });
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/appointments") {
+    return createAppointment(operationsContext, dependencies, body);
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/appointment-types") {
+    return listAppointmentTypes(operationsContext, dependencies);
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/chairs") {
+    return listChairs(operationsContext, dependencies);
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/provider-schedules") {
+    return listProviderSchedules(operationsContext, dependencies, url.searchParams.get("providerId"));
+  }
+
+  const appointmentPatchMatch = pathname.match(/^\/v1\/appointments\/([^/]+)$/);
+  if (appointmentPatchMatch && input.request.method === "PATCH") {
+    return updateAppointment(operationsContext, dependencies, pathUuid(appointmentPatchMatch[1], "appointmentId"), body);
+  }
+
+  const appointmentConfirmMatch = pathname.match(/^\/v1\/appointments\/([^/]+)\/confirm$/);
+  if (appointmentConfirmMatch && input.request.method === "POST") {
+    return confirmAppointment(operationsContext, dependencies, pathUuid(appointmentConfirmMatch[1], "appointmentId"));
+  }
+
+  const appointmentCheckInMatch = pathname.match(/^\/v1\/appointments\/([^/]+)\/check-in$/);
+  if (appointmentCheckInMatch && input.request.method === "POST") {
+    return checkInAppointment(operationsContext, dependencies, pathUuid(appointmentCheckInMatch[1], "appointmentId"));
+  }
+
+  const appointmentNoShowMatch = pathname.match(/^\/v1\/appointments\/([^/]+)\/mark-no-show$/);
+  if (appointmentNoShowMatch && input.request.method === "POST") {
+    return markAppointmentNoShow(operationsContext, dependencies, pathUuid(appointmentNoShowMatch[1], "appointmentId"));
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/queue") {
+    return listQueue(operationsContext, dependencies, url.searchParams.get("date") ?? todayIsoDate());
+  }
+
+  const queuePatchMatch = pathname.match(/^\/v1\/queue\/([^/]+)$/);
+  if (queuePatchMatch && input.request.method === "PATCH") {
+    return updateQueueEntry(operationsContext, dependencies, pathUuid(queuePatchMatch[1], "queueEntryId"), body);
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/dashboard/morning") {
+    return getMorningDashboard(operationsContext, dependencies, url.searchParams.get("date") ?? todayIsoDate());
+  }
+
+  throw new ApiError(404, "NOT_FOUND", "Route not found.", {
+    method: input.request.method,
+    path: pathname
+  });
+}
+
+async function resolveAccessContext(input: {
+  request: IncomingMessage;
+  tokenVerifier: TokenVerifier;
+  useLocalAuthFixture: boolean;
+  fixtureSubject?: string | undefined;
+  expectedIssuer: string;
+  acceptedAudience: string;
+  config: ClinicOsConfig;
+  identityRepository: IdentityRepository;
+}): Promise<AccessContext> {
+  const verifiedKeycloakClaims = await resolveClaims({
+    request: input.request,
+    tokenVerifier: input.tokenVerifier,
+    useLocalAuthFixture: input.useLocalAuthFixture,
+    fixtureSubject: input.fixtureSubject,
+    expectedIssuer: input.expectedIssuer,
+    acceptedAudience: input.acceptedAudience
+  });
+  const principal = principalFromVerifiedKeycloakClaims(verifiedKeycloakClaims, {
+    expectedIssuer: input.expectedIssuer,
+    acceptedAudiences: [input.acceptedAudience, input.config.auth.keycloakClientId, "clinicos-api"],
+    acceptedClientIds: [input.acceptedAudience, input.config.auth.keycloakClientId]
+  });
+  const snapshot = await input.identityRepository.findAccessByKeycloakSubject(principal.subject);
+
+  if (!snapshot) {
+    throw new ApiError(403, "PERMISSION_DENIED", "Authenticated identity is not registered for ClinicOS.", {
+      reason: "identity_not_registered"
+    });
+  }
+
+  return buildAccessContext({
+    principal,
+    tenant: snapshot.tenant,
+    user: snapshot.user,
+    memberships: snapshot.memberships,
+    clinicAssignments: snapshot.clinicAssignments,
+    roleAssignments: snapshot.roleAssignments
+  });
+}
+
+function resolveClinicId(request: IncomingMessage, context: AccessContext): UUID {
+  const requestedClinicId = headerValue(request, "x-clinic-id");
+
+  if (requestedClinicId) return pathUuid(requestedClinicId, "x-clinic-id");
+
+  const assignment = context.clinicAssignments.find((candidate) => candidate.status === "active");
+
+  if (!assignment) {
+    throw new ApiError(403, "PERMISSION_DENIED", "User is not assigned to an active clinic.");
+  }
+
+  return assignment.clinicId;
+}
+
+function createPostgresRepositorySet(config: ClinicOsConfig): {
+  identityRepository: IdentityRepository;
+  operationsRepository: ClinicOperationsRepository;
+  auditSink: AuditSink;
+} {
+  const pool = new Pool({
+    connectionString: config.services.databaseUrl
+  });
+
+  return {
+    identityRepository: new PostgresIdentityRepository(pool),
+    operationsRepository: new PostgresClinicOperationsRepository(pool),
+    auditSink: new PostgresAuditEventSink(pool)
   };
 }
 
@@ -224,6 +510,42 @@ function sendJson(response: ServerResponse, status: number, body: unknown) {
   response.end(`${JSON.stringify(body)}\n`);
 }
 
+async function readJsonBody(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+
+    if (totalBytes > 1024 * 1024) {
+      throw new ApiError(400, "VALIDATION_ERROR", "Request body exceeds the 1MB limit.");
+    }
+
+    chunks.push(buffer);
+  }
+
+  if (chunks.length === 0) return {};
+
+  try {
+    return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+  } catch {
+    throw new ApiError(400, "VALIDATION_ERROR", "Request body must be valid JSON.");
+  }
+}
+
+function pathUuid(value: string, label: string): UUID {
+  if (!isUuid(value)) {
+    throw new ApiError(400, "VALIDATION_ERROR", `${label} must be a valid UUID.`, { field: label });
+  }
+
+  return value;
+}
+
+function todayIsoDate(): string {
+  return new Date().toISOString().slice(0, 10);
+}
+
 function sendApiError(response: ServerResponse, error: ApiError, requestId: string) {
   sendJson(response, error.status, toApiErrorBody(error, requestId));
 }
@@ -232,6 +554,12 @@ function normalizeApiError(error: unknown): ApiError {
   if (error instanceof ApiError) return error;
   if (error instanceof AuthenticationError)
     return new ApiError(401, "UNAUTHENTICATED", error.message);
+  if (error instanceof AuthorizationError) {
+    return new ApiError(403, "PERMISSION_DENIED", error.message, {
+      required_permission: error.requiredPermission,
+      reason: error.reason
+    });
+  }
   if (error instanceof Error) return new ApiError(500, "CONFIGURATION_ERROR", error.message);
   return new ApiError(500, "CONFIGURATION_ERROR", "Unexpected API error.");
 }
