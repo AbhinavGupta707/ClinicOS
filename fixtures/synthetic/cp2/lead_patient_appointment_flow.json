@@ -1,0 +1,642 @@
+{
+  "schemaVersion": "clinic-os.cp2.qa-fixture.v1",
+  "fixtureUse": {
+    "name": "Checkpoint 2 lead to appointment QA scenario",
+    "localOnly": true,
+    "syntheticOnly": true,
+    "productionUseDenied": true,
+    "allowedEnvironments": ["local", "development", "test", "ci"],
+    "notes": "Deterministic local/test fixture. Do not seed this into production or present it as clinic data."
+  },
+  "sourceReferences": [
+    "clinic_os_specs_v2/08_USER_STORIES_AND_ACCEPTANCE_CRITERIA.md#story-2-1-create-patient",
+    "clinic_os_specs_v2/08_USER_STORIES_AND_ACCEPTANCE_CRITERIA.md#story-3-1-book-appointment",
+    "clinic_os_specs_v2/08_USER_STORIES_AND_ACCEPTANCE_CRITERIA.md#story-3-2-morning-dashboard",
+    "clinic_os_specs_v2/08_USER_STORIES_AND_ACCEPTANCE_CRITERIA.md#story-3-3-check-in-and-queue",
+    "clinic_os_specs_v2/08_USER_STORIES_AND_ACCEPTANCE_CRITERIA.md#story-4-1-inbound-whatsapp-message",
+    "clinic_os_specs_v2/09_API_CONTRACTS_AND_EVENTS.md#patients",
+    "clinic_os_specs_v2/09_API_CONTRACTS_AND_EVENTS.md#appointments-and-queue",
+    "clinic_os_specs_v2/09_API_CONTRACTS_AND_EVENTS.md#lead-inbox"
+  ],
+  "clock": {
+    "businessDate": "2026-07-07",
+    "fixedNow": "2026-07-07T09:05:00+05:30",
+    "timezone": "Asia/Kolkata"
+  },
+  "tenants": [
+    {
+      "key": "primary",
+      "id": "20000000-0000-4000-8000-000000000001",
+      "slug": "cp2-sunrise-dental",
+      "displayName": "CP2 Sunrise Dental Synthetic Tenant"
+    },
+    {
+      "key": "wrongTenant",
+      "id": "20000000-0000-4000-8000-000000000002",
+      "slug": "cp2-monsoon-dental",
+      "displayName": "CP2 Monsoon Dental Synthetic Tenant"
+    }
+  ],
+  "clinics": [
+    {
+      "key": "primaryClinic",
+      "id": "20000000-0000-4000-8000-000000000101",
+      "tenantId": "20000000-0000-4000-8000-000000000001",
+      "slug": "indiranagar-cp2",
+      "displayName": "CP2 Synthetic Indiranagar Dental",
+      "timezone": "Asia/Kolkata"
+    },
+    {
+      "key": "wrongTenantClinic",
+      "id": "20000000-0000-4000-8000-000000000201",
+      "tenantId": "20000000-0000-4000-8000-000000000002",
+      "slug": "koramangala-cp2",
+      "displayName": "CP2 Synthetic Koramangala Dental",
+      "timezone": "Asia/Kolkata"
+    }
+  ],
+  "actors": [
+    {
+      "key": "owner",
+      "id": "20000000-0000-4000-8000-000000001001",
+      "displayName": "Dr Kavya Owner Synthetic",
+      "email": "cp2.owner@example.test",
+      "roleSlug": "owner_admin",
+      "tenantId": "20000000-0000-4000-8000-000000000001",
+      "clinicId": "20000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "doctor",
+      "id": "20000000-0000-4000-8000-000000001002",
+      "displayName": "Dr Neel Doctor Synthetic",
+      "email": "cp2.doctor@example.test",
+      "roleSlug": "doctor",
+      "tenantId": "20000000-0000-4000-8000-000000000001",
+      "clinicId": "20000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "assistant",
+      "id": "20000000-0000-4000-8000-000000001003",
+      "displayName": "Mira Assistant Synthetic",
+      "email": "cp2.assistant@example.test",
+      "roleSlug": "assistant",
+      "tenantId": "20000000-0000-4000-8000-000000000001",
+      "clinicId": "20000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "receptionist",
+      "id": "20000000-0000-4000-8000-000000001004",
+      "displayName": "Rohan Reception Synthetic",
+      "email": "cp2.reception@example.test",
+      "roleSlug": "receptionist",
+      "tenantId": "20000000-0000-4000-8000-000000000001",
+      "clinicId": "20000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "accountant",
+      "id": "20000000-0000-4000-8000-000000001005",
+      "displayName": "Ishaan Accounts Synthetic",
+      "email": "cp2.accounts@example.test",
+      "roleSlug": "accountant",
+      "tenantId": "20000000-0000-4000-8000-000000000001",
+      "clinicId": "20000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "wrongTenantAssistant",
+      "id": "20000000-0000-4000-8000-000000001006",
+      "displayName": "Tara Other Assistant Synthetic",
+      "email": "cp2.other.assistant@example.test",
+      "roleSlug": "assistant",
+      "tenantId": "20000000-0000-4000-8000-000000000002",
+      "clinicId": "20000000-0000-4000-8000-000000000201"
+    }
+  ],
+  "patients": [
+    {
+      "key": "returningPatient",
+      "id": "20000000-0000-4000-8000-000000002001",
+      "externalId": "CP2-PAT-RETURNING-001",
+      "tenantId": "20000000-0000-4000-8000-000000000001",
+      "clinicId": "20000000-0000-4000-8000-000000000101",
+      "fullName": "Riya Synthetic",
+      "phone": "+919900001001",
+      "email": "riya.synthetic@example.test",
+      "dateOfBirth": "1990-05-14",
+      "gender": "female",
+      "source": "manual",
+      "existsBeforeFlow": true,
+      "patientClassification": "returning",
+      "timelineSeed": [
+        {
+          "type": "patient.created",
+          "occurredAt": "2026-06-15T10:00:00+05:30",
+          "summary": "Synthetic returning patient created during prior visit."
+        }
+      ]
+    },
+    {
+      "key": "expectedNewPatient",
+      "id": "20000000-0000-4000-8000-000000002002",
+      "externalId": "CP2-PAT-NEW-001",
+      "tenantId": "20000000-0000-4000-8000-000000000001",
+      "clinicId": "20000000-0000-4000-8000-000000000101",
+      "fullName": "Ira Synthetic",
+      "phone": "+919900001002",
+      "email": "ira.synthetic@example.test",
+      "dateOfBirth": "1995-08-22",
+      "gender": "female",
+      "source": "external_system",
+      "existsBeforeFlow": false,
+      "patientClassification": "new",
+      "sourceAttribution": {
+        "source": "google",
+        "externalRef": "gmb-cp2-lead-001",
+        "campaign": "synthetic-google-profile",
+        "touchId": "20000000-0000-4000-8000-000000006001"
+      }
+    }
+  ],
+  "leads": [
+    {
+      "key": "whatsappReturningLead",
+      "id": "20000000-0000-4000-8000-000000003001",
+      "tenantId": "20000000-0000-4000-8000-000000000001",
+      "clinicId": "20000000-0000-4000-8000-000000000101",
+      "source": "whatsapp",
+      "status": "new",
+      "displayName": "Riya Synthetic",
+      "primaryContact": "+919900001001",
+      "intent": "appointment_request",
+      "receivedAt": "2026-07-07T09:05:00+05:30",
+      "sourceDetail": {
+        "externalRef": "wa-msg-cp2-001",
+        "rawWebhookStored": true,
+        "rawNotificationText": "Synthetic WhatsApp: can I come today for tooth pain?",
+        "deliveryStatus": "delivered"
+      },
+      "expectedPatientMatch": {
+        "strategy": "phone_exact",
+        "patientId": "20000000-0000-4000-8000-000000002001",
+        "patientClassification": "returning",
+        "duplicateSuggestions": ["20000000-0000-4000-8000-000000002001"]
+      },
+      "expectedEvents": ["external.lead.received", "external.lead.matched"]
+    },
+    {
+      "key": "googleNewPatientLead",
+      "id": "20000000-0000-4000-8000-000000003002",
+      "tenantId": "20000000-0000-4000-8000-000000000001",
+      "clinicId": "20000000-0000-4000-8000-000000000101",
+      "source": "google",
+      "status": "new",
+      "displayName": "Ira Synthetic",
+      "primaryContact": "+919900001002",
+      "intent": "appointment_request",
+      "receivedAt": "2026-07-07T09:12:00+05:30",
+      "sourceDetail": {
+        "externalRef": "gmb-cp2-lead-001",
+        "doctorName": "Dr Neel Doctor Synthetic",
+        "rawNotificationText": "Synthetic Google profile inquiry requesting cleaning appointment."
+      },
+      "expectedPatientMatch": {
+        "strategy": "no_match_create_patient",
+        "patientId": "20000000-0000-4000-8000-000000002002",
+        "patientClassification": "new",
+        "duplicateSuggestions": []
+      },
+      "expectedEvents": ["external.lead.received", "patient.created", "attribution.touch.created"]
+    },
+    {
+      "key": "missedCallLeadTask",
+      "id": "20000000-0000-4000-8000-000000003003",
+      "tenantId": "20000000-0000-4000-8000-000000000001",
+      "clinicId": "20000000-0000-4000-8000-000000000101",
+      "source": "phone",
+      "status": "new",
+      "displayName": "Kabir Synthetic",
+      "primaryContact": "+919900001003",
+      "intent": "missed_call_callback",
+      "receivedAt": "2026-07-07T08:50:00+05:30",
+      "sourceDetail": {
+        "externalRef": "call-cp2-missed-001",
+        "rawNotificationText": "Synthetic missed call before clinic open."
+      },
+      "expectedDashboardTask": true,
+      "expectedEvents": ["external.lead.received"]
+    }
+  ],
+  "appointmentTypes": [
+    {
+      "key": "consultation",
+      "id": "20000000-0000-4000-8000-000000004001",
+      "name": "Dental consultation",
+      "defaultDurationMinutes": 30
+    },
+    {
+      "key": "scaling",
+      "id": "20000000-0000-4000-8000-000000004002",
+      "name": "Scaling and polishing",
+      "defaultDurationMinutes": 45
+    }
+  ],
+  "appointments": [
+    {
+      "key": "newPatientAppointment",
+      "id": "20000000-0000-4000-8000-000000005001",
+      "tenantId": "20000000-0000-4000-8000-000000000001",
+      "clinicId": "20000000-0000-4000-8000-000000000101",
+      "patientId": "20000000-0000-4000-8000-000000002002",
+      "leadId": "20000000-0000-4000-8000-000000003002",
+      "appointmentTypeId": "20000000-0000-4000-8000-000000004002",
+      "providerActorKey": "doctor",
+      "scheduledStart": "2026-07-07T11:30:00+05:30",
+      "scheduledEnd": "2026-07-07T12:15:00+05:30",
+      "chair": "Chair 2",
+      "statusSequence": ["requested", "booked", "confirmed", "checked_in"],
+      "sourceAttribution": {
+        "source": "google",
+        "leadId": "20000000-0000-4000-8000-000000003002",
+        "touchId": "20000000-0000-4000-8000-000000006001"
+      },
+      "expectedConfirmationTaskId": "20000000-0000-4000-8000-000000007001",
+      "expectedQueueEntryId": "20000000-0000-4000-8000-000000008001"
+    },
+    {
+      "key": "returningPatientUnconfirmedAppointment",
+      "id": "20000000-0000-4000-8000-000000005002",
+      "tenantId": "20000000-0000-4000-8000-000000000001",
+      "clinicId": "20000000-0000-4000-8000-000000000101",
+      "patientId": "20000000-0000-4000-8000-000000002001",
+      "leadId": "20000000-0000-4000-8000-000000003001",
+      "appointmentTypeId": "20000000-0000-4000-8000-000000004001",
+      "providerActorKey": "doctor",
+      "scheduledStart": "2026-07-07T10:15:00+05:30",
+      "scheduledEnd": "2026-07-07T10:45:00+05:30",
+      "chair": "Chair 1",
+      "statusSequence": ["requested", "booked"],
+      "sourceAttribution": {
+        "source": "whatsapp",
+        "leadId": "20000000-0000-4000-8000-000000003001",
+        "touchId": "20000000-0000-4000-8000-000000006002"
+      },
+      "expectedConfirmationTaskId": "20000000-0000-4000-8000-000000007002"
+    }
+  ],
+  "dashboardSnapshots": [
+    {
+      "key": "morningStart",
+      "asOf": "2026-07-07T09:15:00+05:30",
+      "expected": {
+        "businessDate": "2026-07-07",
+        "todayAppointmentCount": 1,
+        "unconfirmedAppointmentCount": 1,
+        "leadTaskCount": 3,
+        "missedCallTaskCount": 1,
+        "queueWaitingCount": 0,
+        "newPatientVisible": false,
+        "returningPatientVisible": true
+      }
+    },
+    {
+      "key": "afterNewPatientCheckIn",
+      "asOf": "2026-07-07T11:20:00+05:30",
+      "expected": {
+        "businessDate": "2026-07-07",
+        "todayAppointmentCount": 2,
+        "unconfirmedAppointmentCount": 1,
+        "leadTaskCount": 1,
+        "missedCallTaskCount": 1,
+        "queueWaitingCount": 1,
+        "checkedInPatientIds": ["20000000-0000-4000-8000-000000002002"],
+        "newPatientVisible": true,
+        "returningPatientVisible": true
+      }
+    }
+  ],
+  "flow": {
+    "name": "lead -> patient -> appointment -> confirmation -> check-in -> dashboard",
+    "actorSequence": [
+      "assistant",
+      "assistant",
+      "assistant",
+      "assistant",
+      "assistant",
+      "assistant",
+      "assistant",
+      "receptionist",
+      "receptionist",
+      "assistant"
+    ],
+    "steps": [
+      {
+        "key": "capture-whatsapp-returning-lead",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/leads",
+        "bodyFixtureRef": "leads.whatsappReturningLead",
+        "idempotencyKey": "cp2-whatsapp-returning-lead-create",
+        "expectedStatus": 201,
+        "expectedEvents": ["external.lead.received"],
+        "expectedAudit": [
+          {
+            "action": "lead.created",
+            "phiFields": ["displayName", "primaryContact"],
+            "resourceType": "lead",
+            "resourceId": "20000000-0000-4000-8000-000000003001"
+          }
+        ],
+        "timelineExpectations": []
+      },
+      {
+        "key": "match-whatsapp-returning-lead",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/leads/20000000-0000-4000-8000-000000003001/match-patient",
+        "bodyFixtureRef": "leads.whatsappReturningLead.expectedPatientMatch",
+        "idempotencyKey": "cp2-whatsapp-returning-lead-match",
+        "expectedStatus": 200,
+        "expectedEvents": ["external.lead.matched"],
+        "expectedAudit": [
+          {
+            "action": "patient.duplicate_suggestions.viewed",
+            "phiFields": ["fullName", "phone"],
+            "resourceType": "lead",
+            "resourceId": "20000000-0000-4000-8000-000000003001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "20000000-0000-4000-8000-000000002001",
+            "entryType": "external.lead.matched"
+          }
+        ]
+      },
+      {
+        "key": "capture-google-lead",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/leads",
+        "bodyFixtureRef": "leads.googleNewPatientLead",
+        "idempotencyKey": "cp2-google-lead-create",
+        "expectedStatus": 201,
+        "expectedEvents": ["external.lead.received"],
+        "expectedAudit": [
+          {
+            "action": "lead.created",
+            "phiFields": ["displayName", "primaryContact"],
+            "resourceType": "lead",
+            "resourceId": "20000000-0000-4000-8000-000000003002"
+          }
+        ],
+        "timelineExpectations": []
+      },
+      {
+        "key": "match-google-lead",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/leads/20000000-0000-4000-8000-000000003002/match-patient",
+        "bodyFixtureRef": "leads.googleNewPatientLead.expectedPatientMatch",
+        "idempotencyKey": "cp2-google-lead-match",
+        "expectedStatus": 200,
+        "expectedEvents": [],
+        "expectedAudit": [
+          {
+            "action": "patient.duplicate_suggestions.viewed",
+            "phiFields": ["fullName", "phone"],
+            "resourceType": "lead",
+            "resourceId": "20000000-0000-4000-8000-000000003002"
+          }
+        ],
+        "timelineExpectations": []
+      },
+      {
+        "key": "create-patient-from-lead",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/patients",
+        "bodyFixtureRef": "patients.expectedNewPatient",
+        "idempotencyKey": "cp2-create-ira-synthetic",
+        "expectedStatus": 201,
+        "expectedEvents": ["patient.created", "attribution.touch.created"],
+        "expectedAudit": [
+          {
+            "action": "patient.created",
+            "phiFields": ["fullName", "phone", "email", "dateOfBirth"],
+            "resourceType": "patient",
+            "resourceId": "20000000-0000-4000-8000-000000002002"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "20000000-0000-4000-8000-000000002002",
+            "entryType": "patient.created"
+          },
+          {
+            "patientId": "20000000-0000-4000-8000-000000002002",
+            "entryType": "attribution.touch.created"
+          }
+        ]
+      },
+      {
+        "key": "convert-lead-to-appointment",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/leads/20000000-0000-4000-8000-000000003002/convert-to-appointment",
+        "bodyFixtureRef": "appointments.newPatientAppointment",
+        "idempotencyKey": "cp2-convert-google-lead-to-appointment",
+        "expectedStatus": 201,
+        "expectedEvents": ["appointment.created", "lead.converted_to_appointment"],
+        "expectedAudit": [
+          {
+            "action": "appointment.created",
+            "phiFields": ["patientId"],
+            "resourceType": "appointment",
+            "resourceId": "20000000-0000-4000-8000-000000005001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "20000000-0000-4000-8000-000000002002",
+            "entryType": "appointment.created"
+          }
+        ]
+      },
+      {
+        "key": "confirm-appointment",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/appointments/20000000-0000-4000-8000-000000005001/confirm",
+        "bodyFixtureRef": "appointments.newPatientAppointment",
+        "idempotencyKey": "cp2-confirm-new-patient-appointment",
+        "expectedStatus": 200,
+        "expectedEvents": ["appointment.confirmed"],
+        "expectedAudit": [
+          {
+            "action": "appointment.confirmed",
+            "phiFields": ["patientId"],
+            "resourceType": "appointment",
+            "resourceId": "20000000-0000-4000-8000-000000005001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "20000000-0000-4000-8000-000000002002",
+            "entryType": "appointment.confirmed"
+          }
+        ]
+      },
+      {
+        "key": "check-in-patient",
+        "actorKey": "receptionist",
+        "method": "POST",
+        "path": "/v1/appointments/20000000-0000-4000-8000-000000005001/check-in",
+        "bodyFixtureRef": "appointments.newPatientAppointment.expectedQueueEntryId",
+        "idempotencyKey": "cp2-check-in-new-patient",
+        "expectedStatus": 200,
+        "expectedEvents": ["patient.checked_in", "queue.entry_created"],
+        "expectedAudit": [
+          {
+            "action": "patient.checked_in",
+            "phiFields": ["patientId"],
+            "resourceType": "appointment",
+            "resourceId": "20000000-0000-4000-8000-000000005001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "20000000-0000-4000-8000-000000002002",
+            "entryType": "patient.checked_in"
+          },
+          {
+            "patientId": "20000000-0000-4000-8000-000000002002",
+            "entryType": "queue.entry_created"
+          }
+        ]
+      },
+      {
+        "key": "read-queue-after-check-in",
+        "actorKey": "receptionist",
+        "method": "GET",
+        "path": "/v1/queue?date=2026-07-07",
+        "bodyFixtureRef": "appointments.newPatientAppointment.expectedQueueEntryId",
+        "idempotencyKey": "cp2-read-queue-after-check-in",
+        "expectedStatus": 200,
+        "expectedEvents": [],
+        "expectedAudit": [
+          {
+            "action": "queue.viewed",
+            "phiFields": ["patientId"],
+            "resourceType": "queue",
+            "resourceId": "20000000-0000-4000-8000-000000008001"
+          }
+        ],
+        "timelineExpectations": []
+      },
+      {
+        "key": "read-dashboard-after-check-in",
+        "actorKey": "assistant",
+        "method": "GET",
+        "path": "/v1/dashboard/morning?date=2026-07-07",
+        "bodyFixtureRef": "dashboardSnapshots.afterNewPatientCheckIn",
+        "idempotencyKey": "cp2-read-dashboard-after-check-in",
+        "expectedStatus": 200,
+        "expectedEvents": [],
+        "expectedAudit": [
+          {
+            "action": "dashboard.morning.viewed",
+            "phiFields": ["patientId"],
+            "resourceType": "dashboard",
+            "resourceId": "2026-07-07"
+          }
+        ],
+        "timelineExpectations": []
+      }
+    ]
+  },
+  "roleTenantExpectations": [
+    {
+      "key": "assistant-can-create-patient-in-own-clinic",
+      "actorKey": "assistant",
+      "operation": "POST /v1/patients",
+      "targetTenantId": "20000000-0000-4000-8000-000000000001",
+      "targetClinicId": "20000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["patient.write"],
+      "expected": "allow"
+    },
+    {
+      "key": "assistant-can-book-appointment-in-own-clinic",
+      "actorKey": "assistant",
+      "operation": "POST /v1/appointments",
+      "targetTenantId": "20000000-0000-4000-8000-000000000001",
+      "targetClinicId": "20000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["schedule.write"],
+      "expected": "allow"
+    },
+    {
+      "key": "receptionist-can-check-in-own-clinic",
+      "actorKey": "receptionist",
+      "operation": "POST /v1/appointments/{appointmentId}/check-in",
+      "targetTenantId": "20000000-0000-4000-8000-000000000001",
+      "targetClinicId": "20000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["queue.manage"],
+      "expected": "allow"
+    },
+    {
+      "key": "accountant-cannot-create-patient",
+      "actorKey": "accountant",
+      "operation": "POST /v1/patients",
+      "targetTenantId": "20000000-0000-4000-8000-000000000001",
+      "targetClinicId": "20000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["patient.write"],
+      "expected": "deny",
+      "expectedReason": "missing_permission"
+    },
+    {
+      "key": "doctor-cannot-book-without-schedule-write",
+      "actorKey": "doctor",
+      "operation": "POST /v1/appointments",
+      "targetTenantId": "20000000-0000-4000-8000-000000000001",
+      "targetClinicId": "20000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["schedule.write"],
+      "expected": "deny",
+      "expectedReason": "missing_permission"
+    },
+    {
+      "key": "assistant-cannot-cross-tenant-write",
+      "actorKey": "assistant",
+      "operation": "POST /v1/patients",
+      "targetTenantId": "20000000-0000-4000-8000-000000000002",
+      "targetClinicId": "20000000-0000-4000-8000-000000000201",
+      "requiredPermissions": ["patient.write"],
+      "expected": "deny",
+      "expectedReason": "tenant_mismatch"
+    }
+  ],
+  "responseAssertions": {
+    "duplicateSuggestions": {
+      "mustIncludePatientIds": ["20000000-0000-4000-8000-000000002001"],
+      "mustNotExposeWrongTenantPatientIds": true
+    },
+    "leadConversion": {
+      "mustPreserveLeadId": true,
+      "mustPreserveSourceAttribution": true,
+      "mustCreateConfirmationTask": true
+    },
+    "timeline": {
+      "newPatientMustInclude": [
+        "patient.created",
+        "attribution.touch.created",
+        "appointment.created",
+        "appointment.confirmed",
+        "patient.checked_in",
+        "queue.entry_created"
+      ],
+      "sensitivePatientMutationsRequireAudit": true
+    },
+    "dashboard": {
+      "mustShowNewAndReturningFlags": true,
+      "mustReflectQueueAfterCheckIn": true,
+      "mustShowMissedCallTasks": true
+    }
+  }
+}
