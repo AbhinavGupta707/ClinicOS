@@ -1,0 +1,7 @@
+{
+  "name": "@clinic-os/integrations",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Provider interfaces, adapters, simulators, and contract fixtures."
+}
+

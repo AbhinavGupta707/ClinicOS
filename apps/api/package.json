@@ -1,0 +1,14 @@
+{
+  "name": "@clinic-os/api",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ClinicOS API. Checkpoint 1 will add the NestJS REST/OpenAPI service.",
+  "scripts": {
+    "dev": "echo \"Checkpoint 1 will add API dev server\"",
+    "typecheck": "echo \"Checkpoint 1 will add API typecheck\"",
+    "lint": "echo \"Checkpoint 1 will add API lint\"",
+    "test": "echo \"Checkpoint 1 will add API tests\"",
+    "build": "echo \"Checkpoint 1 will add API build\""
+  }
+}
+

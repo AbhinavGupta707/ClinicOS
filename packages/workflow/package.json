@@ -1,0 +1,7 @@
+{
+  "name": "@clinic-os/workflow",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Temporal workflow and activity contracts."
+}
+

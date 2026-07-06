@@ -1,0 +1,14 @@
+{
+  "name": "@clinic-os/web",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ClinicOS web app. Checkpoint 1 will add the Next.js application shell.",
+  "scripts": {
+    "dev": "echo \"Checkpoint 1 will add Next.js dev server\"",
+    "typecheck": "echo \"Checkpoint 1 will add web typecheck\"",
+    "lint": "echo \"Checkpoint 1 will add web lint\"",
+    "test": "echo \"Checkpoint 1 will add web tests\"",
+    "build": "echo \"Checkpoint 1 will add web build\""
+  }
+}
+

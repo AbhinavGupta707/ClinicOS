@@ -1,0 +1,14 @@
+{
+  "name": "@clinic-os/mobile",
+  "version": "0.0.0",
+  "private": true,
+  "description": "ClinicOS Expo/React Native capture app. Checkpoint 1 starts app shell; Checkpoint 8 expands capture workflows.",
+  "scripts": {
+    "dev": "echo \"Checkpoint 1 will add Expo dev command\"",
+    "typecheck": "echo \"Checkpoint 1 will add mobile typecheck\"",
+    "lint": "echo \"Checkpoint 1 will add mobile lint\"",
+    "test": "echo \"Checkpoint 1 will add mobile tests\"",
+    "build": "echo \"Checkpoint 1 will add mobile build\""
+  }
+}
+

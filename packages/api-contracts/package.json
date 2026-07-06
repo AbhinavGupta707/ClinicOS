@@ -1,0 +1,7 @@
+{
+  "name": "@clinic-os/api-contracts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "OpenAPI schemas and generated/shared API contract types."
+}
+
