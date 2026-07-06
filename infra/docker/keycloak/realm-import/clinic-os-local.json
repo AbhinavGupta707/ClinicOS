@@ -2,6 +2,7 @@
   "realm": "clinic-os-local",
   "enabled": true,
   "displayName": "ClinicOS Local",
+  "sslRequired": "none",
   "registrationAllowed": false,
   "resetPasswordAllowed": true,
   "rememberMe": true,
