@@ -27,4 +27,4 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | Checkpoint | Status | Base commit | Result commit | Notes |
 |---|---|---:|---:|---|
 | 0 - Git and orchestration preflight | Complete | repository root | `main` HEAD | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured and pushed. |
-| 1 - Production platform foundation | In progress | `447206a` | `539ca41` partial | Data/Auth and Runtime/Workflow lanes merged after master-side checks. Repo/DevEx and Web Shell lanes are pending merge verification. |
+| 1 - Production platform foundation | In progress | `447206a` | `bb9b522` partial | Data/Auth, Runtime/Workflow, and Repo/DevEx lanes merged after master-side checks. Web Shell lane is pending merge verification. |

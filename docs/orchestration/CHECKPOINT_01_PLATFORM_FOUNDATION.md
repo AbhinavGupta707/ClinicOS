@@ -94,4 +94,30 @@ Runtime/Workflow merged into `main` at `539ca41` after master-side verification.
   - `npm run test --workspace apps/worker --if-present` passed after local package builds: 5 tests.
 - User/runtime evidence gap: Temporal server and Postgres-backed worker were not booted yet because the Repo/DevEx local stack lane has not merged. This remains a post-Repo/DevEx integration check.
 
-Awaiting Repo/DevEx merge verification.
+Repo/DevEx merged into `main` at `bb9b522` after conflict resolution and merged-tree verification.
+
+### Repo/DevEx Evidence
+
+- Lane commit: `21cd064 chore: add checkpoint 1 devex foundation`.
+- Merge commit: `bb9b522 merge: checkpoint 1 repo devex lane`.
+- Merge conflicts were limited to overlap in `apps/api/README.md`, `apps/api/package.json`, `apps/worker/README.md`, and `apps/worker/package.json`.
+- Conflict policy:
+  - Preserved the Data/Auth `/v1/me` contract, package tests, and syntax checks.
+  - Kept API `dev` unavailable until a production NestJS server is implemented.
+  - Preserved the Runtime/Workflow worker runtime, worker `dev`, typecheck, test, and build scripts.
+  - Added root dependency-order-aware scripts so worker gates build local shared package declarations before compiling app workspaces.
+  - Updated CI to call root `typecheck`, `lint`, `test`, and `build` scripts instead of raw workspace invocations.
+- Master checks after conflict resolution:
+  - `npm install` passed and refreshed `package-lock.json` for the combined Data/Auth, Runtime/Workflow, and Repo/DevEx graph.
+  - `npm run check` passed.
+  - `npm run typecheck` passed.
+  - `npm run lint` passed.
+  - `npm run test` passed.
+  - `npm run build` passed.
+  - `npm run security:secrets` passed.
+  - `npm run security:audit` passed at the configured high threshold with 9 moderate Temporal/protobuf advisories.
+  - `docker compose config` passed.
+  - `git diff --check` passed.
+- User/runtime evidence gap: Docker services were syntax-validated but not started yet. A local stack boot and worker health check remain for the master integration pass.
+
+Awaiting Web Shell merge verification.
