@@ -71,4 +71,27 @@ Data/Auth merged into `main` at `a7fb7dc` after master-side verification.
   - `npm run typecheck --workspace packages/domain --if-present` passed.
 - Lane-reported user/runtime evidence: temporary PostgreSQL 16 migration and seed applied cleanly; non-superuser RLS smoke showed tenant A saw 1 patient, tenant B saw 1 patient, and mismatched tenant/clinic context saw 0.
 
-Awaiting Runtime/Workflow merge verification.
+Runtime/Workflow merged into `main` at `539ca41` after master-side verification.
+
+### Runtime/Workflow Evidence
+
+- Lane commit: `6b1b687 Build checkpoint 1 runtime workflow foundation`.
+- Merge commit: `539ca41 merge: checkpoint 1 runtime workflow lane`.
+- Lane scope remained inside `apps/worker`, `packages/workflow`, `packages/observability`, and `packages/integrations`.
+- Master checks before and after merge:
+  - `git diff --check 447206a..6b1b687` passed in the lane.
+  - `npm run typecheck --workspace packages/workflow --if-present` passed.
+  - `npm run typecheck --workspace apps/worker --if-present` passed.
+  - `npm run typecheck --workspace packages/observability --if-present` passed.
+  - `npm run typecheck --workspace packages/integrations --if-present` passed.
+  - `npm run test --workspace packages/workflow --if-present` passed after allowing build output in the managed worktree: 3 tests.
+  - `npm run test --workspace apps/worker --if-present` passed after allowing build output in the managed worktree: 5 tests.
+  - `npm install --no-package-lock` on `main` installed runtime dependencies without lockfile churn and reported 9 moderate advisories.
+  - `npm run check` passed on `main`.
+  - `git diff --check HEAD~1..HEAD` passed after merge.
+  - `npm run build --workspace packages/observability --if-present`, `npm run build --workspace packages/integrations --if-present`, and `npm run build --workspace packages/workflow --if-present` passed before worker compile, because worker consumes generated local package declarations.
+  - `npm run typecheck --workspace apps/worker --if-present` passed after local package builds.
+  - `npm run test --workspace apps/worker --if-present` passed after local package builds: 5 tests.
+- User/runtime evidence gap: Temporal server and Postgres-backed worker were not booted yet because the Repo/DevEx local stack lane has not merged. This remains a post-Repo/DevEx integration check.
+
+Awaiting Repo/DevEx merge verification.
