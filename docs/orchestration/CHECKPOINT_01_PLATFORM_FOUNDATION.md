@@ -29,6 +29,8 @@ Build the deployable ClinicOS skeleton: web/API/worker/mobile app foundation, lo
 | Repo/DevEx | `019f3963-74b4-7dd3-92a4-638484ae51fc` | `/Users/abhinavgupta/.codex/worktrees/d6f6/ClinicOS` | root scripts/config, CI, local stack, `packages/config`, infra runbooks |
 | Web Shell | `019f3963-74d6-7f61-bf80-7aa882e1ddaa` | `/Users/abhinavgupta/.codex/worktrees/df8c/ClinicOS` | `apps/web`, `packages/ui` |
 
+Codex app visibility note: these lanes use Codex-managed worktrees under `$CODEX_HOME/worktrees`, so they may not render as children under the saved `ClinicOS` project in the sidebar. Search for `CP1 Lane` in Codex or open the thread IDs directly. The documented app path for long-lived sidebar-visible worktrees is a permanent worktree created from the project menu, which appears as its own project.
+
 ## Merge Order
 
 1. Data/Auth
