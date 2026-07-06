@@ -8,6 +8,10 @@ const migration = readFileSync(
   resolve(import.meta.dirname, "../migrations/0001_identity_auth_audit_phi.sql"),
   "utf8"
 );
+const checkpoint2Migration = readFileSync(
+  resolve(import.meta.dirname, "../migrations/0002_lead_patient_appointment_day_start.sql"),
+  "utf8"
+);
 
 test("migration enables RLS for first PHI and audit tables", () => {
   assert.match(migration, /alter table patients enable row level security/i);
@@ -53,4 +57,49 @@ test("RLS context statements use transaction-local settings", () => {
   assert.equal(statements.length, 3);
   assert.ok(statements.every((statement) => statement.sql.includes("set_config")));
   assert.ok(statements.every((statement) => statement.sql.includes("true")));
+});
+
+test("checkpoint 2 migration includes lead patient appointment and dashboard tables", () => {
+  for (const table of [
+    "patient_contacts",
+    "patient_merge_candidates",
+    "patient_timeline_items",
+    "leads",
+    "attribution_touches",
+    "appointment_types",
+    "provider_schedules",
+    "chairs_or_rooms",
+    "appointments",
+    "appointment_status_history",
+    "queue_entries",
+    "tasks",
+    "outbox_events"
+  ]) {
+    assert.match(checkpoint2Migration, new RegExp(`create table if not exists ${table}`, "i"));
+  }
+});
+
+test("checkpoint 2 migration enforces RLS and tenant-clinic scope on operational tables", () => {
+  for (const table of [
+    "patient_contacts",
+    "leads",
+    "appointments",
+    "queue_entries",
+    "tasks",
+    "attribution_touches",
+    "outbox_events"
+  ]) {
+    assert.match(checkpoint2Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
+    assert.match(checkpoint2Migration, new RegExp(`${table}_tenant_clinic_isolation`, "i"));
+  }
+
+  assert.match(checkpoint2Migration, /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i);
+  assert.match(checkpoint2Migration, /foreign key \(tenant_id, patient_id\) references patients\(tenant_id, id\)/i);
+});
+
+test("checkpoint 2 migration protects appointment provider and chair conflicts at the database layer", () => {
+  assert.match(checkpoint2Migration, /create extension if not exists btree_gist/i);
+  assert.match(checkpoint2Migration, /appointments_provider_no_overlap exclude using gist/i);
+  assert.match(checkpoint2Migration, /appointments_chair_no_overlap exclude using gist/i);
+  assert.match(checkpoint2Migration, /status in \('requested', 'booked', 'confirmed', 'checked_in', 'in_consult'\)/i);
 });

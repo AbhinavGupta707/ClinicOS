@@ -21,6 +21,20 @@ test("audit classifications mark sensitive access", () => {
   assert.equal(classification.category, "phi_access");
 });
 
+test("checkpoint 2 workflow audit actions are PHI-linked where patient state changes", () => {
+  for (const action of [
+    "appointment.created",
+    "appointment.confirmed",
+    "patient.checked_in",
+    "queue.entry_created",
+    "lead.matched_to_patient"
+  ] as const) {
+    const classification = classifyAuditAction(action);
+    assert.equal(classification.phiInvolved, true);
+    assert.equal(classification.requiresPatientId, true);
+  }
+});
+
 test("PHI redaction masks nested patient and free-text identifiers", () => {
   const redacted = redactPhi({
     event: "patient.record.viewed",

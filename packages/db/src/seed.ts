@@ -12,6 +12,15 @@ export const CHECKPOINT1_SEED_IDS = {
   },
   patients: {
     rheaSynthetic: "10000000-0000-4000-8000-000000002001" as UUID
+  },
+  appointmentTypes: {
+    consultation: "10000000-0000-4000-8000-000000003001" as UUID
+  },
+  chairs: {
+    operatoryOne: "10000000-0000-4000-8000-000000004001" as UUID
+  },
+  providerSchedules: {
+    doctorWeekday: "10000000-0000-4000-8000-000000005001" as UUID
   }
 } as const;
 
