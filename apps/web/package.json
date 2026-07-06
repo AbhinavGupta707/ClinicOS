@@ -2,8 +2,28 @@
   "name": "@clinic-os/web",
   "version": "0.0.0",
   "private": true,
-  "description": "ClinicOS web app. Checkpoint 1 will add the Next.js application shell.",
+  "description": "ClinicOS web app for clinic operating surfaces.",
   "scripts": {
-    "dev": "node ../../scripts/workspace-command-unavailable.mjs web \"Next.js app shell\" \"Install Next.js and register a real dev server in the Web Shell lane.\""
+    "dev": "next dev",
+    "typecheck": "next typegen && tsc --noEmit",
+    "lint": "eslint . --max-warnings=0",
+    "test": "vitest run",
+    "build": "next build"
+  },
+  "dependencies": {
+    "@clinic-os/ui": "*",
+    "lucide-react": "^0.468.0",
+    "next": "^15.0.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "eslint": "^9.0.0",
+    "eslint-config-next": "^15.0.0",
+    "typescript": "^5.5.0",
+    "vitest": "^4.1.10"
   }
 }
