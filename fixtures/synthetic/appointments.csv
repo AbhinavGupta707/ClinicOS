@@ -1,0 +1,5 @@
+external_id,patient_external_id,source,appointment_type,scheduled_start,scheduled_end,status,chair,doctor,notes
+SYN-APT-001,SYN-PAT-001,WhatsApp,Implant consult,2026-07-07T10:00:00+05:30,2026-07-07T10:45:00+05:30,booked,Chair 1,Dr. Synthetic,Requires CBCT review placeholder
+SYN-APT-002,SYN-PAT-002,Practo,Aligner consult,2026-07-07T11:00:00+05:30,2026-07-07T11:30:00+05:30,booked,Chair 2,Dr. Synthetic,Lead source attribution test
+SYN-APT-003,SYN-PAT-003,Phone,Emergency pain,2026-07-07T12:15:00+05:30,2026-07-07T12:45:00+05:30,walk_in,Chair 1,Dr. Synthetic,Missed-call conversion scenario
+

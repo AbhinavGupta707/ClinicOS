@@ -1,0 +1,10 @@
+Doctor: What brings you in today?
+Patient: I have pain in the lower right tooth when chewing, especially since last week.
+Doctor: Any swelling or fever?
+Patient: No fever. Slight swelling yesterday evening.
+Doctor: I can see deep decay on the lower right first molar. We will need an X-ray to confirm if the nerve is involved.
+Patient: What treatment would that mean?
+Doctor: If the X-ray confirms nerve involvement, the options are root canal treatment followed by a crown, or extraction if the tooth is not restorable.
+Patient: I prefer saving the tooth if possible.
+Doctor: We will take the X-ray, explain the estimate, and start pain control today.
+

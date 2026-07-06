@@ -48,6 +48,7 @@ For implementation agents:
 17. `13_CRITICAL_ARCHITECTURE_REVIEW.md` - research-backed review record and rationale.
 18. `00_SOURCE_REGISTER.md` - research sources and evidence notes.
 19. `21_EXECUTION_INPUTS_AND_CREDENTIALS.md` - credentials, sandbox accounts, clinic inputs, and access needed for autonomous verification.
+20. `22_CREDENTIAL_SETUP_GUIDE.md` - concrete provider setup steps and env fields for autonomous credential preflight.
 
 Historical roadmap/backlog/ADR material lives in `archive/` and is not current implementation guidance.
 

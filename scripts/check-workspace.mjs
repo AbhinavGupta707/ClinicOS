@@ -11,6 +11,7 @@ const requiredPaths = [
   "clinic_os_specs_v2/19_IMPLEMENTATION_PLAN_INTEGRATIONS_AI_MOBILE.md",
   "clinic_os_specs_v2/20_ORCHESTRATION_CHECKPOINT_PLAN.md",
   "clinic_os_specs_v2/21_EXECUTION_INPUTS_AND_CREDENTIALS.md",
+  "clinic_os_specs_v2/22_CREDENTIAL_SETUP_GUIDE.md",
   "apps/web/package.json",
   "apps/api/package.json",
   "apps/worker/package.json",
@@ -18,7 +19,13 @@ const requiredPaths = [
   "packages/domain/package.json",
   "packages/integrations/package.json",
   "packages/workflow/package.json",
-  "docs/orchestration/CHECKPOINT_LOG.md"
+  "docs/orchestration/CHECKPOINT_LOG.md",
+  "docs/orchestration/orchestration.env.example",
+  "fixtures/synthetic/patients.csv",
+  "fixtures/synthetic/appointments.csv",
+  "fixtures/synthetic/pricebook.csv",
+  "fixtures/synthetic/templates/consent_recording_ai.md",
+  "fixtures/synthetic/transcripts/consultation_001.txt"
 ];
 
 const missing = requiredPaths.filter((path) => !existsSync(join(process.cwd(), path)));
@@ -37,4 +44,3 @@ if (!Array.isArray(packageJson.workspaces) || packageJson.workspaces.length < 2)
 }
 
 console.log("Checkpoint 0 workspace structure is valid.");
-

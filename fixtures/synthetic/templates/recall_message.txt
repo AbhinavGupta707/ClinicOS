@@ -1,0 +1,2 @@
+Hello {{patient_first_name}}, this is {{clinic_name}}. You are due for your dental follow-up/cleaning. Reply 1 for available slots or call us at {{clinic_phone}}.
+

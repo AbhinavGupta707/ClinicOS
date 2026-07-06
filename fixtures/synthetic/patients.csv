@@ -1,0 +1,5 @@
+external_id,full_name,phone,email,date_of_birth,gender,preferred_language,whatsapp_opt_in,notes
+SYN-PAT-001,Aarav Mehta,+919900000001,aarav.mehta@example.test,1991-04-12,male,Hinglish,true,Synthetic implant consultation patient
+SYN-PAT-002,Nisha Rao,+919900000002,nisha.rao@example.test,1987-09-28,female,English,true,Synthetic aligner enquiry patient
+SYN-PAT-003,Farhan Khan,+919900000003,farhan.khan@example.test,1978-01-19,male,Hindi,false,Synthetic emergency toothache patient
+

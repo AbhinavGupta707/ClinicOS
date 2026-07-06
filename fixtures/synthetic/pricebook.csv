@@ -1,0 +1,8 @@
+procedure_code,procedure_name,specialty,default_price_inr,tax_rate_percent,notes
+DENT-CONSULT,Dental consultation,Dental,700,0,Base doctor consult
+DENT-XRAY-IOPA,IOPA X-ray,Dental,500,0,Single-tooth radiograph
+DENT-SCALING,Scaling and polishing,Dental,2500,0,Standard oral prophylaxis
+DENT-RCT-MOLAR,Molar root canal,Dental,9500,0,Excludes crown
+DENT-IMPLANT,Implant placement,Dental,35000,0,Implant fixture only synthetic price
+DENT-ALIGNER-START,Aligner starter records,Dental,5000,0,Scan and treatment-planning records
+

@@ -1,0 +1,2 @@
+Hello {{patient_first_name}}, your bill for {{invoice_amount}} is ready. You can pay securely here: {{payment_link}}. Thank you, {{clinic_name}}.
+

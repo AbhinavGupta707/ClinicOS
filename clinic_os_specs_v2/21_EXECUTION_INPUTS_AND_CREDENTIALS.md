@@ -29,6 +29,8 @@ For the autonomous checkpoint chain, use:
 
 This directory is ignored by Git. Use `docs/orchestration/orchestration.env.example` as the template.
 
+For provider-specific setup steps, use `22_CREDENTIAL_SETUP_GUIDE.md`.
+
 Rules:
 
 - Use sandbox/test credentials wherever possible.
@@ -142,6 +144,8 @@ Can proceed earlier with:
 Needed by Checkpoint 8 for live AI testing:
 
 - AI provider choice and API key, such as OpenAI or another approved provider.
+- LLM provider choice and API key, such as Fireworks AI, OpenAI, or another approved provider.
+- Transcription provider choice and API key, if live mobile scribe transcription is required.
 - Data retention preferences.
 - Whether audio can leave India-region infrastructure during pilot, or whether stricter data-residency constraints apply.
 - Consent language for audio recording and AI draft generation.
@@ -255,7 +259,8 @@ Before launching Checkpoint 1 through Checkpoint 10 unattended, provide as much 
 | Razorpay sandbox | Yes for live payment checks | Yes, until payment hardening |
 | WhatsApp/BSP sandbox | Yes for live messaging checks | Yes, until live integration hardening |
 | Telephony sandbox | Optional for first full run | Yes |
-| AI provider key | Yes for live AI checks | Yes, deterministic AI fixtures |
+| LLM provider key | Yes for live AI drafting/extraction checks | Yes, deterministic AI fixtures |
+| Transcription provider key | Yes for live audio-to-text checks | Yes, golden transcript fixtures |
 | AWS access | Yes for pilot-prod infra apply | Terraform plan/local infra only |
 | ABDM sandbox | Yes for ABDM live checks | FHIR synthetic export only |
 | Google Business Profile access | Optional early | Source/link simulation |
