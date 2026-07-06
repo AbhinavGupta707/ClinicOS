@@ -12,4 +12,4 @@ The domain/model checkpoints may expand these files or replace them with richer 
 - `templates/` - message, consent, prescription, and post-op templates.
 - `transcripts/` - synthetic consultation transcript text for scribe tests.
 - `media/` - placeholder location for synthetic X-ray/photo metadata or generated non-PHI media.
-
+- `cp2/` - deterministic Checkpoint 2 lead/patient/appointment/day-start QA scenarios.
