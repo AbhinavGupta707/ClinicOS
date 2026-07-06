@@ -13,5 +13,4 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 
 | Checkpoint | Status | Base commit | Result commit | Notes |
 |---|---|---:|---:|---|
-| 0 - Git and orchestration preflight | In progress | TBD | TBD | Establish local Git repo, scaffold baseline, commit, configure remote. |
-
+| 0 - Git and orchestration preflight | Complete | repository root | `746ec76` | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured. |

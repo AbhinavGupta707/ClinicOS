@@ -27,5 +27,6 @@ No product UI exists in Checkpoint 0. Browser/app checks start in Checkpoint 1 a
 
 ## Handoff Notes
 
-Checkpoint 1 should start from the committed baseline and create real worktree lanes for platform foundation.
+Checkpoint 0 baseline commit: `746ec76`
 
+Checkpoint 1 should start from this committed baseline and create real worktree lanes for platform foundation.
