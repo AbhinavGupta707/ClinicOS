@@ -67,3 +67,8 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Launch packet: `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md`.
 - Browser preflight: committed repo-local `@playwright/test` in `5fe65da` and confirmed cached Chromium.
 - Integration branch rule: CP2 lane commits merge first into `codex/integration/checkpoint-2`; promote to `main` only after full code and user-perspective gates pass.
+- Visible project-scoped worktree lanes launched:
+  - Backend/Data: `019f39b0-7027-7ed3-a1c5-b492d6da4ff9`, `/Users/abhinavgupta/.codex/worktrees/d38e/ClinicOS`.
+  - Contracts/Events: `019f39b0-703a-71b3-b15b-60cd2e4fb85c`, `/Users/abhinavgupta/.codex/worktrees/df37/ClinicOS`.
+  - Frontend Workflow: `019f39b0-7027-7ed3-a1c5-b4a8bc5db4b6`, `/Users/abhinavgupta/.codex/worktrees/3ed5/ClinicOS`.
+  - QA/Fixtures: `019f39b0-7036-75c3-8a75-85b0d8b93861`, `/Users/abhinavgupta/.codex/worktrees/14f1/ClinicOS`.

@@ -22,12 +22,12 @@ Assistant can capture a source-attributed lead, match or create a patient, book 
 
 ## Lanes
 
-| Lane              | Thread ID | Worktree | Ownership                                                                                                                                   |
-| ----------------- | --------- | -------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
-| Backend/Data      | pending   | pending  | Patient/contact/lead/attribution/appointment/queue/task/dashboard domain and API implementation; DB migration/seed additions for CP2 tables |
-| Contracts/Events  | pending   | pending  | Shared API contract package, event names/envelopes, audit classification coverage, contract tests, OpenAPI notes                            |
-| Frontend Workflow | pending   | pending  | Web assistant dashboard, lead inbox, patient quick-create/match, appointment calendar/queue workflow, browser evidence                      |
-| QA/Fixtures       | pending   | pending  | Synthetic CP2 fixture set, E2E/acceptance tests, role/tenant checks, smoke scripts/runbook evidence                                         |
+| Lane              | Pending Worktree ID                          | Thread ID                              | Worktree                                             | Ownership                                                                                                                                   |
+| ----------------- | -------------------------------------------- | -------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------- |
+| Backend/Data      | `local:923958e0-3e5d-4bdc-89f1-03004dbea3ea` | `019f39b0-7027-7ed3-a1c5-b492d6da4ff9` | `/Users/abhinavgupta/.codex/worktrees/d38e/ClinicOS` | Patient/contact/lead/attribution/appointment/queue/task/dashboard domain and API implementation; DB migration/seed additions for CP2 tables |
+| Contracts/Events  | `local:685974ea-a52b-4d01-8ce4-6acd884501c0` | `019f39b0-703a-71b3-b15b-60cd2e4fb85c` | `/Users/abhinavgupta/.codex/worktrees/df37/ClinicOS` | Shared API contract package, event names/envelopes, audit classification coverage, contract tests, OpenAPI notes                            |
+| Frontend Workflow | `local:9b3667fa-1851-4324-bf21-c6e1c72efb43` | `019f39b0-7027-7ed3-a1c5-b4a8bc5db4b6` | `/Users/abhinavgupta/.codex/worktrees/3ed5/ClinicOS` | Web assistant dashboard, lead inbox, patient quick-create/match, appointment calendar/queue workflow, browser evidence                      |
+| QA/Fixtures       | `local:f565963b-3c44-4ba2-a974-3a22dce7249b` | `019f39b0-7036-75c3-8a75-85b0d8b93861` | `/Users/abhinavgupta/.codex/worktrees/14f1/ClinicOS` | Synthetic CP2 fixture set, E2E/acceptance tests, role/tenant checks, smoke scripts/runbook evidence                                         |
 
 ## Shared-File Policy
 
