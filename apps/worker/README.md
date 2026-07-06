@@ -120,3 +120,5 @@ ignore, or investigate these rows without changing the processing contract.
 `workflow.approval.requested` starts the durable approval/timer workflow. Its payload must be an
 `ApprovalWorkflowInput` from `@clinic-os/workflow`, either directly or under a top-level
 `workflow` key. The outbox envelope tenant/clinic must match the workflow input tenant/clinic.
+
+Reserved root command: `npm run dev:worker`.

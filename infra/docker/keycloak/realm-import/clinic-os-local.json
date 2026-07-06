@@ -1,0 +1,138 @@
+{
+  "realm": "clinic-os-local",
+  "enabled": true,
+  "displayName": "ClinicOS Local",
+  "registrationAllowed": false,
+  "resetPasswordAllowed": true,
+  "rememberMe": true,
+  "bruteForceProtected": true,
+  "roles": {
+    "realm": [
+      {
+        "name": "owner",
+        "description": "Synthetic local clinic owner."
+      },
+      {
+        "name": "doctor",
+        "description": "Synthetic local doctor."
+      },
+      {
+        "name": "assistant",
+        "description": "Synthetic local chairside assistant."
+      },
+      {
+        "name": "receptionist",
+        "description": "Synthetic local front desk user."
+      },
+      {
+        "name": "accountant",
+        "description": "Synthetic local accountant."
+      },
+      {
+        "name": "platform_admin",
+        "description": "Synthetic local platform administrator."
+      }
+    ]
+  },
+  "clients": [
+    {
+      "clientId": "clinic-os-web",
+      "name": "ClinicOS Web Local",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": ["http://localhost:3000/*", "http://127.0.0.1:3000/*"],
+      "webOrigins": ["http://localhost:3000", "http://127.0.0.1:3000"]
+    },
+    {
+      "clientId": "clinic-os-api",
+      "name": "ClinicOS API Local",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": true,
+      "standardFlowEnabled": false,
+      "directAccessGrantsEnabled": false
+    },
+    {
+      "clientId": "clinic-os-mobile",
+      "name": "ClinicOS Mobile Local",
+      "enabled": true,
+      "publicClient": true,
+      "standardFlowEnabled": true,
+      "directAccessGrantsEnabled": false,
+      "redirectUris": [
+        "clinic-os://auth/callback",
+        "exp://127.0.0.1:8081/*",
+        "http://localhost:8081/*"
+      ],
+      "webOrigins": ["+"]
+    }
+  ],
+  "users": [
+    {
+      "username": "owner.local",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Synthetic",
+      "lastName": "Owner",
+      "email": "owner.local@example.invalid",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-only-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["owner"]
+    },
+    {
+      "username": "doctor.local",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Synthetic",
+      "lastName": "Doctor",
+      "email": "doctor.local@example.invalid",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-only-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["doctor"]
+    },
+    {
+      "username": "assistant.local",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Synthetic",
+      "lastName": "Assistant",
+      "email": "assistant.local@example.invalid",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-only-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["assistant"]
+    },
+    {
+      "username": "receptionist.local",
+      "enabled": true,
+      "emailVerified": true,
+      "firstName": "Synthetic",
+      "lastName": "Receptionist",
+      "email": "receptionist.local@example.invalid",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "local-only-password",
+          "temporary": false
+        }
+      ],
+      "realmRoles": ["receptionist"]
+    }
+  ]
+}

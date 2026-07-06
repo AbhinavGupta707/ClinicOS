@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "dev": "echo \"Checkpoint 1 will add API dev server\"",
+    "dev": "node ../../scripts/workspace-command-unavailable.mjs api \"NestJS REST API\" \"The /v1/me contract exists in src/me.ts; register the production NestJS server, OpenAPI generation, auth guards, tenant resolver, and health endpoints before enabling a long-running API dev process.\"",
     "typecheck": "node --check src/index.ts",
     "lint": "node --check src/index.ts",
     "test": "node --test test/*.test.ts",

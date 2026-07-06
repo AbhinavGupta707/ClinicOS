@@ -4,6 +4,8 @@ Owner: platform/backend workstream.
 
 Checkpoint 1 will install and wire the production NestJS REST API, OpenAPI generation, auth guards, tenant resolver, and health endpoints.
 
+Reserved root command: `npm run dev:api`.
+
 ## Checkpoint 1 Data/Auth Contract
 
 This lane adds a framework-neutral `/v1/me` handler in `src/me.ts` so the later NestJS route can be a thin adapter:

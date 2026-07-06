@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+coverage/
+.next/
+.expo/
+.cache/
+.turbo/
+.secrets/
+artifacts/
+playwright-report/
+test-results/
+package-lock.json
+clinic_os_specs_v2/

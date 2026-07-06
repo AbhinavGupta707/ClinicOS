@@ -3,24 +3,45 @@
   "version": "0.0.0",
   "private": true,
   "description": "ClinicOS India monorepo baseline.",
+  "packageManager": "npm@10.9.7",
   "workspaces": [
     "apps/*",
     "packages/*"
   ],
   "scripts": {
-    "check": "node scripts/check-workspace.mjs",
-    "typecheck": "npm run typecheck --workspaces --if-present",
-    "lint": "npm run lint --workspaces --if-present",
-    "test": "npm run test --workspaces --if-present",
-    "build": "npm run build --workspaces --if-present",
-    "dev:web": "npm --workspace apps/web run dev",
-    "dev:api": "npm --workspace apps/api run dev",
-    "dev:worker": "npm --workspace apps/worker run dev",
-    "dev:mobile": "npm --workspace apps/mobile run dev"
+    "check": "node scripts/check-workspace.mjs && npm run check:env && npm run format:check",
+    "check:env": "npm --workspace @clinic-os/config run build && node scripts/validate-env-template.mjs",
+    "ci": "npm run check && npm run typecheck && npm run lint && npm run test && npm run build && npm run security:audit && npm run security:secrets",
+    "build:shared": "npm run build --workspace @clinic-os/config --if-present && npm run build --workspace @clinic-os/observability --if-present && npm run build --workspace @clinic-os/integrations --if-present && npm run build --workspace @clinic-os/workflow --if-present",
+    "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
+    "lint": "npm run build:shared && npm run lint --workspaces --if-present",
+    "test": "npm run build:shared && npm run test --workspaces --if-present",
+    "build": "npm run build:shared && npm run build --workspaces --if-present",
+    "format": "prettier --ignore-unknown --write package.json \"apps/*/package.json\" \"apps/*/README.md\" \"packages/config/**/*.{json,ts,md}\" \"scripts/**/*.{js,mjs}\" \".github/**/*.yml\" docker-compose.yml infra/README.md \"infra/docker/**/*.{md,json,yml,yaml,sql}\" \"infra/runbooks/**/*.{md,json,yml,yaml,sql}\" tsconfig.json tsconfig.base.json \"*.config.{js,mjs,ts}\"",
+    "format:check": "prettier --ignore-unknown --check package.json \"apps/*/package.json\" \"apps/*/README.md\" \"packages/config/**/*.{json,ts,md}\" \"scripts/**/*.{js,mjs}\" \".github/**/*.yml\" docker-compose.yml infra/README.md \"infra/docker/**/*.{md,json,yml,yaml,sql}\" \"infra/runbooks/**/*.{md,json,yml,yaml,sql}\" tsconfig.json tsconfig.base.json \"*.config.{js,mjs,ts}\"",
+    "security:audit": "npm audit --audit-level=high",
+    "security:secrets": "node scripts/secret-scan.mjs",
+    "local:up": "docker compose up -d postgres redis temporal temporal-ui keycloak",
+    "local:down": "docker compose down --remove-orphans",
+    "local:logs": "docker compose logs -f postgres redis temporal temporal-ui keycloak",
+    "local:ps": "docker compose ps",
+    "dev:web": "npm --workspace @clinic-os/web run dev",
+    "dev:api": "npm --workspace @clinic-os/api run dev",
+    "dev:worker": "npm --workspace @clinic-os/worker run dev",
+    "dev:mobile": "npm --workspace @clinic-os/mobile run dev"
   },
   "engines": {
     "node": ">=22.0.0",
     "npm": ">=10.0.0"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "@types/node": "^26.1.0",
+    "eslint": "^10.6.0",
+    "globals": "^17.7.0",
+    "prettier": "^3.9.4",
+    "typescript": "^6.0.3",
+    "typescript-eslint": "^8.63.0",
+    "vitest": "^4.1.10"
   }
 }
-
