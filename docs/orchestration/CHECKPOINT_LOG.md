@@ -52,3 +52,9 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Thread report: detached `HEAD`, clean status, running inside a Codex-managed worktree path.
 - UI evidence: `/var/folders/dp/vpvxrph17r3fqqj5bk3cjbb80000gn/T/codex-shot-2026-07-06_23-47-42.png` shows the unpinned test thread under the `ClinicOS` project in the Codex sidebar.
 - Result: use this exact project-scoped worktree launch path for Checkpoint 2+ worker lanes. Pinning is not required for project-sidebar visibility, but may still be used only if the user wants prominence.
+
+## Checkpoint 1 Postmortem - 2026-07-06
+
+- Retrospective: `docs/orchestration/CHECKPOINT_01_POSTMORTEM.md`.
+- Main cause of the long integration pass: late acceptance gates and tooling readiness gaps, not non-isolated worker sessions.
+- CP2 launch rule: project-scoped visible worktree threads, explicit shared-file ownership, early browser/tooling blocker checks, and lane-owned boot/smoke gates before merge.
