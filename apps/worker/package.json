@@ -2,13 +2,34 @@
   "name": "@clinic-os/worker",
   "version": "0.0.0",
   "private": true,
-  "description": "ClinicOS worker runtime. Checkpoint 1 will add outbox and Temporal workers.",
+  "description": "ClinicOS worker runtime for outbox processing and Temporal workers.",
+  "type": "module",
+  "main": "./dist/main.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "scripts": {
-    "dev": "echo \"Checkpoint 1 will add worker dev command\"",
-    "typecheck": "echo \"Checkpoint 1 will add worker typecheck\"",
-    "lint": "echo \"Checkpoint 1 will add worker lint\"",
-    "test": "echo \"Checkpoint 1 will add worker tests\"",
-    "build": "echo \"Checkpoint 1 will add worker build\""
+    "dev": "npm run build && node dist/main.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build && node --test \"dist/__tests__/*.test.js\"",
+    "build": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@clinic-os/integrations": "0.0.0",
+    "@clinic-os/observability": "0.0.0",
+    "@clinic-os/workflow": "0.0.0",
+    "@temporalio/client": "^1.12.1",
+    "@temporalio/worker": "^1.12.1",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "@types/pg": "^8.11.10",
+    "typescript": "^5.7.2"
   }
 }
-
