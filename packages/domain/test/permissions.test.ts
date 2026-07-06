@@ -1,0 +1,34 @@
+import test from "node:test";
+import assert from "node:assert/strict";
+import {
+  DEFAULT_ROLE_PERMISSION_GRANTS,
+  isClinicalPermission,
+  permissionsForRoles,
+  roleGrantsPermission
+} from "../src/index.ts";
+
+test("accountant role cannot read clinical PHI by default", () => {
+  assert.equal(roleGrantsPermission("accountant", "billing.read"), true);
+  assert.equal(roleGrantsPermission("accountant", "clinical.note.read"), false);
+  assert.equal(roleGrantsPermission("accountant", "media.read"), false);
+  assert.equal(roleGrantsPermission("accountant", "patient.phi.read"), false);
+});
+
+test("doctor can sign clinical records and assistant cannot", () => {
+  assert.equal(roleGrantsPermission("doctor", "clinical.note.sign"), true);
+  assert.equal(roleGrantsPermission("doctor", "prescription.sign"), true);
+  assert.equal(roleGrantsPermission("assistant", "clinical.note.sign"), false);
+  assert.equal(roleGrantsPermission("assistant", "prescription.sign"), false);
+});
+
+test("role expansion deduplicates permissions", () => {
+  const permissions = permissionsForRoles(["assistant", "receptionist"]);
+  assert.equal(permissions.includes("schedule.write"), true);
+  assert.equal(new Set(permissions).size, permissions.length);
+});
+
+test("clinical permission classifier covers PHI-sensitive permissions", () => {
+  assert.equal(isClinicalPermission("patient.phi.read"), true);
+  assert.equal(isClinicalPermission("billing.export"), false);
+  assert.ok(DEFAULT_ROLE_PERMISSION_GRANTS.owner_admin.length > DEFAULT_ROLE_PERMISSION_GRANTS.assistant.length);
+});

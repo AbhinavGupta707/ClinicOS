@@ -2,6 +2,14 @@
   "name": "@clinic-os/domain",
   "version": "0.0.0",
   "private": true,
-  "description": "Shared domain types, invariants, state machines, and policy helpers."
+  "description": "Shared domain types, invariants, state machines, and policy helpers.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "node --check src/index.ts",
+    "lint": "node --check src/index.ts",
+    "test": "node --test test/*.test.ts"
+  }
 }
-

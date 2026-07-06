@@ -2,6 +2,14 @@
   "name": "@clinic-os/auth",
   "version": "0.0.0",
   "private": true,
-  "description": "Authentication and authorization helpers."
+  "description": "Authentication and authorization helpers.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "node --check src/index.ts",
+    "lint": "node --check src/index.ts",
+    "test": "node --test test/*.test.ts"
+  }
 }
-
