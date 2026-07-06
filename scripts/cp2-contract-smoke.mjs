@@ -12,6 +12,21 @@ const TOKEN_ENV_BY_ACTOR = {
   wrongTenantAssistant: "CLINICOS_CP2_WRONG_TENANT_ASSISTANT_TOKEN"
 };
 
+const LOCAL_DEV_SUBJECT_BY_ACTOR = {
+  owner: "seed-owner",
+  assistant: "seed-assistant",
+  receptionist: "seed-receptionist",
+  accountant: "seed-accountant",
+  doctor: "seed-doctor",
+  wrongTenantAssistant: "seed-assistant"
+};
+
+const LOCAL_DEV_TENANT_ID = "10000000-0000-4000-8000-000000000001";
+const LOCAL_DEV_CLINIC_ID = "10000000-0000-4000-8000-000000000101";
+const LOCAL_DEV_DOCTOR_USER_ID = "10000000-0000-4000-8000-000000001002";
+const LOCAL_DEV_APPOINTMENT_TYPE_ID = "10000000-0000-4000-8000-000000003001";
+const LOCAL_DEV_CHAIR_ID = "10000000-0000-4000-8000-000000004001";
+
 function parseArgs(argv) {
   const options = {
     dryRun: false,
@@ -164,24 +179,138 @@ function bodyForStep(scenario, step) {
   throw new Error(`No request body mapping for step ${step.key}`);
 }
 
+function normalizeApiPath(path) {
+  if (path.startsWith("/v1/")) return path;
+  if (path.startsWith("/")) return `/v1${path}`;
+  return `/v1/${path}`;
+}
+
+function stripScopeFields(body) {
+  if (!body || typeof body !== "object") return body;
+  const { tenantId: _tenantId, clinicId: _clinicId, ...rest } = body;
+  return rest;
+}
+
+function replaceRuntimeIds(path, state) {
+  return path
+    .replaceAll(
+      "20000000-0000-4000-8000-000000003001",
+      state.returningLeadId ?? "20000000-0000-4000-8000-000000003001"
+    )
+    .replaceAll(
+      "20000000-0000-4000-8000-000000003002",
+      state.googleLeadId ?? "20000000-0000-4000-8000-000000003002"
+    )
+    .replaceAll(
+      "20000000-0000-4000-8000-000000002002",
+      state.newPatientId ?? "20000000-0000-4000-8000-000000002002"
+    )
+    .replaceAll(
+      "20000000-0000-4000-8000-000000005001",
+      state.appointmentId ?? "20000000-0000-4000-8000-000000005001"
+    );
+}
+
+function adaptBodyForLiveLocal(request, body, state) {
+  if (body === undefined) return undefined;
+
+  if (request.key === "match-whatsapp-returning-lead") {
+    const patientId = state.returningPatientId ?? body.selectedPatientId;
+    assert.ok(patientId, "Returning lead capture did not expose a patient match suggestion.");
+    return { patientId };
+  }
+
+  if (request.key === "match-google-lead") {
+    if (!state.googlePatientId) {
+      return { skipLive: "Google lead correctly had no duplicate patient to match before create." };
+    }
+    return { patientId: state.googlePatientId };
+  }
+
+  if (request.key === "create-patient-from-lead") {
+    return stripScopeFields({
+      fullName: body.fullName,
+      phone: body.phone,
+      email: body.email,
+      dateOfBirth: body.dateOfBirth,
+      gender: body.gender,
+      source: body.source,
+      sourceDetail: body.sourceAttribution ?? {},
+      leadId: state.googleLeadId
+    });
+  }
+
+  if (
+    request.key === "convert-lead-to-appointment" ||
+    request.key === "deny-doctor-book-appointment"
+  ) {
+    return stripScopeFields({
+      patientId: state.newPatientId ?? body.patientId,
+      providerUserId: LOCAL_DEV_DOCTOR_USER_ID,
+      appointmentTypeId: LOCAL_DEV_APPOINTMENT_TYPE_ID,
+      chairId: LOCAL_DEV_CHAIR_ID,
+      startAt: body.scheduledStart,
+      endAt: body.scheduledEnd,
+      source: body.sourceAttribution?.source ?? "manual",
+      status: "booked"
+    });
+  }
+
+  return stripScopeFields(body);
+}
+
+function resolveLiveRequest(request, options, state) {
+  const resolved = {
+    ...request,
+    path: replaceRuntimeIds(normalizeApiPath(request.path), state),
+    body: clonePlain(request.body)
+  };
+
+  if (options.authMode === "fixture-headers" || options.authMode === "local-dev-subject") {
+    resolved.body = adaptBodyForLiveLocal(resolved, resolved.body, state);
+
+    if (resolved.key === "deny-cross-tenant-patient-create") {
+      resolved.actorKey = "wrongTenantAssistant";
+    }
+
+    if (resolved.body?.skipLive) {
+      resolved.skipLive = resolved.body.skipLive;
+      resolved.body = undefined;
+    }
+  }
+
+  return resolved;
+}
+
 function expectedStatusList(expectedStatus) {
   return Array.isArray(expectedStatus) ? expectedStatus : [expectedStatus];
 }
 
 function headersForRequest(scenario, request, options) {
   const actor = actorForStep(scenario, request.actorKey);
+  const usesLocalDevSubject =
+    options.authMode === "fixture-headers" || options.authMode === "local-dev-subject";
+  const requestTenantId = usesLocalDevSubject ? LOCAL_DEV_TENANT_ID : actor.tenantId;
+  const requestClinicId =
+    usesLocalDevSubject && actor.key !== "wrongTenantAssistant"
+      ? LOCAL_DEV_CLINIC_ID
+      : actor.clinicId;
   const headers = {
     Accept: "application/json",
     "Content-Type": "application/json",
     "Idempotency-Key": request.idempotencyKey,
-    "X-ClinicOS-Tenant-Id": actor.tenantId,
-    "X-ClinicOS-Clinic-Id": actor.clinicId,
+    "X-Clinic-Id": requestClinicId,
+    "X-ClinicOS-Tenant-Id": requestTenantId,
+    "X-ClinicOS-Clinic-Id": requestClinicId,
     "X-ClinicOS-Actor-Id": actor.id
   };
 
-  if (options.authMode === "fixture-headers") {
+  if (usesLocalDevSubject) {
+    const subject = LOCAL_DEV_SUBJECT_BY_ACTOR[actor.key];
+    assert.ok(subject, `No local dev subject mapping for ${actor.key}`);
     return {
       ...headers,
+      "X-ClinicOS-Dev-Subject": subject,
       "X-ClinicOS-Fixture-Actor": actor.key,
       "X-ClinicOS-Fixture-Role": actor.roleSlug
     };
@@ -326,9 +455,9 @@ function assertSerializedIncludes(value, needles, label) {
   }
 }
 
-function assertStepResponse(step, body) {
+function assertStepResponse(step, body, state) {
   if (step.key === "match-whatsapp-returning-lead") {
-    assertSerializedIncludes(body, ["20000000-0000-4000-8000-000000002001"], step.key);
+    assertSerializedIncludes(body, [state.returningPatientId], step.key);
   }
 
   if (step.key === "create-patient-from-lead") {
@@ -336,23 +465,40 @@ function assertStepResponse(step, body) {
   }
 
   if (step.key === "convert-lead-to-appointment") {
-    assertSerializedIncludes(
-      body,
-      ["20000000-0000-4000-8000-000000002002", "20000000-0000-4000-8000-000000003002"],
-      step.key
-    );
+    assertSerializedIncludes(body, [state.newPatientId, state.googleLeadId], step.key);
   }
 
   if (step.key === "read-queue-after-check-in") {
-    assertSerializedIncludes(
-      body,
-      ["20000000-0000-4000-8000-000000008001", "20000000-0000-4000-8000-000000002002"],
-      step.key
-    );
+    assertSerializedIncludes(body, [state.queueEntryId, state.newPatientId], step.key);
   }
 
   if (step.key === "read-dashboard-after-check-in") {
-    assertSerializedIncludes(body, ["20000000-0000-4000-8000-000000002002", "queue"], step.key);
+    assertSerializedIncludes(body, [state.newPatientId, "queue"], step.key);
+  }
+}
+
+function updateRuntimeStateFromResponse(request, body, state) {
+  if (request.key === "capture-whatsapp-returning-lead") {
+    state.returningLeadId = body?.lead?.id;
+    state.returningPatientId = body?.patientMatchSuggestions?.[0]?.patientId;
+  }
+
+  if (request.key === "capture-google-lead") {
+    state.googleLeadId = body?.lead?.id;
+    state.googlePatientId = body?.patientMatchSuggestions?.[0]?.patientId;
+  }
+
+  if (request.key === "create-patient-from-lead") {
+    state.newPatientId = body?.patient?.id;
+    state.googleLeadId = body?.matchedLead?.id ?? state.googleLeadId;
+  }
+
+  if (request.key === "convert-lead-to-appointment") {
+    state.appointmentId = body?.appointment?.id;
+  }
+
+  if (request.key === "check-in-patient") {
+    state.queueEntryId = body?.queueEntry?.id;
   }
 }
 
@@ -409,15 +555,23 @@ function printDryRun(plan) {
 
 async function runLiveSmoke(scenario, plan, options) {
   assert.ok(options.baseUrl, "Set --base-url or CLINICOS_CP2_API_BASE_URL for live smoke.");
+  const state = {};
 
   for (const request of plan.flowRequests) {
-    const { body } = await executeRequest(options.baseUrl, scenario, request, options);
-    assertStepResponse(request, body);
+    const liveRequest = resolveLiveRequest(request, options, state);
+    if (liveRequest.skipLive) {
+      console.log(`pass ${request.key} (${liveRequest.skipLive})`);
+      continue;
+    }
+    const { body } = await executeRequest(options.baseUrl, scenario, liveRequest, options);
+    updateRuntimeStateFromResponse(request, body, state);
+    assertStepResponse(request, body, state);
     console.log(`pass ${request.key}`);
   }
 
   for (const request of plan.postFlowVerification) {
-    const { body } = await executeRequest(options.baseUrl, scenario, request, options);
+    const liveRequest = resolveLiveRequest(request, options, state);
+    const { body } = await executeRequest(options.baseUrl, scenario, liveRequest, options);
     assertSerializedIncludes(
       body,
       ["patient.created", "appointment.created", "patient.checked_in"],
@@ -450,7 +604,8 @@ async function runLiveSmoke(scenario, plan, options) {
   }
 
   for (const request of plan.negativeRequests) {
-    await executeRequest(options.baseUrl, scenario, request, options);
+    const liveRequest = resolveLiveRequest(request, options, state);
+    await executeRequest(options.baseUrl, scenario, liveRequest, options);
     console.log(`pass ${request.key}`);
   }
 }

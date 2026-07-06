@@ -101,6 +101,46 @@ test("CP2 services execute lead to checked-in dashboard workflow without socket 
   );
 });
 
+test("creating a patient from a source lead matches the lead before conversion", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const auditSink = new InMemoryAuditSink();
+  const dependencies = { repository, auditSink };
+  const assistant = await operationsContext("seed-assistant");
+
+  const leadResponse = await createLead(assistant, dependencies, {
+    source: "google",
+    primaryContact: "+91 99000 01002",
+    intent: "appointment_request",
+    sourceDetail: { patientName: "Ira Synthetic", campaign: "cp2-regression" }
+  });
+  const lead = leadResponse.body.lead;
+
+  const patientResponse = await createPatient(assistant, dependencies, {
+    fullName: "Ira Synthetic",
+    phone: "+91 99000 01002",
+    email: "ira.synthetic@example.test",
+    gender: "female",
+    source: "google",
+    sourceDetail: { campaign: "cp2-regression" },
+    leadId: lead.id
+  });
+  assert.equal(patientResponse.status, 201);
+  assert.equal(patientResponse.body.matchedLead.id, lead.id);
+  assert.equal(patientResponse.body.matchedLead.patientId, patientResponse.body.patient.id);
+  assert.ok(auditSink.events.some((event) => event.action === "lead.matched_to_patient"));
+
+  const appointmentResponse = await convertLeadToAppointment(assistant, dependencies, lead.id, {
+    providerUserId: CHECKPOINT1_SEED_IDS.users.doctor,
+    appointmentTypeId: CHECKPOINT1_SEED_IDS.appointmentTypes.consultation,
+    chairId: CHECKPOINT1_SEED_IDS.chairs.operatoryOne,
+    startAt: `${new Date().toISOString().slice(0, 10)}T14:00:00.000Z`,
+    durationMinutes: 30,
+    reason: "Lead-created patient conversion"
+  });
+  assert.equal(appointmentResponse.status, 201);
+  assert.equal(appointmentResponse.body.appointment.patientId, patientResponse.body.patient.id);
+});
+
 async function operationsContext(subject) {
   const identityRepository = new LocalFixtureIdentityRepository();
   const claims = {

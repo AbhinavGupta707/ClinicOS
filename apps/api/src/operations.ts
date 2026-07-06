@@ -108,6 +108,22 @@ export async function createPatient(
   assertPatientCreateMinimum(input);
 
   const scope = scopeFrom(context);
+  const sourceLead = input.leadId ? await dependencies.repository.findLeadById(scope, input.leadId) : null;
+
+  if (input.leadId && !sourceLead) {
+    throw notFound("Source lead not found.", { lead_id: input.leadId });
+  }
+
+  if (sourceLead) {
+    if (sourceLead.patientId) {
+      throw validation("Source lead is already matched to a patient.", {
+        lead_id: sourceLead.id,
+        patient_id: sourceLead.patientId
+      });
+    }
+    assertLeadTransition(sourceLead.status, "matched");
+  }
+
   const duplicateRecords = await dependencies.repository.findPatientDuplicateCandidates(scope, {
     fullName: input.fullName,
     phone: input.phone
@@ -122,6 +138,7 @@ export async function createPatient(
   if (attributionSource) {
     await dependencies.repository.createAttributionTouch(scope, {
       patientId: patient.id,
+      leadId: sourceLead?.id ?? null,
       source: attributionSource,
       touchType: "first_touch",
       occurredAt: new Date().toISOString(),
@@ -143,6 +160,30 @@ export async function createPatient(
     payload: { patientId: patient.id, source: patient.source }
   });
 
+  const matchedLead = sourceLead
+    ? await dependencies.repository.matchLeadToPatient(scope, sourceLead.id, patient.id)
+    : null;
+
+  if (sourceLead && !matchedLead) {
+    throw notFound("Source lead not found after patient creation.", { lead_id: sourceLead.id });
+  }
+
+  if (matchedLead) {
+    await audit(context, dependencies, "lead.matched_to_patient", {
+      patientId: patient.id,
+      resourceType: "lead",
+      resourceId: matchedLead.id,
+      metadata: { source: matchedLead.source, createdPatient: true }
+    });
+    await appendOutbox(context, dependencies, {
+      eventType: "lead.matched_to_patient",
+      aggregateType: "lead",
+      aggregateId: matchedLead.id,
+      patientId: patient.id,
+      payload: { leadId: matchedLead.id, patientId: patient.id, createdPatient: true }
+    });
+  }
+
   if (duplicateSuggestions.length > 0) {
     await appendOutbox(context, dependencies, {
       eventType: "patient.duplicate_detected",
@@ -153,7 +194,7 @@ export async function createPatient(
     });
   }
 
-  return created({ patient, duplicateSuggestions });
+  return created({ patient, duplicateSuggestions, matchedLead });
 }
 
 export async function getPatient(
@@ -729,7 +770,7 @@ async function appendOutbox(
   });
 }
 
-function parseCreatePatient(body: unknown): CreatePatientInput {
+function parseCreatePatient(body: unknown): CreatePatientInput & { leadId?: UUID | null } {
   const input = objectBody(body);
   return {
     fullName: requiredString(input.fullName, "fullName"),
@@ -738,7 +779,8 @@ function parseCreatePatient(body: unknown): CreatePatientInput {
     dateOfBirth: optionalNullableString(input.dateOfBirth, "dateOfBirth"),
     gender: input.gender === undefined ? "unknown" : parseGender(input.gender),
     source: parsePatientSource(requiredString(input.source ?? "manual", "source")),
-    sourceDetail: recordField(input.sourceDetail, "sourceDetail")
+    sourceDetail: recordField(input.sourceDetail, "sourceDetail"),
+    leadId: optionalUuid(input.leadId, "leadId")
   };
 }
 
