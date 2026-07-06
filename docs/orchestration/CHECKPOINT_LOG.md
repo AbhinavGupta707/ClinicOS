@@ -56,5 +56,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 ## Checkpoint 1 Postmortem - 2026-07-06
 
 - Retrospective: `docs/orchestration/CHECKPOINT_01_POSTMORTEM.md`.
+- Durable project memory: `docs/AGENT_MEMORY.md`.
+- Merge/integration runbook: `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
 - Main cause of the long integration pass: late acceptance gates and tooling readiness gaps, not non-isolated worker sessions.
 - CP2 launch rule: project-scoped visible worktree threads, explicit shared-file ownership, early browser/tooling blocker checks, and lane-owned boot/smoke gates before merge.

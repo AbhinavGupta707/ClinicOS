@@ -58,6 +58,29 @@ The avoidable part was not worker laziness. It was weak launch protocol:
 - Shared files such as app `package.json`, app READMEs, and `package-lock.json` did not have a checkpoint-level conflict protocol.
 - The correct project-scoped Codex worktree launch shape was not verified before CP1 lanes were created.
 
+## Integration Optimization Assessment
+
+The CP1 merge/integration loop was safe, but not fully optimized. It favored correctness over speed, which was acceptable for the first production-grade foundation checkpoint, but the same pattern would create unnecessary drag in later checkpoints.
+
+What worked:
+
+- Worker lanes were isolated and produced reviewable commits.
+- Master reviewed and merged in dependency order.
+- Conflicts were resolved by preserving both lane intents.
+- Final evidence included CI, local stack startup, API smoke, browser screenshots, and mobile viewport checks.
+
+What was not optimized:
+
+- The master merged before building a complete changed-file and shared-file conflict map across all lane handoffs.
+- `package-lock.json` reconciliation happened as part of merge repair instead of as a planned integration step after package manifests stabilized.
+- Some checkpoint-critical runtime proofs were discovered after lane merge instead of assigned as lane-owned gates.
+- Browser/mobile tooling was not made an explicit lane readiness check.
+- `main` carried the integration work directly instead of using a checkpoint integration branch as a proving ground before final merge.
+
+The optimized rule for CP2 and later is: gather all lane handoffs, build a conflict map, merge into a checkpoint integration branch/worktree, run narrow checks after each merge, reconcile dependencies once, run full checkpoint verification once after integration patches, then merge to `main`.
+
+See `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
+
 ## Browser And Playwright Caveat
 
 The Web Shell lane reported: "IAB was unavailable and Playwright is not installed." This was not intentional product scope reduction. It was a tooling readiness gap.
@@ -113,6 +136,9 @@ This still matters because the future design will inherit the same routing, auth
 
 7. Keep master integration, but narrow it.
    Master should reconcile cross-lane contracts, run final evidence, and patch small integration gaps. Master should not routinely discover that a checkpoint-critical app has no bootable runtime.
+
+8. Use a checkpoint integration branch for non-trivial checkpoints.
+   Merge worker commits and resolve conflicts away from `main`; promote to `main` only after the checkpoint verification suite and user-perspective checks pass.
 
 ## Bottom Line
 

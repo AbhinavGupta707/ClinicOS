@@ -84,6 +84,22 @@ For every checkpoint:
 9. Update checkpoint log/docs.
 10. Only then start the next checkpoint.
 
+### 5.1 Post-Checkpoint-1 Integration Optimizations
+
+Checkpoint 1 showed that worker execution was not the bottleneck; the long portion was master merge and integration. For Checkpoint 2 and later, use the optimized integration protocol in `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
+
+Additional mandatory rules:
+
+1. Launch worker lanes as visible project-scoped Codex worktree threads when the Codex app supports thread tools.
+2. Build a changed-file/shared-file conflict map from all lane handoffs before merging non-trivial checkpoints.
+3. Use a checkpoint integration branch or equivalent worktree before promoting to `main`.
+4. Keep `main` as the last verified checkpoint until integration gates pass.
+5. Name a single owner for shared files such as root `package.json`, `package-lock.json`, app package manifests, migrations, generated API contracts, Docker/local stack files, and app READMEs.
+6. Do not let multiple lanes independently commit `package-lock.json`; prefer one integration-owned lockfile reconciliation after package manifests stabilize.
+7. Require workers to check install/tooling/browser/local-service readiness early and report blockers immediately.
+8. Run narrow merge checks after each lane, then one full checkpoint suite after all merges and integration patches.
+9. Keep browser/mobile smoke for implemented UI workflows, but test temporary UI for responsive and safety invariants rather than final visual polish.
+
 ## 6. Expected Orchestration Artifacts
 
 During execution, create:
