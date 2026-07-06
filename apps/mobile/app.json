@@ -1,0 +1,15 @@
+{
+  "expo": {
+    "name": "ClinicOS Mobile",
+    "slug": "clinicos-mobile",
+    "scheme": "clinic-os",
+    "version": "0.1.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "platforms": ["ios", "android", "web"],
+    "plugins": ["expo-router"],
+    "experiments": {
+      "typedRoutes": true
+    }
+  }
+}

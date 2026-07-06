@@ -3,7 +3,28 @@
   "version": "0.0.0",
   "private": true,
   "description": "ClinicOS Expo/React Native capture app. Checkpoint 1 starts app shell; Checkpoint 8 expands capture workflows.",
+  "type": "module",
+  "main": "expo-router/entry",
   "scripts": {
-    "dev": "node ../../scripts/workspace-command-unavailable.mjs mobile \"Expo capture app\" \"Install Expo and register a real dev command in the Mobile Capture lane.\""
+    "dev": "expo start",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "node --test test/*.test.ts",
+    "build": "expo export --platform web --output-dir dist"
+  },
+  "dependencies": {
+    "@expo/metro-runtime": "~57.0.3",
+    "expo": "^57.0.2",
+    "expo-constants": "~57.0.3",
+    "expo-linking": "~57.0.1",
+    "expo-router": "57.0.3",
+    "react": "19.2.3",
+    "react-dom": "19.2.3",
+    "react-native": "0.86.0",
+    "react-native-gesture-handler": "~2.32.0",
+    "react-native-reanimated": "4.5.0",
+    "react-native-safe-area-context": "~5.7.0",
+    "react-native-screens": "4.25.2",
+    "react-native-web": "^0.21.2"
   }
 }

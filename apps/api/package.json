@@ -2,16 +2,16 @@
   "name": "@clinic-os/api",
   "version": "0.0.0",
   "private": true,
-  "description": "ClinicOS API. Checkpoint 1 will add the NestJS REST/OpenAPI service.",
+  "description": "ClinicOS API. Checkpoint 1 exposes health and session context surfaces.",
   "type": "module",
   "exports": {
     ".": "./src/index.ts"
   },
   "scripts": {
-    "dev": "node ../../scripts/workspace-command-unavailable.mjs api \"NestJS REST API\" \"The /v1/me contract exists in src/me.ts; register the production NestJS server, OpenAPI generation, auth guards, tenant resolver, and health endpoints before enabling a long-running API dev process.\"",
-    "typecheck": "node --check src/index.ts",
-    "lint": "node --check src/index.ts",
+    "dev": "npm run build --workspace @clinic-os/config --if-present && node src/server.ts",
+    "typecheck": "node --check src/index.ts && node --check src/keycloak-verifier.ts && node --check src/local-fixture.ts && node --check src/me.ts && node --check src/server.ts",
+    "lint": "node --check src/index.ts && node --check src/keycloak-verifier.ts && node --check src/local-fixture.ts && node --check src/me.ts && node --check src/server.ts && node --check test/*.test.ts",
     "test": "node --test test/*.test.ts",
-    "build": "node --check src/index.ts"
+    "build": "node --check src/index.ts && node --check src/keycloak-verifier.ts && node --check src/local-fixture.ts && node --check src/me.ts && node --check src/server.ts"
   }
 }
