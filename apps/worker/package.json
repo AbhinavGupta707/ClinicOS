@@ -4,11 +4,6 @@
   "private": true,
   "description": "ClinicOS worker runtime. Checkpoint 1 will add outbox and Temporal workers.",
   "scripts": {
-    "dev": "echo \"Checkpoint 1 will add worker dev command\"",
-    "typecheck": "echo \"Checkpoint 1 will add worker typecheck\"",
-    "lint": "echo \"Checkpoint 1 will add worker lint\"",
-    "test": "echo \"Checkpoint 1 will add worker tests\"",
-    "build": "echo \"Checkpoint 1 will add worker build\""
+    "dev": "node ../../scripts/workspace-command-unavailable.mjs worker \"outbox and Temporal worker runtime\" \"Install the Temporal/outbox worker and register a real dev server in the Runtime/Workflow lane.\""
   }
 }
-

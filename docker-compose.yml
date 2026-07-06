@@ -1,0 +1,90 @@
+name: clinic-os-local
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: clinic-os-postgres
+    environment:
+      POSTGRES_DB: clinic_os
+      POSTGRES_USER: clinic_os
+      POSTGRES_PASSWORD: clinic_os
+    ports:
+      - "5432:5432"
+    volumes:
+      - clinic_os_postgres_data:/var/lib/postgresql/data
+      - ./infra/docker/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U clinic_os -d clinic_os"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: clinic-os-redis
+    command: ["redis-server", "--appendonly", "yes"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - clinic_os_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  temporal:
+    image: temporalio/auto-setup:1.25.2
+    container_name: clinic-os-temporal
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      DB: postgres12
+      DB_PORT: "5432"
+      POSTGRES_SEEDS: postgres
+      POSTGRES_USER: temporal
+      POSTGRES_PWD: temporal
+      DBNAME: temporal
+      VISIBILITY_DBNAME: temporal_visibility
+      DYNAMIC_CONFIG_FILE_PATH: config/dynamicconfig/development-sql.yaml
+    ports:
+      - "7233:7233"
+    volumes:
+      - ./infra/docker/temporal/dynamicconfig:/etc/temporal/config/dynamicconfig:ro
+
+  temporal-ui:
+    image: temporalio/ui:2.31.2
+    container_name: clinic-os-temporal-ui
+    depends_on:
+      - temporal
+    environment:
+      TEMPORAL_ADDRESS: temporal:7233
+      TEMPORAL_CORS_ORIGINS: http://localhost:3000
+    ports:
+      - "8088:8080"
+
+  keycloak:
+    image: quay.io/keycloak/keycloak:25.0.6
+    container_name: clinic-os-keycloak
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: clinic_os
+      KC_DB_PASSWORD: clinic_os
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KEYCLOAK_ADMIN: admin
+      KEYCLOAK_ADMIN_PASSWORD: admin
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./infra/docker/keycloak/realm-import:/opt/keycloak/data/import:ro
+
+volumes:
+  clinic_os_postgres_data:
+  clinic_os_redis_data:
