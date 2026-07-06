@@ -2,6 +2,24 @@
   "name": "@clinic-os/integrations",
   "version": "0.0.0",
   "private": true,
-  "description": "Provider interfaces, adapters, simulators, and contract fixtures."
+  "description": "Provider interfaces, adapters, simulators, and contract fixtures.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "test": "npm run build"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.0",
+    "typescript": "^5.7.2"
+  }
 }
-
