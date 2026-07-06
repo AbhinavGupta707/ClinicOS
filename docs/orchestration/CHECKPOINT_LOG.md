@@ -24,10 +24,11 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 
 ## Checkpoints
 
-| Checkpoint                          | Status   |     Base commit | Result commit | Notes                                                                                                                                                                                                                                                                          |
-| ----------------------------------- | -------- | --------------: | ------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0 - Git and orchestration preflight | Complete | repository root |   `main` HEAD | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured and pushed.                                                                                                                                                 |
-| 1 - Production platform foundation  | Complete |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
+| Checkpoint                             | Status    |     Base commit | Result commit | Notes                                                                                                                                                                                                                                                                          |
+| -------------------------------------- | --------- | --------------: | ------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0 - Git and orchestration preflight    | Complete  | repository root |   `main` HEAD | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured and pushed.                                                                                                                                                 |
+| 1 - Production platform foundation     | Complete  |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
+| 2 - Lead/patient/appointment/day-start | Launching |       `5fe65da` |       pending | CP2 launch packet created with visible project-scoped worktree lanes, repo-local Playwright preflight, shared-file policy, and integration-branch requirement.                                                                                                                 |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -60,3 +61,9 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Merge/integration runbook: `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
 - Main cause of the long integration pass: late acceptance gates and tooling readiness gaps, not non-isolated worker sessions.
 - CP2 launch rule: project-scoped visible worktree threads, explicit shared-file ownership, early browser/tooling blocker checks, and lane-owned boot/smoke gates before merge.
+
+## Checkpoint 2 Launch - 2026-07-07
+
+- Launch packet: `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md`.
+- Browser preflight: committed repo-local `@playwright/test` in `5fe65da` and confirmed cached Chromium.
+- Integration branch rule: CP2 lane commits merge first into `codex/integration/checkpoint-2`; promote to `main` only after full code and user-perspective gates pass.
