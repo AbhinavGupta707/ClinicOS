@@ -1,4 +1,5 @@
 export * from "./audit.ts";
+export * from "./events.ts";
 export * from "./ids.ts";
 export * from "./patient.ts";
 export * from "./permissions.ts";

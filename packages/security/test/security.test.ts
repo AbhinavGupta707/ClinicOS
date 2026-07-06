@@ -21,6 +21,31 @@ test("audit classifications mark sensitive access", () => {
   assert.equal(classification.category, "phi_access");
 });
 
+test("CP2 audit classifications cover lead appointment and queue events", () => {
+  const leadCreated = classifyAuditAction("lead.created");
+  assert.equal(leadCreated.phiInvolved, true);
+  assert.equal(leadCreated.requiresPatientId, false);
+
+  const leadMatched = classifyAuditAction("lead.matched_to_patient");
+  assert.equal(leadMatched.riskLevel, "high");
+  assert.equal(leadMatched.requiresPatientId, true);
+
+  const noShow = classifyAuditAction("appointment.no_show");
+  assert.equal(noShow.category, "phi_access");
+  assert.equal(noShow.riskLevel, "high");
+
+  assert.throws(
+    () =>
+      createAuditEvent({
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000002",
+        actor: { type: "user", id: "10000000-0000-4000-8000-000000001001" },
+        action: "patient.checked_in"
+      }),
+    /requires patientId/
+  );
+});
+
 test("PHI redaction masks nested patient and free-text identifiers", () => {
   const redacted = redactPhi({
     event: "patient.record.viewed",

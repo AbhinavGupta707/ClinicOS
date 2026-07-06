@@ -2,6 +2,15 @@
   "name": "@clinic-os/api-contracts",
   "version": "0.0.0",
   "private": true,
-  "description": "OpenAPI schemas and generated/shared API contract types."
+  "description": "OpenAPI schemas and generated/shared API contract types.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "find src -name '*.ts' -exec node --check {} \\;",
+    "lint": "find src test -name '*.ts' -exec node --check {} \\;",
+    "test": "node --test test/*.test.ts",
+    "build": "find src -name '*.ts' -exec node --check {} \\;"
+  }
 }
-

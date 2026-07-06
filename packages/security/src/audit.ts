@@ -38,6 +38,18 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "patient.created": {
+    category: "phi_access",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "patient.updated": {
+    category: "phi_access",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
   "patient.record.exported": {
     category: "privacy",
     riskLevel: "critical",
@@ -90,6 +102,90 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     category: "integration",
     riskLevel: "critical",
     phiInvolved: false,
+    requiresPatientId: false
+  },
+  "lead.created": {
+    category: "integration",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "lead.matched_to_patient": {
+    category: "phi_access",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "lead.converted_to_appointment": {
+    category: "phi_access",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "attribution.touch.created": {
+    category: "integration",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "appointment.created": {
+    category: "phi_access",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "appointment.confirmation_requested": {
+    category: "phi_access",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "appointment.confirmed": {
+    category: "phi_access",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "appointment.no_show": {
+    category: "phi_access",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "patient.checked_in": {
+    category: "phi_access",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "queue.entry_created": {
+    category: "phi_access",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "queue.entry_updated": {
+    category: "phi_access",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "task.created": {
+    category: "administration",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "task.status_changed": {
+    category: "administration",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "task.due": {
+    category: "administration",
+    riskLevel: "low",
+    phiInvolved: true,
     requiresPatientId: false
   }
 } as const;
