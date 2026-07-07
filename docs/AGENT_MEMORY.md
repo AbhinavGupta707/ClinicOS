@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after CP4 re-verification commit `d3d341f`; Checkpoint 5 is relaunched from this base with fresh visible project-scoped worktree lanes.
+- Branch: `main` after Checkpoint 5 promotion commit `6f9fe1c`; Checkpoint 6 launch is in progress from this verified base.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -24,12 +24,13 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Imaging/QA: `019f3a35-4418-7e93-91f6-7beffa65ac55`, `/Users/abhinavgupta/.codex/worktrees/9cf9/ClinicOS`.
 - CP1 worker lanes were real Codex-managed worktrees under `.codex/worktrees`.
 - A project-scoped worktree thread test succeeded: `target.type = "project"`, `projectId = "/Users/abhinavgupta/Desktop/ClinicOS"`, and `environment.type = "worktree"` made the worker visible under the `ClinicOS` project in the Codex sidebar.
-- Checkpoint 5 active relaunch lanes:
+- Checkpoint 5 is verified and promoted to `main` via merge commit `d679a78` plus closeout docs commit `6f9fe1c`.
+- Checkpoint 5 used four fresh visible project-scoped lanes:
   - Billing Domain: `019f3bcc-2145-7dc0-9518-dc8477e86b51`, `/Users/abhinavgupta/.codex/worktrees/a598/ClinicOS`.
   - Payment Provider: `019f3bcc-213b-7191-8424-2856a60a85a0`, `/Users/abhinavgupta/.codex/worktrees/fae5/ClinicOS`.
   - Checkout UX: `019f3bcc-213b-7191-8424-284dd78c7323`, `/Users/abhinavgupta/.codex/worktrees/82db/ClinicOS`.
   - Clinical Output QA: `019f3bcc-216e-79b3-bd9d-db6d77e928a5`, `/Users/abhinavgupta/.codex/worktrees/1f2d/ClinicOS`.
-- Checkpoint 5 must integrate into `codex/integration/checkpoint-5` before promotion to `main`.
+- Checkpoint 6 lanes are planned as Workflow/Task Backend, Lab/Inventory/Event, Operations UX, and Analytics/QA. Launch them as visible project-scoped worktree threads from the current `main`.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture

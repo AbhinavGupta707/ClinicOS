@@ -247,3 +247,15 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Accepted gaps:
   - Live hosted Razorpay webhook callback registration remains deferred until deployment owns a reachable HTTPS callback; provider verification/idempotent replay is covered by simulator/contract tests.
   - Production aggregate CP5 checkout read model is deferred as a whole workflow. The temporary web checkout surface uses explicit local fixture mode, while granular CP5 API routes are implemented and tested.
+
+## Checkpoint 6 Launch - 2026-07-07
+
+- Launch packet: `docs/orchestration/CHECKPOINT_06_CONTINUITY_OPERATIONS_OWNER_DASHBOARD.md`.
+- Base commit before launch packet: `6f9fe1c` (`docs: record checkpoint 5 promotion`).
+- Credential/input preflight: `.secrets/orchestration.env` is present; WhatsApp provider variables are present locally but must not be printed or committed; `.env.example` declares `TEMPORAL_ADDRESS`.
+- Integration branch rule: CP6 lane commits merge first into `codex/integration/checkpoint-6`; promote to `main` only after full code, deterministic workflow, browser/user, docs, and accepted-gap gates pass.
+- Visible project-scoped lanes planned:
+  - Workflow/Task Backend.
+  - Lab/Inventory/Event.
+  - Operations UX.
+  - Analytics/QA.
