@@ -89,6 +89,7 @@ import {
   getEncounter,
   getInvoice,
   getMigrationBatch,
+  getPilotReadiness,
   listMigrationBatches,
   getPatientDentalChart,
   getPatient,
@@ -445,6 +446,10 @@ async function routeOperationsRequest(input: {
 
   if (input.request.method === "GET" && pathname === "/v1/provider-health") {
     return listProviderHealth(operationsContext, dependencies);
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/pilot-readiness") {
+    return getPilotReadiness(operationsContext, dependencies);
   }
 
   if (input.request.method === "GET" && pathname === "/v1/dead-letter-events") {

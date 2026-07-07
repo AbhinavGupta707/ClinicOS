@@ -39,6 +39,15 @@ ClinicOS is release-candidate ready for a selected pilot clinic: pilot configura
 - User-facing temporary UI states remain reachable, responsive, and safe at 390px mobile width and desktop.
 - Release notes and runbooks make go-live gates, operator actions, training flow, support escalation, and deferred whole workflows explicit.
 
+## Pilot Configuration Lane Output
+
+- Adds a read-only CP10 readiness contract: `GET /v1/pilot-readiness`.
+- Adds owner-only web surface `Pilot readiness` at `/surface/pilot-readiness`.
+- Adds synthetic pilot configuration fixture under `fixtures/synthetic/cp10/`.
+- Documents QA posture in `docs/qa/checkpoint-10-pilot-readiness.md`.
+- Local release-candidate configuration can be `ready` while pilot go-live remains `blocked` or `deferred` by external evidence gaps.
+- No live providers, ABDM, AWS apply, GitHub push, physical-device checks, real PHI, or secret values are activated or exposed by this lane.
+
 ## Accepted Non-Goals
 
 - No live provider, ABDM, AWS, GitHub push, or physical-device verification unless credentials/access are supplied and explicitly approved.

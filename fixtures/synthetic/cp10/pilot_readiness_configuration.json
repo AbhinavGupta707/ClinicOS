@@ -1,0 +1,95 @@
+{
+  "schemaVersion": "cp10.pilot_configuration_fixture.v1",
+  "fixturePosture": {
+    "syntheticOnly": true,
+    "noRealPhi": true,
+    "noLiveProviderActivation": true,
+    "noSecretValues": true
+  },
+  "input": {
+    "generatedAt": "2026-07-07T11:00:00.000Z",
+    "environment": "local",
+    "productionLike": false,
+    "tenantId": "10000000-0000-4000-8000-000000000001",
+    "clinicId": "10000000-0000-4000-8000-000000000101",
+    "clinicName": "Synthetic Dental Clinic",
+    "syntheticDataOnly": true,
+    "pilotInputs": {
+      "patientExportPath": "fixtures/synthetic/patients.csv",
+      "appointmentExportPath": "fixtures/synthetic/appointments.csv",
+      "pricebookPath": "fixtures/synthetic/pricebook.csv",
+      "templatesDir": "fixtures/synthetic/templates",
+      "xraySampleDir": "fixtures/synthetic/media"
+    },
+    "providers": {
+      "whatsapp": {
+        "provider": "meta_cloud",
+        "credentialsPresent": true,
+        "signedWebhookConfigured": false
+      },
+      "payment": {
+        "provider": "razorpay",
+        "credentialsPresent": true,
+        "signedWebhookConfigured": false
+      },
+      "telephony": {
+        "provider": "unconfigured",
+        "credentialsPresent": false,
+        "signedWebhookConfigured": false
+      },
+      "ai": {
+        "llmProvider": "simulator",
+        "llmCredentialsPresent": false,
+        "transcriptionProvider": "simulator",
+        "transcriptionCredentialsPresent": false,
+        "dataResidencyApproved": false
+      }
+    },
+    "operations": {
+      "cloud": {
+        "primaryRegion": "ap-south-1",
+        "drRegion": "ap-south-2",
+        "accountConfigured": true,
+        "terraformBackendConfigured": true,
+        "kmsConfigured": true,
+        "applyVerified": false
+      },
+      "alerting": {
+        "provider": "unconfigured",
+        "destinationConfigured": false
+      },
+      "backupRestore": {
+        "drillMode": "dry_run",
+        "dryRunEvidence": true,
+        "liveRestoreVerified": false
+      },
+      "githubPushVerified": false,
+      "physicalDeviceVerified": false,
+      "abdmSandboxVerified": false
+    }
+  },
+  "expected": {
+    "localConfigurationStatus": "ready",
+    "pilotGoLiveStatus": "blocked",
+    "minimumReadyItems": 10,
+    "requiredBlockedItems": [
+      "provider-whatsapp",
+      "provider-razorpay",
+      "ops-cloud-pilot-prod",
+      "ops-alerting",
+      "ops-github-push"
+    ],
+    "externalLiveVerificationGaps": [
+      "Signed WhatsApp webhook registration",
+      "Signed Razorpay HTTPS callback registration",
+      "Telephony provider onboarding",
+      "Live AI/transcription approval",
+      "AWS pilot-prod apply",
+      "Alert routing",
+      "Live restore/failover",
+      "GitHub push/remote CI",
+      "Physical-device smoke",
+      "ABDM sandbox/live exchange"
+    ]
+  }
+}

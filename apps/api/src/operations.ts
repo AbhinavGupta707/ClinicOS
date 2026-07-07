@@ -76,6 +76,7 @@ import {
   assertPatientCreateMinimum,
   assertRetentionRunPolicy,
   applyPaymentToInvoice,
+  buildCp10PilotReadinessPlan,
   buildOwnerDashboardProjection,
   buildMorningDashboard,
   buildPatientDuplicateSuggestions,
@@ -147,6 +148,7 @@ import {
   type ConsentCaptureMethod,
   type ConsentPurpose,
   type CreateDentalFindingInput,
+  type Cp10PilotReadinessInput,
   type DomainEventType,
   type EncounterStatus,
   type IntakeFormType,
@@ -1121,6 +1123,123 @@ export async function listProviderHealth(
         status: "available"
       })
     ]
+  });
+}
+
+export async function getPilotReadiness(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "clinic.manage" });
+  const config = runtimeConfigFrom(dependencies);
+  const readinessInput: Cp10PilotReadinessInput = {
+    clinicId: context.clinicId,
+    clinicName: "Configured ClinicOS clinic",
+    environment: config.clinicOsEnv,
+    productionLike: config.isProductionLike,
+    syntheticDataOnly: config.pilotInputs.syntheticDataOnly,
+    tenantId: context.accessContext.tenant.id,
+    pilotInputs: {
+      appointmentExportPath: config.pilotInputs.appointmentExportPath,
+      patientExportPath: config.pilotInputs.patientExportPath,
+      pricebookPath: config.pilotInputs.pricebookPath,
+      templatesDir: config.pilotInputs.templatesDir,
+      xraySampleDir: config.pilotInputs.xraySampleDir
+    },
+    providers: {
+      whatsapp: {
+        credentialsPresent: Boolean(
+          config.providers.whatsapp.accessToken &&
+            config.providers.whatsapp.appId &&
+            config.providers.whatsapp.appSecret &&
+            config.providers.whatsapp.businessAccountId &&
+            config.providers.whatsapp.phoneNumberId &&
+            config.providers.whatsapp.webhookVerifyToken
+        ),
+        provider: config.providers.whatsapp.provider,
+        signedWebhookConfigured: false
+      },
+      payment: {
+        credentialsPresent: Boolean(
+          config.providers.payment.razorpayKeyId &&
+            config.providers.payment.razorpayKeySecret &&
+            config.providers.payment.razorpayWebhookSecret
+        ),
+        provider: config.providers.payment.provider,
+        signedWebhookConfigured: Boolean(
+          config.providers.payment.razorpayWebhookUrl &&
+            config.providers.payment.razorpayWebhookSecret
+        )
+      },
+      telephony: {
+        credentialsPresent: Boolean(
+          config.providers.telephony.accountSid &&
+            config.providers.telephony.apiKey &&
+            config.providers.telephony.apiToken &&
+            config.providers.telephony.virtualNumber &&
+            config.providers.telephony.webhookSecret
+        ),
+        provider: config.providers.telephony.provider,
+        signedWebhookConfigured: false
+      },
+      ai: {
+        dataResidencyApproved: Boolean(config.providers.ai.dataResidencyNotes),
+        llmCredentialsPresent: Boolean(
+          (config.providers.ai.llmProvider === "fireworks" &&
+            config.providers.ai.fireworksApiKey &&
+            config.providers.ai.llmBaseUrl &&
+            config.providers.ai.llmModelPrimary) ||
+            (config.providers.ai.llmProvider === "openai" &&
+              config.providers.ai.openaiApiKey &&
+              config.providers.ai.llmModelPrimary)
+        ),
+        llmProvider: config.providers.ai.llmProvider,
+        transcriptionCredentialsPresent: Boolean(
+          (config.providers.ai.transcriptionProvider === "openai" &&
+            config.providers.ai.openaiApiKey &&
+            config.providers.ai.transcriptionModel) ||
+            (config.providers.ai.transcriptionProvider === "deepgram" &&
+              config.providers.ai.deepgramApiKey &&
+              config.providers.ai.transcriptionModel)
+        ),
+        transcriptionProvider: config.providers.ai.transcriptionProvider
+      }
+    },
+    operations: {
+      abdmSandboxVerified: false,
+      backupRestore: {
+        drillMode: config.operations.backupRestore.drillMode,
+        dryRunEvidence: config.operations.backupRestore.drillMode === "dry_run",
+        liveRestoreVerified: false
+      },
+      cloud: {
+        accountConfigured: Boolean(config.operations.cloud.accountId),
+        applyVerified: false,
+        drRegion: config.operations.cloud.drRegion,
+        kmsConfigured: Boolean(config.operations.cloud.kmsKeyAlias),
+        primaryRegion: config.operations.cloud.primaryRegion,
+        terraformBackendConfigured: Boolean(
+          config.operations.cloud.terraformStateBucket &&
+            config.operations.cloud.terraformLockTable
+        )
+      },
+      alerting: {
+        destinationConfigured: Boolean(
+          (config.operations.alerting.provider === "email" &&
+            config.operations.alerting.contactEmail) ||
+            (config.operations.alerting.provider === "slack" &&
+              config.operations.alerting.slackWebhookUrl) ||
+            (config.operations.alerting.provider === "sentry" && config.operations.alerting.sentryDsn)
+        ),
+        provider: config.operations.alerting.provider
+      },
+      githubPushVerified: false,
+      physicalDeviceVerified: false
+    }
+  };
+
+  return ok({
+    readiness: buildCp10PilotReadinessPlan(readinessInput)
   });
 }
 

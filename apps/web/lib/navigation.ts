@@ -363,6 +363,18 @@ export const SURFACES: SurfaceRegistration[] = [
     roles: ["owner", "doctor", "assistant"]
   },
   {
+    availability: "active",
+    checkpoint: 10,
+    description:
+      "Release-candidate pilot configuration, provider activation gaps, and go-live evidence.",
+    href: "/surface/pilot-readiness",
+    icon: ClipboardCheck,
+    id: "pilot-readiness",
+    label: "Pilot readiness",
+    requiredApis: ["GET /v1/pilot-readiness"],
+    roles: ["owner"]
+  },
+  {
     availability: "registered_unavailable",
     checkpoint: 1,
     description: "Clinic setup, users, roles, templates, pricebook, and source policy.",
@@ -439,7 +451,10 @@ const SURFACE_ALIASES = new Map<string, string>([
   ["ai-scribe", "note-drafts"],
   ["scribe-review", "note-drafts"],
   ["chart-review", "chart-drafts"],
-  ["proposal-inbox", "action-proposals"]
+  ["proposal-inbox", "action-proposals"],
+  ["pilot", "pilot-readiness"],
+  ["pilot-config", "pilot-readiness"],
+  ["release-readiness", "pilot-readiness"]
 ]);
 
 export function hasSurface(surfaceId: string) {
