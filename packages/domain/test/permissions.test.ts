@@ -9,6 +9,10 @@ import {
 
 test("accountant role cannot read clinical PHI by default", () => {
   assert.equal(roleGrantsPermission("accountant", "billing.read"), true);
+  assert.equal(roleGrantsPermission("accountant", "patient.export"), false);
+  assert.equal(roleGrantsPermission("accountant", "privacy.request"), false);
+  assert.equal(roleGrantsPermission("accountant", "retention.manage"), false);
+  assert.equal(roleGrantsPermission("accountant", "audit.review"), false);
   assert.equal(roleGrantsPermission("accountant", "clinical.note.read"), false);
   assert.equal(roleGrantsPermission("accountant", "dental.chart.read"), false);
   assert.equal(roleGrantsPermission("accountant", "media.read"), false);
@@ -53,6 +57,10 @@ test("role expansion deduplicates permissions", () => {
 
 test("clinical permission classifier covers PHI-sensitive permissions", () => {
   assert.equal(isClinicalPermission("patient.phi.read"), true);
+  assert.equal(isClinicalPermission("patient.export"), true);
+  assert.equal(isClinicalPermission("privacy.request"), true);
+  assert.equal(isClinicalPermission("retention.manage"), true);
+  assert.equal(isClinicalPermission("audit.review"), true);
   assert.equal(isClinicalPermission("dental.chart.read"), true);
   assert.equal(isClinicalPermission("prescription.write"), true);
   assert.equal(isClinicalPermission("task.manage"), true);
@@ -61,6 +69,16 @@ test("clinical permission classifier covers PHI-sensitive permissions", () => {
   assert.equal(isClinicalPermission("migration.manage"), true);
   assert.equal(isClinicalPermission("billing.export"), false);
   assert.ok(DEFAULT_ROLE_PERMISSION_GRANTS.owner_admin.length > DEFAULT_ROLE_PERMISSION_GRANTS.assistant.length);
+});
+
+test("CP9 audit review and retention permissions stay limited to compliance/admin roles", () => {
+  assert.equal(roleGrantsPermission("owner_admin", "audit.review"), true);
+  assert.equal(roleGrantsPermission("owner_admin", "retention.manage"), true);
+  assert.equal(roleGrantsPermission("owner_admin", "privacy.request"), true);
+  assert.equal(roleGrantsPermission("auditor", "audit.review"), true);
+  assert.equal(roleGrantsPermission("auditor", "retention.manage"), false);
+  assert.equal(roleGrantsPermission("doctor", "retention.manage"), false);
+  assert.equal(roleGrantsPermission("assistant", "patient.export"), false);
 });
 
 test("CP6 operations keep accountant analytics separate from operational mutation", () => {

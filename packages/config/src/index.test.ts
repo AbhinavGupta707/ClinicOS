@@ -17,7 +17,14 @@ const baseEnv = {
   PAYMENT_PROVIDER: "simulator",
   TELEPHONY_PROVIDER: "simulator",
   LLM_PROVIDER: "simulator",
-  TRANSCRIPTION_PROVIDER: "simulator"
+  TRANSCRIPTION_PROVIDER: "simulator",
+  AWS_REGION: "ap-south-1",
+  AWS_DR_REGION: "ap-south-2",
+  ALERTING_PROVIDER: "unconfigured",
+  BACKUP_RESTORE_DRILL_MODE: "dry_run",
+  BACKUP_RESTORE_ALLOW_DESTRUCTIVE: "false",
+  BACKUP_RESTORE_RPO_MINUTES: "60",
+  BACKUP_RESTORE_RTO_MINUTES: "240"
 } as const;
 
 describe("parseClinicOsEnv", () => {
@@ -28,6 +35,10 @@ describe("parseClinicOsEnv", () => {
     expect(config.isProductionLike).toBe(false);
     expect(config.providers.whatsapp.provider).toBe("simulator");
     expect(config.providers.payment.provider).toBe("simulator");
+    expect(config.operations.cloud.primaryRegion).toBe("ap-south-1");
+    expect(config.operations.cloud.drRegion).toBe("ap-south-2");
+    expect(config.operations.backupRestore.drillMode).toBe("dry_run");
+    expect(config.operations.backupRestore.rpoMinutes).toBe(60);
   });
 
   it("rejects simulator providers in production-like environments", () => {
@@ -58,12 +69,106 @@ describe("parseClinicOsEnv", () => {
       PAYMENT_PROVIDER: "manual_clinic_approved",
       TELEPHONY_PROVIDER: "unconfigured",
       LLM_PROVIDER: "unconfigured",
-      TRANSCRIPTION_PROVIDER: "unconfigured"
+      TRANSCRIPTION_PROVIDER: "unconfigured",
+      AWS_ACCOUNT_ID: "123456789012",
+      AWS_TERRAFORM_STATE_BUCKET: "clinic-os-terraform-state",
+      AWS_TERRAFORM_LOCK_TABLE: "clinic-os-terraform-locks",
+      AWS_KMS_KEY_ALIAS: "alias/clinic-os-pilot-prod",
+      ALERTING_PROVIDER: "email",
+      ALERTING_CONTACT_EMAIL: "ops@example.test"
     });
 
     expect(config.isProductionLike).toBe(true);
     expect(config.providers.whatsapp.provider).toBe("unconfigured");
     expect(config.providers.payment.provider).toBe("manual_clinic_approved");
+    expect(config.operations.alerting.provider).toBe("email");
+  });
+
+  it("requires pilot-prod cloud backend, KMS, and alerting posture", () => {
+    const result = safeParseClinicOsEnv({
+      ...baseEnv,
+      NODE_ENV: "production",
+      CLINIC_OS_ENV: "pilot-prod",
+      WHATSAPP_PROVIDER: "unconfigured",
+      PAYMENT_PROVIDER: "manual_clinic_approved",
+      TELEPHONY_PROVIDER: "unconfigured",
+      LLM_PROVIDER: "unconfigured",
+      TRANSCRIPTION_PROVIDER: "unconfigured"
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.map((issue) => issue.path.join("."))).toEqual(
+      expect.arrayContaining([
+        "AWS_ACCOUNT_ID",
+        "AWS_TERRAFORM_STATE_BUCKET",
+        "AWS_TERRAFORM_LOCK_TABLE",
+        "AWS_KMS_KEY_ALIAS",
+        "ALERTING_PROVIDER"
+      ])
+    );
+  });
+
+  it("rejects same-region primary and DR configuration", () => {
+    const result = safeParseClinicOsEnv({
+      ...baseEnv,
+      AWS_DR_REGION: "ap-south-1"
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.map((issue) => issue.path.join("."))).toContain("AWS_DR_REGION");
+  });
+
+  it("requires alerting destination details when an alerting provider is selected", () => {
+    const result = safeParseClinicOsEnv({
+      ...baseEnv,
+      ALERTING_PROVIDER: "slack"
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.map((issue) => issue.path.join("."))).toContain(
+      "ALERTING_SLACK_WEBHOOK_URL"
+    );
+  });
+
+  it("guards destructive restore drill execution behind local synthetic data", () => {
+    const config = parseClinicOsEnv({
+      ...baseEnv,
+      BACKUP_RESTORE_DRILL_MODE: "local_execute",
+      BACKUP_RESTORE_ALLOW_DESTRUCTIVE: "true",
+      BACKUP_RESTORE_TARGET_DATABASE_URL:
+        "postgresql://clinic_os:clinic_os@localhost:5432/clinic_os_restore_drill",
+      PILOT_SYNTHETIC_DATA_ONLY: "true"
+    });
+
+    expect(config.operations.backupRestore.drillMode).toBe("local_execute");
+    expect(config.operations.backupRestore.allowDestructive).toBe(true);
+  });
+
+  it("blocks destructive restore drill execution in production-like environments", () => {
+    const result = safeParseClinicOsEnv({
+      ...baseEnv,
+      NODE_ENV: "production",
+      CLINIC_OS_ENV: "staging",
+      WHATSAPP_PROVIDER: "unconfigured",
+      PAYMENT_PROVIDER: "unconfigured",
+      TELEPHONY_PROVIDER: "unconfigured",
+      LLM_PROVIDER: "unconfigured",
+      TRANSCRIPTION_PROVIDER: "unconfigured",
+      BACKUP_RESTORE_DRILL_MODE: "local_execute",
+      BACKUP_RESTORE_ALLOW_DESTRUCTIVE: "true",
+      BACKUP_RESTORE_TARGET_DATABASE_URL:
+        "postgresql://clinic_os:clinic_os@localhost:5432/clinic_os_restore_drill",
+      PILOT_SYNTHETIC_DATA_ONLY: "true"
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.map((issue) => issue.path.join("."))).toEqual(
+      expect.arrayContaining(["BACKUP_RESTORE_DRILL_MODE", "BACKUP_RESTORE_ALLOW_DESTRUCTIVE"])
+    );
   });
 
   it("requires official provider credentials when those providers are selected", () => {

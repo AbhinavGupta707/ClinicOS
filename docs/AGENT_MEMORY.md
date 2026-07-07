@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after CP9 launch commit `6697df4`; Checkpoint 9 worker lanes are active in visible project-scoped worktrees.
+- Branch: `codex/integration/checkpoint-9` at verified CP9 integration head `ea13a97`; promote CP9 to `main` before launching Checkpoint 10.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -54,6 +54,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - FHIR/ABDM: `019f3cec-83b6-7383-81f5-e14f267d2392`, `/Users/abhinavgupta/.codex/worktrees/1238/ClinicOS`.
   - Infrastructure/Ops: `019f3cec-d3a3-7a71-ba13-ab7ceaf09f69`, `/Users/abhinavgupta/.codex/worktrees/7e8c/ClinicOS`.
   - Performance/QA: `019f3ced-1911-78e1-9301-ce5df9e8e934`, `/Users/abhinavgupta/.codex/worktrees/1091/ClinicOS`.
+- Checkpoint 9 is verified on `codex/integration/checkpoint-9` at `ea13a97`. Security/Privacy, FHIR/ABDM, Infrastructure/Ops, and Performance/QA lanes were merged in dependency order. Full gates passed: `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`. CP9 browser smoke passed for owner compliance desktop/mobile and platform-support unavailable shells.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture
@@ -171,6 +172,17 @@ Follow `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
 - Do not invent fake web routes for Expo mobile workflows. Mobile capture evidence belongs to the mobile lane through Expo/mobile tests and screenshots; the web CP8 surface owns review UX only.
 - If the Codex in-app browser is unavailable in a worker lane, record that blocker and use explicit Playwright fallback evidence. Do not claim in-app browser evidence when only Playwright ran.
 - AI review approvals in CP8 are review-only evidence. Do not let future lanes interpret CP8 approval buttons as chart, note, prescription, billing, or messaging application unless a later checkpoint owns that whole authorized workflow.
+
+## CP9 Integration Lessons
+
+- Reconcile deterministic QA route contracts against merged API routes before closeout. CP9 Performance/QA initially described `/export-requests`, `/retention/runs`, and `/break-glass/requests`; the canonical merged Security routes are `/v1/patients/{patientId}/record-exports`, `/v1/privacy/deletion-requests`, `/v1/privacy/retention-runs`, and `/v1/break-glass/access-requests`.
+- Distinguish live implemented APIs from projection-package evidence. CP9 FHIR is implemented as `@clinic-os/fhir` with local fixture validation; it must not be marked as a live FHIR API route until a later checkpoint owns that route.
+- Registered-unavailable web shells still need browser smoke. CP9 compliance/platform-support shells were tested for honest unavailable state, canonical API-boundary text, no fake completion claims, and 390px no-horizontal-overflow.
+- When the web app is smoke-tested without a running API server, start it with `NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true`; otherwise the shell correctly reports `/v1/me` as unregistered and the surface smoke is invalid.
+- Role-specific CP9 browser smoke requires separate server processes or environment runs for `NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=owner` and `platform_admin`.
+- Terraform/restore evidence must stay non-mutating by default. CP9 uses a validation-only Terraform profile and synthetic restore dry-run evidence; do not treat these as cloud readiness or live restore proof.
+- ABDM readiness is not ABDM activation. Empty credentials should remain `not_configured`/`unavailable`, log summaries must not expose credential values, and `liveExchangeAllowed` remains false even for sandbox-ready posture until compliance activation exists.
+- `npm run security:audit` remains an external dependency-inventory disclosure and should not be rerun after policy rejection without explicit user approval. Keep `npm run security:secrets`, code review, and local tests as the default security gates.
 
 ## Shared-File Mistakes To Avoid
 

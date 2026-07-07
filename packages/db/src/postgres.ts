@@ -4,6 +4,8 @@ import type {
   AppointmentRecord,
   AppointmentStatus,
   AppointmentTypeRecord,
+  AuditEventForReviewRecord,
+  AuditReviewRecord,
   AiActionProposalRecord,
   AiDraftOutputRecord,
   AiJobRecord,
@@ -13,6 +15,7 @@ import type {
   AiSourceAnchorRecord,
   AiTranscriptSegmentRecord,
   AttributionTouchRecord,
+  BreakGlassAccessRecord,
   ChairOrRoomRecord,
   ClinicalNoteVersionRecord,
   Clinic,
@@ -22,6 +25,7 @@ import type {
   ConsentRecord,
   AcceptTreatmentPlanInput,
   CorrectiveActionRecord,
+  DeletionRequestRecord,
   CreateTreatmentPlanInput,
   CreateDentalFindingInput,
   DentalChartRecord,
@@ -69,6 +73,9 @@ import type {
   OwnerDashboardProjectionData,
   PaymentRequestRecord,
   PaymentTransactionRecord,
+  PatientRecordExportRecord,
+  PatientRecordExportSection,
+  PatientRecordExportSnapshot,
   PatientGender,
   PatientInstructionRecord,
   PatientRecord,
@@ -83,6 +90,8 @@ import type {
   RecallRecord,
   RecallRuleRecord,
   ReceiptRecord,
+  RetentionActionRecord,
+  RetentionRunRecord,
   RoleAssignment,
   SopRunDetail,
   SopRunItemRecord,
@@ -145,8 +154,13 @@ import type {
   AmendClinicalNoteInput,
   AmendClinicalNoteResult,
   AiRetentionDeletionResult,
+  ActiveBreakGlassAccessFilter,
+  AuditEventSearchFilter,
   ClinicOperationsRepository,
   CreateInvoiceInput,
+  CreateAuditReviewInput,
+  CreateBreakGlassAccessInput,
+  CreateDeletionRequestInput,
   CreateAiActionProposalInput,
   CreateAiDraftOutputInput,
   CreateAiJobInput,
@@ -184,6 +198,7 @@ import type {
   CreateStockLedgerEntryInput,
   CreateTaskInput,
   DateRangeFilter,
+  DeletionRequestSearchFilter,
   DashboardDataSet,
   CommitMigrationBatchInput,
   GenerateDueContinuityInput,
@@ -198,19 +213,26 @@ import type {
   InventoryExceptionFilter,
   LabCaseSearchFilter,
   LeadSearchFilter,
+  BreakGlassAccessSearchFilter,
   IntegrationDeadLetterSearchFilter,
   MigrationBatchSearchFilter,
   MigrationRowsFilter,
   OutboxEventInput,
   PatientSearchFilter,
+  PatientRecordExportInput,
+  PatientRecordExportSearchFilter,
   RecordAiReviewDecisionInput,
   RecordPaymentTransactionInput,
   RecallSearchFilter,
   RepositoryScope,
   ReplayIntegrationDeadLetterInput,
   RevokeConsentInput,
+  RetentionRunResult,
+  ReviewBreakGlassAccessInput,
+  ReviewDeletionRequestInput,
   ResolveMigrationRowInput,
   RollbackMigrationBatchInput,
+  RunRetentionJobInput,
   SaveClinicalNoteDraftInput,
   SignClinicalNoteResult,
   SopRunSearchFilter,
@@ -664,6 +686,879 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       );
 
       return result.rows[0] ? mapPatientRow(result.rows[0]) : null;
+    });
+  }
+
+  async listAuditEvents(
+    scope: RepositoryScope,
+    filter: AuditEventSearchFilter = {}
+  ): Promise<AuditEventForReviewRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["audit_events.tenant_id = $1", "(audit_events.clinic_id is null or audit_events.clinic_id = $2)"];
+
+      if (filter.patientId) {
+        values.push(filter.patientId);
+        where.push(`audit_events.patient_id = $${values.length}`);
+      }
+      if (filter.action) {
+        values.push(filter.action);
+        where.push(`audit_events.action = $${values.length}`);
+      }
+      if (filter.category) {
+        values.push(filter.category);
+        where.push(`audit_events.category = $${values.length}`);
+      }
+      if (filter.riskLevel) {
+        values.push(filter.riskLevel);
+        where.push(`audit_events.risk_level = $${values.length}`);
+      }
+
+      values.push(Math.min(filter.limit ?? 50, 100));
+      const result = await client.query<AuditEventReviewJoinedRow>(
+        `
+          select
+            audit_events.*,
+            audit_event_reviews.id as review_id,
+            audit_event_reviews.clinic_id as review_clinic_id,
+            audit_event_reviews.review_status,
+            audit_event_reviews.disposition,
+            audit_event_reviews.notes as review_notes,
+            audit_event_reviews.reviewed_by_user_id,
+            audit_event_reviews.reviewed_at,
+            audit_event_reviews.created_at as review_created_at
+          from audit_events
+          left join lateral (
+            select *
+            from audit_event_reviews
+            where audit_event_reviews.tenant_id = audit_events.tenant_id
+              and audit_event_reviews.audit_event_id = audit_events.id
+            order by audit_event_reviews.reviewed_at desc
+            limit 1
+          ) audit_event_reviews on true
+          where ${where.join(" and ")}
+          order by audit_events.occurred_at desc
+          limit $${values.length}
+        `,
+        values
+      );
+
+      return result.rows.map(mapAuditEventForReviewRow);
+    });
+  }
+
+  async createAuditReview(
+    scope: RepositoryScope,
+    auditEventId: UUID,
+    input: CreateAuditReviewInput
+  ): Promise<AuditReviewRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const event = await client.query<{ id: UUID }>(
+        `
+          select id
+          from audit_events
+          where tenant_id = $1
+            and (clinic_id is null or clinic_id = $2)
+            and id = $3
+        `,
+        [scope.tenantId, scope.clinicId, auditEventId]
+      );
+      if (!event.rows[0]) return null;
+
+      const result = await client.query<AuditReviewRow>(
+        `
+          insert into audit_event_reviews (
+            tenant_id,
+            clinic_id,
+            audit_event_id,
+            review_status,
+            disposition,
+            notes,
+            reviewed_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          auditEventId,
+          input.reviewStatus,
+          input.disposition,
+          input.notes ?? null,
+          scope.actorUserId
+        ]
+      );
+
+      return mapAuditReviewRow(result.rows[0]);
+    });
+  }
+
+  async buildPatientRecordExportSnapshot(
+    scope: RepositoryScope,
+    patientId: UUID,
+    sections: PatientRecordExportSection[]
+  ): Promise<PatientRecordExportSnapshot | null> {
+    return this.#withRls(scope, async (client) => {
+      const patient = await this.#findPatientByIdInTransaction(client, scope, patientId);
+      if (!patient) return null;
+      const sectionSet = new Set(sections);
+      const now = new Date().toISOString();
+
+      const [
+        timeline,
+        consents,
+        intake,
+        encounters,
+        notes,
+        prescriptions,
+        instructions,
+        chart,
+        findings,
+        findingHistory,
+        chartSnapshots,
+        media,
+        invoices,
+        paymentRequests,
+        paymentTransactions,
+        receipts,
+        aiSessions,
+        aiSourceAnchors,
+        aiDraftOutputs,
+        aiActionProposals,
+        aiReviewDecisions,
+        auditTrail
+      ] = await Promise.all([
+        sectionSet.has("timeline")
+          ? client.query<PatientTimelineRow>(
+              `select * from patient_timeline_items where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by occurred_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("consents")
+          ? client.query<ConsentRow>(
+              `select * from consents where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by created_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("intake")
+          ? client.query<IntakeFormSubmissionRow>(
+              `select * from form_responses where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by submitted_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("encounters")
+          ? client.query<EncounterRow>(
+              `select * from encounters where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by created_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("clinical_notes")
+          ? client.query<ClinicalNoteVersionRow>(
+              `select * from clinical_note_versions where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by created_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("prescriptions")
+          ? client.query<PrescriptionRow>(
+              `select * from prescriptions where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by created_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("instructions")
+          ? client.query<PatientInstructionRow>(
+              `select * from patient_instruction_requests where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by created_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("dental_chart")
+          ? client.query<DentalChartRow>(
+              `select * from dental_charts where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by created_at asc limit 1`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("dental_chart")
+          ? client.query<DentalFindingRow>(
+              `select * from dental_findings where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by created_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("dental_chart")
+          ? client.query<DentalFindingHistoryRow>(
+              `
+                select dental_finding_history.*
+                from dental_finding_history
+                join dental_findings on dental_findings.tenant_id = dental_finding_history.tenant_id
+                  and dental_findings.id = dental_finding_history.finding_id
+                where dental_finding_history.tenant_id = $1
+                  and dental_finding_history.clinic_id = $2
+                  and dental_findings.patient_id = $3
+                order by dental_finding_history.changed_at desc
+              `,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("dental_chart")
+          ? client.query<DentalChartSnapshotRow>(
+              `select * from dental_chart_snapshots where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by created_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("media")
+          ? client.query<MediaAssetRow>(
+              `select * from media_assets where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by uploaded_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("billing")
+          ? client.query<InvoiceRow>(
+              `select * from invoices where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by issued_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("billing")
+          ? client.query<PaymentRequestRow>(
+              `select * from payment_requests where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by created_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("billing")
+          ? client.query<PaymentTransactionRow>(
+              `select * from payment_transactions where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by created_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("billing")
+          ? client.query<ReceiptRow>(
+              `select * from receipts where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by generated_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("ai_evidence")
+          ? client.query<AiSessionRow>(
+              `select * from ai_sessions where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by started_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("ai_evidence")
+          ? client.query<AiSourceAnchorRow>(
+              `select * from ai_source_anchors where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by created_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("ai_evidence")
+          ? client.query<AiDraftOutputRow>(
+              `select * from ai_draft_outputs where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by created_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("ai_evidence")
+          ? client.query<AiActionProposalRow>(
+              `select * from ai_action_proposals where tenant_id = $1 and clinic_id = $2 and patient_id = $3 order by created_at desc`,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("ai_evidence")
+          ? client.query<AiReviewDecisionRow>(
+              `
+                select ai_review_decisions.*
+                from ai_review_decisions
+                join ai_sessions on ai_sessions.tenant_id = ai_review_decisions.tenant_id
+                  and ai_sessions.id = ai_review_decisions.session_id
+                where ai_review_decisions.tenant_id = $1
+                  and ai_review_decisions.clinic_id = $2
+                  and ai_sessions.patient_id = $3
+                order by ai_review_decisions.reviewed_at desc
+              `,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] },
+        sectionSet.has("privacy_audit")
+          ? client.query<AuditEventReviewJoinedRow>(
+              `
+                select
+                  audit_events.*,
+                  audit_event_reviews.id as review_id,
+                  audit_event_reviews.clinic_id as review_clinic_id,
+                  audit_event_reviews.review_status,
+                  audit_event_reviews.disposition,
+                  audit_event_reviews.notes as review_notes,
+                  audit_event_reviews.reviewed_by_user_id,
+                  audit_event_reviews.reviewed_at,
+                  audit_event_reviews.created_at as review_created_at
+                from audit_events
+                left join lateral (
+                  select *
+                  from audit_event_reviews
+                  where audit_event_reviews.tenant_id = audit_events.tenant_id
+                    and audit_event_reviews.audit_event_id = audit_events.id
+                  order by audit_event_reviews.reviewed_at desc
+                  limit 1
+                ) audit_event_reviews on true
+                where audit_events.tenant_id = $1
+                  and (audit_events.clinic_id is null or audit_events.clinic_id = $2)
+                  and audit_events.patient_id = $3
+                order by audit_events.occurred_at desc
+                limit 100
+              `,
+              [scope.tenantId, scope.clinicId, patientId]
+            )
+          : { rows: [] }
+      ]);
+
+      return {
+        manifest: {
+          schemaVersion: "cp9.patient_record_export.v1",
+          generatedAt: now,
+          tenantId: scope.tenantId,
+          clinicId: scope.clinicId,
+          patientId,
+          sections,
+          format: "json",
+          safety: {
+            rawStorageReferences: "excluded",
+            rawProviderPayloads: "excluded",
+            auditMetadata: "phi_redacted",
+            tenantScoped: true
+          }
+        },
+        patient: sectionSet.has("demographics") ? patient : null,
+        consents: consents.rows.map(mapConsentRow),
+        timeline: timeline.rows.map(mapTimelineRow),
+        intakeSubmissions: intake.rows.map(mapIntakeFormSubmissionRow),
+        encounters: encounters.rows.map(mapEncounterRow),
+        clinicalNotes: notes.rows.map(mapClinicalNoteVersionRow),
+        prescriptions: prescriptions.rows.map(mapPrescriptionRow),
+        instructions: instructions.rows.map(mapPatientInstructionRow),
+        dentalChart: {
+          chart: chart.rows[0] ? mapDentalChartRow(chart.rows[0]) : null,
+          findings: findings.rows.map(mapDentalFindingRow),
+          findingHistory: findingHistory.rows.map(mapDentalFindingHistoryRow),
+          snapshots: chartSnapshots.rows.map(mapDentalChartSnapshotRow)
+        },
+        mediaAssets: media.rows.map((row) => {
+          const {
+            objectKey: _objectKey,
+            storageProvider: _storageProvider,
+            storageRegion: _storageRegion,
+            ...asset
+          } = mapMediaAssetRow(row);
+          return asset;
+        }),
+        billing: {
+          invoices: invoices.rows.map(mapInvoiceRow),
+          paymentRequests: paymentRequests.rows.map(mapPaymentRequestRow),
+          paymentTransactions: paymentTransactions.rows.map(mapPaymentTransactionRow),
+          receipts: receipts.rows.map(mapReceiptRow)
+        },
+        aiEvidence: {
+          sessions: aiSessions.rows.map(mapAiSessionRow),
+          sourceAnchors: aiSourceAnchors.rows.map(mapAiSourceAnchorRow),
+          draftOutputs: aiDraftOutputs.rows.map(mapAiDraftOutputRow),
+          actionProposals: aiActionProposals.rows.map(mapAiActionProposalRow),
+          reviewDecisions: aiReviewDecisions.rows.map(mapAiReviewDecisionRow)
+        },
+        privacyAuditTrail: auditTrail.rows.map(mapAuditEventForReviewRow)
+      };
+    });
+  }
+
+  async createPatientRecordExport(
+    scope: RepositoryScope,
+    input: PatientRecordExportInput
+  ): Promise<PatientRecordExportRecord> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<PatientRecordExportRow>(
+        `
+          insert into data_exports (
+            tenant_id,
+            clinic_id,
+            patient_id,
+            status,
+            format,
+            sections,
+            requested_by_user_id,
+            completed_by_user_id,
+            completed_at,
+            manifest,
+            export_payload,
+            payload_digest
+          )
+          values ($1, $2, $3, 'completed', $4, $5, $6, $6, now(), $7::jsonb, $8::jsonb, $9)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.patientId,
+          input.format,
+          input.sections,
+          scope.actorUserId,
+          JSON.stringify(input.snapshot.manifest),
+          JSON.stringify(input.snapshot),
+          input.payloadDigest
+        ]
+      );
+
+      return mapPatientRecordExportRow(result.rows[0]);
+    });
+  }
+
+  async listPatientRecordExports(
+    scope: RepositoryScope,
+    filter: PatientRecordExportSearchFilter = {}
+  ): Promise<PatientRecordExportRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "clinic_id = $2"];
+      if (filter.patientId) {
+        values.push(filter.patientId);
+        where.push(`patient_id = $${values.length}`);
+      }
+      if (filter.status) {
+        values.push(filter.status);
+        where.push(`status = $${values.length}`);
+      }
+      values.push(Math.min(filter.limit ?? 25, 100));
+      const result = await client.query<PatientRecordExportRow>(
+        `
+          select *
+          from data_exports
+          where ${where.join(" and ")}
+          order by requested_at desc
+          limit $${values.length}
+        `,
+        values
+      );
+      return result.rows.map(mapPatientRecordExportRow);
+    });
+  }
+
+  async createDeletionRequest(
+    scope: RepositoryScope,
+    input: CreateDeletionRequestInput
+  ): Promise<DeletionRequestRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const patient = await this.#findPatientByIdInTransaction(client, scope, input.patientId);
+      if (!patient) return null;
+      const requestScope = {
+        requestedCategories: input.requestedCategories,
+        protectedClinicalRecords: "not_deleted",
+        protectedAuditRecords: "not_deleted"
+      };
+      const result = await client.query<DeletionRequestRow>(
+        `
+          insert into deletion_requests (
+            tenant_id,
+            clinic_id,
+            patient_id,
+            request_type,
+            status,
+            reason,
+            requested_by_user_id,
+            scope
+          )
+          values ($1, $2, $3, $4, 'requested', $5, $6, $7::jsonb)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.patientId,
+          input.requestType,
+          input.reason,
+          scope.actorUserId,
+          JSON.stringify(requestScope)
+        ]
+      );
+      return mapDeletionRequestRow(result.rows[0]);
+    });
+  }
+
+  async listDeletionRequests(
+    scope: RepositoryScope,
+    filter: DeletionRequestSearchFilter = {}
+  ): Promise<DeletionRequestRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "clinic_id = $2"];
+      if (filter.patientId) {
+        values.push(filter.patientId);
+        where.push(`patient_id = $${values.length}`);
+      }
+      if (filter.status) {
+        values.push(filter.status);
+        where.push(`status = $${values.length}`);
+      }
+      values.push(Math.min(filter.limit ?? 50, 100));
+      const result = await client.query<DeletionRequestRow>(
+        `select * from deletion_requests where ${where.join(" and ")} order by requested_at desc limit $${values.length}`,
+        values
+      );
+      return result.rows.map(mapDeletionRequestRow);
+    });
+  }
+
+  async findDeletionRequestById(
+    scope: RepositoryScope,
+    requestId: UUID
+  ): Promise<DeletionRequestRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<DeletionRequestRow>(
+        `
+          select *
+          from deletion_requests
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+        `,
+        [scope.tenantId, scope.clinicId, requestId]
+      );
+      return result.rows[0] ? mapDeletionRequestRow(result.rows[0]) : null;
+    });
+  }
+
+  async reviewDeletionRequest(
+    scope: RepositoryScope,
+    requestId: UUID,
+    input: ReviewDeletionRequestInput
+  ): Promise<DeletionRequestRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const nextStatus =
+        input.decision === "approve"
+          ? "approved_pending_retention_job"
+          : input.decision === "cancel"
+            ? "cancelled"
+            : "rejected";
+      const result = await client.query<DeletionRequestRow>(
+        `
+          update deletion_requests
+          set
+            status = $4,
+            reviewed_by_user_id = $5,
+            reviewed_at = now(),
+            review_reason = $6
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, requestId, nextStatus, scope.actorUserId, input.reviewReason]
+      );
+      return result.rows[0] ? mapDeletionRequestRow(result.rows[0]) : null;
+    });
+  }
+
+  async runRetentionJob(
+    scope: RepositoryScope,
+    input: RunRetentionJobInput
+  ): Promise<RetentionRunResult> {
+    return this.#withRls(scope, async (client) => {
+      const runResult = await client.query<RetentionRunRow>(
+        `
+          insert into retention_job_runs (
+            tenant_id,
+            clinic_id,
+            mode,
+            status,
+            policy_code,
+            as_of,
+            deletion_request_id,
+            started_by_user_id,
+            completed_at,
+            summary
+          )
+          values ($1, $2, $3, 'completed', $4, $5, $6, $7, now(), '{}'::jsonb)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.mode,
+          input.policyCode,
+          input.asOf,
+          input.deletionRequestId ?? null,
+          scope.actorUserId
+        ]
+      );
+      const runId = runResult.rows[0].id;
+      const cutoff = new Date(
+        new Date(input.asOf).getTime() - input.transcriptDeleteAfterDays * 24 * 60 * 60 * 1000
+      ).toISOString();
+      const eligible = await client.query<AiSessionRow>(
+        `
+          select *
+          from ai_sessions
+          where tenant_id = $1
+            and clinic_id = $2
+            and status <> 'retention_deleted'
+            and started_at <= $3
+            and ($4::uuid is null or patient_id = $4)
+          order by started_at asc
+        `,
+        [scope.tenantId, scope.clinicId, cutoff, input.patientId ?? null]
+      );
+      const actions: RetentionActionRecord[] = [];
+
+      for (const sessionRow of eligible.rows) {
+        const session = mapAiSessionRow(sessionRow);
+        const segmentCount = await client.query<{ count: string }>(
+          `
+            select count(*)::text as count
+            from ai_transcript_segments
+            where tenant_id = $1 and clinic_id = $2 and session_id = $3
+          `,
+          [scope.tenantId, scope.clinicId, session.id]
+        );
+        if (input.mode === "execute") {
+          await client.query(
+            `
+              delete from ai_transcript_segments
+              where tenant_id = $1 and clinic_id = $2 and session_id = $3
+            `,
+            [scope.tenantId, scope.clinicId, session.id]
+          );
+          await client.query(
+            `
+              update ai_sessions
+              set status = 'retention_deleted',
+                  raw_audio_deleted_at = coalesce(raw_audio_deleted_at, now()),
+                  transcript_deleted_at = coalesce(transcript_deleted_at, now())
+              where tenant_id = $1 and clinic_id = $2 and id = $3
+            `,
+            [scope.tenantId, scope.clinicId, session.id]
+          );
+        }
+        const actionRow = await client.query<RetentionActionRow>(
+          `
+            insert into retention_actions (
+              tenant_id,
+              clinic_id,
+              run_id,
+              patient_id,
+              action_kind,
+              status,
+              target_type,
+              target_id,
+              protected_record,
+              evidence,
+              completed_at
+            )
+            values ($1, $2, $3, $4, 'ai_transcript_delete', $5, 'ai_session', $6, false, $7::jsonb, case when $5 = 'completed' then now() else null end)
+            returning *
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            runId,
+            session.patientId,
+            input.mode === "execute" ? "completed" : "planned",
+            session.id,
+            JSON.stringify({
+              transcriptSegmentCount: Number(segmentCount.rows[0]?.count ?? 0),
+              policyCode: input.policyCode,
+              mode: input.mode
+            })
+          ]
+        );
+        actions.push(mapRetentionActionRow(actionRow.rows[0]));
+      }
+
+      for (const protectedTarget of ["clinical_records", "audit_events"] as const) {
+        const actionRow = await client.query<RetentionActionRow>(
+          `
+            insert into retention_actions (
+              tenant_id,
+              clinic_id,
+              run_id,
+              patient_id,
+              action_kind,
+              status,
+              target_type,
+              target_id,
+              protected_record,
+              evidence
+            )
+            values ($1, $2, $3, $4, $5, 'skipped', $6, $7, true, $8::jsonb)
+            returning *
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            runId,
+            input.patientId ?? null,
+            protectedTarget === "clinical_records"
+              ? "protected_clinical_record_skipped"
+              : "protected_audit_record_skipped",
+            protectedTarget,
+            input.patientId ?? scope.clinicId,
+            JSON.stringify({
+              reason: "Protected clinical and audit records are never deleted by CP9 retention jobs.",
+              deletionRequestId: input.deletionRequestId ?? null
+            })
+          ]
+        );
+        actions.push(mapRetentionActionRow(actionRow.rows[0]));
+      }
+
+      const summary = {
+        eligibleTransientPayloads: eligible.rows.length,
+        completedActions: actions.filter((action) => action.status === "completed").length,
+        protectedRecordsSkipped: actions.filter((action) => action.protectedRecord).length
+      };
+      const updatedRun = await client.query<RetentionRunRow>(
+        `
+          update retention_job_runs
+          set summary = $4::jsonb
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, runId, JSON.stringify(summary)]
+      );
+
+      if (input.mode === "execute" && input.deletionRequestId) {
+        await client.query(
+          `
+            update deletion_requests
+            set status = 'completed',
+                updated_at = now()
+            where tenant_id = $1
+              and clinic_id = $2
+              and id = $3
+              and status = 'approved_pending_retention_job'
+          `,
+          [scope.tenantId, scope.clinicId, input.deletionRequestId]
+        );
+      }
+
+      return { run: mapRetentionRunRow(updatedRun.rows[0]), actions };
+    });
+  }
+
+  async createBreakGlassAccessRequest(
+    scope: RepositoryScope,
+    input: CreateBreakGlassAccessInput
+  ): Promise<BreakGlassAccessRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const patient = await this.#findPatientByIdInTransaction(client, scope, input.patientId);
+      if (!patient) return null;
+      const result = await client.query<BreakGlassAccessRow>(
+        `
+          insert into break_glass_accesses (
+            tenant_id,
+            clinic_id,
+            user_id,
+            patient_id,
+            reason,
+            status,
+            expires_at,
+            access_categories,
+            access_scope
+          )
+          values ($1, $2, $3, $4, $5, 'requested', $6, $7, $8::jsonb)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          scope.actorUserId,
+          input.patientId,
+          input.reason,
+          input.expiresAt,
+          input.accessCategories,
+          JSON.stringify({
+            patientId: input.patientId,
+            resourceTypes: input.accessCategories,
+            clinicalJustification: input.reason
+          })
+        ]
+      );
+      return mapBreakGlassAccessRow(result.rows[0]);
+    });
+  }
+
+  async listBreakGlassAccessRequests(
+    scope: RepositoryScope,
+    filter: BreakGlassAccessSearchFilter = {}
+  ): Promise<BreakGlassAccessRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "clinic_id = $2"];
+      if (filter.patientId) {
+        values.push(filter.patientId);
+        where.push(`patient_id = $${values.length}`);
+      }
+      if (filter.status) {
+        values.push(filter.status);
+        where.push(`status = $${values.length}`);
+      }
+      if (filter.requestedByUserId) {
+        values.push(filter.requestedByUserId);
+        where.push(`user_id = $${values.length}`);
+      }
+      values.push(Math.min(filter.limit ?? 50, 100));
+      const result = await client.query<BreakGlassAccessRow>(
+        `select * from break_glass_accesses where ${where.join(" and ")} order by requested_at desc limit $${values.length}`,
+        values
+      );
+      return result.rows.map(mapBreakGlassAccessRow);
+    });
+  }
+
+  async reviewBreakGlassAccessRequest(
+    scope: RepositoryScope,
+    requestId: UUID,
+    input: ReviewBreakGlassAccessInput
+  ): Promise<BreakGlassAccessRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const nextStatus =
+        input.decision === "approve" ? "approved" : input.decision === "revoke" ? "revoked" : "denied";
+      const result = await client.query<BreakGlassAccessRow>(
+        `
+          update break_glass_accesses
+          set
+            status = $4,
+            approved_by_user_id = case when $4 = 'approved' then $5 else approved_by_user_id end,
+            approved_at = case when $4 = 'approved' then now() else approved_at end,
+            reviewed_by_user_id = $5,
+            reviewed_at = now(),
+            review_reason = $6,
+            revoked_at = case when $4 = 'revoked' then now() else revoked_at end
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, requestId, nextStatus, scope.actorUserId, input.reviewReason]
+      );
+      return result.rows[0] ? mapBreakGlassAccessRow(result.rows[0]) : null;
+    });
+  }
+
+  async findActiveBreakGlassAccess(
+    scope: RepositoryScope,
+    filter: ActiveBreakGlassAccessFilter
+  ): Promise<BreakGlassAccessRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<BreakGlassAccessRow>(
+        `
+          select *
+          from break_glass_accesses
+          where tenant_id = $1
+            and clinic_id = $2
+            and user_id = $3
+            and patient_id = $4
+            and status = 'approved'
+            and revoked_at is null
+            and expires_at > $5
+            and ($6::text is null or $6 = any(access_categories))
+          order by approved_at desc nulls last, requested_at desc
+          limit 1
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          filter.userId,
+          filter.patientId,
+          filter.at,
+          filter.requiredCategory ?? null
+        ]
+      );
+      return result.rows[0] ? mapBreakGlassAccessRow(result.rows[0]) : null;
     });
   }
 
@@ -8647,6 +9542,137 @@ interface PatientTimelineRow {
   metadata: Record<string, unknown>;
 }
 
+interface AuditEventReviewJoinedRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID | null;
+  actor_type: AuditEventForReviewRecord["actorType"];
+  actor_id: string;
+  action: string;
+  category: AuditEventForReviewRecord["category"];
+  risk_level: AuditEventForReviewRecord["riskLevel"];
+  phi_involved: boolean;
+  resource_type: string | null;
+  resource_id: string | null;
+  patient_id: UUID | null;
+  ip_address: string | null;
+  user_agent: string | null;
+  correlation_id: string | null;
+  metadata: Record<string, unknown>;
+  occurred_at: Date | string;
+  review_id: UUID | null;
+  review_clinic_id: UUID | null;
+  review_status: AuditReviewRecord["reviewStatus"] | null;
+  disposition: string | null;
+  review_notes: string | null;
+  reviewed_by_user_id: UUID | null;
+  reviewed_at: Date | string | null;
+  review_created_at: Date | string | null;
+}
+
+interface AuditReviewRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  audit_event_id: UUID;
+  review_status: AuditReviewRecord["reviewStatus"];
+  disposition: string;
+  notes: string | null;
+  reviewed_by_user_id: UUID;
+  reviewed_at: Date | string;
+  created_at: Date | string;
+}
+
+interface PatientRecordExportRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  patient_id: UUID;
+  status: PatientRecordExportRecord["status"];
+  format: "json";
+  sections: PatientRecordExportSection[];
+  requested_by_user_id: UUID;
+  completed_by_user_id: UUID | null;
+  requested_at: Date | string;
+  completed_at: Date | string | null;
+  manifest: PatientRecordExportRecord["manifest"];
+  export_payload: PatientRecordExportSnapshot | null;
+  payload_digest: string | null;
+  failure_reason: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface DeletionRequestRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  patient_id: UUID;
+  request_type: DeletionRequestRecord["requestType"];
+  status: DeletionRequestRecord["status"];
+  reason: string;
+  requested_by_user_id: UUID;
+  requested_at: Date | string;
+  reviewed_by_user_id: UUID | null;
+  reviewed_at: Date | string | null;
+  review_reason: string | null;
+  scope: DeletionRequestRecord["scope"];
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface RetentionRunRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  mode: RetentionRunRecord["mode"];
+  status: RetentionRunRecord["status"];
+  policy_code: string;
+  as_of: Date | string;
+  deletion_request_id: UUID | null;
+  started_by_user_id: UUID;
+  started_at: Date | string;
+  completed_at: Date | string;
+  summary: RetentionRunRecord["summary"];
+  created_at: Date | string;
+}
+
+interface RetentionActionRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  run_id: UUID;
+  patient_id: UUID | null;
+  action_kind: RetentionActionRecord["actionKind"];
+  status: RetentionActionRecord["status"];
+  target_type: string;
+  target_id: string;
+  protected_record: boolean;
+  evidence: Record<string, unknown>;
+  completed_at: Date | string | null;
+  created_at: Date | string;
+}
+
+interface BreakGlassAccessRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  user_id: UUID;
+  patient_id: UUID;
+  reason: string;
+  status: BreakGlassAccessRecord["status"];
+  requested_at: Date | string;
+  expires_at: Date | string;
+  reviewed_by_user_id: UUID | null;
+  reviewed_at: Date | string | null;
+  review_reason: string | null;
+  revoked_at: Date | string | null;
+  access_categories: BreakGlassAccessRecord["accessCategories"];
+  access_scope: BreakGlassAccessRecord["accessScope"];
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
 interface MigrationBatchRow {
   id: UUID;
   tenant_id: UUID;
@@ -9945,6 +10971,157 @@ function mapTimelineRow(row: PatientTimelineRow): PatientTimelineItem {
     title: row.title,
     summary: row.summary,
     metadata: row.metadata
+  };
+}
+
+function mapAuditEventForReviewRow(row: AuditEventReviewJoinedRow): AuditEventForReviewRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    actorType: row.actor_type,
+    actorId: row.actor_id,
+    action: row.action,
+    category: row.category,
+    riskLevel: row.risk_level,
+    phiInvolved: row.phi_involved,
+    resourceType: row.resource_type,
+    resourceId: row.resource_id,
+    patientId: row.patient_id,
+    metadata: row.metadata,
+    ipAddress: row.ip_address,
+    userAgent: row.user_agent,
+    correlationId: row.correlation_id,
+    occurredAt: toIso(row.occurred_at),
+    review: row.review_id
+      ? {
+          id: row.review_id,
+          tenantId: row.tenant_id,
+          clinicId: row.review_clinic_id ?? row.clinic_id ?? ("00000000-0000-4000-8000-000000000000" as UUID),
+          auditEventId: row.id,
+          reviewStatus: row.review_status ?? "reviewed",
+          disposition: row.disposition ?? "",
+          notes: row.review_notes,
+          reviewedByUserId: row.reviewed_by_user_id ?? ("00000000-0000-4000-8000-000000000000" as UUID),
+          reviewedAt: row.reviewed_at ? toIso(row.reviewed_at) : toIso(row.occurred_at),
+          createdAt: row.review_created_at ? toIso(row.review_created_at) : toIso(row.occurred_at)
+        }
+      : null
+  };
+}
+
+function mapAuditReviewRow(row: AuditReviewRow): AuditReviewRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    auditEventId: row.audit_event_id,
+    reviewStatus: row.review_status,
+    disposition: row.disposition,
+    notes: row.notes,
+    reviewedByUserId: row.reviewed_by_user_id,
+    reviewedAt: toIso(row.reviewed_at),
+    createdAt: toIso(row.created_at)
+  };
+}
+
+function mapPatientRecordExportRow(row: PatientRecordExportRow): PatientRecordExportRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    patientId: row.patient_id,
+    status: row.status,
+    format: row.format,
+    sections: row.sections,
+    requestedByUserId: row.requested_by_user_id,
+    completedByUserId: row.completed_by_user_id,
+    requestedAt: toIso(row.requested_at),
+    completedAt: row.completed_at ? toIso(row.completed_at) : null,
+    manifest: row.manifest,
+    payload: row.export_payload,
+    payloadDigest: row.payload_digest,
+    failureReason: row.failure_reason,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapDeletionRequestRow(row: DeletionRequestRow): DeletionRequestRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    patientId: row.patient_id,
+    requestType: row.request_type,
+    status: row.status,
+    reason: row.reason,
+    requestedByUserId: row.requested_by_user_id,
+    requestedAt: toIso(row.requested_at),
+    reviewedByUserId: row.reviewed_by_user_id,
+    reviewedAt: row.reviewed_at ? toIso(row.reviewed_at) : null,
+    reviewReason: row.review_reason,
+    scope: row.scope,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapRetentionRunRow(row: RetentionRunRow): RetentionRunRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    mode: row.mode,
+    status: row.status,
+    policyCode: row.policy_code,
+    asOf: toIso(row.as_of),
+    deletionRequestId: row.deletion_request_id,
+    startedByUserId: row.started_by_user_id,
+    startedAt: toIso(row.started_at),
+    completedAt: toIso(row.completed_at),
+    summary: row.summary,
+    createdAt: toIso(row.created_at)
+  };
+}
+
+function mapRetentionActionRow(row: RetentionActionRow): RetentionActionRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    runId: row.run_id,
+    patientId: row.patient_id,
+    actionKind: row.action_kind,
+    status: row.status,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    protectedRecord: row.protected_record,
+    evidence: row.evidence,
+    completedAt: row.completed_at ? toIso(row.completed_at) : null,
+    createdAt: toIso(row.created_at)
+  };
+}
+
+function mapBreakGlassAccessRow(row: BreakGlassAccessRow): BreakGlassAccessRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    requestedByUserId: row.user_id,
+    patientId: row.patient_id,
+    reason: row.reason,
+    status: row.status,
+    accessCategories: row.access_categories,
+    accessScope: row.access_scope,
+    requestedAt: toIso(row.requested_at),
+    expiresAt: toIso(row.expires_at),
+    reviewedByUserId: row.reviewed_by_user_id,
+    reviewedAt: row.reviewed_at ? toIso(row.reviewed_at) : null,
+    reviewReason: row.review_reason,
+    revokedAt: row.revoked_at ? toIso(row.revoked_at) : null,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
   };
 }
 
