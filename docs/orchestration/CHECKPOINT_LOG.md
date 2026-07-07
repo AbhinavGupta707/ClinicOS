@@ -228,6 +228,8 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 ## Checkpoint 5 Integration Verification - 2026-07-07
 
 - Integration branch: `codex/integration/checkpoint-5`.
+- Verified integration patch commit: `353e2bc`.
+- Main promotion merge commit: `d679a78`.
 - Merge order:
   - Billing Domain commit `86e8669` merged first.
   - Payment Provider commit `6ed5350` merged second with master conflict resolution into the canonical billing repository/payment provider contract.
