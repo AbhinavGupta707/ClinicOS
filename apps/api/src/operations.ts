@@ -9,20 +9,44 @@ import type {
   ClinicOperationsRepository,
   CreateAppointmentInput,
   CreateConsentInput,
+  CreateCorrectiveActionInput,
   CreateDentalChartSnapshotInput,
   CreateEncounterInput,
+  CreateInventoryCategoryInput,
+  CreateInventoryCheckRunInput,
+  CreateInventoryCheckTemplateInput,
+  CreateInventoryItemInput,
+  CreateIncidentInput,
   CreateInvoiceInput,
   CreateIntakeFormSubmissionInput,
   CreateIntakeFormTemplateInput,
+  CreateLabCaseInput,
+  CreateLabReconciliationInput,
+  CreateLabVendorInput,
   CreateLeadInput,
   CreatePatientInput,
   CreatePatientInstructionInput,
   CreateProcedurePerformedInput,
   CreatePrescriptionInput,
+  CreateRecallRuleInput,
   CreateReceiptInput,
+  CreateSopScheduleInput,
+  CreateSopTemplateInput,
+  CreateTaskInput,
+  CreateStockLedgerEntryInput,
   CreateTreatmentPlanInput,
+  GenerateDueContinuityInput,
+  GenerateDueSopRunsInput,
+  RecordRecallActionInput,
   RepositoryScope,
+  SopRunSearchFilter,
+  TaskSearchFilter,
+  UpdateCorrectiveActionInput,
   UpdateDentalFindingRepositoryInput,
+  UpdateInventoryCheckRunInput,
+  UpdateLabCaseStatusInput,
+  UpdateSopRunInput,
+  UpdateTaskInput,
   UpdateTreatmentPlanInput
 } from "@clinic-os/db";
 import {
@@ -34,10 +58,12 @@ import {
   assertLeadTransition,
   assertPatientCreateMinimum,
   applyPaymentToInvoice,
+  buildOwnerDashboardProjection,
   buildMorningDashboard,
   buildPatientDuplicateSuggestions,
   calculateBillingLineTotals,
   calculateEndAt,
+  correctiveActionEffectiveStatus,
   hasClinicalNoteContent,
   isAppointmentStatus,
   isBillingCurrency,
@@ -50,9 +76,29 @@ import {
   isEncounterStatus,
   isIntakeFormType,
   isIntakeSubmissionSource,
+  isCorrectiveActionStatus,
+  isCorrectiveActionType,
+  isIncidentCategory,
+  isIncidentSeverity,
+  isIncidentStatus,
+  isInventoryCategoryKind,
+  isInventoryCheckRunStatus,
+  isLabCaseStatus,
+  isLabReconciliationEntryStatus,
+  isLabReconciliationStatus,
   isPatientInstructionChannel,
+  isRecallActionType,
+  isRecallRuleAnchor,
+  isRecallStatus,
   isMediaScanStatus,
   isMediaType,
+  isSopRecurrenceType,
+  isSopRunItemStatus,
+  isSopRunStatus,
+  isTaskPriority,
+  isTaskSourceWorkflow,
+  isTaskStatus,
+  isTaskType,
   isTreatmentPlanStatus,
   isManualPaymentMethod,
   isValidLeadStatus,
@@ -74,6 +120,7 @@ import {
   type LeadIntent,
   type LeadSource,
   type LeadStatus,
+  type LabCaseStatus,
   type MediaScanStatus,
   type MediaType,
   type ManualPaymentMethod,
@@ -87,6 +134,11 @@ import {
   type PricebookProcedureRecord,
   type PrescriptionMedication,
   type QueueStatus,
+  type RecallRecord,
+  type SopRunDetail,
+  type SopScheduleRecord,
+  type SopTemplateDetail,
+  type TaskRecord,
   type TreatmentPlanDetail,
   type UUID
 } from "@clinic-os/domain";
@@ -952,6 +1004,922 @@ export async function getMorningDashboard(
   authorize(context, { permission: "schedule.read" });
   const data = await dependencies.repository.loadDashboardData(scopeFrom(context), date);
   return ok({ dashboard: buildMorningDashboard({ date, ...data }) });
+}
+
+export async function listTasks(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  query: URLSearchParams = new URLSearchParams()
+) {
+  authorize(context, { permission: "task.manage" });
+  const tasks = await dependencies.repository.listTasks(scopeFrom(context), parseTaskSearch(query));
+  return ok({ tasks: tasks.map(publicTask) });
+}
+
+export async function createTask(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "task.manage" });
+  const task = await dependencies.repository.createTask(scopeFrom(context), parseCreateTask(body));
+  await audit(context, dependencies, "task.created", {
+    patientId: task.patientId,
+    resourceType: "task",
+    resourceId: task.id,
+    metadata: taskAuditMetadata(task)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "task.created",
+    aggregateType: "task",
+    aggregateId: task.id,
+    patientId: task.patientId,
+    payload: taskAuditMetadata(task)
+  });
+  return created({ task: publicTask(task) });
+}
+
+export async function updateTask(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  taskId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "task.manage" });
+  const task = await dependencies.repository.updateTask(scopeFrom(context), taskId, parseUpdateTask(body));
+  if (!task) throw notFound("Task not found.", { task_id: taskId });
+  const eventType = task.status === "done" ? "task.completed" : "task.status_changed";
+  await audit(context, dependencies, eventType, {
+    patientId: task.patientId,
+    resourceType: "task",
+    resourceId: task.id,
+    metadata: taskAuditMetadata(task)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType,
+    aggregateType: "task",
+    aggregateId: task.id,
+    patientId: task.patientId,
+    payload: taskAuditMetadata(task)
+  });
+  return ok({ task: publicTask(task) });
+}
+
+export async function generateDueContinuityTasks(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "task.manage" });
+  authorize(context, { permission: "recall.manage" });
+  const result = await dependencies.repository.generateDueContinuityTasks(
+    scopeFrom(context),
+    parseGenerateDueContinuity(body)
+  );
+  for (const recall of result.recallsCreated) {
+    await audit(context, dependencies, "recall.due", {
+      patientId: recall.patientId,
+      resourceType: "recall",
+      resourceId: recall.id,
+      metadata: recallAuditMetadata(recall)
+    });
+    await appendOutbox(context, dependencies, {
+      eventType: "recall.due",
+      aggregateType: "recall",
+      aggregateId: recall.id,
+      patientId: recall.patientId,
+      payload: recallAuditMetadata(recall)
+    });
+  }
+  for (const task of [...result.recallTasksCreated, ...result.followUpTasksCreated]) {
+    await audit(context, dependencies, "task.due", {
+      patientId: task.patientId,
+      resourceType: "task",
+      resourceId: task.id,
+      metadata: taskAuditMetadata(task)
+    });
+    await appendOutbox(context, dependencies, {
+      eventType: "task.due",
+      aggregateType: "task",
+      aggregateId: task.id,
+      patientId: task.patientId,
+      payload: taskAuditMetadata(task)
+    });
+  }
+  return accepted({
+    recallTasksCreated: result.recallTasksCreated.map(publicTask),
+    followUpTasksCreated: result.followUpTasksCreated.map(publicTask),
+    recallsCreated: result.recallsCreated.map(publicRecall),
+    skippedExistingKeys: result.skippedExistingKeys
+  });
+}
+
+export async function createRecallRule(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "recall.manage" });
+  const rule = await dependencies.repository.createRecallRule(scopeFrom(context), parseCreateRecallRule(body));
+  await audit(context, dependencies, "recall.rule_created", {
+    resourceType: "recall_rule",
+    resourceId: rule.id,
+    metadata: {
+      code: rule.code,
+      anchor: rule.anchor,
+      offsetDays: rule.offsetDays,
+      procedureCategory: rule.procedureCategory,
+      pricebookProcedureId: rule.pricebookProcedureId
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "recall.rule_created",
+    aggregateType: "recall_rule",
+    aggregateId: rule.id,
+    payload: {
+      code: rule.code,
+      anchor: rule.anchor,
+      offsetDays: rule.offsetDays,
+      procedureCategory: rule.procedureCategory,
+      pricebookProcedureId: rule.pricebookProcedureId
+    }
+  });
+  return created({ recallRule: rule });
+}
+
+export async function listRecalls(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  query: URLSearchParams = new URLSearchParams()
+) {
+  authorize(context, { permission: "recall.manage" });
+  const recalls = await dependencies.repository.listRecalls(scopeFrom(context), parseRecallSearch(query));
+  return ok({ recalls: recalls.map(publicRecall) });
+}
+
+export async function recordRecallAction(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  recallId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "recall.manage" });
+  const input = parseRecallAction(body);
+  const recall = await dependencies.repository.recordRecallAction(scopeFrom(context), recallId, input);
+  if (!recall) throw notFound("Recall not found.", { recall_id: recallId });
+  const eventType =
+    recall.status === "completed"
+      ? "recall.completed"
+      : input.actionType === "manual_contact_requested" || input.actionType === "manual_contacted"
+        ? "recall.sent"
+        : "recall.action_recorded";
+  await audit(context, dependencies, eventType, {
+    patientId: recall.patientId,
+    resourceType: "recall",
+    resourceId: recall.id,
+    metadata: recallAuditMetadata(recall)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType,
+    aggregateType: "recall",
+    aggregateId: recall.id,
+    patientId: recall.patientId,
+    payload: recallAuditMetadata(recall)
+  });
+  return ok({ recall: publicRecall(recall) });
+}
+
+export async function createSopTemplate(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "sop.manage" });
+  const detail = await dependencies.repository.createSopTemplate(
+    scopeFrom(context),
+    parseCreateSopTemplate(body)
+  );
+  await audit(context, dependencies, "sop_template.created", {
+    resourceType: "sop_template",
+    resourceId: detail.template.id,
+    metadata: { code: detail.template.code, itemCount: detail.items.length }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "sop_template.created",
+    aggregateType: "sop_template",
+    aggregateId: detail.template.id,
+    payload: { code: detail.template.code, itemCount: detail.items.length }
+  });
+  return created({ sopTemplate: publicSopTemplateDetail(detail) });
+}
+
+export async function createSopSchedule(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "sop.manage" });
+  const schedule = await dependencies.repository.createSopSchedule(
+    scopeFrom(context),
+    parseCreateSopSchedule(body)
+  );
+  if (!schedule) throw notFound("SOP template not found.", {});
+  await audit(context, dependencies, "sop_schedule.created", {
+    resourceType: "sop_schedule",
+    resourceId: schedule.id,
+    metadata: sopScheduleAuditMetadata(schedule)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "sop_schedule.created",
+    aggregateType: "sop_schedule",
+    aggregateId: schedule.id,
+    payload: sopScheduleAuditMetadata(schedule)
+  });
+  return created({ sopSchedule: schedule });
+}
+
+export async function generateDueSopRuns(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "sop.manage" });
+  const result = await dependencies.repository.generateDueSopRuns(
+    scopeFrom(context),
+    parseGenerateDueSopRuns(body)
+  );
+  for (const detail of result.runsCreated) {
+    await audit(context, dependencies, "sop_run.created", {
+      resourceType: "sop_run",
+      resourceId: detail.run.id,
+      metadata: sopRunAuditMetadata(detail)
+    });
+    await appendOutbox(context, dependencies, {
+      eventType: "sop_run.created",
+      aggregateType: "sop_run",
+      aggregateId: detail.run.id,
+      payload: sopRunAuditMetadata(detail)
+    });
+  }
+  return accepted({
+    sopRunsCreated: result.runsCreated.map(publicSopRunDetail),
+    skippedExistingKeys: result.skippedExistingKeys
+  });
+}
+
+export async function listSopRuns(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  query: URLSearchParams = new URLSearchParams()
+) {
+  authorize(context, { permission: "sop.manage" });
+  const runs = await dependencies.repository.listSopRuns(scopeFrom(context), parseSopRunSearch(query));
+  return ok({ sopRuns: runs.map(publicSopRunDetail) });
+}
+
+export async function updateSopRun(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  sopRunId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "sop.manage" });
+  const detail = await dependencies.repository.updateSopRun(
+    scopeFrom(context),
+    sopRunId,
+    parseUpdateSopRun(body)
+  );
+  if (!detail) throw notFound("SOP run not found.", { sop_run_id: sopRunId });
+  const eventType = detail.run.status === "completed" ? "sop_run.completed" : "sop_run.updated";
+  await audit(context, dependencies, eventType, {
+    resourceType: "sop_run",
+    resourceId: detail.run.id,
+    metadata: sopRunAuditMetadata(detail)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType,
+    aggregateType: "sop_run",
+    aggregateId: detail.run.id,
+    payload: sopRunAuditMetadata(detail)
+  });
+  return ok({ sopRun: publicSopRunDetail(detail) });
+}
+
+export async function listLabVendors(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "lab.manage" });
+  const labVendors = await dependencies.repository.listLabVendors(scopeFrom(context));
+  return ok({ labVendors });
+}
+
+export async function createLabVendor(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "lab.manage" });
+  const vendor = await dependencies.repository.createLabVendor(
+    scopeFrom(context),
+    parseCreateLabVendor(body)
+  );
+
+  await audit(context, dependencies, "lab_vendor.created", {
+    resourceType: "lab_vendor",
+    resourceId: vendor.id,
+    metadata: { displayName: vendor.displayName }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "lab_vendor.created",
+    aggregateType: "lab_vendor",
+    aggregateId: vendor.id,
+    payload: { vendorId: vendor.id, displayName: vendor.displayName }
+  });
+
+  return created({ labVendor: vendor });
+}
+
+export async function listLabCases(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { status?: string | null; dueBefore?: string | null; vendorId?: string | null }
+) {
+  authorize(context, { permission: "lab.manage" });
+  const labCases = await dependencies.repository.listLabCases(scopeFrom(context), {
+    status: filter.status ? parseLabCaseStatus(filter.status) : null,
+    dueBefore: filter.dueBefore ?? null,
+    vendorId: filter.vendorId ? uuidField(filter.vendorId, "vendorId") : null
+  });
+  return ok({ labCases });
+}
+
+export async function createLabCase(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "lab.manage" });
+  const input = parseCreateLabCase(body);
+  const result = await dependencies.repository.createLabCase(scopeFrom(context), input);
+  if (!result) throw notFound("Lab vendor, patient, or clinical linkage not found.", {
+    vendor_id: input.vendorId,
+    patient_id: input.patientId
+  });
+
+  await audit(context, dependencies, "lab_case.created", {
+    patientId: result.labCase.patientId,
+    resourceType: "lab_case",
+    resourceId: result.labCase.id,
+    metadata: { vendorId: result.labCase.vendorId, dueAt: result.labCase.dueAt }
+  });
+  await audit(context, dependencies, "lab_slip.generated", {
+    patientId: result.labCase.patientId,
+    resourceType: "lab_case",
+    resourceId: result.labCase.id,
+    metadata: {
+      slipNumber: result.labCase.slipNumber,
+      slipVersion: result.labCase.slipVersion
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "lab_case.created",
+    aggregateType: "lab_case",
+    aggregateId: result.labCase.id,
+    patientId: result.labCase.patientId,
+    payload: {
+      labCaseId: result.labCase.id,
+      vendorId: result.labCase.vendorId,
+      dueAt: result.labCase.dueAt,
+      slipNumber: result.labCase.slipNumber
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "lab_slip.generated",
+    aggregateType: "lab_slip",
+    aggregateId: result.labCase.id,
+    patientId: result.labCase.patientId,
+    payload: {
+      labCaseId: result.labCase.id,
+      slipNumber: result.labCase.slipNumber,
+      slipVersion: result.labCase.slipVersion
+    }
+  });
+
+  return created({ labCase: result });
+}
+
+export async function updateLabCase(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  labCaseId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "lab.manage" });
+  const input = parseUpdateLabCaseStatus(body);
+  const before = await dependencies.repository.findLabCaseById(scopeFrom(context), labCaseId);
+  if (!before) throw notFound("Lab case not found.", { lab_case_id: labCaseId });
+
+  let result;
+  try {
+    result = await dependencies.repository.updateLabCaseStatus(scopeFrom(context), labCaseId, input);
+  } catch (error) {
+    throw conflict(error instanceof Error ? error.message : "Invalid lab case transition.", {
+      lab_case_id: labCaseId,
+      to_status: input.status
+    });
+  }
+  if (!result) throw notFound("Lab case not found.", { lab_case_id: labCaseId });
+
+  const action = labCaseAuditAction(input.status);
+  const eventType = labCaseEventType(input.status);
+  await audit(context, dependencies, action, {
+    patientId: result.labCase.patientId,
+    resourceType: "lab_case",
+    resourceId: result.labCase.id,
+    metadata: { fromStatus: before.labCase.status, toStatus: result.labCase.status }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType,
+    aggregateType: "lab_case",
+    aggregateId: result.labCase.id,
+    patientId: result.labCase.patientId,
+    payload: {
+      labCaseId: result.labCase.id,
+      fromStatus: before.labCase.status,
+      toStatus: result.labCase.status
+    }
+  });
+
+  return ok({ labCase: result });
+}
+
+export async function createLabReconciliation(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "lab.manage" });
+  const input = parseCreateLabReconciliation(body);
+  const result = await dependencies.repository.createLabReconciliation(scopeFrom(context), input);
+  if (!result) throw notFound("Lab vendor or lab case not found for reconciliation.", {
+    vendor_id: input.vendorId
+  });
+
+  await audit(context, dependencies, "lab_reconciliation.created", {
+    resourceType: "lab_reconciliation",
+    resourceId: result.reconciliation.id,
+    metadata: {
+      vendorId: result.reconciliation.vendorId,
+      periodStart: result.reconciliation.periodStart,
+      periodEnd: result.reconciliation.periodEnd,
+      entryCount: result.entries.length,
+      varianceAmountMinor: result.reconciliation.varianceAmountMinor
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "lab_reconciliation.created",
+    aggregateType: "lab_reconciliation",
+    aggregateId: result.reconciliation.id,
+    payload: {
+      reconciliationId: result.reconciliation.id,
+      vendorId: result.reconciliation.vendorId,
+      periodStart: result.reconciliation.periodStart,
+      periodEnd: result.reconciliation.periodEnd,
+      entryCount: result.entries.length,
+      varianceAmountMinor: result.reconciliation.varianceAmountMinor
+    }
+  });
+
+  return created({ labReconciliation: result });
+}
+
+export async function listInventoryCategories(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const categories = await dependencies.repository.listInventoryCategories(scopeFrom(context));
+  return ok({ categories });
+}
+
+export async function createInventoryCategory(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const category = await dependencies.repository.createInventoryCategory(
+    scopeFrom(context),
+    parseCreateInventoryCategory(body)
+  );
+
+  await audit(context, dependencies, "inventory_category.created", {
+    resourceType: "inventory_category",
+    resourceId: category.id,
+    metadata: { kind: category.kind }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "inventory_category.created",
+    aggregateType: "inventory_category",
+    aggregateId: category.id,
+    payload: { categoryId: category.id, kind: category.kind }
+  });
+
+  return created({ category });
+}
+
+export async function listInventoryItems(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const items = await dependencies.repository.listInventoryItems(scopeFrom(context));
+  return ok({ items });
+}
+
+export async function createInventoryItem(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const input = parseCreateInventoryItem(body);
+  const item = await dependencies.repository.createInventoryItem(scopeFrom(context), input);
+  if (!item) throw notFound("Inventory category not found.", { category_id: input.categoryId });
+
+  await audit(context, dependencies, "inventory_item.created", {
+    resourceType: "inventory_item",
+    resourceId: item.id,
+    metadata: { sku: item.sku, openingQuantity: input.openingQuantity ?? 0 }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "inventory_item.created",
+    aggregateType: "inventory_item",
+    aggregateId: item.id,
+    payload: { itemId: item.id, sku: item.sku, openingQuantity: input.openingQuantity ?? 0 }
+  });
+
+  return created({ item });
+}
+
+export async function createStockLedgerEntry(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const input = parseCreateStockLedgerEntry(body);
+  const entry = await dependencies.repository.createStockLedgerEntry(scopeFrom(context), input);
+  if (!entry) throw notFound("Inventory item not found.", { item_id: input.itemId });
+
+  await audit(context, dependencies, "inventory_stock.adjusted", {
+    resourceType: "stock_ledger_entry",
+    resourceId: entry.id,
+    metadata: {
+      itemId: entry.itemId,
+      movementType: entry.movementType,
+      quantityDelta: entry.quantityDelta,
+      quantityAfter: entry.quantityAfter
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "inventory_stock.adjusted",
+    aggregateType: "stock_ledger_entry",
+    aggregateId: entry.id,
+    payload: {
+      itemId: entry.itemId,
+      movementType: entry.movementType,
+      quantityDelta: entry.quantityDelta,
+      quantityAfter: entry.quantityAfter
+    }
+  });
+
+  return created({ stockLedgerEntry: entry });
+}
+
+export async function listInventoryCheckTemplates(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const templates = await dependencies.repository.listInventoryCheckTemplates(scopeFrom(context));
+  return ok({ templates });
+}
+
+export async function createInventoryCheckTemplate(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const input = parseCreateInventoryCheckTemplate(body);
+  const template = await dependencies.repository.createInventoryCheckTemplate(scopeFrom(context), input);
+  if (!template) throw notFound("Inventory item not found for check template.", {});
+  return created({ template });
+}
+
+export async function createInventoryCheckRun(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const input = parseCreateInventoryCheckRun(body);
+  const run = await dependencies.repository.createInventoryCheckRun(scopeFrom(context), input);
+  if (!run) throw notFound("Inventory check template not found.", { template_id: input.templateId });
+
+  await audit(context, dependencies, "inventory_check.created", {
+    resourceType: "inventory_check_run",
+    resourceId: run.run.id,
+    metadata: { templateId: run.run.templateId, lineCount: run.lines.length }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "inventory_check.created",
+    aggregateType: "inventory_check_run",
+    aggregateId: run.run.id,
+    payload: { checkRunId: run.run.id, templateId: run.run.templateId, lineCount: run.lines.length }
+  });
+
+  return created({ checkRun: run });
+}
+
+export async function updateInventoryCheckRun(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  checkRunId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const input = parseUpdateInventoryCheckRun(body);
+  const run = await dependencies.repository.updateInventoryCheckRun(
+    scopeFrom(context),
+    checkRunId,
+    input
+  );
+  if (!run) throw conflict("Inventory check run cannot be updated for this state or payload.", {
+    check_run_id: checkRunId
+  });
+
+  if (run.run.status === "completed") {
+    const exceptionLines = run.lines.filter((line) => line.exceptionType);
+    await audit(context, dependencies, "inventory_check.completed", {
+      resourceType: "inventory_check_run",
+      resourceId: run.run.id,
+      metadata: {
+        exceptionCount: exceptionLines.length,
+        procurementSuggestionCount: run.procurementSuggestions.length
+      }
+    });
+    await appendOutbox(context, dependencies, {
+      eventType: "inventory_check.completed",
+      aggregateType: "inventory_check_run",
+      aggregateId: run.run.id,
+      payload: {
+        checkRunId: run.run.id,
+        exceptionCount: exceptionLines.length
+      }
+    });
+    for (const line of exceptionLines) {
+      if (line.exceptionType !== "low_stock" && line.exceptionType !== "missing_item") continue;
+      await audit(context, dependencies, "inventory.low_stock_detected", {
+        resourceType: "inventory_item",
+        resourceId: line.itemId,
+        metadata: {
+          checkRunId: run.run.id,
+          checkRunLineId: line.id,
+          exceptionType: line.exceptionType,
+          expectedQuantity: line.expectedQuantity,
+          countedQuantity: line.countedQuantity
+        }
+      });
+      await appendOutbox(context, dependencies, {
+        eventType: "inventory.low_stock_detected",
+        aggregateType: "inventory_item",
+        aggregateId: line.itemId,
+        payload: {
+          checkRunId: run.run.id,
+          checkRunLineId: line.id,
+          exceptionType: line.exceptionType,
+          expectedQuantity: line.expectedQuantity,
+          countedQuantity: line.countedQuantity
+        }
+      });
+    }
+    for (const suggestion of run.procurementSuggestions) {
+      await audit(context, dependencies, "inventory.procurement_suggested", {
+        resourceType: "procurement_suggestion",
+        resourceId: suggestion.id,
+        metadata: {
+          itemId: suggestion.itemId,
+          suggestedQuantity: suggestion.suggestedQuantity,
+          taskCreation: "suggested_not_created"
+        }
+      });
+      await appendOutbox(context, dependencies, {
+        eventType: "inventory.procurement_suggested",
+        aggregateType: "procurement_suggestion",
+        aggregateId: suggestion.id,
+        payload: {
+          suggestionId: suggestion.id,
+          itemId: suggestion.itemId,
+          suggestedQuantity: suggestion.suggestedQuantity,
+          taskCreation: "suggested_not_created"
+        }
+      });
+    }
+  }
+
+  return ok({ checkRun: run });
+}
+
+export async function listInventoryExceptions(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { itemId?: string | null; checkRunId?: string | null }
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const exceptions = await dependencies.repository.listInventoryExceptions(scopeFrom(context), {
+    itemId: filter.itemId ? uuidField(filter.itemId, "itemId") : null,
+    checkRunId: filter.checkRunId ? uuidField(filter.checkRunId, "checkRunId") : null
+  });
+  return ok({ exceptions });
+}
+
+export async function listIncidents(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { status?: string | null; severity?: string | null; category?: string | null }
+) {
+  authorize(context, { permission: "incident.manage" });
+  const incidents = await dependencies.repository.listIncidents(scopeFrom(context), {
+    status: filter.status ? parseIncidentStatus(filter.status) : null,
+    severity: filter.severity ? parseIncidentSeverity(filter.severity) : null,
+    category: filter.category ? parseIncidentCategory(filter.category) : null
+  });
+  return ok({ incidents });
+}
+
+export async function createIncident(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "incident.manage" });
+  const input = parseCreateIncident(body);
+  const incident = await dependencies.repository.createIncident(scopeFrom(context), input);
+  if (!incident) throw notFound("Incident linkage not found.", {});
+
+  await audit(context, dependencies, "incident.created", {
+    patientId: incident.patientId,
+    resourceType: "incident",
+    resourceId: incident.id,
+    metadata: {
+      category: incident.category,
+      severity: incident.severity,
+      labCaseId: incident.labCaseId,
+      inventoryItemId: incident.inventoryItemId
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "incident.created",
+    aggregateType: "incident",
+    aggregateId: incident.id,
+    patientId: incident.patientId,
+    payload: {
+      incidentId: incident.id,
+      category: incident.category,
+      severity: incident.severity,
+      status: incident.status
+    }
+  });
+
+  return created({ incident });
+}
+
+export async function listCorrectiveActions(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "corrective_action.manage" });
+  const correctiveActions = (await dependencies.repository.listCorrectiveActions(scopeFrom(context))).map(
+    publicCorrectiveAction
+  );
+  return ok({ correctiveActions });
+}
+
+export async function createCorrectiveAction(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "corrective_action.manage" });
+  const input = parseCreateCorrectiveAction(body);
+  const correctiveAction = await dependencies.repository.createCorrectiveAction(scopeFrom(context), input);
+  if (!correctiveAction) throw notFound("Incident not found.", { incident_id: input.incidentId ?? null });
+
+  await audit(context, dependencies, "corrective_action.created", {
+    resourceType: "corrective_action",
+    resourceId: correctiveAction.id,
+    metadata: {
+      incidentId: correctiveAction.incidentId,
+      actionType: correctiveAction.actionType,
+      dueAt: correctiveAction.dueAt
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "corrective_action.created",
+    aggregateType: "corrective_action",
+    aggregateId: correctiveAction.id,
+    payload: {
+      correctiveActionId: correctiveAction.id,
+      incidentId: correctiveAction.incidentId,
+      dueAt: correctiveAction.dueAt
+    }
+  });
+
+  return created({ correctiveAction: publicCorrectiveAction(correctiveAction) });
+}
+
+export async function updateCorrectiveAction(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  correctiveActionId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "corrective_action.manage" });
+  const input = parseUpdateCorrectiveAction(body);
+  const correctiveAction = await dependencies.repository.updateCorrectiveAction(
+    scopeFrom(context),
+    correctiveActionId,
+    input
+  );
+  if (!correctiveAction) throw notFound("Corrective action not found or already closed.", {
+    corrective_action_id: correctiveActionId
+  });
+
+  const action =
+    correctiveAction.status === "completed"
+      ? "corrective_action.completed"
+      : "corrective_action.status_changed";
+  await audit(context, dependencies, action, {
+    resourceType: "corrective_action",
+    resourceId: correctiveAction.id,
+    metadata: {
+      incidentId: correctiveAction.incidentId,
+      status: correctiveAction.status,
+      effectiveStatus: correctiveActionEffectiveStatus(correctiveAction)
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: action,
+    aggregateType: "corrective_action",
+    aggregateId: correctiveAction.id,
+    payload: {
+      correctiveActionId: correctiveAction.id,
+      incidentId: correctiveAction.incidentId,
+      status: correctiveAction.status,
+      effectiveStatus: correctiveActionEffectiveStatus(correctiveAction)
+    }
+  });
+
+  return ok({ correctiveAction: publicCorrectiveAction(correctiveAction) });
+}
+
+export async function getOwnerDashboard(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { from?: string | null; to?: string | null }
+) {
+  authorize(context, { permission: "analytics.read" });
+  const range = parseOwnerDashboardRange(filter);
+  const data = await dependencies.repository.loadOwnerDashboardProjectionData(
+    scopeFrom(context),
+    range
+  );
+  const dashboard = buildOwnerDashboardProjection({
+    from: range.startAt,
+    to: range.endAt,
+    generatedAt: new Date().toISOString(),
+    data
+  });
+
+  await audit(context, dependencies, "owner_dashboard.viewed", {
+    resourceType: "owner_dashboard",
+    resourceId: context.clinicId,
+    metadata: {
+      from: range.startAt,
+      to: range.endAt,
+      sourceKeys: dashboard.dataSources.map((source) => source.key),
+      revenueSources: dashboard.revenue.bySource.map((source) => source.source)
+    }
+  });
+
+  return ok({ dashboard });
 }
 
 export async function listPricebookProcedures(
@@ -2769,6 +3737,9 @@ async function bookAppointment(
     leadId: appointment.leadId,
     appointmentId: appointment.id,
     taskType: "confirmation",
+    sourceWorkflow: "appointment_confirmation",
+    sourceRecordType: "appointment",
+    sourceRecordId: appointment.id,
     title: "Confirm appointment",
     dueAt: appointment.startAt,
     assignedToUserId: scope.actorUserId
@@ -2939,6 +3910,49 @@ function authorizeDoctorSignature(
   }
 }
 
+function labCaseAuditAction(status: LabCaseStatus): KnownAuditAction {
+  switch (status) {
+    case "sent_to_lab":
+      return "lab_case.sent";
+    case "received_by_lab":
+      return "lab_case.received";
+    case "returned":
+      return "lab_case.returned";
+    case "completed":
+      return "lab_case.completed";
+    case "cancelled":
+      return "lab_case.cancelled";
+    default:
+      return "lab_case.status_changed";
+  }
+}
+
+function labCaseEventType(status: LabCaseStatus): DomainEventType {
+  switch (status) {
+    case "sent_to_lab":
+      return "lab_case.sent";
+    case "received_by_lab":
+      return "lab_case.received";
+    case "returned":
+      return "lab_case.returned";
+    case "completed":
+      return "lab_case.completed";
+    case "cancelled":
+      return "lab_case.cancelled";
+    default:
+      return "lab_case.status_changed";
+  }
+}
+
+function publicCorrectiveAction<TAction extends { status: string; dueAt: string }>(action: TAction) {
+  const effectiveStatus = correctiveActionEffectiveStatus(action as Parameters<typeof correctiveActionEffectiveStatus>[0]);
+  return {
+    ...action,
+    effectiveStatus,
+    overdue: effectiveStatus === "overdue"
+  };
+}
+
 type PublicTimelineItemType =
   | "patient"
   | "attribution"
@@ -2956,6 +3970,8 @@ type PublicTimelineItemType =
   | "invoice"
   | "payment"
   | "receipt"
+  | "lab"
+  | "quality"
   | "task"
   | "consent";
 
@@ -3041,6 +4057,15 @@ function publicTimelineItemType(
       return "payment";
     case "receipt_generated":
       return "invoice";
+    case "lab_case_created":
+    case "lab_case_sent":
+    case "lab_case_returned":
+    case "lab_case_completed":
+      return "lab";
+    case "incident_created":
+    case "corrective_action_created":
+    case "corrective_action_completed":
+      return "quality";
   }
 }
 
@@ -3124,6 +4149,20 @@ function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): Dom
       return "payment.reconciliation_required";
     case "receipt_generated":
       return "receipt.generated";
+    case "lab_case_created":
+      return "lab_case.created";
+    case "lab_case_sent":
+      return "lab_case.sent";
+    case "lab_case_returned":
+      return "lab_case.returned";
+    case "lab_case_completed":
+      return "lab_case.completed";
+    case "incident_created":
+      return "incident.created";
+    case "corrective_action_created":
+      return "corrective_action.created";
+    case "corrective_action_completed":
+      return "corrective_action.completed";
   }
 }
 
@@ -3227,6 +4266,245 @@ function parseCreateAppointment(
     notes: optionalNullableString(input.notes, "notes"),
     allowConflictOverride: Boolean(input.allowConflictOverride)
   };
+}
+
+function parseTaskSearch(query: URLSearchParams): TaskSearchFilter {
+  const status = query.get("status");
+  const sourceWorkflow = query.get("sourceWorkflow");
+  return {
+    status: status ? parseTaskStatus(status) : null,
+    dueDate: query.get("dueDate"),
+    dueBefore: query.get("dueBefore"),
+    assignedToUserId: uuidOrNullQuery(query.get("assignedToUserId"), "assignedToUserId"),
+    patientId: uuidOrNullQuery(query.get("patientId"), "patientId"),
+    sourceWorkflow: sourceWorkflow ? parseTaskSourceWorkflow(sourceWorkflow) : null,
+    limit: integerQueryParam(query.get("limit"), "limit")
+  };
+}
+
+function parseCreateTask(body: unknown): CreateTaskInput {
+  const input = objectBody(body);
+  const taskType = parseTaskType(requiredString(input.taskType ?? "manual", "taskType"));
+  return {
+    patientId: optionalUuid(input.patientId, "patientId"),
+    leadId: optionalUuid(input.leadId, "leadId"),
+    appointmentId: optionalUuid(input.appointmentId, "appointmentId"),
+    invoiceId: optionalUuid(input.invoiceId, "invoiceId"),
+    encounterId: optionalUuid(input.encounterId, "encounterId"),
+    treatmentPlanId: optionalUuid(input.treatmentPlanId, "treatmentPlanId"),
+    procedurePerformedId: optionalUuid(input.procedurePerformedId, "procedurePerformedId"),
+    taskType,
+    sourceWorkflow:
+      input.sourceWorkflow === undefined
+        ? "manual"
+        : parseTaskSourceWorkflow(requiredString(input.sourceWorkflow, "sourceWorkflow")),
+    sourceRecordType: optionalNullableString(input.sourceRecordType, "sourceRecordType"),
+    sourceRecordId: optionalUuid(input.sourceRecordId, "sourceRecordId"),
+    title: requiredString(input.title, "title"),
+    description: optionalNullableString(input.description, "description"),
+    priority:
+      input.priority === undefined
+        ? "normal"
+        : parseTaskPriority(requiredString(input.priority, "priority")),
+    status:
+      input.status === undefined ? undefined : parseTaskStatus(requiredString(input.status, "status")),
+    dueAt: optionalNullableString(input.dueAt, "dueAt"),
+    assignedToUserId: optionalUuid(input.assignedToUserId, "assignedToUserId"),
+    idempotencyKey: optionalNullableString(input.idempotencyKey, "idempotencyKey")
+  };
+}
+
+function parseUpdateTask(body: unknown): UpdateTaskInput {
+  const input = objectBody(body);
+  const parsed = {
+    status:
+      input.status === undefined ? undefined : parseTaskStatus(requiredString(input.status, "status")),
+    assignedToUserId:
+      input.assignedToUserId === undefined
+        ? undefined
+        : optionalUuid(input.assignedToUserId, "assignedToUserId"),
+    priority:
+      input.priority === undefined
+        ? undefined
+        : parseTaskPriority(requiredString(input.priority, "priority")),
+    dueAt: input.dueAt === undefined ? undefined : optionalNullableString(input.dueAt, "dueAt"),
+    title: input.title === undefined ? undefined : requiredString(input.title, "title"),
+    description:
+      input.description === undefined
+        ? undefined
+        : optionalNullableString(input.description, "description"),
+    completionEvidence:
+      input.completionEvidence === undefined
+        ? undefined
+        : recordField(input.completionEvidence, "completionEvidence"),
+    cancelledReason:
+      input.cancelledReason === undefined
+        ? undefined
+        : optionalNullableString(input.cancelledReason, "cancelledReason")
+  };
+  if (parsed.status === "done" && !parsed.completionEvidence) {
+    throw validation("Completed tasks require completionEvidence.", { field: "completionEvidence" });
+  }
+  if (parsed.status === "cancelled" && !parsed.cancelledReason) {
+    throw validation("Cancelled tasks require cancelledReason.", { field: "cancelledReason" });
+  }
+  return parsed;
+}
+
+function parseGenerateDueContinuity(body: unknown): GenerateDueContinuityInput {
+  const input = body === undefined ? {} : objectBody(body);
+  return {
+    asOf: requiredString(input.asOf ?? new Date().toISOString(), "asOf")
+  };
+}
+
+function parseCreateRecallRule(body: unknown): CreateRecallRuleInput {
+  const input = objectBody(body);
+  const anchor =
+    input.anchor === undefined ? undefined : parseRecallRuleAnchor(requiredString(input.anchor, "anchor"));
+  return {
+    code: requiredString(input.code, "code"),
+    title: requiredString(input.title, "title"),
+    anchor,
+    offsetDays: integerField(input.offsetDays ?? 183, "offsetDays", { min: 1, max: 3650 }),
+    procedureCategory: optionalNullableString(input.procedureCategory, "procedureCategory"),
+    pricebookProcedureId: optionalUuid(input.pricebookProcedureId, "pricebookProcedureId"),
+    defaultTaskTitle: optionalNullableString(input.defaultTaskTitle, "defaultTaskTitle"),
+    defaultTaskPriority:
+      input.defaultTaskPriority === undefined
+        ? "normal"
+        : parseTaskPriority(requiredString(input.defaultTaskPriority, "defaultTaskPriority"))
+  };
+}
+
+function parseRecallSearch(query: URLSearchParams) {
+  const status = query.get("status");
+  return {
+    status: status ? parseRecallStatus(status) : null,
+    dueBefore: query.get("dueBefore"),
+    patientId: uuidOrNullQuery(query.get("patientId"), "patientId"),
+    limit: integerQueryParam(query.get("limit"), "limit")
+  };
+}
+
+function parseRecallAction(body: unknown): RecordRecallActionInput {
+  const input = objectBody(body);
+  return {
+    actionType: parseRecallActionType(requiredString(input.actionType, "actionType")),
+    method: optionalNullableString(input.method, "method"),
+    appointmentId: optionalUuid(input.appointmentId, "appointmentId"),
+    evidence: recordField(input.evidence, "evidence"),
+    notes: optionalNullableString(input.notes, "notes")
+  };
+}
+
+function parseCreateSopTemplate(body: unknown): CreateSopTemplateInput {
+  const input = objectBody(body);
+  const items = input.items;
+  if (!Array.isArray(items) || items.length === 0) {
+    throw validation("SOP template items must be a non-empty array.", { field: "items" });
+  }
+  return {
+    code: requiredString(input.code, "code"),
+    title: requiredString(input.title, "title"),
+    description: optionalNullableString(input.description, "description"),
+    items: items.map((itemValue, index) => {
+      const item = objectField(itemValue, `items[${index}]`);
+      return {
+        title: requiredString(item.title, `items[${index}].title`),
+        instructions: optionalNullableString(item.instructions, `items[${index}].instructions`),
+        evidenceRequired:
+          item.evidenceRequired === undefined
+            ? false
+            : booleanField(item.evidenceRequired, `items[${index}].evidenceRequired`)
+      };
+    })
+  };
+}
+
+function parseCreateSopSchedule(body: unknown): CreateSopScheduleInput {
+  const input = objectBody(body);
+  const recurrenceType = parseSopRecurrenceType(requiredString(input.recurrenceType, "recurrenceType"));
+  const parsed = {
+    templateId: uuidField(input.templateId, "templateId"),
+    title: requiredString(input.title, "title"),
+    recurrenceType,
+    intervalDays:
+      input.intervalDays === undefined || input.intervalDays === null
+        ? null
+        : integerField(input.intervalDays, "intervalDays", { min: 1, max: 365 }),
+    dayOfWeek:
+      input.dayOfWeek === undefined || input.dayOfWeek === null
+        ? null
+        : integerField(input.dayOfWeek, "dayOfWeek", { min: 0, max: 6 }),
+    dayOfMonth:
+      input.dayOfMonth === undefined || input.dayOfMonth === null
+        ? null
+        : integerField(input.dayOfMonth, "dayOfMonth", { min: 1, max: 31 }),
+    dueTime: requiredString(input.dueTime, "dueTime"),
+    timezone: optionalNullableString(input.timezone, "timezone"),
+    startsOn: requiredString(input.startsOn, "startsOn"),
+    endsOn: optionalNullableString(input.endsOn, "endsOn"),
+    assignedToUserId: optionalUuid(input.assignedToUserId, "assignedToUserId"),
+    defaultTaskPriority:
+      input.defaultTaskPriority === undefined
+        ? "normal"
+        : parseTaskPriority(requiredString(input.defaultTaskPriority, "defaultTaskPriority"))
+  };
+  assertSopScheduleShape(parsed);
+  return parsed;
+}
+
+function parseGenerateDueSopRuns(body: unknown): GenerateDueSopRunsInput {
+  const input = body === undefined ? {} : objectBody(body);
+  return {
+    asOf: requiredString(input.asOf ?? new Date().toISOString(), "asOf")
+  };
+}
+
+function parseSopRunSearch(query: URLSearchParams): SopRunSearchFilter {
+  const status = query.get("status");
+  return {
+    date: query.get("date"),
+    status: status ? parseSopRunStatus(status) : null,
+    dueBefore: query.get("dueBefore"),
+    limit: integerQueryParam(query.get("limit"), "limit")
+  };
+}
+
+function parseUpdateSopRun(body: unknown): UpdateSopRunInput {
+  const input = objectBody(body);
+  const items = input.items;
+  const parsed = {
+    status:
+      input.status === undefined ? undefined : parseSopRunStatus(requiredString(input.status, "status")),
+    completionEvidence:
+      input.completionEvidence === undefined
+        ? undefined
+        : recordField(input.completionEvidence, "completionEvidence"),
+    items:
+      items === undefined
+        ? undefined
+        : parseSopRunItemUpdates(items)
+  };
+  if (parsed.status === "completed" && !parsed.completionEvidence) {
+    throw validation("Completed SOP runs require completionEvidence.", {
+      field: "completionEvidence"
+    });
+  }
+  return parsed;
+}
+
+function parseSopRunItemUpdates(value: unknown): NonNullable<UpdateSopRunInput["items"]> {
+  if (!Array.isArray(value)) throw validation("items must be an array.", { field: "items" });
+  return value.map((itemValue, index) => {
+    const item = objectField(itemValue, `items[${index}]`);
+    return {
+      itemId: uuidField(item.itemId ?? item.id, `items[${index}].itemId`),
+      status: parseSopRunItemStatus(requiredString(item.status, `items[${index}].status`)),
+      evidence: recordField(item.evidence, `items[${index}].evidence`)
+    };
+  });
 }
 
 function parseCreateIntakeFormTemplate(body: unknown): CreateIntakeFormTemplateInput {
@@ -3778,6 +5056,265 @@ function parsePaymentCustomer(
   };
 }
 
+function parseCreateLabVendor(body: unknown): CreateLabVendorInput {
+  const input = objectBody(body);
+  return {
+    displayName: requiredString(input.displayName ?? input.name, "displayName"),
+    phone: optionalNullableString(input.phone, "phone"),
+    email: optionalNullableString(input.email, "email"),
+    address: recordField(input.address, "address"),
+    taxRegistrationNumber: optionalNullableString(input.taxRegistrationNumber, "taxRegistrationNumber"),
+    paymentTermsDays:
+      input.paymentTermsDays === undefined
+        ? undefined
+        : integerField(input.paymentTermsDays, "paymentTermsDays", { min: 0, max: 365 })
+  };
+}
+
+function parseCreateLabCase(body: unknown): CreateLabCaseInput {
+  const input = objectBody(body);
+  const items = arrayField(input.items, "items").map((value, index) => {
+    const item = objectField(value, `items[${index}]`);
+    return {
+      itemType: requiredString(item.itemType ?? item.type, `items[${index}].itemType`),
+      toothNumber: optionalNullableString(item.toothNumber, `items[${index}].toothNumber`),
+      material: optionalNullableString(item.material, `items[${index}].material`),
+      shade: optionalNullableString(item.shade, `items[${index}].shade`),
+      quantity:
+        item.quantity === undefined
+          ? 1
+          : integerField(item.quantity, `items[${index}].quantity`, { min: 1, max: 99 }),
+      notes: optionalNullableString(item.notes, `items[${index}].notes`)
+    };
+  });
+  if (items.length === 0) throw validation("Lab case requires at least one item.", { field: "items" });
+  return {
+    vendorId: uuidField(input.vendorId, "vendorId"),
+    patientId: uuidField(input.patientId, "patientId"),
+    encounterId: optionalUuid(input.encounterId, "encounterId"),
+    treatmentPlanId: optionalUuid(input.treatmentPlanId, "treatmentPlanId"),
+    treatmentPlanEstimateItemId: optionalUuid(input.treatmentPlanEstimateItemId, "treatmentPlanEstimateItemId"),
+    procedurePerformedId: optionalUuid(input.procedurePerformedId, "procedurePerformedId"),
+    title: requiredString(input.title, "title"),
+    priority: parseLabPriority(input.priority ?? "routine"),
+    dueAt: requiredString(input.dueAt, "dueAt"),
+    clinicalNotes: optionalNullableString(input.clinicalNotes, "clinicalNotes"),
+    internalNotes: optionalNullableString(input.internalNotes, "internalNotes"),
+    expectedCostMinor:
+      input.expectedCostMinor === undefined || input.expectedCostMinor === null
+        ? null
+        : integerField(input.expectedCostMinor, "expectedCostMinor", { min: 0 }),
+    slipMetadata: recordField(input.slipMetadata, "slipMetadata"),
+    items
+  };
+}
+
+function parseUpdateLabCaseStatus(body: unknown): UpdateLabCaseStatusInput {
+  const input = objectBody(body);
+  return {
+    status: parseLabCaseStatus(requiredString(input.status, "status")),
+    reason: optionalNullableString(input.reason, "reason"),
+    evidence: recordField(input.evidence, "evidence")
+  };
+}
+
+function parseCreateLabReconciliation(body: unknown): CreateLabReconciliationInput {
+  const input = objectBody(body);
+  const entries = arrayField(input.entries, "entries").map((value, index) => {
+    const entry = objectField(value, `entries[${index}]`);
+    return {
+      labCaseId: uuidField(entry.labCaseId, `entries[${index}].labCaseId`),
+      status:
+        entry.status === undefined
+          ? undefined
+          : parseLabReconciliationEntryStatus(requiredString(entry.status, `entries[${index}].status`)),
+      invoiceAmountMinor:
+        entry.invoiceAmountMinor === undefined || entry.invoiceAmountMinor === null
+          ? null
+          : integerField(entry.invoiceAmountMinor, `entries[${index}].invoiceAmountMinor`, { min: 0 }),
+      notes: optionalNullableString(entry.notes, `entries[${index}].notes`)
+    };
+  });
+  if (entries.length === 0) {
+    throw validation("Lab reconciliation requires at least one entry.", { field: "entries" });
+  }
+  return {
+    vendorId: uuidField(input.vendorId, "vendorId"),
+    periodStart: requiredString(input.periodStart, "periodStart"),
+    periodEnd: requiredString(input.periodEnd, "periodEnd"),
+    status:
+      input.status === undefined
+        ? undefined
+        : parseLabReconciliationStatus(requiredString(input.status, "status")),
+    invoiceReference: optionalNullableString(input.invoiceReference, "invoiceReference"),
+    invoiceAmountMinor:
+      input.invoiceAmountMinor === undefined || input.invoiceAmountMinor === null
+        ? null
+        : integerField(input.invoiceAmountMinor, "invoiceAmountMinor", { min: 0 }),
+    evidence: recordField(input.evidence, "evidence"),
+    entries
+  };
+}
+
+function parseCreateInventoryCategory(body: unknown): CreateInventoryCategoryInput {
+  const input = objectBody(body);
+  return {
+    code: requiredString(input.code, "code"),
+    displayName: requiredString(input.displayName, "displayName"),
+    kind: parseInventoryCategoryKind(requiredString(input.kind, "kind")),
+    active: input.active === undefined ? undefined : booleanField(input.active, "active")
+  };
+}
+
+function parseCreateInventoryItem(body: unknown): CreateInventoryItemInput {
+  const input = objectBody(body);
+  return {
+    categoryId: uuidField(input.categoryId, "categoryId"),
+    sku: requiredString(input.sku, "sku"),
+    displayName: requiredString(input.displayName, "displayName"),
+    unitOfMeasure: requiredString(input.unitOfMeasure, "unitOfMeasure"),
+    storageLocation: requiredString(input.storageLocation, "storageLocation"),
+    trackQuantity: input.trackQuantity === undefined ? undefined : booleanField(input.trackQuantity, "trackQuantity"),
+    minimumQuantity:
+      input.minimumQuantity === undefined
+        ? undefined
+        : nonNegativeNumberField(input.minimumQuantity, "minimumQuantity"),
+    reorderQuantity:
+      input.reorderQuantity === undefined
+        ? undefined
+        : nonNegativeNumberField(input.reorderQuantity, "reorderQuantity"),
+    openingQuantity:
+      input.openingQuantity === undefined
+        ? undefined
+        : nonNegativeNumberField(input.openingQuantity, "openingQuantity")
+  };
+}
+
+function parseCreateStockLedgerEntry(body: unknown): CreateStockLedgerEntryInput {
+  const input = objectBody(body);
+  return {
+    itemId: uuidField(input.itemId, "itemId"),
+    movementType: parseStockLedgerMovementType(requiredString(input.movementType, "movementType")),
+    quantityDelta: numberField(input.quantityDelta, "quantityDelta"),
+    unitCostMinor:
+      input.unitCostMinor === undefined || input.unitCostMinor === null
+        ? null
+        : integerField(input.unitCostMinor, "unitCostMinor", { min: 0 }),
+    currency:
+      input.currency === undefined || input.currency === null
+        ? null
+        : parseBillingCurrency(requiredString(input.currency, "currency")),
+    sourceTable: optionalNullableString(input.sourceTable, "sourceTable"),
+    sourceId: optionalUuid(input.sourceId, "sourceId"),
+    reason: requiredString(input.reason, "reason"),
+    evidence: recordField(input.evidence, "evidence")
+  };
+}
+
+function parseCreateInventoryCheckTemplate(body: unknown): CreateInventoryCheckTemplateInput {
+  const input = objectBody(body);
+  const lines = arrayField(input.lines, "lines").map((value, index) => {
+    const line = objectField(value, `lines[${index}]`);
+    return {
+      itemId: uuidField(line.itemId, `lines[${index}].itemId`),
+      sequence: integerField(line.sequence ?? index + 1, `lines[${index}].sequence`, { min: 1 }),
+      drawerLocation: requiredString(line.drawerLocation, `lines[${index}].drawerLocation`),
+      expectedQuantity:
+        line.expectedQuantity === undefined || line.expectedQuantity === null
+          ? null
+          : nonNegativeNumberField(line.expectedQuantity, `lines[${index}].expectedQuantity`),
+      required: line.required === undefined ? true : booleanField(line.required, `lines[${index}].required`),
+      instructions: optionalNullableString(line.instructions, `lines[${index}].instructions`)
+    };
+  });
+  if (lines.length === 0) {
+    throw validation("Inventory check template requires at least one line.", { field: "lines" });
+  }
+  return {
+    code: requiredString(input.code, "code"),
+    displayName: requiredString(input.displayName, "displayName"),
+    cadence: parseInventoryCadence(requiredString(input.cadence ?? "monthly", "cadence")),
+    active: input.active === undefined ? undefined : booleanField(input.active, "active"),
+    lines
+  };
+}
+
+function parseCreateInventoryCheckRun(body: unknown): CreateInventoryCheckRunInput {
+  const input = objectBody(body);
+  return {
+    templateId: uuidField(input.templateId, "templateId"),
+    notes: optionalNullableString(input.notes, "notes")
+  };
+}
+
+function parseUpdateInventoryCheckRun(body: unknown): UpdateInventoryCheckRunInput {
+  const input = objectBody(body);
+  return {
+    status: parseInventoryCheckRunStatus(requiredString(input.status, "status")),
+    notes: optionalNullableString(input.notes, "notes"),
+    lines:
+      input.lines === undefined
+        ? undefined
+        : arrayField(input.lines, "lines").map((value, index) => {
+            const line = objectField(value, `lines[${index}]`);
+            return {
+              lineId: uuidField(line.lineId ?? line.id, `lines[${index}].lineId`),
+              countedQuantity: nonNegativeNumberField(
+                line.countedQuantity,
+                `lines[${index}].countedQuantity`
+              ),
+              exceptionNotes: optionalNullableString(line.exceptionNotes, `lines[${index}].exceptionNotes`)
+            };
+          })
+  };
+}
+
+function parseCreateIncident(body: unknown): CreateIncidentInput {
+  const input = objectBody(body);
+  return {
+    patientId: optionalUuid(input.patientId, "patientId"),
+    appointmentId: optionalUuid(input.appointmentId, "appointmentId"),
+    labCaseId: optionalUuid(input.labCaseId, "labCaseId"),
+    inventoryItemId: optionalUuid(input.inventoryItemId, "inventoryItemId"),
+    category: parseIncidentCategory(requiredString(input.category, "category")),
+    severity: parseIncidentSeverity(requiredString(input.severity, "severity")),
+    occurredAt: requiredString(input.occurredAt, "occurredAt"),
+    location: optionalNullableString(input.location, "location"),
+    summary: requiredString(input.summary, "summary"),
+    description: requiredString(input.description, "description"),
+    impact: optionalNullableString(input.impact, "impact"),
+    learning: optionalNullableString(input.learning, "learning"),
+    immediateAction: optionalNullableString(input.immediateAction, "immediateAction"),
+    evidence: recordField(input.evidence, "evidence"),
+    ownerUserId: optionalUuid(input.ownerUserId, "ownerUserId")
+  };
+}
+
+function parseCreateCorrectiveAction(body: unknown): CreateCorrectiveActionInput {
+  const input = objectBody(body);
+  return {
+    incidentId: optionalUuid(input.incidentId, "incidentId"),
+    actionType: parseCorrectiveActionType(requiredString(input.actionType ?? "corrective", "actionType")),
+    title: requiredString(input.title, "title"),
+    description: requiredString(input.description, "description"),
+    ownerUserId: uuidField(input.ownerUserId, "ownerUserId"),
+    dueAt: requiredString(input.dueAt, "dueAt"),
+    verificationEvidence: recordField(input.verificationEvidence, "verificationEvidence")
+  };
+}
+
+function parseUpdateCorrectiveAction(body: unknown): UpdateCorrectiveActionInput {
+  const input = objectBody(body);
+  return {
+    status: parseCorrectiveActionStatus(requiredString(input.status, "status")),
+    completionEvidence: recordField(input.completionEvidence, "completionEvidence"),
+    verificationEvidence:
+      input.verificationEvidence === undefined
+        ? undefined
+        : recordField(input.verificationEvidence, "verificationEvidence")
+  };
+}
+
 function parseClinicalNoteContent(value: unknown): ClinicalNoteContent {
   const input = objectField(value, "content");
   return {
@@ -3921,6 +5458,89 @@ function parseQueueStatus(value: string): QueueStatus {
   return value as QueueStatus;
 }
 
+function parseTaskStatus(value: string) {
+  if (!isTaskStatus(value)) throw validation("Invalid task status.", { field: "status", value });
+  return value;
+}
+
+function parseTaskType(value: string) {
+  if (!isTaskType(value)) throw validation("Invalid task type.", { field: "taskType", value });
+  return value;
+}
+
+function parseTaskPriority(value: string) {
+  if (!isTaskPriority(value)) throw validation("Invalid task priority.", { field: "priority", value });
+  return value;
+}
+
+function parseTaskSourceWorkflow(value: string) {
+  if (!isTaskSourceWorkflow(value)) {
+    throw validation("Invalid task source workflow.", { field: "sourceWorkflow", value });
+  }
+  return value;
+}
+
+function parseRecallRuleAnchor(value: string) {
+  if (!isRecallRuleAnchor(value)) throw validation("Invalid recall rule anchor.", { field: "anchor", value });
+  return value;
+}
+
+function parseRecallStatus(value: string) {
+  if (!isRecallStatus(value)) throw validation("Invalid recall status.", { field: "status", value });
+  return value;
+}
+
+function parseRecallActionType(value: string) {
+  if (!isRecallActionType(value)) {
+    throw validation("Invalid recall action type.", { field: "actionType", value });
+  }
+  return value;
+}
+
+function parseSopRecurrenceType(value: string) {
+  if (!isSopRecurrenceType(value)) {
+    throw validation("Invalid SOP recurrence type.", { field: "recurrenceType", value });
+  }
+  return value;
+}
+
+function parseSopRunStatus(value: string) {
+  if (!isSopRunStatus(value)) throw validation("Invalid SOP run status.", { field: "status", value });
+  return value;
+}
+
+function parseSopRunItemStatus(value: string) {
+  if (!isSopRunItemStatus(value)) {
+    throw validation("Invalid SOP run item status.", { field: "status", value });
+  }
+  return value;
+}
+
+function assertSopScheduleShape(input: CreateSopScheduleInput): void {
+  const valid =
+    (input.recurrenceType === "daily" &&
+      input.intervalDays === null &&
+      input.dayOfWeek === null &&
+      input.dayOfMonth === null) ||
+    (input.recurrenceType === "weekly" &&
+      input.intervalDays === null &&
+      input.dayOfWeek !== null &&
+      input.dayOfMonth === null) ||
+    (input.recurrenceType === "monthly" &&
+      input.intervalDays === null &&
+      input.dayOfWeek === null &&
+      input.dayOfMonth !== null) ||
+    (input.recurrenceType === "interval_days" &&
+      input.intervalDays !== null &&
+      input.dayOfWeek === null &&
+      input.dayOfMonth === null);
+  if (!valid) {
+    throw validation("SOP schedule recurrence fields do not match recurrenceType.", {
+      recurrenceType: input.recurrenceType
+    });
+  }
+}
+
 function parseMediaType(value: string): MediaType {
   if (!isMediaType(value)) {
     throw validation("Invalid media type.", { field: "mediaType", value });
@@ -4010,11 +5630,122 @@ function parseMediaScanStatus(value: string): MediaScanStatus {
   return value;
 }
 
+function parseLabPriority(value: unknown): "routine" | "urgent" {
+  const parsed = requiredString(value, "priority");
+  if (parsed !== "routine" && parsed !== "urgent") {
+    throw validation("Invalid lab case priority.", { field: "priority", value: parsed });
+  }
+  return parsed;
+}
+
+function parseLabCaseStatus(value: string): LabCaseStatus {
+  if (!isLabCaseStatus(value)) {
+    throw validation("Invalid lab case status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseLabReconciliationStatus(value: string): NonNullable<CreateLabReconciliationInput["status"]> {
+  if (!isLabReconciliationStatus(value)) {
+    throw validation("Invalid lab reconciliation status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseLabReconciliationEntryStatus(
+  value: string
+): NonNullable<CreateLabReconciliationInput["entries"][number]["status"]> {
+  if (!isLabReconciliationEntryStatus(value)) {
+    throw validation("Invalid lab reconciliation entry status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseInventoryCategoryKind(value: string): CreateInventoryCategoryInput["kind"] {
+  if (!isInventoryCategoryKind(value)) {
+    throw validation("Invalid inventory category kind.", { field: "kind", value });
+  }
+  return value;
+}
+
+function parseInventoryCadence(value: string): CreateInventoryCheckTemplateInput["cadence"] {
+  if (["daily", "weekly", "monthly", "ad_hoc"].includes(value)) {
+    return value as CreateInventoryCheckTemplateInput["cadence"];
+  }
+  throw validation("Invalid inventory check cadence.", { field: "cadence", value });
+}
+
+function parseInventoryCheckRunStatus(value: string): UpdateInventoryCheckRunInput["status"] {
+  if (!isInventoryCheckRunStatus(value)) {
+    throw validation("Invalid inventory check run status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseStockLedgerMovementType(value: string): CreateStockLedgerEntryInput["movementType"] {
+  if (
+    [
+      "opening_balance",
+      "manual_adjustment",
+      "consumption",
+      "check_variance",
+      "procurement_received",
+      "write_off"
+    ].includes(value)
+  ) {
+    return value as CreateStockLedgerEntryInput["movementType"];
+  }
+  throw validation("Invalid stock ledger movement type.", { field: "movementType", value });
+}
+
+function parseIncidentCategory(value: string): CreateIncidentInput["category"] {
+  if (!isIncidentCategory(value)) {
+    throw validation("Invalid incident category.", { field: "category", value });
+  }
+  return value;
+}
+
+function parseIncidentSeverity(value: string): CreateIncidentInput["severity"] {
+  if (!isIncidentSeverity(value)) {
+    throw validation("Invalid incident severity.", { field: "severity", value });
+  }
+  return value;
+}
+
+function parseIncidentStatus(value: string): NonNullable<Parameters<ClinicOperationsRepository["listIncidents"]>[1]>["status"] {
+  if (!isIncidentStatus(value)) {
+    throw validation("Invalid incident status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseCorrectiveActionType(value: string): CreateCorrectiveActionInput["actionType"] {
+  if (!isCorrectiveActionType(value)) {
+    throw validation("Invalid corrective action type.", { field: "actionType", value });
+  }
+  return value;
+}
+
+function parseCorrectiveActionStatus(value: string): UpdateCorrectiveActionInput["status"] {
+  if (!isCorrectiveActionStatus(value)) {
+    throw validation("Invalid corrective action status.", { field: "status", value });
+  }
+  return value;
+}
+
 function parsePaymentRequestType(value: string): PaymentProviderRequestKind {
   if (value === "payment_link") return "payment_link";
   if (value === "invoice_qr" || value === "dynamic_qr" || value === "qr" || value === "qr_code")
     return "invoice_qr";
   throw validation("Invalid payment request type.", { field: "requestType", value });
+}
+
+function parseBillingCurrency(value: string): "INR" {
+  const normalized = value.toUpperCase();
+  if (!isBillingCurrency(normalized)) {
+    throw validation("Invalid billing currency.", { field: "currency", value });
+  }
+  return normalized;
 }
 
 function parseManualPaymentMethod(value: string): ManualPaymentMethod {
@@ -4268,6 +5999,68 @@ function publicDentalChartSnapshot<T extends { chartState: { numberingSystem: st
   };
 }
 
+function publicTask(task: TaskRecord) {
+  return {
+    id: task.id,
+    patientId: task.patientId,
+    leadId: task.leadId,
+    appointmentId: task.appointmentId,
+    invoiceId: task.invoiceId,
+    encounterId: task.encounterId,
+    treatmentPlanId: task.treatmentPlanId,
+    procedurePerformedId: task.procedurePerformedId,
+    taskType: task.taskType,
+    sourceWorkflow: task.sourceWorkflow,
+    sourceRecordType: task.sourceRecordType,
+    sourceRecordId: task.sourceRecordId,
+    title: task.title,
+    description: task.description,
+    priority: task.priority,
+    status: task.status,
+    dueAt: task.dueAt,
+    assignedToUserId: task.assignedToUserId,
+    completedByUserId: task.completedByUserId,
+    completedAt: task.completedAt,
+    completionEvidence: task.completionEvidence,
+    cancelledReason: task.cancelledReason,
+    statusChangedAt: task.statusChangedAt,
+    createdAt: task.createdAt,
+    updatedAt: task.updatedAt
+  };
+}
+
+function publicRecall(recall: RecallRecord) {
+  return {
+    id: recall.id,
+    recallRuleId: recall.recallRuleId,
+    patientId: recall.patientId,
+    sourceProcedurePerformedId: recall.sourceProcedurePerformedId,
+    sourceInvoiceId: recall.sourceInvoiceId,
+    taskId: recall.taskId,
+    appointmentId: recall.appointmentId,
+    status: recall.status,
+    dueAt: recall.dueAt,
+    lastActionAt: recall.lastActionAt,
+    actionEvidence: recall.actionEvidence,
+    createdAt: recall.createdAt,
+    updatedAt: recall.updatedAt
+  };
+}
+
+function publicSopTemplateDetail(detail: SopTemplateDetail) {
+  return {
+    ...detail.template,
+    items: detail.items.map((item) => ({ ...item }))
+  };
+}
+
+function publicSopRunDetail(detail: SopRunDetail) {
+  return {
+    ...detail.run,
+    items: detail.items.map((item) => ({ ...item }))
+  };
+}
+
 function publicPricebookProcedure(procedure: PricebookProcedureRecord) {
   return {
     id: procedure.id,
@@ -4470,6 +6263,61 @@ function invoiceAuditMetadata(detail: InvoiceDetail) {
   };
 }
 
+function taskAuditMetadata(task: TaskRecord) {
+  return {
+    taskType: task.taskType,
+    sourceWorkflow: task.sourceWorkflow,
+    sourceRecordType: task.sourceRecordType,
+    sourceRecordId: task.sourceRecordId,
+    status: task.status,
+    priority: task.priority,
+    dueAt: task.dueAt,
+    assignedToUserId: task.assignedToUserId,
+    hasCompletionEvidence: Object.keys(task.completionEvidence).length > 0,
+    idempotencyKey: task.idempotencyKey
+  };
+}
+
+function recallAuditMetadata(recall: RecallRecord) {
+  return {
+    recallRuleId: recall.recallRuleId,
+    status: recall.status,
+    dueAt: recall.dueAt,
+    taskId: recall.taskId,
+    appointmentId: recall.appointmentId,
+    sourceProcedurePerformedId: recall.sourceProcedurePerformedId,
+    sourceInvoiceId: recall.sourceInvoiceId,
+    providerConfirmationReceived: false
+  };
+}
+
+function sopScheduleAuditMetadata(schedule: SopScheduleRecord) {
+  return {
+    templateId: schedule.templateId,
+    recurrenceType: schedule.recurrenceType,
+    intervalDays: schedule.intervalDays,
+    dayOfWeek: schedule.dayOfWeek,
+    dayOfMonth: schedule.dayOfMonth,
+    dueTime: schedule.dueTime,
+    startsOn: schedule.startsOn,
+    endsOn: schedule.endsOn,
+    assignedToUserId: schedule.assignedToUserId
+  };
+}
+
+function sopRunAuditMetadata(detail: SopRunDetail) {
+  return {
+    templateId: detail.run.templateId,
+    scheduleId: detail.run.scheduleId,
+    taskId: detail.run.taskId,
+    dueAt: detail.run.dueAt,
+    status: detail.run.status,
+    itemCount: detail.items.length,
+    completedItemCount: detail.items.filter((item) => item.status === "done").length,
+    requiredItemCount: detail.items.filter((item) => item.evidenceRequired).length
+  };
+}
+
 function dentalFindingAuditMetadata(input: {
   toothNumber: string;
   surface?: string | null;
@@ -4527,6 +6375,44 @@ function optionalString(value: unknown, field: string): string | undefined {
   return requiredString(value, field);
 }
 
+function parseOwnerDashboardRange(filter: {
+  from?: string | null;
+  to?: string | null;
+}): { startAt: string; endAt: string } {
+  const today = new Date().toISOString().slice(0, 10);
+  const startAt = parseDateBoundary(filter.from ?? today, "from", "start");
+  const endAt = parseDateBoundary(filter.to ?? today, "to", "end");
+
+  if (Date.parse(startAt) > Date.parse(endAt)) {
+    throw validation("Owner dashboard from date must be on or before to date.", {
+      from: filter.from,
+      to: filter.to
+    });
+  }
+
+  return { startAt, endAt };
+}
+
+function parseDateBoundary(
+  value: string,
+  field: "from" | "to",
+  boundary: "start" | "end"
+): string {
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return boundary === "start"
+      ? `${trimmed}T00:00:00.000Z`
+      : `${trimmed}T23:59:59.999Z`;
+  }
+
+  const timestamp = Date.parse(trimmed);
+  if (Number.isNaN(timestamp)) {
+    throw validation(`${field} must be an ISO date or timestamp.`, { field });
+  }
+
+  return new Date(timestamp).toISOString();
+}
+
 function optionalNullableString(value: unknown, field: string): string | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -4544,11 +6430,30 @@ function optionalUuid(value: unknown, field: string): UUID | null {
   return uuidField(value, field);
 }
 
+function uuidOrNullQuery(value: string | null, field: string): UUID | null {
+  if (!value) return null;
+  return uuidField(value, field);
+}
+
+function integerQueryParam(value: string | null, field: string): number | null {
+  if (!value) return null;
+  const parsed = Number(value);
+  return integerField(parsed, field, { min: 1, max: 500 });
+}
+
 function numberField(value: unknown, field: string): number {
   if (typeof value !== "number" || !Number.isFinite(value)) {
     throw validation(`${field} must be a number.`, { field });
   }
   return value;
+}
+
+function nonNegativeNumberField(value: unknown, field: string): number {
+  const number = numberField(value, field);
+  if (number < 0) {
+    throw validation(`${field} must be a non-negative number.`, { field });
+  }
+  return number;
 }
 
 function optionalUnitNumber(value: unknown, field: string): number | null | undefined {
@@ -4592,6 +6497,11 @@ function recordField(value: unknown, field: string): Record<string, unknown> {
     throw validation(`${field} must be a JSON object.`, { field });
   }
   return value as Record<string, unknown>;
+}
+
+function arrayField(value: unknown, field: string): unknown[] {
+  if (!Array.isArray(value)) throw validation(`${field} must be an array.`, { field });
+  return value;
 }
 
 function stringArrayField(value: unknown, field: string): string[] {

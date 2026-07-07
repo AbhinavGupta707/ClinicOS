@@ -24,7 +24,18 @@ export const DOMAIN_EVENT_TYPES = [
   "queue.entry_updated",
   "task.created",
   "task.status_changed",
+  "task.completed",
   "task.due",
+  "recall.rule_created",
+  "recall.due",
+  "recall.sent",
+  "recall.action_recorded",
+  "recall.completed",
+  "sop_template.created",
+  "sop_schedule.created",
+  "sop_run.created",
+  "sop_run.updated",
+  "sop_run.completed",
   "form_response.submitted",
   "consent.created",
   "consent.revoked",
@@ -59,6 +70,27 @@ export const DOMAIN_EVENT_TYPES = [
   "payment.manually_recorded",
   "payment.reconciliation_required",
   "receipt.generated",
+  "lab_vendor.created",
+  "lab_slip.generated",
+  "lab_case.created",
+  "lab_case.sent",
+  "lab_case.received",
+  "lab_case.returned",
+  "lab_case.completed",
+  "lab_case.cancelled",
+  "lab_case.status_changed",
+  "lab_reconciliation.created",
+  "inventory_category.created",
+  "inventory_item.created",
+  "inventory_stock.adjusted",
+  "inventory_check.created",
+  "inventory_check.completed",
+  "inventory.low_stock_detected",
+  "inventory.procurement_suggested",
+  "incident.created",
+  "corrective_action.created",
+  "corrective_action.status_changed",
+  "corrective_action.completed",
   "patient.timeline_item.created"
 ] as const;
 
@@ -155,6 +187,69 @@ export const CP5_EVENT_TYPES = [
   ...CP5_PAYMENT_EVENT_TYPES
 ] as const;
 
+export const CP6_TASK_EVENT_TYPES = [
+  "task.created",
+  "task.status_changed",
+  "task.completed",
+  "task.due"
+] as const;
+
+export const CP6_RECALL_EVENT_TYPES = [
+  "recall.rule_created",
+  "recall.due",
+  "recall.sent",
+  "recall.action_recorded",
+  "recall.completed"
+] as const;
+
+export const CP6_SOP_EVENT_TYPES = [
+  "sop_template.created",
+  "sop_schedule.created",
+  "sop_run.created",
+  "sop_run.updated",
+  "sop_run.completed"
+] as const;
+
+export const CP6_LAB_EVENT_TYPES = [
+  "lab_vendor.created",
+  "lab_slip.generated",
+  "lab_case.created",
+  "lab_case.sent",
+  "lab_case.received",
+  "lab_case.returned",
+  "lab_case.completed",
+  "lab_case.cancelled",
+  "lab_case.status_changed",
+  "lab_reconciliation.created"
+] as const;
+
+export const CP6_INVENTORY_EVENT_TYPES = [
+  "inventory_category.created",
+  "inventory_item.created",
+  "inventory_stock.adjusted",
+  "inventory_check.created",
+  "inventory_check.completed",
+  "inventory.low_stock_detected",
+  "inventory.procurement_suggested"
+] as const;
+
+export const CP6_QUALITY_EVENT_TYPES = [
+  "incident.created",
+  "corrective_action.created",
+  "corrective_action.status_changed",
+  "corrective_action.completed"
+] as const;
+
+export const CP6_EVENT_TYPES = [
+  ...CP5_EVENT_TYPES,
+  ...CP6_TASK_EVENT_TYPES,
+  ...CP6_RECALL_EVENT_TYPES,
+  ...CP6_SOP_EVENT_TYPES,
+  ...CP6_LAB_EVENT_TYPES,
+  ...CP6_INVENTORY_EVENT_TYPES,
+  ...CP6_QUALITY_EVENT_TYPES
+] as const;
+
 export type Cp2LeadEventType = (typeof CP2_LEAD_EVENT_TYPES)[number];
 export type Cp2PatientEventType = (typeof CP2_PATIENT_EVENT_TYPES)[number];
 export type Cp2AppointmentEventType = (typeof CP2_APPOINTMENT_EVENT_TYPES)[number];
@@ -169,6 +264,13 @@ export type Cp4EventType = (typeof CP4_EVENT_TYPES)[number];
 export type Cp5BillingEventType = (typeof CP5_BILLING_EVENT_TYPES)[number];
 export type Cp5PaymentEventType = (typeof CP5_PAYMENT_EVENT_TYPES)[number];
 export type Cp5EventType = (typeof CP5_EVENT_TYPES)[number];
+export type Cp6TaskEventType = (typeof CP6_TASK_EVENT_TYPES)[number];
+export type Cp6RecallEventType = (typeof CP6_RECALL_EVENT_TYPES)[number];
+export type Cp6SopEventType = (typeof CP6_SOP_EVENT_TYPES)[number];
+export type Cp6LabEventType = (typeof CP6_LAB_EVENT_TYPES)[number];
+export type Cp6InventoryEventType = (typeof CP6_INVENTORY_EVENT_TYPES)[number];
+export type Cp6QualityEventType = (typeof CP6_QUALITY_EVENT_TYPES)[number];
+export type Cp6EventType = (typeof CP6_EVENT_TYPES)[number];
 
 export type EventSourceKind =
   | "external_system"
@@ -199,6 +301,11 @@ export interface DomainEventAggregate {
     | "appointment"
     | "queue_entry"
     | "task"
+    | "recall_rule"
+    | "recall"
+    | "sop_template"
+    | "sop_schedule"
+    | "sop_run"
     | "attribution_touch"
     | "form_response"
     | "consent"
@@ -220,6 +327,17 @@ export interface DomainEventAggregate {
     | "payment_transaction"
     | "payment_reconciliation_item"
     | "receipt"
+    | "lab_vendor"
+    | "lab_case"
+    | "lab_slip"
+    | "lab_reconciliation"
+    | "inventory_category"
+    | "inventory_item"
+    | "stock_ledger_entry"
+    | "inventory_check_run"
+    | "procurement_suggestion"
+    | "incident"
+    | "corrective_action"
     | "patient_timeline_item";
   id: UUID | string;
 }
@@ -279,6 +397,10 @@ export function isCp4EventType(value: string): value is Cp4EventType {
 
 export function isCp5EventType(value: string): value is Cp5EventType {
   return (CP5_EVENT_TYPES as readonly string[]).includes(value);
+}
+
+export function isCp6EventType(value: string): value is Cp6EventType {
+  return (CP6_EVENT_TYPES as readonly string[]).includes(value);
 }
 
 export function createDomainEventEnvelope<

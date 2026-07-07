@@ -1,0 +1,823 @@
+{
+  "schemaVersion": "clinic-os.cp6.qa-fixture.v1",
+  "fixtureUse": {
+    "localOnly": true,
+    "syntheticOnly": true,
+    "productionUseDenied": true,
+    "allowedEnvironments": ["local", "development", "test", "ci"]
+  },
+  "clock": {
+    "businessDate": "2026-07-07",
+    "timezone": "Asia/Kolkata",
+    "fixedNow": "2026-07-07T12:00:00+05:30",
+    "ownerDashboardFrom": "2026-07-01T00:00:00.000Z",
+    "ownerDashboardTo": "2026-07-07T23:59:59.999Z"
+  },
+  "tenants": [
+    {
+      "key": "primaryTenant",
+      "id": "60000000-0000-4000-8000-000000000001"
+    },
+    {
+      "key": "wrongTenant",
+      "id": "60000000-0000-4000-8000-000000000002"
+    }
+  ],
+  "clinics": [
+    {
+      "key": "primaryClinic",
+      "id": "60000000-0000-4000-8000-000000000101",
+      "tenantId": "60000000-0000-4000-8000-000000000001"
+    },
+    {
+      "key": "wrongClinic",
+      "id": "60000000-0000-4000-8000-000000000201",
+      "tenantId": "60000000-0000-4000-8000-000000000002"
+    }
+  ],
+  "actors": [
+    {
+      "key": "owner",
+      "id": "60000000-0000-4000-8000-000000001001",
+      "tenantId": "60000000-0000-4000-8000-000000000001",
+      "clinicId": "60000000-0000-4000-8000-000000000101",
+      "roleSlug": "owner_admin",
+      "email": "cp6.owner@example.test"
+    },
+    {
+      "key": "assistant",
+      "id": "60000000-0000-4000-8000-000000001002",
+      "tenantId": "60000000-0000-4000-8000-000000000001",
+      "clinicId": "60000000-0000-4000-8000-000000000101",
+      "roleSlug": "assistant",
+      "email": "cp6.assistant@example.test"
+    },
+    {
+      "key": "accountant",
+      "id": "60000000-0000-4000-8000-000000001003",
+      "tenantId": "60000000-0000-4000-8000-000000000001",
+      "clinicId": "60000000-0000-4000-8000-000000000101",
+      "roleSlug": "accountant",
+      "email": "cp6.accountant@example.test"
+    },
+    {
+      "key": "wrongTenantOwner",
+      "id": "60000000-0000-4000-8000-000000001004",
+      "tenantId": "60000000-0000-4000-8000-000000000002",
+      "clinicId": "60000000-0000-4000-8000-000000000201",
+      "roleSlug": "owner_admin",
+      "email": "cp6.wrong-owner@example.test"
+    }
+  ],
+  "patients": [
+    {
+      "key": "googlePatient",
+      "id": "60000000-0000-4000-8000-000000002001",
+      "tenantId": "60000000-0000-4000-8000-000000000001",
+      "clinicId": "60000000-0000-4000-8000-000000000101",
+      "fullName": "CP6 Google Synthetic",
+      "phone": "+919960000001",
+      "email": "cp6.google@example.test",
+      "source": "google"
+    },
+    {
+      "key": "practoPatient",
+      "id": "60000000-0000-4000-8000-000000002002",
+      "tenantId": "60000000-0000-4000-8000-000000000001",
+      "clinicId": "60000000-0000-4000-8000-000000000101",
+      "fullName": "CP6 Practo Synthetic",
+      "phone": "+919960000002",
+      "email": "cp6.practo@example.test",
+      "source": "practo"
+    },
+    {
+      "key": "referralPatient",
+      "id": "60000000-0000-4000-8000-000000002003",
+      "tenantId": "60000000-0000-4000-8000-000000000001",
+      "clinicId": "60000000-0000-4000-8000-000000000101",
+      "fullName": "CP6 Referral Synthetic",
+      "phone": "+919960000003",
+      "email": "cp6.referral@example.test",
+      "source": "referral"
+    }
+  ],
+  "flow": {
+    "name": "checkout continuity -> recalls/tasks -> lab reconciliation -> inventory procurement -> incident CAPA -> owner dashboard",
+    "steps": [
+      {
+        "key": "record-checkout-procedure",
+        "routeFamily": "checkout-procedure",
+        "method": "POST",
+        "path": "/v1/encounters/60000000-0000-4000-8000-000000005001/procedures",
+        "actorKey": "assistant",
+        "expectedStatus": 201,
+        "liveImplemented": false,
+        "expectedEvents": ["procedure.completed"],
+        "requestBody": {
+          "treatmentPlanId": "60000000-0000-4000-8000-000000007001",
+          "treatmentPlanEstimateItemId": "60000000-0000-4000-8000-000000007101"
+        }
+      },
+      {
+        "key": "create-post-op-follow-up-task",
+        "routeFamily": "tasks",
+        "method": "POST",
+        "path": "/v1/tasks",
+        "actorKey": "assistant",
+        "expectedStatus": 201,
+        "liveImplemented": false,
+        "expectedEvents": ["task.created"],
+        "requestBody": {
+          "patientId": "60000000-0000-4000-8000-000000002001",
+          "taskType": "post_op_follow_up",
+          "title": "Post-op call after completed procedure",
+          "dueAt": "2026-07-02T12:00:00.000Z"
+        }
+      },
+      {
+        "key": "create-six-month-recall-rule",
+        "routeFamily": "recalls",
+        "method": "POST",
+        "path": "/v1/recall-rules",
+        "actorKey": "owner",
+        "expectedStatus": 201,
+        "liveImplemented": false,
+        "expectedEvents": ["recall.due"],
+        "requestBody": {
+          "procedureCode": "RESTORE-COMP",
+          "intervalMonths": 6,
+          "taskTemplateKey": "six-month-recall"
+        }
+      },
+      {
+        "key": "read-due-recalls",
+        "routeFamily": "recalls",
+        "method": "GET",
+        "path": "/v1/recalls?status=due&dueBefore=2026-07-07",
+        "actorKey": "assistant",
+        "expectedStatus": 200,
+        "liveImplemented": false,
+        "expectedBodyIncludes": ["six-month-recall", "google"]
+      },
+      {
+        "key": "complete-recall-action",
+        "routeFamily": "recalls",
+        "method": "POST",
+        "path": "/v1/recalls/60000000-0000-4000-8000-00000000b001/actions",
+        "actorKey": "assistant",
+        "expectedStatus": 200,
+        "liveImplemented": false,
+        "expectedEvents": ["recall.sent", "task.completed"],
+        "requestBody": {
+          "action": "completed",
+          "outcome": "appointment_booked"
+        }
+      },
+      {
+        "key": "complete-post-op-task",
+        "routeFamily": "tasks",
+        "method": "PATCH",
+        "path": "/v1/tasks/60000000-0000-4000-8000-00000000c001",
+        "actorKey": "assistant",
+        "expectedStatus": 200,
+        "liveImplemented": false,
+        "expectedEvents": ["task.completed"],
+        "requestBody": {
+          "status": "done",
+          "completionEvidence": {
+            "channel": "phone_call",
+            "outcome": "patient comfortable"
+          }
+        }
+      },
+      {
+        "key": "create-lab-case",
+        "routeFamily": "lab-cases",
+        "method": "POST",
+        "path": "/v1/lab-cases",
+        "actorKey": "assistant",
+        "expectedStatus": 201,
+        "liveImplemented": false,
+        "expectedEvents": ["lab_case.created"],
+        "requestBody": {
+          "patientId": "60000000-0000-4000-8000-000000002001",
+          "vendorKey": "cp6-lab",
+          "toothNumber": "36",
+          "material": "zirconia crown",
+          "dueAt": "2026-07-05T09:00:00.000Z"
+        }
+      },
+      {
+        "key": "mark-lab-case-sent",
+        "routeFamily": "lab-cases",
+        "method": "PATCH",
+        "path": "/v1/lab-cases/60000000-0000-4000-8000-00000000e001",
+        "actorKey": "assistant",
+        "expectedStatus": 200,
+        "liveImplemented": false,
+        "expectedEvents": ["lab_case.sent"],
+        "requestBody": {
+          "status": "sent_to_lab"
+        }
+      },
+      {
+        "key": "mark-lab-case-returned",
+        "routeFamily": "lab-cases",
+        "method": "PATCH",
+        "path": "/v1/lab-cases/60000000-0000-4000-8000-00000000e001",
+        "actorKey": "assistant",
+        "expectedStatus": 200,
+        "liveImplemented": false,
+        "expectedEvents": ["lab_case.returned"],
+        "requestBody": {
+          "status": "returned"
+        }
+      },
+      {
+        "key": "complete-lab-case",
+        "routeFamily": "lab-cases",
+        "method": "PATCH",
+        "path": "/v1/lab-cases/60000000-0000-4000-8000-00000000e001",
+        "actorKey": "assistant",
+        "expectedStatus": 200,
+        "liveImplemented": false,
+        "expectedEvents": ["lab_case.completed"],
+        "requestBody": {
+          "status": "completed"
+        }
+      },
+      {
+        "key": "create-lab-reconciliation",
+        "routeFamily": "lab-reconciliations",
+        "method": "POST",
+        "path": "/v1/lab-reconciliations",
+        "actorKey": "owner",
+        "expectedStatus": 201,
+        "liveImplemented": false,
+        "expectedEvents": ["lab_reconciliation.created"],
+        "requestBody": {
+          "vendorKey": "cp6-lab",
+          "month": "2026-07",
+          "caseIds": ["60000000-0000-4000-8000-00000000e003"]
+        }
+      },
+      {
+        "key": "start-inventory-check-run",
+        "routeFamily": "inventory",
+        "method": "POST",
+        "path": "/v1/inventory/check-runs",
+        "actorKey": "assistant",
+        "expectedStatus": 201,
+        "liveImplemented": false,
+        "expectedEvents": ["inventory_check.created"],
+        "requestBody": {
+          "templateKey": "monthly-drawer-check",
+          "startedAt": "2026-07-02T08:00:00.000Z"
+        }
+      },
+      {
+        "key": "complete-inventory-check-low-stock",
+        "routeFamily": "inventory",
+        "method": "PATCH",
+        "path": "/v1/inventory/check-runs/60000000-0000-4000-8000-00000000f101",
+        "actorKey": "assistant",
+        "expectedStatus": 200,
+        "liveImplemented": false,
+        "expectedEvents": ["inventory_check.completed", "inventory.low_stock_detected", "task.created"],
+        "requestBody": {
+          "status": "completed",
+          "exceptions": [
+            {
+              "itemKey": "composite-a2",
+              "severity": "critical",
+              "procurementTaskId": "60000000-0000-4000-8000-00000000c003"
+            }
+          ]
+        }
+      },
+      {
+        "key": "read-inventory-exceptions",
+        "routeFamily": "inventory",
+        "method": "GET",
+        "path": "/v1/inventory/exceptions",
+        "actorKey": "assistant",
+        "expectedStatus": 200,
+        "liveImplemented": false,
+        "expectedBodyIncludes": ["composite-a2", "procurement_requested"]
+      },
+      {
+        "key": "create-incident",
+        "routeFamily": "incidents",
+        "method": "POST",
+        "path": "/v1/incidents",
+        "actorKey": "assistant",
+        "expectedStatus": 201,
+        "liveImplemented": false,
+        "expectedEvents": ["incident.created"],
+        "requestBody": {
+          "category": "lab_delay",
+          "severity": "high",
+          "description": "Synthetic lab delay for CP6 fixture"
+        }
+      },
+      {
+        "key": "assign-corrective-action",
+        "routeFamily": "corrective-actions",
+        "method": "POST",
+        "path": "/v1/corrective-actions",
+        "actorKey": "owner",
+        "expectedStatus": 201,
+        "liveImplemented": false,
+        "expectedEvents": ["corrective_action.created"],
+        "requestBody": {
+          "incidentId": "60000000-0000-4000-8000-00000000a101",
+          "assignedToActorKey": "assistant",
+          "dueAt": "2026-07-05T18:00:00.000Z"
+        }
+      },
+      {
+        "key": "complete-corrective-action",
+        "routeFamily": "corrective-actions",
+        "method": "PATCH",
+        "path": "/v1/corrective-actions/60000000-0000-4000-8000-00000000a202",
+        "actorKey": "assistant",
+        "expectedStatus": 200,
+        "liveImplemented": false,
+        "expectedEvents": ["corrective_action.completed"],
+        "requestBody": {
+          "status": "completed",
+          "completionEvidence": {
+            "learning": "confirm lab ETA during daily huddle"
+          }
+        }
+      },
+      {
+        "key": "read-owner-dashboard",
+        "routeFamily": "owner-dashboard",
+        "method": "GET",
+        "path": "/v1/owner-dashboard?from=2026-07-01&to=2026-07-07",
+        "actorKey": "owner",
+        "expectedStatus": 200,
+        "liveImplemented": true,
+        "expectedBodyIncludes": ["google", "practo", "cp6-local-continuity-fixture"],
+        "expectedBodyMustNotInclude": ["CP6 Google Synthetic", "+919960000001", "medicalHistory"]
+      }
+    ]
+  },
+  "roleTenantExpectations": [
+    {
+      "key": "owner-can-read-dashboard",
+      "actorKey": "owner",
+      "operation": "read-owner-dashboard",
+      "method": "GET",
+      "path": "/v1/owner-dashboard?from=2026-07-01&to=2026-07-07",
+      "expected": "allow",
+      "expectedStatus": 200
+    },
+    {
+      "key": "accountant-can-read-aggregate-dashboard-without-phi",
+      "actorKey": "accountant",
+      "operation": "read-owner-dashboard",
+      "method": "GET",
+      "path": "/v1/owner-dashboard?from=2026-07-01&to=2026-07-07",
+      "expected": "allow",
+      "expectedStatus": 200,
+      "mustNotInclude": ["CP6 Google Synthetic", "+919960000001", "clinicalSummary", "medicalHistory"]
+    },
+    {
+      "key": "assistant-cannot-read-owner-dashboard",
+      "actorKey": "assistant",
+      "operation": "read-owner-dashboard",
+      "method": "GET",
+      "path": "/v1/owner-dashboard?from=2026-07-01&to=2026-07-07",
+      "expected": "deny",
+      "expectedStatus": 403,
+      "expectedReason": "missing_permission",
+      "liveSmoke": true
+    },
+    {
+      "key": "wrong-tenant-owner-cannot-read-primary-dashboard",
+      "actorKey": "wrongTenantOwner",
+      "operation": "read-owner-dashboard",
+      "method": "GET",
+      "path": "/v1/owner-dashboard?from=2026-07-01&to=2026-07-07",
+      "expected": "deny",
+      "expectedStatus": 403,
+      "expectedReason": "tenant_mismatch",
+      "liveSmoke": false
+    },
+    {
+      "key": "assistant-cannot-create-lab-reconciliation",
+      "actorKey": "assistant",
+      "operation": "create-lab-reconciliation",
+      "method": "POST",
+      "path": "/v1/lab-reconciliations",
+      "expected": "deny",
+      "expectedStatus": 403,
+      "expectedReason": "missing_permission",
+      "liveSmoke": false
+    }
+  ],
+  "ownerDashboard": {
+    "projectionData": {
+      "patients": [
+        {
+          "id": "60000000-0000-4000-8000-000000002001",
+          "source": "google",
+          "createdAt": "2026-07-01T08:00:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-000000002002",
+          "source": "practo",
+          "createdAt": "2026-07-02T08:00:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-000000002003",
+          "source": "referral",
+          "createdAt": "2026-07-03T08:00:00.000Z"
+        }
+      ],
+      "leads": [
+        {
+          "id": "60000000-0000-4000-8000-000000003001",
+          "patientId": "60000000-0000-4000-8000-000000002001",
+          "source": "google",
+          "status": "booked",
+          "firstSeenAt": "2026-07-01T08:05:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-000000003002",
+          "patientId": "60000000-0000-4000-8000-000000002002",
+          "source": "practo",
+          "status": "booked",
+          "firstSeenAt": "2026-07-02T08:05:00.000Z"
+        }
+      ],
+      "appointments": [
+        {
+          "id": "60000000-0000-4000-8000-000000004001",
+          "patientId": "60000000-0000-4000-8000-000000002001",
+          "leadId": "60000000-0000-4000-8000-000000003001",
+          "status": "completed",
+          "source": "google",
+          "startAt": "2026-07-03T09:00:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-000000004002",
+          "patientId": "60000000-0000-4000-8000-000000002002",
+          "leadId": "60000000-0000-4000-8000-000000003002",
+          "status": "no_show",
+          "source": "practo",
+          "startAt": "2026-07-03T10:00:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-000000004003",
+          "patientId": "60000000-0000-4000-8000-000000002003",
+          "leadId": null,
+          "status": "confirmed",
+          "source": "referral",
+          "startAt": "2026-07-06T10:00:00.000Z"
+        }
+      ],
+      "encounters": [
+        {
+          "id": "60000000-0000-4000-8000-000000005001",
+          "patientId": "60000000-0000-4000-8000-000000002001",
+          "appointmentId": "60000000-0000-4000-8000-000000004001",
+          "status": "closed",
+          "createdAt": "2026-07-03T09:10:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-000000005002",
+          "patientId": "60000000-0000-4000-8000-000000002002",
+          "appointmentId": "60000000-0000-4000-8000-000000004002",
+          "status": "cancelled",
+          "createdAt": "2026-07-03T10:10:00.000Z"
+        }
+      ],
+      "attributionTouches": [
+        {
+          "id": "60000000-0000-4000-8000-000000006001",
+          "patientId": "60000000-0000-4000-8000-000000002001",
+          "leadId": "60000000-0000-4000-8000-000000003001",
+          "appointmentId": "60000000-0000-4000-8000-000000004001",
+          "invoiceId": "60000000-0000-4000-8000-000000009001",
+          "source": "google",
+          "touchType": "revenue_touch",
+          "occurredAt": "2026-07-03T10:30:00.000Z"
+        }
+      ],
+      "treatmentPlans": [
+        {
+          "id": "60000000-0000-4000-8000-000000007001",
+          "patientId": "60000000-0000-4000-8000-000000002001",
+          "status": "accepted",
+          "totalMinor": 900000,
+          "presentedAt": "2026-07-03T09:25:00.000Z",
+          "acceptedAt": "2026-07-03T09:35:00.000Z",
+          "createdAt": "2026-07-03T09:20:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-000000007002",
+          "patientId": "60000000-0000-4000-8000-000000002002",
+          "status": "presented",
+          "totalMinor": 600000,
+          "presentedAt": "2026-07-04T09:25:00.000Z",
+          "acceptedAt": null,
+          "createdAt": "2026-07-04T09:20:00.000Z"
+        }
+      ],
+      "procedures": [
+        {
+          "id": "60000000-0000-4000-8000-000000008001",
+          "patientId": "60000000-0000-4000-8000-000000002001",
+          "encounterId": "60000000-0000-4000-8000-000000005001",
+          "treatmentPlanId": "60000000-0000-4000-8000-000000007001",
+          "invoiceId": "60000000-0000-4000-8000-000000009001",
+          "status": "completed",
+          "totalMinor": 900000,
+          "performedAt": "2026-07-03T09:50:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-000000008002",
+          "patientId": "60000000-0000-4000-8000-000000002002",
+          "encounterId": "60000000-0000-4000-8000-000000005002",
+          "treatmentPlanId": "60000000-0000-4000-8000-000000007002",
+          "invoiceId": "60000000-0000-4000-8000-000000009002",
+          "status": "completed",
+          "totalMinor": 600000,
+          "performedAt": "2026-07-04T10:00:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-000000008003",
+          "patientId": "60000000-0000-4000-8000-000000002003",
+          "encounterId": "60000000-0000-4000-8000-000000005001",
+          "treatmentPlanId": "60000000-0000-4000-8000-000000007001",
+          "invoiceId": null,
+          "status": "completed",
+          "totalMinor": 250000,
+          "performedAt": "2026-07-05T10:00:00.000Z"
+        }
+      ],
+      "invoices": [
+        {
+          "id": "60000000-0000-4000-8000-000000009001",
+          "patientId": "60000000-0000-4000-8000-000000002001",
+          "treatmentPlanId": "60000000-0000-4000-8000-000000007001",
+          "status": "issued",
+          "paymentStatus": "paid",
+          "currency": "INR",
+          "totalMinor": 900000,
+          "paidMinor": 900000,
+          "balanceMinor": 0,
+          "issuedAt": "2026-07-03T10:15:00.000Z",
+          "dueAt": "2026-07-03T18:00:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-000000009002",
+          "patientId": "60000000-0000-4000-8000-000000002002",
+          "treatmentPlanId": "60000000-0000-4000-8000-000000007002",
+          "status": "issued",
+          "paymentStatus": "unpaid",
+          "currency": "INR",
+          "totalMinor": 600000,
+          "paidMinor": 0,
+          "balanceMinor": 600000,
+          "issuedAt": "2026-07-04T10:15:00.000Z",
+          "dueAt": "2026-07-05T18:00:00.000Z"
+        }
+      ],
+      "payments": [
+        {
+          "id": "60000000-0000-4000-8000-00000000a001",
+          "invoiceId": "60000000-0000-4000-8000-000000009001",
+          "status": "manually_recorded",
+          "amountMinor": 900000,
+          "receivedAt": "2026-07-03T10:30:00.000Z"
+        }
+      ],
+      "recalls": [
+        {
+          "id": "60000000-0000-4000-8000-00000000b001",
+          "patientId": "60000000-0000-4000-8000-000000002001",
+          "source": "google",
+          "status": "completed",
+          "dueAt": "2026-07-02T09:00:00.000Z",
+          "completedAt": "2026-07-02T11:00:00.000Z",
+          "bookedAppointmentId": "60000000-0000-4000-8000-000000004001"
+        },
+        {
+          "id": "60000000-0000-4000-8000-00000000b002",
+          "patientId": "60000000-0000-4000-8000-000000002002",
+          "source": "practo",
+          "status": "contacted",
+          "dueAt": "2026-07-04T09:00:00.000Z",
+          "completedAt": null,
+          "bookedAppointmentId": null
+        },
+        {
+          "id": "60000000-0000-4000-8000-00000000b003",
+          "patientId": "60000000-0000-4000-8000-000000002003",
+          "source": "referral",
+          "status": "due",
+          "dueAt": "2026-07-06T09:00:00.000Z",
+          "completedAt": null,
+          "bookedAppointmentId": null
+        }
+      ],
+      "tasks": [
+        {
+          "id": "60000000-0000-4000-8000-00000000c001",
+          "patientId": "60000000-0000-4000-8000-000000002001",
+          "taskType": "post_op_follow_up",
+          "status": "done",
+          "dueAt": "2026-07-02T12:00:00.000Z",
+          "createdAt": "2026-07-01T12:00:00.000Z",
+          "updatedAt": "2026-07-02T13:00:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-00000000c002",
+          "patientId": "60000000-0000-4000-8000-000000002002",
+          "taskType": "payment_due",
+          "status": "open",
+          "dueAt": "2026-07-05T12:00:00.000Z",
+          "createdAt": "2026-07-04T12:00:00.000Z",
+          "updatedAt": "2026-07-04T12:00:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-00000000c003",
+          "patientId": null,
+          "taskType": "procurement",
+          "status": "in_progress",
+          "dueAt": "2026-07-06T12:00:00.000Z",
+          "createdAt": "2026-07-05T12:00:00.000Z",
+          "updatedAt": "2026-07-05T12:00:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-00000000c004",
+          "patientId": null,
+          "taskType": "capa",
+          "status": "open",
+          "dueAt": "2026-07-09T12:00:00.000Z",
+          "createdAt": "2026-07-05T12:00:00.000Z",
+          "updatedAt": "2026-07-05T12:00:00.000Z"
+        }
+      ],
+      "sopRuns": [
+        {
+          "id": "60000000-0000-4000-8000-00000000d001",
+          "templateKey": "switch-check",
+          "status": "completed",
+          "scheduledFor": "2026-07-02T08:00:00.000Z",
+          "completedAt": "2026-07-02T08:15:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-00000000d002",
+          "templateKey": "inventory-check",
+          "status": "scheduled",
+          "scheduledFor": "2026-07-05T08:00:00.000Z",
+          "completedAt": null
+        }
+      ],
+      "labCases": [
+        {
+          "id": "60000000-0000-4000-8000-00000000e001",
+          "patientId": "60000000-0000-4000-8000-000000002001",
+          "status": "rework_required",
+          "dueAt": "2026-07-05T09:00:00.000Z",
+          "createdAt": "2026-07-01T09:00:00.000Z",
+          "completedAt": null,
+          "reconciliationStatus": "pending",
+          "expectedAmountMinor": 45000,
+          "invoiceAmountMinor": null
+        },
+        {
+          "id": "60000000-0000-4000-8000-00000000e002",
+          "patientId": "60000000-0000-4000-8000-000000002002",
+          "status": "sent_to_lab",
+          "dueAt": "2026-07-08T09:00:00.000Z",
+          "createdAt": "2026-07-04T09:00:00.000Z",
+          "completedAt": null,
+          "reconciliationStatus": "not_required",
+          "expectedAmountMinor": 30000,
+          "invoiceAmountMinor": null
+        },
+        {
+          "id": "60000000-0000-4000-8000-00000000e003",
+          "patientId": "60000000-0000-4000-8000-000000002003",
+          "status": "completed",
+          "dueAt": "2026-07-04T09:00:00.000Z",
+          "createdAt": "2026-07-01T09:00:00.000Z",
+          "completedAt": "2026-07-05T09:00:00.000Z",
+          "reconciliationStatus": "variance",
+          "expectedAmountMinor": 20000,
+          "invoiceAmountMinor": 22000
+        }
+      ],
+      "inventoryExceptions": [
+        {
+          "id": "60000000-0000-4000-8000-00000000f001",
+          "itemKey": "composite-a2",
+          "severity": "critical",
+          "status": "procurement_requested",
+          "detectedAt": "2026-07-02T08:00:00.000Z",
+          "resolvedAt": null,
+          "procurementTaskId": "60000000-0000-4000-8000-00000000c003"
+        },
+        {
+          "id": "60000000-0000-4000-8000-00000000f002",
+          "itemKey": "gloves-m",
+          "severity": "medium",
+          "status": "open",
+          "detectedAt": "2026-07-03T08:00:00.000Z",
+          "resolvedAt": null,
+          "procurementTaskId": null
+        },
+        {
+          "id": "60000000-0000-4000-8000-00000000f003",
+          "itemKey": "etchant",
+          "severity": "low",
+          "status": "resolved",
+          "detectedAt": "2026-07-04T08:00:00.000Z",
+          "resolvedAt": "2026-07-05T08:00:00.000Z",
+          "procurementTaskId": null
+        }
+      ],
+      "incidents": [
+        {
+          "id": "60000000-0000-4000-8000-00000000a101",
+          "category": "lab_delay",
+          "severity": "high",
+          "status": "open",
+          "occurredAt": "2026-07-04T12:00:00.000Z"
+        },
+        {
+          "id": "60000000-0000-4000-8000-00000000a102",
+          "category": "missed_payment_collection",
+          "severity": "medium",
+          "status": "closed",
+          "occurredAt": "2026-07-03T12:00:00.000Z"
+        }
+      ],
+      "correctiveActions": [
+        {
+          "id": "60000000-0000-4000-8000-00000000a201",
+          "incidentId": "60000000-0000-4000-8000-00000000a101",
+          "status": "assigned",
+          "dueAt": "2026-07-05T18:00:00.000Z",
+          "assignedAt": "2026-07-04T13:00:00.000Z",
+          "completedAt": null
+        },
+        {
+          "id": "60000000-0000-4000-8000-00000000a202",
+          "incidentId": "60000000-0000-4000-8000-00000000a102",
+          "status": "completed",
+          "dueAt": "2026-07-05T18:00:00.000Z",
+          "assignedAt": "2026-07-03T13:00:00.000Z",
+          "completedAt": "2026-07-04T13:00:00.000Z"
+        }
+      ],
+      "dataSources": [
+        {
+          "key": "cp6-local-continuity-fixture",
+          "label": "CP6 local continuity operations fixture",
+          "status": "local_fixture",
+          "recordCount": 35,
+          "provenance": [
+            "fixtures/synthetic/cp6/continuity_owner_dashboard_flow.json"
+          ],
+          "notes": "Synthetic local/test fixture rows only."
+        }
+      ]
+    },
+    "expectedSummary": {
+      "appointmentsScheduled": 3,
+      "appointmentsCompleted": 1,
+      "appointmentNoShows": 1,
+      "revenueInvoicedMinor": 1500000,
+      "revenueCollectedMinor": 900000,
+      "revenueOutstandingMinor": 600000,
+      "revenueSources": ["google", "practo", "referral"],
+      "recallDue": 3,
+      "recallCompleted": 1,
+      "recallOverdue": 2,
+      "openTasks": 3,
+      "overdueTasks": 2,
+      "completedTasks": 1,
+      "sopDue": 2,
+      "sopCompleted": 1,
+      "labOverdueCases": 1,
+      "labPendingReconciliation": 1,
+      "inventoryOpenExceptions": 2,
+      "inventoryProcurementRequests": 1,
+      "presentedPlanCount": 2,
+      "acceptedPlanCount": 1,
+      "completedButUninvoicedMinor": 250000,
+      "overdueInvoiceMinor": 600000,
+      "incidentsOpened": 2,
+      "openIncidents": 1,
+      "correctiveActionsCompleted": 1,
+      "correctiveActionsOverdue": 1
+    }
+  }
+}

@@ -6,6 +6,8 @@ export type AuditCategory =
   | "phi_access"
   | "clinical"
   | "billing"
+  | "operations"
+  | "quality"
   | "integration"
   | "privacy";
 

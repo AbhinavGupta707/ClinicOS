@@ -58,6 +58,10 @@ export type PatientTimelineItemType =
   | "queue_entry_created"
   | "appointment_no_show"
   | "task_created"
+  | "task_status_changed"
+  | "task_completed"
+  | "recall_due"
+  | "recall_action_recorded"
   | "form_response_submitted"
   | "consent_created"
   | "consent_revoked"
@@ -86,7 +90,14 @@ export type PatientTimelineItemType =
   | "payment_succeeded"
   | "payment_manually_recorded"
   | "payment_reconciliation_required"
-  | "receipt_generated";
+  | "receipt_generated"
+  | "lab_case_created"
+  | "lab_case_sent"
+  | "lab_case_returned"
+  | "lab_case_completed"
+  | "incident_created"
+  | "corrective_action_created"
+  | "corrective_action_completed";
 
 export interface PatientTimelineItem {
   id: UUID;

@@ -1903,6 +1903,110 @@ button.duplicate-item {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.surface-hero--operations {
+  background:
+    linear-gradient(110deg, rgba(223, 247, 243, 0.76), rgba(231, 240, 251, 0.72)), var(--paper);
+}
+
+.cp6-workflow .workflow-tabs {
+  gap: var(--space-3);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: var(--space-2);
+}
+
+.workflow-grid--cp6 {
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.86fr);
+}
+
+.readiness-grid--cp6 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.cp6-card-list,
+.cp6-checklist {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.cp6-card,
+.cp6-check-row,
+.cp6-count-row {
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: 12px;
+}
+
+.cp6-card {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  text-align: left;
+}
+
+button.cp6-card {
+  cursor: pointer;
+  width: 100%;
+}
+
+.cp6-card--active,
+button.cp6-card:hover {
+  border-color: var(--mint);
+  box-shadow: inset 3px 0 0 var(--mint);
+}
+
+.cp6-card strong,
+.cp6-card span,
+.cp6-check-row strong,
+.cp6-check-row span,
+.cp6-count-row strong,
+.cp6-count-row small {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cp6-card span,
+.cp6-check-row span,
+.cp6-count-row small {
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.35;
+}
+
+.cp6-check-row {
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.cp6-count-row {
+  grid-template-columns: minmax(0, 1fr) 104px;
+}
+
+.cp6-count-row input {
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--ink);
+  min-height: 38px;
+  min-width: 0;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.cp6-count-row input:focus-visible,
+.cp6-card:focus-visible {
+  outline: 3px solid rgba(39, 94, 159, 0.28);
+  outline-offset: 1px;
+}
+
+.cp6-incident-form {
+  margin-bottom: 14px;
+}
+
 @keyframes pulse {
   0% {
     background-position: 100% 0;
@@ -1923,6 +2027,7 @@ button.duplicate-item {
 
   .workflow-grid--dashboard,
   .workflow-grid--checkout,
+  .workflow-grid--cp6,
   .workflow-grid--dental,
   .workflow-grid--encounter,
   .workflow-grid--split {
@@ -2013,7 +2118,8 @@ button.duplicate-item {
   .note-section-grid,
   .prep-grid,
   .readiness-grid--checkout,
-  .readiness-grid--clinical {
+  .readiness-grid--clinical,
+  .readiness-grid--cp6 {
     grid-template-columns: 1fr;
   }
 
@@ -2034,6 +2140,10 @@ button.duplicate-item {
   }
 
   .cp5-workflow .workflow-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cp6-workflow .workflow-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2118,6 +2228,9 @@ button.duplicate-item {
   .cp5-estimate-form,
   .cp5-manual-form,
   .cp5-output-form,
+  .cp6-card,
+  .cp6-check-row,
+  .cp6-count-row,
   .patient-switcher,
   .prescription-grid {
     grid-template-columns: 1fr;
@@ -2125,7 +2238,8 @@ button.duplicate-item {
 
   .cp3-workflow .workflow-tabs,
   .cp4-workflow .workflow-tabs,
-  .cp5-workflow .workflow-tabs {
+  .cp5-workflow .workflow-tabs,
+  .cp6-workflow .workflow-tabs {
     grid-template-columns: 1fr;
   }
 

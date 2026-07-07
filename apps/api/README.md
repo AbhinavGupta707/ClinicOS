@@ -53,3 +53,12 @@ CP4 adds backend-mediated media access for patient, encounter, tooth, and dental
 - `POST /v1/media/assets/{mediaAssetId}/signed-url` returns short-lived opaque signed access after authorization and audit.
 
 Raw object keys and bucket paths are internal repository/storage fields only. Local/dev uses `LocalMediaStorageSimulator`; production-like runtimes must register an official storage provider and cannot silently fall back to the simulator.
+
+## Checkpoint 6 Owner Dashboard Contract
+
+CP6 adds an aggregate owner analytics read model:
+
+- `GET /v1/owner-dashboard?from=&to=` returns source-backed revenue, recall, task, SOP, lab, inventory, treatment/payment leakage, no-show, incident, and CAPA metrics.
+- The route requires `analytics.read`; owner/admin and accountant-style analytics roles are allowed, assistant roles are denied.
+- The response is aggregate-only and must not include patient names, phone numbers, clinical notes, or medical-history payloads.
+- Production runtime reads existing durable CP2-CP5 tables now and marks CP6 lab/inventory/event tables as schema dependencies until those migrations land. Local/dev fixture mode adds explicit synthetic CP6 continuity rows through the repository contract only.

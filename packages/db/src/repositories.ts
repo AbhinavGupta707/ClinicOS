@@ -20,6 +20,8 @@ import type {
   CreateProcedurePerformedInput,
   CreateReceiptInput,
   CreateDentalFindingInput,
+  CorrectiveActionRecord,
+  CorrectiveActionStatus,
   CreateTreatmentPlanInput,
   DomainEventType,
   DentalChartSnapshotRecord,
@@ -28,6 +30,23 @@ import type {
   DentalFindingRecord,
   EncounterRecord,
   EncounterStatus,
+  IncidentCategory,
+  IncidentRecord,
+  IncidentSeverity,
+  InventoryCategoryKind,
+  InventoryCategoryRecord,
+  InventoryCheckRunDetail,
+  InventoryCheckRunStatus,
+  InventoryCheckTemplateLineRecord,
+  InventoryCheckTemplateRecord,
+  InventoryExceptionRecord,
+  InventoryItemRecord,
+  LabCaseDetail,
+  LabCaseStatus,
+  LabReconciliationDetail,
+  LabReconciliationEntryStatus,
+  LabReconciliationStatus,
+  LabVendorRecord,
   IntakeFormTemplateRecord,
   IntakeFormType,
   IntakeFormSubmissionRecord,
@@ -40,6 +59,7 @@ import type {
   PaymentRequestRecord,
   PaymentTransactionRecord,
   MediaUploadReservationRecord,
+  OwnerDashboardProjectionData,
   PatientRecord,
   PatientInstructionRecord,
   PatientSource,
@@ -47,14 +67,30 @@ import type {
   PricebookProcedureRecord,
   PrescriptionMedication,
   PrescriptionRecord,
+  ProcurementSuggestionRecord,
   ProcedurePerformedRecord,
   ProviderScheduleRecord,
   QueueEntryRecord,
   QueueStatus,
+  RecallActionType,
+  RecallRecord,
+  RecallRuleAnchor,
+  RecallRuleRecord,
+  RecallStatus,
   ReceiptRecord,
   RecordPaymentTransactionInput,
   RoleAssignment,
+  SopRecurrenceType,
+  SopRunDetail,
+  SopRunItemStatus,
+  SopRunStatus,
+  SopScheduleRecord,
+  SopTemplateDetail,
+  StockLedgerEntryRecord,
+  StockLedgerMovementType,
   TaskRecord,
+  TaskPriority,
+  TaskSourceWorkflow,
   TaskStatus,
   TaskType,
   Tenant,
@@ -167,11 +203,299 @@ export interface CreateTaskInput {
   patientId?: UUID | null;
   leadId?: UUID | null;
   appointmentId?: UUID | null;
+  invoiceId?: UUID | null;
+  encounterId?: UUID | null;
+  treatmentPlanId?: UUID | null;
+  procedurePerformedId?: UUID | null;
   taskType: TaskType;
+  sourceWorkflow?: TaskSourceWorkflow;
+  sourceRecordType?: string | null;
+  sourceRecordId?: UUID | null;
   title: string;
+  description?: string | null;
+  priority?: TaskPriority;
   status?: TaskStatus;
   dueAt?: string | null;
   assignedToUserId?: UUID | null;
+  idempotencyKey?: string | null;
+}
+
+export interface TaskSearchFilter {
+  status?: TaskStatus | null;
+  dueDate?: string | null;
+  dueBefore?: string | null;
+  assignedToUserId?: UUID | null;
+  patientId?: UUID | null;
+  sourceWorkflow?: TaskSourceWorkflow | null;
+  limit?: number | null;
+}
+
+export interface UpdateTaskInput {
+  status?: TaskStatus;
+  assignedToUserId?: UUID | null;
+  priority?: TaskPriority;
+  dueAt?: string | null;
+  title?: string;
+  description?: string | null;
+  completionEvidence?: Record<string, unknown>;
+  cancelledReason?: string | null;
+}
+
+export interface CreateRecallRuleInput {
+  code: string;
+  title: string;
+  anchor?: RecallRuleAnchor;
+  offsetDays: number;
+  procedureCategory?: string | null;
+  pricebookProcedureId?: UUID | null;
+  defaultTaskTitle?: string | null;
+  defaultTaskPriority?: TaskPriority;
+}
+
+export interface RecallSearchFilter {
+  status?: RecallStatus | null;
+  dueBefore?: string | null;
+  patientId?: UUID | null;
+  limit?: number | null;
+}
+
+export interface RecordRecallActionInput {
+  actionType: RecallActionType;
+  method?: string | null;
+  appointmentId?: UUID | null;
+  evidence?: Record<string, unknown>;
+  notes?: string | null;
+}
+
+export interface GenerateDueContinuityInput {
+  asOf: string;
+}
+
+export interface GenerateDueContinuityResult {
+  recallTasksCreated: TaskRecord[];
+  followUpTasksCreated: TaskRecord[];
+  recallsCreated: RecallRecord[];
+  skippedExistingKeys: string[];
+}
+
+export interface CreateSopTemplateInput {
+  code: string;
+  title: string;
+  description?: string | null;
+  items: {
+    title: string;
+    instructions?: string | null;
+    evidenceRequired?: boolean;
+  }[];
+}
+
+export interface CreateSopScheduleInput {
+  templateId: UUID;
+  title: string;
+  recurrenceType: SopRecurrenceType;
+  intervalDays?: number | null;
+  dayOfWeek?: number | null;
+  dayOfMonth?: number | null;
+  dueTime: string;
+  timezone?: string | null;
+  startsOn: string;
+  endsOn?: string | null;
+  assignedToUserId?: UUID | null;
+  defaultTaskPriority?: TaskPriority;
+}
+
+export interface SopRunSearchFilter {
+  date?: string | null;
+  status?: SopRunStatus | null;
+  dueBefore?: string | null;
+  limit?: number | null;
+}
+
+export interface UpdateSopRunInput {
+  status?: SopRunStatus;
+  completionEvidence?: Record<string, unknown>;
+  items?: {
+    itemId: UUID;
+    status: SopRunItemStatus;
+    evidence?: Record<string, unknown>;
+  }[];
+}
+
+export interface GenerateDueSopRunsInput {
+  asOf: string;
+}
+
+export interface GenerateDueSopRunsResult {
+  runsCreated: SopRunDetail[];
+  skippedExistingKeys: string[];
+}
+
+export interface CreateLabVendorInput {
+  displayName: string;
+  phone?: string | null;
+  email?: string | null;
+  address?: Record<string, unknown>;
+  taxRegistrationNumber?: string | null;
+  paymentTermsDays?: number | null;
+}
+
+export interface LabCaseSearchFilter {
+  status?: LabCaseStatus | null;
+  dueBefore?: string | null;
+  vendorId?: UUID | null;
+  patientId?: UUID | null;
+}
+
+export interface CreateLabCaseInput {
+  vendorId: UUID;
+  patientId: UUID;
+  encounterId?: UUID | null;
+  treatmentPlanId?: UUID | null;
+  treatmentPlanEstimateItemId?: UUID | null;
+  procedurePerformedId?: UUID | null;
+  title: string;
+  priority?: "routine" | "urgent";
+  dueAt: string;
+  clinicalNotes?: string | null;
+  internalNotes?: string | null;
+  expectedCostMinor?: number | null;
+  slipMetadata?: Record<string, unknown>;
+  items: Array<{
+    itemType: string;
+    toothNumber?: string | null;
+    material?: string | null;
+    shade?: string | null;
+    quantity?: number;
+    notes?: string | null;
+  }>;
+}
+
+export interface UpdateLabCaseStatusInput {
+  status: LabCaseStatus;
+  reason?: string | null;
+  evidence?: Record<string, unknown>;
+}
+
+export interface CreateLabReconciliationInput {
+  vendorId: UUID;
+  periodStart: string;
+  periodEnd: string;
+  status?: LabReconciliationStatus;
+  invoiceReference?: string | null;
+  invoiceAmountMinor?: number | null;
+  evidence?: Record<string, unknown>;
+  entries: Array<{
+    labCaseId: UUID;
+    status?: LabReconciliationEntryStatus;
+    invoiceAmountMinor?: number | null;
+    notes?: string | null;
+  }>;
+}
+
+export interface CreateInventoryCategoryInput {
+  code: string;
+  displayName: string;
+  kind: InventoryCategoryKind;
+  active?: boolean;
+}
+
+export interface CreateInventoryItemInput {
+  categoryId: UUID;
+  sku: string;
+  displayName: string;
+  unitOfMeasure: string;
+  storageLocation: string;
+  trackQuantity?: boolean;
+  minimumQuantity?: number;
+  reorderQuantity?: number;
+  openingQuantity?: number;
+}
+
+export interface CreateStockLedgerEntryInput {
+  itemId: UUID;
+  movementType: StockLedgerMovementType;
+  quantityDelta: number;
+  unitCostMinor?: number | null;
+  currency?: "INR" | null;
+  sourceTable?: string | null;
+  sourceId?: UUID | null;
+  reason: string;
+  evidence?: Record<string, unknown>;
+}
+
+export interface CreateInventoryCheckTemplateInput {
+  code: string;
+  displayName: string;
+  cadence: InventoryCheckTemplateRecord["cadence"];
+  active?: boolean;
+  lines: Array<{
+    itemId: UUID;
+    sequence: number;
+    drawerLocation: string;
+    expectedQuantity?: number | null;
+    required?: boolean;
+    instructions?: string | null;
+  }>;
+}
+
+export interface CreateInventoryCheckRunInput {
+  templateId: UUID;
+  notes?: string | null;
+}
+
+export interface UpdateInventoryCheckRunInput {
+  status: InventoryCheckRunStatus;
+  notes?: string | null;
+  lines?: Array<{
+    lineId: UUID;
+    countedQuantity: number;
+    exceptionNotes?: string | null;
+  }>;
+}
+
+export interface InventoryExceptionFilter {
+  itemId?: UUID | null;
+  checkRunId?: UUID | null;
+}
+
+export interface IncidentSearchFilter {
+  status?: IncidentRecord["status"] | null;
+  severity?: IncidentSeverity | null;
+  category?: IncidentCategory | null;
+}
+
+export interface CreateIncidentInput {
+  patientId?: UUID | null;
+  appointmentId?: UUID | null;
+  labCaseId?: UUID | null;
+  inventoryItemId?: UUID | null;
+  category: IncidentCategory;
+  severity: IncidentSeverity;
+  occurredAt: string;
+  location?: string | null;
+  summary: string;
+  description: string;
+  impact?: string | null;
+  learning?: string | null;
+  immediateAction?: string | null;
+  evidence?: Record<string, unknown>;
+  ownerUserId?: UUID | null;
+}
+
+export interface CreateCorrectiveActionInput {
+  incidentId?: UUID | null;
+  actionType: CorrectiveActionRecord["actionType"];
+  title: string;
+  description: string;
+  ownerUserId: UUID;
+  dueAt: string;
+  verificationEvidence?: Record<string, unknown>;
+}
+
+export interface UpdateCorrectiveActionInput {
+  status: CorrectiveActionStatus;
+  completionEvidence?: Record<string, unknown>;
+  verificationEvidence?: Record<string, unknown>;
 }
 
 export interface CreateAttributionTouchInput {
@@ -403,13 +727,102 @@ export interface ClinicOperationsRepository {
   listQueueEntries(scope: RepositoryScope, date: string): Promise<QueueEntryRecord[]>;
   updateQueueEntry(scope: RepositoryScope, queueEntryId: UUID, status: QueueStatus): Promise<QueueEntryRecord | null>;
 
+  listTasks(scope: RepositoryScope, filter?: TaskSearchFilter): Promise<TaskRecord[]>;
+  findTaskById(scope: RepositoryScope, taskId: UUID): Promise<TaskRecord | null>;
   createTask(scope: RepositoryScope, input: CreateTaskInput): Promise<TaskRecord>;
+  updateTask(scope: RepositoryScope, taskId: UUID, input: UpdateTaskInput): Promise<TaskRecord | null>;
+  createRecallRule(scope: RepositoryScope, input: CreateRecallRuleInput): Promise<RecallRuleRecord>;
+  listRecalls(scope: RepositoryScope, filter?: RecallSearchFilter): Promise<RecallRecord[]>;
+  recordRecallAction(
+    scope: RepositoryScope,
+    recallId: UUID,
+    input: RecordRecallActionInput
+  ): Promise<RecallRecord | null>;
+  generateDueContinuityTasks(
+    scope: RepositoryScope,
+    input: GenerateDueContinuityInput
+  ): Promise<GenerateDueContinuityResult>;
+  createSopTemplate(scope: RepositoryScope, input: CreateSopTemplateInput): Promise<SopTemplateDetail>;
+  createSopSchedule(scope: RepositoryScope, input: CreateSopScheduleInput): Promise<SopScheduleRecord | null>;
+  generateDueSopRuns(
+    scope: RepositoryScope,
+    input: GenerateDueSopRunsInput
+  ): Promise<GenerateDueSopRunsResult>;
+  listSopRuns(scope: RepositoryScope, filter?: SopRunSearchFilter): Promise<SopRunDetail[]>;
+  updateSopRun(scope: RepositoryScope, sopRunId: UUID, input: UpdateSopRunInput): Promise<SopRunDetail | null>;
+
+  listLabVendors(scope: RepositoryScope): Promise<LabVendorRecord[]>;
+  findLabVendorById(scope: RepositoryScope, vendorId: UUID): Promise<LabVendorRecord | null>;
+  createLabVendor(scope: RepositoryScope, input: CreateLabVendorInput): Promise<LabVendorRecord>;
+  listLabCases(scope: RepositoryScope, filter?: LabCaseSearchFilter): Promise<LabCaseDetail[]>;
+  findLabCaseById(scope: RepositoryScope, labCaseId: UUID): Promise<LabCaseDetail | null>;
+  createLabCase(scope: RepositoryScope, input: CreateLabCaseInput): Promise<LabCaseDetail | null>;
+  updateLabCaseStatus(
+    scope: RepositoryScope,
+    labCaseId: UUID,
+    input: UpdateLabCaseStatusInput
+  ): Promise<LabCaseDetail | null>;
+  createLabReconciliation(
+    scope: RepositoryScope,
+    input: CreateLabReconciliationInput
+  ): Promise<LabReconciliationDetail | null>;
+
+  listInventoryCategories(scope: RepositoryScope): Promise<InventoryCategoryRecord[]>;
+  createInventoryCategory(
+    scope: RepositoryScope,
+    input: CreateInventoryCategoryInput
+  ): Promise<InventoryCategoryRecord>;
+  listInventoryItems(scope: RepositoryScope): Promise<InventoryItemRecord[]>;
+  findInventoryItemById(scope: RepositoryScope, itemId: UUID): Promise<InventoryItemRecord | null>;
+  createInventoryItem(scope: RepositoryScope, input: CreateInventoryItemInput): Promise<InventoryItemRecord | null>;
+  createStockLedgerEntry(
+    scope: RepositoryScope,
+    input: CreateStockLedgerEntryInput
+  ): Promise<StockLedgerEntryRecord | null>;
+  listInventoryCheckTemplates(scope: RepositoryScope): Promise<
+    Array<InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }>
+  >;
+  createInventoryCheckTemplate(
+    scope: RepositoryScope,
+    input: CreateInventoryCheckTemplateInput
+  ): Promise<(InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }) | null>;
+  createInventoryCheckRun(
+    scope: RepositoryScope,
+    input: CreateInventoryCheckRunInput
+  ): Promise<InventoryCheckRunDetail | null>;
+  updateInventoryCheckRun(
+    scope: RepositoryScope,
+    checkRunId: UUID,
+    input: UpdateInventoryCheckRunInput
+  ): Promise<InventoryCheckRunDetail | null>;
+  listInventoryExceptions(
+    scope: RepositoryScope,
+    filter?: InventoryExceptionFilter
+  ): Promise<InventoryExceptionRecord[]>;
+
+  listIncidents(scope: RepositoryScope, filter?: IncidentSearchFilter): Promise<IncidentRecord[]>;
+  createIncident(scope: RepositoryScope, input: CreateIncidentInput): Promise<IncidentRecord | null>;
+  listCorrectiveActions(scope: RepositoryScope): Promise<CorrectiveActionRecord[]>;
+  createCorrectiveAction(
+    scope: RepositoryScope,
+    input: CreateCorrectiveActionInput
+  ): Promise<CorrectiveActionRecord | null>;
+  updateCorrectiveAction(
+    scope: RepositoryScope,
+    correctiveActionId: UUID,
+    input: UpdateCorrectiveActionInput
+  ): Promise<CorrectiveActionRecord | null>;
+
   createAttributionTouch(
     scope: RepositoryScope,
     input: CreateAttributionTouchInput
   ): Promise<AttributionTouchRecord>;
   appendOutboxEvent(scope: RepositoryScope, event: OutboxEventInput): Promise<void>;
   loadDashboardData(scope: RepositoryScope, date: string): Promise<DashboardDataSet>;
+  loadOwnerDashboardProjectionData(
+    scope: RepositoryScope,
+    range: DateRangeFilter
+  ): Promise<OwnerDashboardProjectionData>;
 
   listPricebookProcedures(scope: RepositoryScope): Promise<PricebookProcedureRecord[]>;
   findPricebookProcedureById(

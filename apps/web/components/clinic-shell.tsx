@@ -10,6 +10,7 @@ import { AuthStatusPanel } from "@/components/auth-status-panel";
 import { CheckoutWorkflow, isCp5WorkflowSurface } from "@/components/checkout-workflow";
 import { ClinicalWorkflow, isCp3WorkflowSurface } from "@/components/clinical-workflow";
 import { DentalMediaWorkflow, isCp4WorkflowSurface } from "@/components/dental-media-workflow";
+import { isCp6WorkflowSurface, OperationsWorkflow } from "@/components/operations-workflow";
 import { SurfaceView } from "@/components/surface-view";
 import { loadMe, type MeState } from "@/lib/me";
 import { canAccessSurface, getSurface, getVisibleSurfaces } from "@/lib/navigation";
@@ -185,6 +186,8 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
             <DentalMediaWorkflow profile={profile} />
           ) : isCp5WorkflowSurface(activeSurface.id) ? (
             <CheckoutWorkflow profile={profile} />
+          ) : isCp6WorkflowSurface(activeSurface.id) ? (
+            <OperationsWorkflow activeSurfaceId={activeSurface.id} profile={profile} />
           ) : (
             <SurfaceView profile={profile} surface={activeSurface} />
           )}
