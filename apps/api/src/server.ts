@@ -55,6 +55,7 @@ import {
   createPatientConsent,
   createPatientTreatmentPlan,
   getMorningDashboard,
+  getOwnerDashboard,
   getEncounter,
   getInvoice,
   getPatientDentalChart,
@@ -704,6 +705,13 @@ async function routeOperationsRequest(input: {
       dependencies,
       url.searchParams.get("date") ?? todayIsoDate()
     );
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/owner-dashboard") {
+    return getOwnerDashboard(operationsContext, dependencies, {
+      from: url.searchParams.get("from"),
+      to: url.searchParams.get("to")
+    });
   }
 
   if (input.request.method === "POST" && pathname === "/v1/encounters") {

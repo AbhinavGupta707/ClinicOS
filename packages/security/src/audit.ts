@@ -380,6 +380,12 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: false,
     requiresPatientId: false
   },
+  "owner_dashboard.viewed": {
+    category: "administration",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
   "integration.credential.changed": {
     category: "integration",
     riskLevel: "critical",

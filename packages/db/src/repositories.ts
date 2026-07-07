@@ -40,6 +40,7 @@ import type {
   PaymentRequestRecord,
   PaymentTransactionRecord,
   MediaUploadReservationRecord,
+  OwnerDashboardProjectionData,
   PatientRecord,
   PatientInstructionRecord,
   PatientSource,
@@ -410,6 +411,10 @@ export interface ClinicOperationsRepository {
   ): Promise<AttributionTouchRecord>;
   appendOutboxEvent(scope: RepositoryScope, event: OutboxEventInput): Promise<void>;
   loadDashboardData(scope: RepositoryScope, date: string): Promise<DashboardDataSet>;
+  loadOwnerDashboardProjectionData(
+    scope: RepositoryScope,
+    range: DateRangeFilter
+  ): Promise<OwnerDashboardProjectionData>;
 
   listPricebookProcedures(scope: RepositoryScope): Promise<PricebookProcedureRecord[]>;
   findPricebookProcedureById(

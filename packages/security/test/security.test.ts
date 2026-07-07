@@ -116,6 +116,7 @@ test("CP5 provider audit classifications separate config health from invoice pay
   assert.equal(classifyAuditAction("payment.succeeded").riskLevel, "high");
   assert.equal(classifyAuditAction("payment.manually_recorded").riskLevel, "high");
   assert.equal(classifyAuditAction("payment.reconciliation_required").category, "billing");
+  assert.equal(classifyAuditAction("owner_dashboard.viewed").phiInvolved, false);
 });
 
 test("CP3 audit classifications cover intake consent encounter note prescription and timeline actions", () => {
