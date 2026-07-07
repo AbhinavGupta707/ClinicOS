@@ -35,7 +35,8 @@ export const DOMAIN_EVENT_TYPES = [
   "clinical_note.signed",
   "clinical_note.amended",
   "prescription.draft_created",
-  "prescription.signed"
+  "prescription.signed",
+  "patient.timeline_item.created"
 ] as const;
 
 export type DomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];
@@ -72,10 +73,13 @@ export const CP2_EVENT_TYPES = [
   ...CP2_DASHBOARD_TASK_EVENT_TYPES
 ] as const;
 
-export const CP3_CLINICAL_EVENT_TYPES = [
+export const CP3_INTAKE_CONSENT_EVENT_TYPES = [
   "form_response.submitted",
   "consent.created",
-  "consent.revoked",
+  "consent.revoked"
+] as const;
+
+export const CP3_CLINICAL_EVENT_TYPES = [
   "encounter.created",
   "encounter.started",
   "encounter.completed",
@@ -86,14 +90,23 @@ export const CP3_CLINICAL_EVENT_TYPES = [
   "prescription.signed"
 ] as const;
 
-export const CP3_EVENT_TYPES = [...CP2_EVENT_TYPES, ...CP3_CLINICAL_EVENT_TYPES] as const;
+export const CP3_TIMELINE_EVENT_TYPES = ["patient.timeline_item.created"] as const;
+
+export const CP3_EVENT_TYPES = [
+  ...CP2_EVENT_TYPES,
+  ...CP3_INTAKE_CONSENT_EVENT_TYPES,
+  ...CP3_CLINICAL_EVENT_TYPES,
+  ...CP3_TIMELINE_EVENT_TYPES
+] as const;
 
 export type Cp2LeadEventType = (typeof CP2_LEAD_EVENT_TYPES)[number];
 export type Cp2PatientEventType = (typeof CP2_PATIENT_EVENT_TYPES)[number];
 export type Cp2AppointmentEventType = (typeof CP2_APPOINTMENT_EVENT_TYPES)[number];
 export type Cp2DashboardTaskEventType = (typeof CP2_DASHBOARD_TASK_EVENT_TYPES)[number];
 export type Cp2EventType = (typeof CP2_EVENT_TYPES)[number];
+export type Cp3IntakeConsentEventType = (typeof CP3_INTAKE_CONSENT_EVENT_TYPES)[number];
 export type Cp3ClinicalEventType = (typeof CP3_CLINICAL_EVENT_TYPES)[number];
+export type Cp3TimelineEventType = (typeof CP3_TIMELINE_EVENT_TYPES)[number];
 export type Cp3EventType = (typeof CP3_EVENT_TYPES)[number];
 
 export type EventSourceKind =
@@ -130,7 +143,8 @@ export interface DomainEventAggregate {
     | "consent"
     | "encounter"
     | "clinical_note"
-    | "prescription";
+    | "prescription"
+    | "patient_timeline_item";
   id: UUID | string;
 }
 

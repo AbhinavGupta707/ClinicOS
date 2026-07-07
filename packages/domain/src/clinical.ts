@@ -58,6 +58,11 @@ export const CONSENT_CAPTURE_METHODS = [
 export type ConsentCaptureMethod = (typeof CONSENT_CAPTURE_METHODS)[number];
 
 export type ConsentStatus = "active" | "revoked";
+export type ConsentBlockReason =
+  | "consent_granted"
+  | "consent_missing"
+  | "consent_revoked"
+  | "consent_not_yet_effective";
 
 export interface ConsentRecord {
   id: UUID;
@@ -93,6 +98,22 @@ export interface ConsentEnforcementState {
   photoCaptureAllowed: boolean;
   photoSharingAllowed: boolean;
   abdmAbhaAllowed: boolean;
+}
+
+export interface ConsentRequirementDecision {
+  purpose: ConsentPurpose;
+  allowed: boolean;
+  reason: ConsentBlockReason;
+  evaluatedAt: string;
+  consentId: UUID | null;
+}
+
+export interface AiAudioReadinessDecision {
+  allowed: boolean;
+  evaluatedAt: string;
+  requiredPurposes: ConsentPurpose[];
+  decisions: ConsentRequirementDecision[];
+  blockedReasons: ConsentRequirementDecision[];
 }
 
 export const ENCOUNTER_STATUSES = [
@@ -252,9 +273,30 @@ export function assertClinicalNoteCanBeSigned(note: ClinicalNoteVersionRecord): 
   }
 }
 
+export function assertClinicalNoteDraftMutationAllowed(
+  note: Pick<ClinicalNoteVersionRecord, "status">
+): void {
+  if (note.status === "signed" || note.status === "amended") {
+    throw new Error("Signed clinical notes are immutable; create a linked amendment instead.");
+  }
+}
+
 export function assertClinicalNoteCanBeAmended(note: ClinicalNoteVersionRecord): void {
   if (note.status !== "signed" && note.status !== "amended") {
     throw new Error("Only a signed clinical note version can be amended.");
+  }
+}
+
+export function assertClinicalNoteAmendmentAllowed(
+  note: Pick<ClinicalNoteVersionRecord, "status">,
+  input: { reason?: string | null }
+): void {
+  if (note.status !== "signed" && note.status !== "amended") {
+    throw new Error("Only signed clinical notes can be amended.");
+  }
+
+  if (!input.reason?.trim()) {
+    throw new Error("Clinical note amendments require a reason.");
   }
 }
 
@@ -293,15 +335,7 @@ export function buildConsentEnforcementState(
   consents: readonly ConsentRecord[],
   evaluatedAt = new Date().toISOString()
 ): ConsentEnforcementState {
-  const latestByPurpose = new Map<ConsentPurpose, ConsentRecord>();
-
-  for (const consent of consents) {
-    const existing = latestByPurpose.get(consent.purpose);
-    if (!existing || consentSortTimestamp(consent) >= consentSortTimestamp(existing)) {
-      latestByPurpose.set(consent.purpose, consent);
-    }
-  }
-
+  const latestByPurpose = latestConsentByPurpose(consents);
   const activePurposes = [...latestByPurpose.values()]
     .filter((consent) => consent.status === "active")
     .map((consent) => consent.purpose)
@@ -330,8 +364,97 @@ export function buildConsentEnforcementState(
   };
 }
 
+export function evaluateConsentRequirement(
+  consents: readonly ConsentRecord[],
+  purpose: ConsentPurpose,
+  options: { evaluatedAt?: string } = {}
+): ConsentRequirementDecision {
+  const evaluatedAt = options.evaluatedAt ?? new Date().toISOString();
+  const evaluatedTime = toTime(evaluatedAt);
+  const consent = latestConsentByPurpose(consents).get(purpose);
+
+  if (!consent) {
+    return blockedConsentDecision(purpose, "consent_missing", evaluatedAt, null);
+  }
+
+  if (toTime(consent.createdAt) > evaluatedTime) {
+    return blockedConsentDecision(purpose, "consent_not_yet_effective", evaluatedAt, consent.id);
+  }
+
+  if (consent.status === "revoked") {
+    return blockedConsentDecision(purpose, "consent_revoked", evaluatedAt, consent.id);
+  }
+
+  return {
+    purpose,
+    allowed: true,
+    reason: "consent_granted",
+    evaluatedAt,
+    consentId: consent.id
+  };
+}
+
+export function evaluateAiAudioReadiness(
+  consents: readonly ConsentRecord[],
+  options: { evaluatedAt?: string; requireRawAudioRetention?: boolean } = {}
+): AiAudioReadinessDecision {
+  const evaluatedAt = options.evaluatedAt ?? new Date().toISOString();
+  const requiredPurposes: ConsentPurpose[] = ["ai_audio_capture"];
+
+  if (options.requireRawAudioRetention) {
+    requiredPurposes.push("raw_audio_retention");
+  }
+
+  const decisions = requiredPurposes.map((purpose) =>
+    evaluateConsentRequirement(consents, purpose, { evaluatedAt })
+  );
+  const blockedReasons = decisions.filter((decision) => !decision.allowed);
+
+  return {
+    allowed: blockedReasons.length === 0,
+    evaluatedAt,
+    requiredPurposes,
+    decisions,
+    blockedReasons
+  };
+}
+
+function latestConsentByPurpose(consents: readonly ConsentRecord[]): Map<ConsentPurpose, ConsentRecord> {
+  const latestByPurpose = new Map<ConsentPurpose, ConsentRecord>();
+
+  for (const consent of consents) {
+    const existing = latestByPurpose.get(consent.purpose);
+    if (!existing || consentSortTimestamp(consent) >= consentSortTimestamp(existing)) {
+      latestByPurpose.set(consent.purpose, consent);
+    }
+  }
+
+  return latestByPurpose;
+}
+
 function consentSortTimestamp(consent: ConsentRecord): number {
-  return Date.parse(consent.revokedAt ?? consent.createdAt);
+  return Math.max(toTime(consent.revokedAt), toTime(consent.createdAt));
+}
+
+function toTime(value: string | null | undefined): number {
+  if (!value) return 0;
+  const time = Date.parse(value);
+  return Number.isNaN(time) ? 0 : time;
+}
+
+function blockedConsentDecision(
+  purpose: ConsentPurpose,
+  reason: Exclude<ConsentBlockReason, "consent_granted">,
+  evaluatedAt: string,
+  consentId: UUID | null
+): ConsentRequirementDecision {
+  return {
+    purpose,
+    allowed: false,
+    reason,
+    evaluatedAt,
+    consentId
+  };
 }
 
 function trimOptional(value: string | undefined): string | undefined {

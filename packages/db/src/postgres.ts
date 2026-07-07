@@ -1678,6 +1678,15 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           ]
         );
         note = mapClinicalNoteVersionRow(result.rows[0]);
+        await this.#appendTimeline(client, scope, {
+          patientId: note.patientId,
+          itemType: "clinical_note_draft_created",
+          sourceTable: "clinical_note_versions",
+          sourceId: note.id,
+          title: "Clinical note drafted",
+          summary: `Version ${note.versionNumber}`,
+          metadata: { encounterId: note.encounterId, readyForSign: input.readyForSign === true }
+        });
       }
 
       const status = input.readyForSign ? "ready_for_sign" : "drafting";
@@ -1881,7 +1890,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
 
       await this.#appendTimeline(client, scope, {
         patientId: prescription.patientId,
-        itemType: "prescription_created",
+        itemType: "prescription_draft_created",
         sourceTable: "prescriptions",
         sourceId: prescription.id,
         title: "Prescription drafted",

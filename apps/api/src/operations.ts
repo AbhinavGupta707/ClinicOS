@@ -300,7 +300,7 @@ export async function getPatientTimeline(
   const timeline = (
     await dependencies.repository.findPatientTimeline(scopeFrom(context), patientId)
   ).map(toPublicPatientTimelineItem);
-  await audit(context, dependencies, "patient.record.viewed", {
+  await audit(context, dependencies, "patient.timeline.viewed", {
     patientId,
     resourceType: "patient_timeline",
     resourceId: patientId
@@ -1084,7 +1084,7 @@ export async function createEncounterPrescription(
   encounterId: UUID,
   body: unknown
 ) {
-  authorize(context, { permission: "clinical.note.write" });
+  authorize(context, { permission: "prescription.write" });
   const input = parseCreatePrescription(body);
   try {
     assertPrescriptionMedicationList(input.medications);
@@ -1371,10 +1371,13 @@ function publicTimelineItemType(
       return "consent";
     case "encounter_created":
     case "encounter_started":
+    case "encounter_completed":
+      return "clinical_note";
+    case "clinical_note_draft_created":
     case "clinical_note_signed":
     case "clinical_note_amended":
       return "clinical_note";
-    case "prescription_created":
+    case "prescription_draft_created":
     case "prescription_signed":
       return "prescription";
   }
@@ -1412,11 +1415,15 @@ function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): Dom
       return "encounter.created";
     case "encounter_started":
       return "encounter.started";
+    case "encounter_completed":
+      return "encounter.completed";
+    case "clinical_note_draft_created":
+      return "clinical_note.draft_created";
     case "clinical_note_signed":
       return "clinical_note.signed";
     case "clinical_note_amended":
       return "clinical_note.amended";
-    case "prescription_created":
+    case "prescription_draft_created":
       return "prescription.draft_created";
     case "prescription_signed":
       return "prescription.signed";

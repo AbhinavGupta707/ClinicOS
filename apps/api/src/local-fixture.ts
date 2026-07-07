@@ -907,6 +907,8 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     if (existingDraft) {
       existingDraft.content = content;
+      encounter.status = input.readyForSign ? "ready_for_sign" : "drafting";
+      encounter.updatedAt = new Date().toISOString();
       return existingDraft;
     }
 
@@ -928,6 +930,16 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     };
 
     this.clinicalNoteVersions.push(note);
+    this.timelineItems.push(
+      timeline(
+        scope,
+        encounter.patientId,
+        "clinical_note_draft_created",
+        "clinical_note_versions",
+        note.id,
+        "Clinical note drafted"
+      )
+    );
     encounter.status = input.readyForSign ? "ready_for_sign" : "drafting";
     encounter.updatedAt = note.createdAt;
     return note;
@@ -1048,7 +1060,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       timeline(
         scope,
         encounter.patientId,
-        "prescription_created",
+        "prescription_draft_created",
         "prescriptions",
         prescription.id,
         "Prescription drafted"

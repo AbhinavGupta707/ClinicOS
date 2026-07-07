@@ -20,9 +20,11 @@ alter table patient_timeline_items
       'consent_revoked',
       'encounter_created',
       'encounter_started',
+      'encounter_completed',
+      'clinical_note_draft_created',
       'clinical_note_signed',
       'clinical_note_amended',
-      'prescription_created',
+      'prescription_draft_created',
       'prescription_signed'
     )
   );
