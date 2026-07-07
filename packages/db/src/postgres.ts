@@ -15,6 +15,10 @@ import type {
   IntakeFormSubmissionRecord,
   IntakeFormTemplateRecord,
   LeadRecord,
+  MediaAssetRecord,
+  MediaScanStatus,
+  MediaStorageProviderKey,
+  MediaUploadReservationRecord,
   PatientGender,
   PatientRecord,
   PatientTimelineItem,
@@ -33,6 +37,7 @@ import {
   assertClinicalNoteCanBeSigned,
   assertPrescriptionCanBeSigned,
   buildConsentEnforcementState,
+  mediaAssetStatusForScan,
   normalizeClinicalNoteContent,
   normalizePhone
 } from "@clinic-os/domain";
@@ -50,10 +55,12 @@ import type {
   CreateIntakeFormSubmissionInput,
   CreateIntakeFormTemplateInput,
   CreateLeadInput,
+  CreateMediaUploadReservationInput,
   CreatePatientInput,
   CreatePrescriptionInput,
   CreateTaskInput,
   DashboardDataSet,
+  CompleteMediaUploadInput,
   IdentityAccessSnapshot,
   IdentityRepository,
   LeadSearchFilter,
@@ -1946,6 +1953,209 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
+  async createMediaUploadReservation(
+    scope: RepositoryScope,
+    input: CreateMediaUploadReservationInput
+  ): Promise<MediaUploadReservationRecord> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<MediaUploadReservationRow>(
+        `
+          insert into media_uploads (
+            id,
+            tenant_id,
+            clinic_id,
+            patient_id,
+            encounter_id,
+            tooth_number,
+            dental_finding_id,
+            media_type,
+            original_filename,
+            mime_type,
+            expected_file_size_bytes,
+            expected_sha256_digest,
+            object_key,
+            storage_provider,
+            storage_region,
+            expires_at,
+            created_by_user_id,
+            tags,
+            provenance
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18::jsonb, $19::jsonb)
+          returning *
+        `,
+        [
+          input.id,
+          scope.tenantId,
+          scope.clinicId,
+          input.patientId,
+          input.encounterId ?? null,
+          input.toothNumber ?? null,
+          input.dentalFindingId ?? null,
+          input.mediaType,
+          input.originalFilename,
+          input.mimeType,
+          input.expectedFileSizeBytes,
+          input.expectedSha256Digest ?? null,
+          input.objectKey,
+          input.storageProvider,
+          input.storageRegion ?? null,
+          input.expiresAt,
+          scope.actorUserId,
+          JSON.stringify(input.tags ?? []),
+          JSON.stringify(input.provenance ?? {})
+        ]
+      );
+
+      return mapMediaUploadReservationRow(result.rows[0]);
+    });
+  }
+
+  async findMediaUploadReservationById(
+    scope: RepositoryScope,
+    uploadId: UUID
+  ): Promise<MediaUploadReservationRecord | null> {
+    return this.#withRls(scope, async (client) =>
+      this.#findMediaUploadReservationByIdInTransaction(client, scope, uploadId)
+    );
+  }
+
+  async completeMediaUpload(
+    scope: RepositoryScope,
+    uploadId: UUID,
+    input: CompleteMediaUploadInput
+  ): Promise<MediaAssetRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const reservation = await this.#findMediaUploadReservationByIdInTransaction(
+        client,
+        scope,
+        uploadId
+      );
+      if (!reservation || reservation.status !== "reserved") return null;
+
+      const result = await client.query<MediaAssetRow>(
+        `
+          insert into media_assets (
+            tenant_id,
+            clinic_id,
+            patient_id,
+            encounter_id,
+            tooth_number,
+            dental_finding_id,
+            media_type,
+            original_filename,
+            mime_type,
+            file_size_bytes,
+            sha256_digest,
+            object_key,
+            object_version,
+            storage_provider,
+            storage_region,
+            status,
+            scan_status,
+            quarantine_reason,
+            tags,
+            provenance,
+            dicom_metadata,
+            created_by_user_id,
+            uploaded_by_user_id,
+            created_at
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19::jsonb, $20::jsonb, $21::jsonb, $22, $23, $24)
+          returning *
+        `,
+        [
+          reservation.tenantId,
+          reservation.clinicId,
+          reservation.patientId,
+          reservation.encounterId,
+          reservation.toothNumber,
+          reservation.dentalFindingId,
+          reservation.mediaType,
+          reservation.originalFilename,
+          reservation.mimeType,
+          input.contentLength,
+          input.sha256Digest ?? reservation.expectedSha256Digest,
+          reservation.objectKey,
+          input.objectVersion ?? null,
+          reservation.storageProvider,
+          reservation.storageRegion,
+          mediaAssetStatusForScan(input.scanStatus),
+          input.scanStatus,
+          input.quarantineReason ?? null,
+          JSON.stringify(reservation.tags),
+          JSON.stringify(reservation.provenance),
+          JSON.stringify(input.dicomMetadata ?? {}),
+          reservation.createdByUserId,
+          scope.actorUserId,
+          reservation.createdAt
+        ]
+      );
+      const asset = mapMediaAssetRow(result.rows[0]);
+
+      await client.query(
+        `
+          update media_uploads
+          set status = 'completed', completed_at = now(), media_asset_id = $4
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+        `,
+        [scope.tenantId, scope.clinicId, uploadId, asset.id]
+      );
+      await this.#appendTimeline(client, scope, {
+        patientId: asset.patientId,
+        itemType: "media_uploaded",
+        sourceTable: "media_assets",
+        sourceId: asset.id,
+        title: `${asset.mediaType.replace("_", " ")} uploaded`,
+        summary: asset.originalFilename,
+        metadata: {
+          mediaAssetId: asset.id,
+          mediaType: asset.mediaType,
+          encounterId: asset.encounterId,
+          toothNumber: asset.toothNumber,
+          dentalFindingId: asset.dentalFindingId
+        }
+      });
+
+      return asset;
+    });
+  }
+
+  async listPatientMediaAssets(
+    scope: RepositoryScope,
+    patientId: UUID
+  ): Promise<MediaAssetRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<MediaAssetRow>(
+        `
+          select *
+          from media_assets
+          where tenant_id = $1 and clinic_id = $2 and patient_id = $3 and status <> 'deleted'
+          order by uploaded_at desc
+        `,
+        [scope.tenantId, scope.clinicId, patientId]
+      );
+      return result.rows.map(mapMediaAssetRow);
+    });
+  }
+
+  async findMediaAssetById(
+    scope: RepositoryScope,
+    mediaAssetId: UUID
+  ): Promise<MediaAssetRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<MediaAssetRow>(
+        `
+          select *
+          from media_assets
+          where tenant_id = $1 and clinic_id = $2 and id = $3 and status <> 'deleted'
+        `,
+        [scope.tenantId, scope.clinicId, mediaAssetId]
+      );
+      return result.rows[0] ? mapMediaAssetRow(result.rows[0]) : null;
+    });
+  }
+
   async #withRls<T>(
     scope: RepositoryScope,
     callback: (client: SqlQueryClient) => Promise<T>
@@ -2130,6 +2340,22 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       [scope.tenantId, scope.clinicId, prescriptionId]
     );
     return result.rows[0] ? mapPrescriptionRow(result.rows[0]) : null;
+  }
+
+  async #findMediaUploadReservationByIdInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    uploadId: UUID
+  ): Promise<MediaUploadReservationRecord | null> {
+    const result = await client.query<MediaUploadReservationRow>(
+      `
+        select *
+        from media_uploads
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, uploadId]
+    );
+    return result.rows[0] ? mapMediaUploadReservationRow(result.rows[0]) : null;
   }
 
   async #appendEncounterStatusHistory(
@@ -2490,6 +2716,62 @@ interface PrescriptionRow {
   signed_at: Date | string | null;
 }
 
+interface MediaUploadReservationRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  patient_id: UUID;
+  encounter_id: UUID | null;
+  tooth_number: string | null;
+  dental_finding_id: UUID | null;
+  media_type: MediaUploadReservationRecord["mediaType"];
+  original_filename: string;
+  mime_type: string;
+  expected_file_size_bytes: number | string;
+  expected_sha256_digest: string | null;
+  object_key: string;
+  storage_provider: MediaStorageProviderKey;
+  storage_region: string | null;
+  status: MediaUploadReservationRecord["status"];
+  expires_at: Date | string;
+  created_by_user_id: UUID;
+  created_at: Date | string;
+  completed_at: Date | string | null;
+  media_asset_id: UUID | null;
+  tags: unknown;
+  provenance: Record<string, unknown>;
+}
+
+interface MediaAssetRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  patient_id: UUID;
+  encounter_id: UUID | null;
+  tooth_number: string | null;
+  dental_finding_id: UUID | null;
+  media_type: MediaAssetRecord["mediaType"];
+  original_filename: string;
+  mime_type: string;
+  file_size_bytes: number | string;
+  sha256_digest: string | null;
+  object_key: string;
+  object_version: string | null;
+  storage_provider: MediaStorageProviderKey;
+  storage_region: string | null;
+  status: MediaAssetRecord["status"];
+  scan_status: MediaScanStatus;
+  quarantine_reason: string | null;
+  tags: unknown;
+  provenance: Record<string, unknown>;
+  dicom_metadata: Record<string, unknown>;
+  created_by_user_id: UUID;
+  uploaded_by_user_id: UUID;
+  created_at: Date | string;
+  uploaded_at: Date | string;
+  updated_at: Date | string;
+}
+
 function mapPatientRow(row: PatientRow): PatientRecord {
   return {
     id: row.id,
@@ -2761,6 +3043,73 @@ function mapPrescriptionRow(row: PrescriptionRow): PrescriptionRecord {
     signedByUserId: row.signed_by_user_id,
     signedAt: row.signed_at ? toIso(row.signed_at) : null
   };
+}
+
+function mapMediaUploadReservationRow(
+  row: MediaUploadReservationRow
+): MediaUploadReservationRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    patientId: row.patient_id,
+    encounterId: row.encounter_id,
+    toothNumber: row.tooth_number,
+    dentalFindingId: row.dental_finding_id,
+    mediaType: row.media_type,
+    originalFilename: row.original_filename,
+    mimeType: row.mime_type,
+    expectedFileSizeBytes: Number(row.expected_file_size_bytes),
+    expectedSha256Digest: row.expected_sha256_digest,
+    objectKey: row.object_key,
+    storageProvider: row.storage_provider,
+    storageRegion: row.storage_region,
+    status: row.status,
+    expiresAt: toIso(row.expires_at),
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at),
+    completedAt: row.completed_at ? toIso(row.completed_at) : null,
+    mediaAssetId: row.media_asset_id,
+    tags: stringArray(row.tags),
+    provenance: row.provenance ?? {}
+  };
+}
+
+function mapMediaAssetRow(row: MediaAssetRow): MediaAssetRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    patientId: row.patient_id,
+    encounterId: row.encounter_id,
+    toothNumber: row.tooth_number,
+    dentalFindingId: row.dental_finding_id,
+    mediaType: row.media_type,
+    originalFilename: row.original_filename,
+    mimeType: row.mime_type,
+    fileSizeBytes: Number(row.file_size_bytes),
+    sha256Digest: row.sha256_digest,
+    objectKey: row.object_key,
+    objectVersion: row.object_version,
+    storageProvider: row.storage_provider,
+    storageRegion: row.storage_region,
+    status: row.status,
+    scanStatus: row.scan_status,
+    quarantineReason: row.quarantine_reason,
+    tags: stringArray(row.tags),
+    provenance: row.provenance ?? {},
+    dicomMetadata: row.dicom_metadata ?? {},
+    createdByUserId: row.created_by_user_id,
+    uploadedByUserId: row.uploaded_by_user_id,
+    createdAt: toIso(row.created_at),
+    uploadedAt: toIso(row.uploaded_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function stringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === "string");
 }
 
 function toIso(value: Date | string): string {

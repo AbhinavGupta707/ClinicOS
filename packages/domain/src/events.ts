@@ -36,6 +36,8 @@ export const DOMAIN_EVENT_TYPES = [
   "clinical_note.amended",
   "prescription.draft_created",
   "prescription.signed",
+  "media.upload_requested",
+  "media.upload_completed",
   "patient.timeline_item.created"
 ] as const;
 
@@ -144,6 +146,8 @@ export interface DomainEventAggregate {
     | "encounter"
     | "clinical_note"
     | "prescription"
+    | "media_upload"
+    | "media_asset"
     | "patient_timeline_item";
   id: UUID | string;
 }

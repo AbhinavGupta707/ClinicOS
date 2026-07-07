@@ -5,6 +5,7 @@ export * from "./dashboard.ts";
 export * from "./events.ts";
 export * from "./ids.ts";
 export * from "./lead.ts";
+export * from "./media.ts";
 export * from "./patient.ts";
 export * from "./permissions.ts";
 export * from "./tenancy.ts";

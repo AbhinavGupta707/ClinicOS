@@ -14,9 +14,11 @@ import {
   type CreateIntakeFormSubmissionInput,
   type CreateIntakeFormTemplateInput,
   type CreateLeadInput,
+  type CreateMediaUploadReservationInput,
   type CreatePatientInput,
   type CreatePrescriptionInput,
   type CreateTaskInput,
+  type CompleteMediaUploadInput,
   type DashboardDataSet,
   type IdentityAccessSnapshot,
   type IdentityRepository,
@@ -50,6 +52,9 @@ import {
   type IntakeFormSubmissionRecord,
   type IntakeFormTemplateRecord,
   type LeadRecord,
+  mediaAssetStatusForScan,
+  type MediaAssetRecord,
+  type MediaUploadReservationRecord,
   type PatientRecord,
   type PatientTimelineItem,
   type PrescriptionRecord,
@@ -229,6 +234,8 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly encounters: EncounterRecord[] = [];
   readonly clinicalNoteVersions: ClinicalNoteVersionRecord[] = [];
   readonly prescriptions: PrescriptionRecord[] = [];
+  readonly mediaUploadReservations: MediaUploadReservationRecord[] = [];
+  readonly mediaAssets: MediaAssetRecord[] = [];
 
   async listPatients(
     scope: RepositoryScope,
@@ -1104,6 +1111,134 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return prescription;
   }
 
+  async createMediaUploadReservation(
+    scope: RepositoryScope,
+    input: CreateMediaUploadReservationInput
+  ): Promise<MediaUploadReservationRecord> {
+    const now = new Date().toISOString();
+    const reservation: MediaUploadReservationRecord = {
+      id: input.id,
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: input.patientId,
+      encounterId: input.encounterId ?? null,
+      toothNumber: input.toothNumber ?? null,
+      dentalFindingId: input.dentalFindingId ?? null,
+      mediaType: input.mediaType,
+      originalFilename: input.originalFilename,
+      mimeType: input.mimeType,
+      expectedFileSizeBytes: input.expectedFileSizeBytes,
+      expectedSha256Digest: input.expectedSha256Digest ?? null,
+      objectKey: input.objectKey,
+      storageProvider: input.storageProvider,
+      storageRegion: input.storageRegion ?? null,
+      status: "reserved",
+      expiresAt: input.expiresAt,
+      createdByUserId: scope.actorUserId,
+      createdAt: now,
+      completedAt: null,
+      mediaAssetId: null,
+      tags: input.tags ?? [],
+      provenance: input.provenance ?? {}
+    };
+
+    this.mediaUploadReservations.push(reservation);
+    return reservation;
+  }
+
+  async findMediaUploadReservationById(
+    scope: RepositoryScope,
+    uploadId: UUID
+  ): Promise<MediaUploadReservationRecord | null> {
+    return (
+      this.mediaUploadReservations.find(
+        (reservation) => matchesScope(reservation, scope) && reservation.id === uploadId
+      ) ?? null
+    );
+  }
+
+  async completeMediaUpload(
+    scope: RepositoryScope,
+    uploadId: UUID,
+    input: CompleteMediaUploadInput
+  ): Promise<MediaAssetRecord | null> {
+    const reservation = await this.findMediaUploadReservationById(scope, uploadId);
+    if (!reservation || reservation.status !== "reserved") return null;
+
+    const now = new Date().toISOString();
+    const asset: MediaAssetRecord = {
+      id: uuid(),
+      tenantId: reservation.tenantId,
+      clinicId: reservation.clinicId,
+      patientId: reservation.patientId,
+      encounterId: reservation.encounterId,
+      toothNumber: reservation.toothNumber,
+      dentalFindingId: reservation.dentalFindingId,
+      mediaType: reservation.mediaType,
+      originalFilename: reservation.originalFilename,
+      mimeType: reservation.mimeType,
+      fileSizeBytes: input.contentLength,
+      sha256Digest: input.sha256Digest ?? reservation.expectedSha256Digest,
+      objectKey: reservation.objectKey,
+      objectVersion: input.objectVersion ?? null,
+      storageProvider: reservation.storageProvider,
+      storageRegion: reservation.storageRegion,
+      status: mediaAssetStatusForScan(input.scanStatus),
+      scanStatus: input.scanStatus,
+      quarantineReason: input.quarantineReason ?? null,
+      tags: reservation.tags,
+      provenance: reservation.provenance,
+      dicomMetadata: input.dicomMetadata ?? {},
+      createdByUserId: reservation.createdByUserId,
+      uploadedByUserId: scope.actorUserId,
+      createdAt: reservation.createdAt,
+      uploadedAt: now,
+      updatedAt: now
+    };
+
+    reservation.status = "completed";
+    reservation.completedAt = now;
+    reservation.mediaAssetId = asset.id;
+    this.mediaAssets.push(asset);
+    this.timelineItems.push(
+      timeline(
+        scope,
+        asset.patientId,
+        "media_uploaded",
+        "media_assets",
+        asset.id,
+        `${asset.mediaType.replace("_", " ")} uploaded`,
+        {
+          mediaAssetId: asset.id,
+          mediaType: asset.mediaType,
+          encounterId: asset.encounterId,
+          toothNumber: asset.toothNumber,
+          dentalFindingId: asset.dentalFindingId
+        }
+      )
+    );
+    return asset;
+  }
+
+  async listPatientMediaAssets(
+    scope: RepositoryScope,
+    patientId: UUID
+  ): Promise<MediaAssetRecord[]> {
+    return this.mediaAssets
+      .filter((asset) => matchesScope(asset, scope) && asset.patientId === patientId)
+      .sort((left, right) => right.uploadedAt.localeCompare(left.uploadedAt));
+  }
+
+  async findMediaAssetById(
+    scope: RepositoryScope,
+    mediaAssetId: UUID
+  ): Promise<MediaAssetRecord | null> {
+    return (
+      this.mediaAssets.find((asset) => matchesScope(asset, scope) && asset.id === mediaAssetId) ??
+      null
+    );
+  }
+
   nextClinicalNoteVersion(scope: RepositoryScope, encounterId: UUID): number {
     return (
       Math.max(
@@ -1160,7 +1295,8 @@ function timeline(
   itemType: PatientTimelineItem["itemType"],
   sourceTable: string,
   sourceId: UUID,
-  title: string
+  title: string,
+  metadata: Record<string, unknown> = {}
 ): PatientTimelineItem {
   return {
     id: uuid(),
@@ -1173,6 +1309,6 @@ function timeline(
     occurredAt: new Date().toISOString(),
     title,
     summary: null,
-    metadata: {}
+    metadata
   };
 }

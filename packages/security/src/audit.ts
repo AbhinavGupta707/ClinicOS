@@ -236,6 +236,18 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "media.upload_requested": {
+    category: "phi_access",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "media.upload_completed": {
+    category: "phi_access",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
   "billing.payment.changed": {
     category: "billing",
     riskLevel: "medium",
