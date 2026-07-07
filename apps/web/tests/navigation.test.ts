@@ -45,7 +45,7 @@ describe("role-aware navigation", () => {
 
   it("reports active versus registered unavailable surfaces", () => {
     expect(summarizeSurfaceAccess(["assistant"])).toMatchObject({
-      activeCount: 10,
+      activeCount: 11,
       registeredCount: expect.any(Number),
       unavailableCount: expect.any(Number)
     });
@@ -86,5 +86,23 @@ describe("role-aware navigation", () => {
     expect(canAccessSurface(getSurface("dental-media"), ["accountant"])).toBe(false);
     expect(hasSurface("odontogram")).toBe(true);
     expect(resolveSurfaceId("dental")).toBe("dental-media");
+  });
+
+  it("activates CP5 checkout and accounting surfaces without clinical PHI navigation", () => {
+    const assistantActive = getVisibleSurfaces(["assistant"])
+      .filter((surface) => surface.availability === "active")
+      .map((surface) => surface.id);
+    const doctorVisible = getVisibleSurfaces(["doctor"]).map((surface) => surface.id);
+    const accountantActive = getVisibleSurfaces(["accountant"])
+      .filter((surface) => surface.availability === "active")
+      .map((surface) => surface.id);
+
+    expect(assistantActive).toContain("checkout");
+    expect(doctorVisible).toContain("checkout");
+    expect(accountantActive).toEqual(expect.arrayContaining(["accounting", "checkout"]));
+    expect(accountantActive).not.toContain("encounter");
+    expect(accountantActive).not.toContain("dental-media");
+    expect(hasSurface("billing")).toBe(true);
+    expect(resolveSurfaceId("payments")).toBe("checkout");
   });
 });

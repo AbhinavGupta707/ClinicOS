@@ -182,15 +182,27 @@ export const SURFACES: SurfaceRegistration[] = [
     roles: ["owner", "doctor", "assistant"]
   },
   {
-    availability: "registered_unavailable",
+    availability: "active",
     checkpoint: 5,
     description: "Treatment plans, estimates, invoice state, payment collection, and receipts.",
     href: "/surface/checkout",
     icon: CreditCard,
     id: "checkout",
     label: "Checkout",
-    requiredApis: ["POST /v1/invoices", "POST /v1/invoices/{invoiceId}/payment-link"],
-    roles: ["owner", "assistant", "receptionist", "accountant"]
+    requiredApis: [
+      "GET /v1/pricebook/procedures",
+      "POST /v1/patients/{patientId}/treatment-plans",
+      "PATCH /v1/treatment-plans/{treatmentPlanId}",
+      "POST /v1/treatment-plans/{treatmentPlanId}/accept",
+      "POST /v1/encounters/{encounterId}/procedures",
+      "POST /v1/invoices",
+      "GET /v1/invoices/{invoiceId}",
+      "POST /v1/invoices/{invoiceId}/payment-requests",
+      "POST /v1/invoices/{invoiceId}/manual-payments",
+      "POST /v1/invoices/{invoiceId}/receipts",
+      "POST /v1/patients/{patientId}/instructions"
+    ],
+    roles: ["owner", "doctor", "assistant", "receptionist", "accountant"]
   },
   {
     availability: "registered_unavailable",
@@ -259,14 +271,19 @@ export const SURFACES: SurfaceRegistration[] = [
     roles: ["owner"]
   },
   {
-    availability: "registered_unavailable",
-    checkpoint: 1,
+    availability: "active",
+    checkpoint: 5,
     description: "Billing exports and payment reconciliation without default clinical access.",
     href: "/surface/accounting",
     icon: FileText,
     id: "accounting",
     label: "Accounting",
-    requiredApis: ["GET /v1/payments", "GET /v1/invoices/{invoiceId}"],
+    requiredApis: [
+      "GET /v1/invoices/{invoiceId}",
+      "POST /v1/invoices/{invoiceId}/payment-requests",
+      "POST /v1/invoices/{invoiceId}/manual-payments",
+      "POST /v1/invoices/{invoiceId}/receipts"
+    ],
     roles: ["owner", "accountant"]
   },
   {
@@ -286,7 +303,9 @@ const SURFACE_BY_ID = new Map(SURFACES.map((surface) => [surface.id, surface]));
 const SURFACE_ALIASES = new Map<string, string>([
   ["clinical", "encounter"],
   ["dental", "dental-media"],
+  ["billing", "checkout"],
   ["odontogram", "dental-media"],
+  ["payments", "checkout"],
   ["day-start", "today"]
 ]);
 
