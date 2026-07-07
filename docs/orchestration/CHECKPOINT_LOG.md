@@ -32,7 +32,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 3 - Intake/consent/encounter/notes     | Complete  |       `6fe2cbc` |     `eb68abd` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-3`. Master integration aligned live CP3 routes, consent enforcement, prep summary, QA fixtures, web selectors, browser smoke, and security/audit coverage.                                         |
 | 4 - Dental charting/media/imaging      | Complete  |       `c7b222c` |     `248496a` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4` and promoted to `main`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                     |
 | 5 - Treatment/checkout/payments         | Complete  |       `d3d341f` |     `d679a78` | CP5 visible project-scoped lanes merged into `codex/integration/checkpoint-5`, promoted to `main`, and followed by closeout docs commit `6f9fe1c`.                                                                                                           |
-| 6 - Continuity/operations/owner dashboard | Verified pending promotion |       `6f9fe1c` |     `c1485b5` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`. Code, fixture, browser, build, and local security gates passed; main promotion is the next master-owned step.                                                                 |
+| 6 - Continuity/operations/owner dashboard | Complete  |       `6f9fe1c` |     `af93fde` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`, verified, documented, and promoted to `main`.                                                                 |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -265,7 +265,9 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 ## Checkpoint 6 Integration Verification - 2026-07-07
 
 - Integration branch: `codex/integration/checkpoint-6`.
-- Verified integration merge head before promotion: `c1485b5`.
+- Verified integration merge head before evidence docs: `c1485b5`.
+- Evidence docs commit: `d9bb50b`.
+- Main promotion merge commit: `af93fde`.
 - Merge order:
   - Workflow/Task Backend commit `bdfb4d8` merged first.
   - Lab/Inventory/Event commit `eea10e4` merged second with master conflict resolution across permissions, events, audit classes, API routes, repositories, and fixture data.
