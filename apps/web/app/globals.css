@@ -15,6 +15,12 @@
   --shadow: 0 18px 45px rgba(35, 48, 64, 0.12);
   --sky: #275e9f;
   --sky-soft: #e7f0fb;
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
   --warning: #a15c04;
   --warning-soft: #fff3d8;
 }
@@ -910,6 +916,10 @@ textarea {
   min-width: 0;
 }
 
+.action-alias {
+  display: inline-flex;
+}
+
 .source-badge,
 .state-pill {
   align-items: center;
@@ -1167,6 +1177,294 @@ button.duplicate-item {
   color: #17456f;
 }
 
+.surface-hero--clinical {
+  background:
+    linear-gradient(110deg, rgba(231, 240, 251, 0.82), rgba(223, 247, 243, 0.78)), var(--paper);
+}
+
+.cp3-workflow .workflow-tabs {
+  gap: var(--space-3);
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  padding: var(--space-2);
+}
+
+.patient-switcher {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.patient-switch {
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: var(--space-3);
+  min-height: 58px;
+  min-width: 0;
+  padding: 11px 13px;
+  text-align: left;
+}
+
+.patient-switch strong,
+.patient-switch span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.patient-switch span {
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+}
+
+.patient-switch--active,
+.patient-switch:hover {
+  border-color: var(--mint);
+  box-shadow: inset 3px 0 0 var(--mint);
+}
+
+.patient-switch:focus-visible,
+.consent-row button:focus-visible {
+  outline: 3px solid rgba(39, 94, 159, 0.35);
+  outline-offset: 2px;
+}
+
+.detail-strip--four {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.clinical-form,
+.note-section-grid,
+.prescription-grid {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+
+.clinical-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.clinical-form > .segmented-control,
+.clinical-form > button {
+  grid-column: 1 / -1;
+  justify-self: start;
+}
+
+.note-section-grid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.prescription-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.clinical-field,
+.clinical-form label {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.clinical-field--wide {
+  grid-column: 1 / -1;
+}
+
+.clinical-field span,
+.clinical-form label span {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.clinical-field input,
+.clinical-field textarea,
+.clinical-form input,
+.clinical-form textarea {
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--ink);
+  min-height: 38px;
+  min-width: 0;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.clinical-field textarea,
+.clinical-form textarea {
+  min-height: 86px;
+  resize: vertical;
+}
+
+.clinical-field input:focus-visible,
+.clinical-field textarea:focus-visible,
+.clinical-form input:focus-visible,
+.clinical-form textarea:focus-visible {
+  outline: 3px solid rgba(39, 94, 159, 0.28);
+  outline-offset: 1px;
+}
+
+.clinical-field input[readonly],
+.clinical-field textarea[readonly] {
+  background: #f6f8fa;
+  color: var(--ink-soft);
+}
+
+.segmented-control--fit {
+  width: fit-content;
+}
+
+.readiness-grid--clinical {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.readiness-gate {
+  align-items: center;
+  border-radius: 8px;
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: 22px minmax(0, 1fr) auto;
+  margin-top: 12px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.readiness-gate span {
+  overflow-wrap: anywhere;
+}
+
+.readiness-gate--blocked {
+  background: var(--danger-soft);
+  border: 1px solid #ffc9c4;
+  color: var(--danger);
+}
+
+.readiness-gate--ready {
+  background: var(--mint-soft);
+  border: 1px solid #bce8e1;
+  color: #06584f;
+}
+
+.consent-list,
+.timeline-list {
+  display: grid;
+  min-width: 0;
+}
+
+.consent-row,
+.timeline-item {
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 0;
+}
+
+.consent-row {
+  align-items: center;
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.timeline-item {
+  grid-template-columns: 94px minmax(0, 1fr);
+}
+
+.consent-row:last-child,
+.timeline-item:last-child {
+  border-bottom: 0;
+}
+
+.consent-row strong,
+.consent-row span,
+.timeline-item strong,
+.timeline-item span {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.consent-row span,
+.timeline-item span,
+.timeline-item time {
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
+.timeline-item code {
+  background: #eef3f7;
+  border-radius: 6px;
+  color: var(--ink-soft);
+  display: inline-flex;
+  font-size: 0.72rem;
+  margin-top: 7px;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 4px 6px;
+  white-space: normal;
+}
+
+.prep-grid {
+  display: grid;
+  gap: 12px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.prep-list {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.prep-list strong {
+  display: block;
+  margin-bottom: 8px;
+}
+
+.prep-list ul {
+  color: var(--ink-soft);
+  display: grid;
+  font-size: 0.86rem;
+  gap: var(--space-3);
+  line-height: 1.4;
+  margin: 0;
+  padding-left: 18px;
+}
+
+.workflow-grid--encounter {
+  grid-template-columns: minmax(0, 0.82fr) minmax(420px, 1.18fr);
+}
+
+.workflow-grid--encounter .work-panel:nth-child(2) {
+  grid-row: span 2;
+}
+
+.amendment-panel {
+  border-top: 1px solid var(--border);
+  display: grid;
+  gap: 12px;
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.panel-heading--compact {
+  margin-bottom: 0;
+  padding-bottom: 0;
+}
+
+.panel-heading--compact h3 {
+  font-size: 0.95rem;
+  line-height: 1.2;
+  margin: 0;
+}
+
 @keyframes pulse {
   0% {
     background-position: 100% 0;
@@ -1186,8 +1484,13 @@ button.duplicate-item {
   }
 
   .workflow-grid--dashboard,
+  .workflow-grid--encounter,
   .workflow-grid--split {
     grid-template-columns: 1fr;
+  }
+
+  .workflow-grid--encounter .work-panel:nth-child(2) {
+    grid-row: auto;
   }
 
   .clinic-nav {
@@ -1260,7 +1563,10 @@ button.duplicate-item {
   }
 
   .readiness-grid,
-  .activation-layout {
+  .activation-layout,
+  .note-section-grid,
+  .prep-grid,
+  .readiness-grid--clinical {
     grid-template-columns: 1fr;
   }
 
@@ -1269,6 +1575,10 @@ button.duplicate-item {
   }
 
   .workflow-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cp3-workflow .workflow-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1297,6 +1607,16 @@ button.duplicate-item {
 
   .endpoint-row {
     grid-template-columns: 1fr;
+  }
+
+  .readiness-gate {
+    align-items: flex-start;
+    grid-template-columns: 22px minmax(0, 1fr);
+  }
+
+  .readiness-gate .ui-button {
+    grid-column: 1 / -1;
+    justify-self: start;
   }
 }
 
@@ -1336,7 +1656,14 @@ button.duplicate-item {
 
   .workflow-tabs,
   .dashboard-metrics,
-  .form-grid {
+  .form-grid,
+  .clinical-form,
+  .patient-switcher,
+  .prescription-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .cp3-workflow .workflow-tabs {
     grid-template-columns: 1fr;
   }
 
@@ -1346,7 +1673,9 @@ button.duplicate-item {
 
   .appointment-row,
   .patient-row,
-  .queue-entry {
+  .queue-entry,
+  .consent-row,
+  .timeline-item {
     grid-template-columns: 1fr;
   }
 
