@@ -63,6 +63,8 @@ The master integration pass owns cross-lane reconciliation of route names, permi
 ## Integration Verification
 
 - Integration branch: `codex/integration/checkpoint-7`.
+- Master integration patch commit: `c193b81`.
+- Main promotion merge commit: `92fb2b9`.
 - Worker commits merged in dependency order: Messaging Provider `9ce137a`, Telephony/Source `945c248`, Migration/Data `9aa5a29`, and Integration Ops/QA `f839d03`.
 - Master integration reconciled cross-lane route drift:
   - CP7 live provider health routes are registered and backed by real adapter health checks or explicit manual/unavailable states.

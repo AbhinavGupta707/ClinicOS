@@ -17,12 +17,7 @@ export const CP7_SCENARIO_PATH = path.join(
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/;
 const TEST_EMAIL_PATTERN = /^[^@\s]+@example\.test$/;
-const REQUIRED_PROVIDER_KEYS = [
-  "whatsapp_cloud",
-  "razorpay",
-  "exotel",
-  "google_business_profile"
-];
+const REQUIRED_PROVIDER_KEYS = ["whatsapp_cloud", "razorpay", "exotel", "google_business_profile"];
 const REQUIRED_ROUTE_FAMILIES = [
   "provider-health",
   "dead-letter-events",

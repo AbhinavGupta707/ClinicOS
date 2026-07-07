@@ -33,7 +33,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 4 - Dental charting/media/imaging      | Complete  |       `c7b222c` |     `248496a` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4` and promoted to `main`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                     |
 | 5 - Treatment/checkout/payments         | Complete  |       `d3d341f` |     `d679a78` | CP5 visible project-scoped lanes merged into `codex/integration/checkpoint-5`, promoted to `main`, and followed by closeout docs commit `6f9fe1c`.                                                                                                           |
 | 6 - Continuity/operations/owner dashboard | Complete  |       `6f9fe1c` |     `08ddab9` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`, verified, documented, promoted to `main`, and post-promotion format gate repaired.                                                                 |
-| 7 - Live integrations/migration hardening | Integration Verified |       `e7139c4` |       pending | CP7 visible project-scoped lanes merged into `codex/integration/checkpoint-7`; master integration reconciled live provider health, dead-letter replay, migration collection/read contracts, and row-based migration resolution.                         |
+| 7 - Live integrations/migration hardening | Complete |       `e7139c4` |     `92fb2b9` | CP7 visible project-scoped lanes merged into `codex/integration/checkpoint-7`, master integration reconciled live provider health/dead-letter/migration contracts, and verified branch was promoted to `main`.                         |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -309,6 +309,8 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 ## Checkpoint 7 Integration Verification - 2026-07-07
 
 - Integration branch: `codex/integration/checkpoint-7`.
+- Main promotion merge commit: `92fb2b9`.
+- Master integration patch commit: `c193b81`.
 - Merge order:
   - Messaging Provider commit `9ce137a` merged first.
   - Telephony/Source commit `945c248` merged second.

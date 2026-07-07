@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `codex/integration/checkpoint-7` with Checkpoint 7 worker merges and master integration verification in progress before promotion to `main`.
+- Branch: `main` after Checkpoint 7 promotion merge `92fb2b9`; Checkpoint 8 has not been launched yet.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -41,7 +41,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Telephony/Source: `019f3c6a-2d9c-7c01-bbad-d95e05fdcf9c`, `/Users/abhinavgupta/.codex/worktrees/046c/ClinicOS`.
   - Migration/Data: `019f3c6a-655d-7223-8cf2-8cde3cf10b80`, `/Users/abhinavgupta/.codex/worktrees/9644/ClinicOS`.
   - Integration Ops/QA: `019f3c6a-9b72-7642-ab14-ce002f1d9511`, `/Users/abhinavgupta/.codex/worktrees/386a/ClinicOS`.
-- Checkpoint 7 integration verification reconciled live provider-health, integration-dead-letter replay, migration-batch collection, and row-based migration resolution contracts on `codex/integration/checkpoint-7`. Promote to `main` only after the logged gates remain green.
+- Checkpoint 7 is verified and promoted to `main` via merge commit `92fb2b9`; master integration patch commit is `c193b81`. CP7 reconciled live provider-health, integration-dead-letter replay, migration-batch collection, and row-based migration resolution contracts.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture
