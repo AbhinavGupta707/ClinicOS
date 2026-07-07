@@ -29,7 +29,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 0 - Git and orchestration preflight    | Complete  | repository root |   `main` HEAD | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured and pushed.                                                                                                                                                 |
 | 1 - Production platform foundation     | Complete  |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
 | 2 - Lead/patient/appointment/day-start | Complete  |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
-| 3 - Intake/consent/encounter/notes     | Launching |       `6ba1fa5` |       pending | CP3 launch packet created for visible project-scoped worktree lanes covering clinical backend, security/compliance, doctor/assistant UX, and QA fixtures.                                                                                                                      |
+| 3 - Intake/consent/encounter/notes     | Active    |       `6fe2cbc` |       pending | CP3 visible project-scoped worktree lanes launched and active for clinical backend, security/compliance, doctor/assistant UX, and QA fixtures.                                                                                                                                  |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -102,10 +102,11 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 ## Checkpoint 3 Launch - 2026-07-07
 
 - Launch packet: `docs/orchestration/CHECKPOINT_03_INTAKE_CONSENT_ENCOUNTER.md`.
-- Base commit: `6ba1fa5f8c0a5b8a058c33ca831494034d76c9e4`.
+- Base commit before launch packet: `6ba1fa5f8c0a5b8a058c33ca831494034d76c9e4`.
+- Worker launch commit: `6fe2cbc`.
 - Integration branch rule: CP3 lane commits merge first into `codex/integration/checkpoint-3`; promote to `main` only after full code, live local, and browser/user gates pass.
-- Planned visible project-scoped lanes:
-  - Clinical Backend.
-  - Security/Compliance.
-  - Doctor/Assistant UX.
-  - QA/Fixtures.
+- Visible project-scoped lanes:
+  - Clinical Backend: pending `local:ab246795-f811-4fb8-8059-6e7dec97cf1d`, thread `019f39f6-8c8d-7ed3-89d7-a0569652c1bb`, worktree `/Users/abhinavgupta/.codex/worktrees/81eb/ClinicOS`.
+  - Security/Compliance: pending `local:8d887afa-acf7-410d-aa45-870a9962847b`, thread `019f39f6-c6ef-7691-af95-ef4be605d978`, worktree `/Users/abhinavgupta/.codex/worktrees/4436/ClinicOS`.
+  - Doctor/Assistant UX: pending `local:9c49eb47-37a9-4d2c-8ea0-0a029a53fb13`, thread `019f39f7-0632-7800-9d41-f55b44f38dd0`, worktree `/Users/abhinavgupta/.codex/worktrees/75ee/ClinicOS`.
+  - QA/Fixtures: pending `local:bc55a12e-149c-4828-a5e2-707857009fb9`, thread `019f39f7-54bd-72e1-a812-dd0fda503d06`, worktree `/Users/abhinavgupta/.codex/worktrees/08d3/ClinicOS`.

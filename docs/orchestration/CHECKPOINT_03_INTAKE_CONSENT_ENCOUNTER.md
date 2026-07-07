@@ -8,6 +8,7 @@ Clinic staff can route new and returning patients into a clinical visit, capture
 
 - Branch: `main`
 - Base commit before launch packet: `6ba1fa5f8c0a5b8a058c33ca831494034d76c9e4`
+- Worker launch commit: `6fe2cbc`
 - Launch date: 2026-07-07
 
 ## Scope
@@ -28,12 +29,12 @@ Clinic staff can route new and returning patients into a clinical visit, capture
 
 ## Lanes
 
-| Lane                | Pending Worktree ID | Thread ID | Worktree | Ownership                                                                                                                       |
-| ------------------- | ------------------- | --------- | -------- | ------------------------------------------------------------------------------------------------------------------------------- |
-| Clinical Backend    | pending             | pending   | pending  | Intake forms, consent records, encounter lifecycle, clinical-note versions, prescriptions, migrations/seeds, API implementation |
-| Security/Compliance | pending             | pending   | pending  | Consent enforcement, PHI audit coverage, signed-note immutability tests, doctor-only sign-off, tenant/role denials              |
-| Doctor/Assistant UX | pending             | pending   | pending  | Patient profile/timeline, intake entry, returning-patient prep, encounter workspace, clinical note and prescription surfaces    |
-| QA/Fixtures         | pending             | pending   | pending  | CP3 synthetic fixture, acceptance/E2E tests, live smoke plan, docs/QA runbook evidence                                          |
+| Lane                | Pending Worktree ID                                | Thread ID                              | Worktree                                             | Ownership                                                                                                                       |
+| ------------------- | -------------------------------------------------- | -------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| Clinical Backend    | `local:ab246795-f811-4fb8-8059-6e7dec97cf1d`      | `019f39f6-8c8d-7ed3-89d7-a0569652c1bb` | `/Users/abhinavgupta/.codex/worktrees/81eb/ClinicOS` | Intake forms, consent records, encounter lifecycle, clinical-note versions, prescriptions, migrations/seeds, API implementation |
+| Security/Compliance | `local:8d887afa-acf7-410d-aa45-870a9962847b`      | `019f39f6-c6ef-7691-af95-ef4be605d978` | `/Users/abhinavgupta/.codex/worktrees/4436/ClinicOS` | Consent enforcement, PHI audit coverage, signed-note immutability tests, doctor-only sign-off, tenant/role denials              |
+| Doctor/Assistant UX | `local:9c49eb47-37a9-4d2c-8ea0-0a029a53fb13`      | `019f39f7-0632-7800-9d41-f55b44f38dd0` | `/Users/abhinavgupta/.codex/worktrees/75ee/ClinicOS` | Patient profile/timeline, intake entry, returning-patient prep, encounter workspace, clinical note and prescription surfaces    |
+| QA/Fixtures         | `local:bc55a12e-149c-4828-a5e2-707857009fb9`      | `019f39f7-54bd-72e1-a812-dd0fda503d06` | `/Users/abhinavgupta/.codex/worktrees/08d3/ClinicOS` | CP3 synthetic fixture, acceptance/E2E tests, live smoke plan, docs/QA runbook evidence                                          |
 
 ## Shared-File Policy
 
