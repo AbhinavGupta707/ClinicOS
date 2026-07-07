@@ -1,0 +1,679 @@
+{
+  "schemaVersion": "clinic-os.cp9.fhir-abdm-fixture.v1",
+  "fixtureUse": {
+    "name": "Checkpoint 9 FHIR R4 projection and ABDM readiness fixture",
+    "localOnly": true,
+    "syntheticOnly": true,
+    "productionUseDenied": true,
+    "allowedEnvironments": ["local", "development", "test", "ci"],
+    "notes": "Deterministic local/test fixture. ABDM credentials are intentionally empty; do not call live ABDM endpoints from this fixture."
+  },
+  "sourceReferences": [
+    "docs/orchestration/CHECKPOINT_09_INTEROPERABILITY_SECURITY_OPS.md",
+    "clinic_os_specs_v2/03_DOMAIN_MODEL_AND_FHIR_MAPPING.md#6-fhir-r4-mapping",
+    "clinic_os_specs_v2/19_IMPLEMENTATION_PLAN_INTEGRATIONS_AI_MOBILE.md#13-fhir-and-abdm",
+    "fixtures/synthetic/cp3/intake_consent_encounter_flow.json"
+  ],
+  "validationExpectations": {
+    "requiredResourceTypes": [
+      "Organization",
+      "Patient",
+      "Practitioner",
+      "Encounter",
+      "Composition",
+      "DocumentReference",
+      "Provenance"
+    ],
+    "forbiddenSerializedSubstrings": [
+      "\"objectKey\"",
+      "\"rawStoragePath\"",
+      "\"storageProvider\"",
+      "s3://",
+      "file://",
+      "/tenants/",
+      "private-media"
+    ]
+  },
+  "sourceEvidence": {
+    "bundleId": "cp9-synthetic-patient-encounter-document-bundle",
+    "generatedAt": "2026-07-07T10:35:00+05:30",
+    "tenant": {
+      "id": "30000000-0000-4000-8000-000000000001",
+      "displayName": "CP3 Sunrise Dental Synthetic Tenant"
+    },
+    "clinic": {
+      "id": "30000000-0000-4000-8000-000000000101",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "displayName": "CP3 Synthetic Indiranagar Dental",
+      "timezone": "Asia/Kolkata",
+      "hfrId": null
+    },
+    "patient": {
+      "id": "30000000-0000-4000-8000-000000002001",
+      "externalId": "CP3-PAT-NEW-001",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "clinicId": "30000000-0000-4000-8000-000000000101",
+      "fullName": "Anya Synthetic",
+      "phone": "+919930001001",
+      "email": "anya.synthetic@example.test",
+      "dateOfBirth": "1994-04-18",
+      "gender": "female",
+      "abhaAddress": null
+    },
+    "practitioners": [
+      {
+        "id": "30000000-0000-4000-8000-000000001002",
+        "displayName": "Dr Neel Doctor Synthetic",
+        "email": "cp3.doctor@example.test",
+        "roleSlug": "doctor",
+        "hprId": null
+      }
+    ],
+    "encounter": {
+      "id": "30000000-0000-4000-8000-000000008001",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "clinicId": "30000000-0000-4000-8000-000000000101",
+      "patientId": "30000000-0000-4000-8000-000000002001",
+      "appointmentId": "30000000-0000-4000-8000-000000003001",
+      "providerUserId": "30000000-0000-4000-8000-000000001002",
+      "status": "amended",
+      "reason": "Synthetic sensitivity during cold drinks for two days.",
+      "startedAt": "2026-07-07T10:12:00+05:30",
+      "closedAt": "2026-07-07T12:12:00+05:30"
+    },
+    "documents": [
+      {
+        "id": "30000000-0000-4000-8000-000000009102",
+        "kind": "clinical_note",
+        "patientId": "30000000-0000-4000-8000-000000002001",
+        "encounterId": "30000000-0000-4000-8000-000000008001",
+        "authorUserId": "30000000-0000-4000-8000-000000001002",
+        "status": "amended",
+        "title": "CP3 synthetic amended clinical note",
+        "description": "Synthetic amended clinical-note evidence from the CP3 fixture.",
+        "createdAt": "2026-07-07T12:12:00+05:30",
+        "signedAt": "2026-07-07T12:12:00+05:30",
+        "signedHash": "sha256:cp3-new-patient-note-v2-synthetic",
+        "contentType": "text/markdown",
+        "sourceReference": "ClinicalNoteVersion/30000000-0000-4000-8000-000000009102",
+        "contentSections": {
+          "history": "Synthetic intake reviewed.",
+          "examination": "Synthetic examination recorded.",
+          "diagnosis": "Synthetic reversible sensitivity diagnosis.",
+          "treatmentPlan": "Synthetic hygiene advice and review plan.",
+          "treatmentPerformed": "Synthetic consultation completed; amendment records wording clarification."
+        }
+      }
+    ]
+  },
+  "fhirBundle": {
+    "resourceType": "Bundle",
+    "id": "cp9-synthetic-patient-encounter-document-bundle",
+    "meta": {
+      "profile": ["https://clinicos.local/fhir/StructureDefinition/clinic-os-exchange-bundle"],
+      "tag": [
+        {
+          "system": "https://clinicos.local/fhir/CodeSystem/exchange-boundary",
+          "code": "projection",
+          "display": "ClinicOS domain projection"
+        }
+      ]
+    },
+    "timestamp": "2026-07-07T10:35:00+05:30",
+    "type": "collection",
+    "entry": [
+      {
+        "fullUrl": "urn:uuid:30000000-0000-4000-8000-000000000101",
+        "resource": {
+          "resourceType": "Organization",
+          "id": "30000000-0000-4000-8000-000000000101",
+          "meta": {
+            "profile": ["https://clinicos.local/fhir/StructureDefinition/clinic-os-organization"]
+          },
+          "active": true,
+          "extension": [
+            {
+              "url": "https://clinicos.local/fhir/StructureDefinition/source-of-truth",
+              "valueCode": "clinic-os"
+            },
+            {
+              "url": "https://clinicos.local/fhir/StructureDefinition/clinic-timezone",
+              "valueString": "Asia/Kolkata"
+            }
+          ],
+          "identifier": [
+            {
+              "system": "https://clinicos.local/fhir/NamingSystem/clinic-os-clinic-id",
+              "value": "30000000-0000-4000-8000-000000000101"
+            }
+          ],
+          "name": "CP3 Synthetic Indiranagar Dental"
+        }
+      },
+      {
+        "fullUrl": "urn:uuid:30000000-0000-4000-8000-000000002001",
+        "resource": {
+          "resourceType": "Patient",
+          "id": "30000000-0000-4000-8000-000000002001",
+          "meta": {
+            "profile": ["https://clinicos.local/fhir/StructureDefinition/clinic-os-patient"]
+          },
+          "active": true,
+          "birthDate": "1994-04-18",
+          "extension": [
+            {
+              "url": "https://clinicos.local/fhir/StructureDefinition/source-of-truth",
+              "valueCode": "clinic-os"
+            },
+            {
+              "url": "https://clinicos.local/fhir/StructureDefinition/abha-link-state",
+              "valueCode": "not_recorded"
+            }
+          ],
+          "gender": "female",
+          "identifier": [
+            {
+              "system": "https://clinicos.local/fhir/NamingSystem/clinic-os-patient-id",
+              "value": "30000000-0000-4000-8000-000000002001"
+            },
+            {
+              "system": "https://clinicos.local/fhir/NamingSystem/clinic-os-external-patient-id",
+              "value": "CP3-PAT-NEW-001"
+            }
+          ],
+          "managingOrganization": {
+            "reference": "Organization/30000000-0000-4000-8000-000000000101",
+            "display": "CP3 Synthetic Indiranagar Dental"
+          },
+          "name": [
+            {
+              "text": "Anya Synthetic"
+            }
+          ],
+          "telecom": [
+            {
+              "system": "phone",
+              "value": "+919930001001",
+              "use": "mobile"
+            },
+            {
+              "system": "email",
+              "value": "anya.synthetic@example.test",
+              "use": "home"
+            }
+          ]
+        }
+      },
+      {
+        "fullUrl": "urn:uuid:30000000-0000-4000-8000-000000001002",
+        "resource": {
+          "resourceType": "Practitioner",
+          "id": "30000000-0000-4000-8000-000000001002",
+          "meta": {
+            "profile": ["https://clinicos.local/fhir/StructureDefinition/clinic-os-practitioner"]
+          },
+          "active": true,
+          "extension": [
+            {
+              "url": "https://clinicos.local/fhir/StructureDefinition/clinic-role",
+              "valueString": "doctor"
+            }
+          ],
+          "identifier": [
+            {
+              "system": "https://clinicos.local/fhir/NamingSystem/clinic-os-practitioner-id",
+              "value": "30000000-0000-4000-8000-000000001002"
+            }
+          ],
+          "name": [
+            {
+              "text": "Dr Neel Doctor Synthetic"
+            }
+          ],
+          "telecom": [
+            {
+              "system": "email",
+              "value": "cp3.doctor@example.test",
+              "use": "work"
+            }
+          ]
+        }
+      },
+      {
+        "fullUrl": "urn:uuid:30000000-0000-4000-8000-000000008001",
+        "resource": {
+          "resourceType": "Encounter",
+          "id": "30000000-0000-4000-8000-000000008001",
+          "meta": {
+            "profile": ["https://clinicos.local/fhir/StructureDefinition/clinic-os-encounter"]
+          },
+          "class": {
+            "system": "http://terminology.hl7.org/CodeSystem/v3-ActCode",
+            "code": "AMB",
+            "display": "ambulatory"
+          },
+          "extension": [
+            {
+              "url": "https://clinicos.local/fhir/StructureDefinition/source-of-truth",
+              "valueCode": "clinic-os"
+            },
+            {
+              "url": "https://clinicos.local/fhir/StructureDefinition/clinic-os-encounter-status",
+              "valueCode": "amended"
+            },
+            {
+              "url": "https://clinicos.local/fhir/StructureDefinition/source-appointment-id",
+              "valueString": "30000000-0000-4000-8000-000000003001"
+            }
+          ],
+          "identifier": [
+            {
+              "system": "https://clinicos.local/fhir/NamingSystem/clinic-os-encounter-id",
+              "value": "30000000-0000-4000-8000-000000008001"
+            }
+          ],
+          "participant": [
+            {
+              "individual": {
+                "reference": "Practitioner/30000000-0000-4000-8000-000000001002",
+                "display": "Dr Neel Doctor Synthetic"
+              },
+              "type": [
+                {
+                  "coding": [
+                    {
+                      "system": "http://terminology.hl7.org/CodeSystem/v3-ParticipationType",
+                      "code": "PPRF",
+                      "display": "primary performer"
+                    }
+                  ]
+                }
+              ]
+            }
+          ],
+          "period": {
+            "start": "2026-07-07T10:12:00+05:30",
+            "end": "2026-07-07T12:12:00+05:30"
+          },
+          "reasonCode": [
+            {
+              "text": "Synthetic sensitivity during cold drinks for two days."
+            }
+          ],
+          "serviceProvider": {
+            "reference": "Organization/30000000-0000-4000-8000-000000000101",
+            "display": "CP3 Synthetic Indiranagar Dental"
+          },
+          "status": "finished",
+          "subject": {
+            "reference": "Patient/30000000-0000-4000-8000-000000002001",
+            "display": "Anya Synthetic"
+          }
+        }
+      },
+      {
+        "fullUrl": "urn:uuid:30000000-0000-4000-8000-000000009102-composition",
+        "resource": {
+          "resourceType": "Composition",
+          "id": "30000000-0000-4000-8000-000000009102-composition",
+          "meta": {
+            "profile": [
+              "https://clinicos.local/fhir/StructureDefinition/clinic-os-clinical-note-composition"
+            ]
+          },
+          "author": [
+            {
+              "reference": "Practitioner/30000000-0000-4000-8000-000000001002",
+              "display": "Dr Neel Doctor Synthetic"
+            }
+          ],
+          "date": "2026-07-07T12:12:00+05:30",
+          "encounter": {
+            "reference": "Encounter/30000000-0000-4000-8000-000000008001"
+          },
+          "extension": [
+            {
+              "url": "https://clinicos.local/fhir/StructureDefinition/source-of-truth",
+              "valueCode": "clinic-os"
+            },
+            {
+              "url": "https://clinicos.local/fhir/StructureDefinition/signed-content-hash",
+              "valueString": "sha256:cp3-new-patient-note-v2-synthetic"
+            }
+          ],
+          "section": [
+            {
+              "code": {
+                "coding": [
+                  {
+                    "system": "https://clinicos.local/fhir/CodeSystem/clinical-note-section",
+                    "code": "history",
+                    "display": "History"
+                  }
+                ],
+                "text": "History"
+              },
+              "text": {
+                "status": "generated",
+                "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\">Synthetic intake reviewed.</div>"
+              },
+              "title": "History"
+            },
+            {
+              "code": {
+                "coding": [
+                  {
+                    "system": "https://clinicos.local/fhir/CodeSystem/clinical-note-section",
+                    "code": "examination",
+                    "display": "Examination"
+                  }
+                ],
+                "text": "Examination"
+              },
+              "text": {
+                "status": "generated",
+                "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\">Synthetic examination recorded.</div>"
+              },
+              "title": "Examination"
+            },
+            {
+              "code": {
+                "coding": [
+                  {
+                    "system": "https://clinicos.local/fhir/CodeSystem/clinical-note-section",
+                    "code": "diagnosis",
+                    "display": "Diagnosis"
+                  }
+                ],
+                "text": "Diagnosis"
+              },
+              "text": {
+                "status": "generated",
+                "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\">Synthetic reversible sensitivity diagnosis.</div>"
+              },
+              "title": "Diagnosis"
+            },
+            {
+              "code": {
+                "coding": [
+                  {
+                    "system": "https://clinicos.local/fhir/CodeSystem/clinical-note-section",
+                    "code": "treatmentPlan",
+                    "display": "Treatment Plan"
+                  }
+                ],
+                "text": "Treatment Plan"
+              },
+              "text": {
+                "status": "generated",
+                "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\">Synthetic hygiene advice and review plan.</div>"
+              },
+              "title": "Treatment Plan"
+            },
+            {
+              "code": {
+                "coding": [
+                  {
+                    "system": "https://clinicos.local/fhir/CodeSystem/clinical-note-section",
+                    "code": "treatmentPerformed",
+                    "display": "Treatment Performed"
+                  }
+                ],
+                "text": "Treatment Performed"
+              },
+              "text": {
+                "status": "generated",
+                "div": "<div xmlns=\"http://www.w3.org/1999/xhtml\">Synthetic consultation completed; amendment records wording clarification.</div>"
+              },
+              "title": "Treatment Performed"
+            }
+          ],
+          "status": "amended",
+          "subject": {
+            "reference": "Patient/30000000-0000-4000-8000-000000002001"
+          },
+          "title": "CP3 synthetic amended clinical note",
+          "type": {
+            "coding": [
+              {
+                "system": "http://loinc.org",
+                "code": "11506-3",
+                "display": "Progress note"
+              }
+            ],
+            "text": "Progress note"
+          }
+        }
+      },
+      {
+        "fullUrl": "urn:uuid:30000000-0000-4000-8000-000000009102",
+        "resource": {
+          "resourceType": "DocumentReference",
+          "id": "30000000-0000-4000-8000-000000009102",
+          "meta": {
+            "profile": [
+              "https://clinicos.local/fhir/StructureDefinition/clinic-os-document-reference"
+            ]
+          },
+          "author": [
+            {
+              "reference": "Practitioner/30000000-0000-4000-8000-000000001002",
+              "display": "Dr Neel Doctor Synthetic"
+            }
+          ],
+          "content": [
+            {
+              "attachment": {
+                "contentType": "text/markdown",
+                "creation": "2026-07-07T12:12:00+05:30",
+                "title": "CP3 synthetic amended clinical note",
+                "url": "urn:clinicos:document-evidence:30000000-0000-4000-8000-000000009102"
+              }
+            }
+          ],
+          "context": {
+            "encounter": [
+              {
+                "reference": "Encounter/30000000-0000-4000-8000-000000008001"
+              }
+            ],
+            "related": [
+              {
+                "reference": "Composition/30000000-0000-4000-8000-000000009102-composition",
+                "display": "CP3 synthetic amended clinical note"
+              }
+            ]
+          },
+          "date": "2026-07-07T12:12:00+05:30",
+          "description": "Synthetic amended clinical-note evidence from the CP3 fixture.",
+          "docStatus": "amended",
+          "extension": [
+            {
+              "url": "https://clinicos.local/fhir/StructureDefinition/source-of-truth",
+              "valueCode": "clinic-os"
+            },
+            {
+              "url": "https://clinicos.local/fhir/StructureDefinition/document-evidence-kind",
+              "valueCode": "clinical_note"
+            },
+            {
+              "url": "https://clinicos.local/fhir/StructureDefinition/signed-content-hash",
+              "valueString": "sha256:cp3-new-patient-note-v2-synthetic"
+            }
+          ],
+          "relatesTo": [
+            {
+              "code": "transforms",
+              "target": {
+                "reference": "Composition/30000000-0000-4000-8000-000000009102-composition",
+                "display": "CP3 synthetic amended clinical note"
+              }
+            }
+          ],
+          "securityLabel": [
+            {
+              "coding": [
+                {
+                  "system": "http://terminology.hl7.org/CodeSystem/v3-Confidentiality",
+                  "code": "R",
+                  "display": "restricted"
+                }
+              ],
+              "text": "restricted"
+            }
+          ],
+          "status": "current",
+          "subject": {
+            "reference": "Patient/30000000-0000-4000-8000-000000002001"
+          },
+          "type": {
+            "coding": [
+              {
+                "system": "http://loinc.org",
+                "code": "11506-3",
+                "display": "Progress note"
+              }
+            ],
+            "text": "Progress note"
+          }
+        }
+      },
+      {
+        "fullUrl": "urn:uuid:30000000-0000-4000-8000-000000009102-provenance",
+        "resource": {
+          "resourceType": "Provenance",
+          "id": "30000000-0000-4000-8000-000000009102-provenance",
+          "meta": {
+            "profile": ["https://clinicos.local/fhir/StructureDefinition/clinic-os-provenance"]
+          },
+          "agent": [
+            {
+              "role": [
+                {
+                  "coding": [
+                    {
+                      "system": "http://terminology.hl7.org/CodeSystem/v3-ParticipationType",
+                      "code": "AUT",
+                      "display": "author"
+                    }
+                  ],
+                  "text": "author"
+                }
+              ],
+              "who": {
+                "reference": "Practitioner/30000000-0000-4000-8000-000000001002",
+                "display": "Dr Neel Doctor Synthetic"
+              }
+            }
+          ],
+          "entity": [
+            {
+              "role": "source",
+              "what": {
+                "display": "ClinicalNoteVersion/30000000-0000-4000-8000-000000009102",
+                "identifier": {
+                  "system": "https://clinicos.local/fhir/NamingSystem/signed-content-hash",
+                  "value": "sha256:cp3-new-patient-note-v2-synthetic"
+                }
+              }
+            }
+          ],
+          "recorded": "2026-07-07T12:12:00+05:30",
+          "target": [
+            {
+              "reference": "DocumentReference/30000000-0000-4000-8000-000000009102",
+              "display": "CP3 synthetic amended clinical note"
+            },
+            {
+              "reference": "Composition/30000000-0000-4000-8000-000000009102-composition",
+              "display": "CP3 synthetic amended clinical note"
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "abdmReadiness": {
+    "input": {
+      "evaluatedAt": "2026-07-07T10:35:00+05:30",
+      "featureFlags": {
+        "abdmEnabled": true,
+        "abhaLinkingEnabled": true,
+        "careContextLinkingEnabled": true,
+        "consentExchangeEnabled": true,
+        "simulatorMode": true,
+        "sandboxActivationApproved": false
+      },
+      "credentials": {
+        "clientId": "",
+        "clientSecret": "",
+        "baseUrl": "",
+        "hipId": "",
+        "hiuId": "",
+        "cmId": ""
+      },
+      "patient": {
+        "patientId": "30000000-0000-4000-8000-000000002001",
+        "abhaAddress": null,
+        "abhaConsentActive": false,
+        "dataExchangeConsentActive": false
+      },
+      "careContexts": [
+        {
+          "id": "30000000-0000-4000-8000-000000008001",
+          "patientId": "30000000-0000-4000-8000-000000002001",
+          "type": "encounter",
+          "display": "CP3 synthetic dental encounter",
+          "resourceReference": "Encounter/30000000-0000-4000-8000-000000008001",
+          "consentStatus": "not_requested",
+          "careContextReference": null
+        },
+        {
+          "id": "30000000-0000-4000-8000-000000009102",
+          "patientId": "30000000-0000-4000-8000-000000002001",
+          "type": "document",
+          "display": "CP3 synthetic amended clinical note",
+          "resourceReference": "DocumentReference/30000000-0000-4000-8000-000000009102",
+          "consentStatus": "not_requested",
+          "careContextReference": null
+        }
+      ]
+    },
+    "expected": {
+      "abhaLinking": {
+        "abhaAddressRecorded": false,
+        "consentActive": false,
+        "status": "not_configured"
+      },
+      "availabilityStatus": "unavailable",
+      "careContextLinking": {
+        "linkedContexts": 0,
+        "projectedContexts": 2,
+        "status": "not_configured"
+      },
+      "configurationStatus": "not_configured",
+      "consentExchange": {
+        "activeConsentLogs": 0,
+        "consentActive": false,
+        "status": "not_configured"
+      },
+      "evaluatedAt": "2026-07-07T10:35:00+05:30",
+      "exchangeMode": "fixture_only",
+      "featureFlags": {
+        "abdmEnabled": true,
+        "abhaLinkingEnabled": true,
+        "careContextLinkingEnabled": true,
+        "consentExchangeEnabled": true,
+        "simulatorMode": true,
+        "sandboxActivationApproved": false
+      },
+      "liveExchangeAllowed": false,
+      "missingCredentialKeys": ["clientId", "clientSecret", "baseUrl", "hipId", "hiuId", "cmId"],
+      "notes": [
+        "ABDM credentials are absent; do not call live ABDM endpoints.",
+        "FHIR projections and ABDM care-context posture are fixture/simulator-only until credentials and approvals exist."
+      ],
+      "simulatorOnly": true
+    }
+  }
+}
