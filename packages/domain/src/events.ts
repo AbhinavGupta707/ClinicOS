@@ -91,6 +91,14 @@ export const DOMAIN_EVENT_TYPES = [
   "corrective_action.created",
   "corrective_action.status_changed",
   "corrective_action.completed",
+  "migration.batch.created",
+  "migration.row.resolved",
+  "migration.batch.committed",
+  "migration.batch.rolled_back",
+  "patient.imported",
+  "integration.raw_event.received",
+  "integration.dead_letter.created",
+  "integration.dead_letter.replayed",
   "patient.timeline_item.created"
 ] as const;
 
@@ -250,6 +258,26 @@ export const CP6_EVENT_TYPES = [
   ...CP6_QUALITY_EVENT_TYPES
 ] as const;
 
+export const CP7_MIGRATION_EVENT_TYPES = [
+  "migration.batch.created",
+  "migration.row.resolved",
+  "migration.batch.committed",
+  "migration.batch.rolled_back",
+  "patient.imported"
+] as const;
+
+export const CP7_INTEGRATION_EVENT_TYPES = [
+  "integration.raw_event.received",
+  "integration.dead_letter.created",
+  "integration.dead_letter.replayed"
+] as const;
+
+export const CP7_EVENT_TYPES = [
+  ...CP6_EVENT_TYPES,
+  ...CP7_MIGRATION_EVENT_TYPES,
+  ...CP7_INTEGRATION_EVENT_TYPES
+] as const;
+
 export type Cp2LeadEventType = (typeof CP2_LEAD_EVENT_TYPES)[number];
 export type Cp2PatientEventType = (typeof CP2_PATIENT_EVENT_TYPES)[number];
 export type Cp2AppointmentEventType = (typeof CP2_APPOINTMENT_EVENT_TYPES)[number];
@@ -271,6 +299,9 @@ export type Cp6LabEventType = (typeof CP6_LAB_EVENT_TYPES)[number];
 export type Cp6InventoryEventType = (typeof CP6_INVENTORY_EVENT_TYPES)[number];
 export type Cp6QualityEventType = (typeof CP6_QUALITY_EVENT_TYPES)[number];
 export type Cp6EventType = (typeof CP6_EVENT_TYPES)[number];
+export type Cp7MigrationEventType = (typeof CP7_MIGRATION_EVENT_TYPES)[number];
+export type Cp7IntegrationEventType = (typeof CP7_INTEGRATION_EVENT_TYPES)[number];
+export type Cp7EventType = (typeof CP7_EVENT_TYPES)[number];
 
 export type EventSourceKind =
   | "external_system"
@@ -338,6 +369,11 @@ export interface DomainEventAggregate {
     | "procurement_suggestion"
     | "incident"
     | "corrective_action"
+    | "migration_batch"
+    | "migration_row"
+    | "imported_record_link"
+    | "integration_event"
+    | "integration_dead_letter"
     | "patient_timeline_item";
   id: UUID | string;
 }
@@ -401,6 +437,10 @@ export function isCp5EventType(value: string): value is Cp5EventType {
 
 export function isCp6EventType(value: string): value is Cp6EventType {
   return (CP6_EVENT_TYPES as readonly string[]).includes(value);
+}
+
+export function isCp7EventType(value: string): value is Cp7EventType {
+  return (CP7_EVENT_TYPES as readonly string[]).includes(value);
 }
 
 export function createDomainEventEnvelope<

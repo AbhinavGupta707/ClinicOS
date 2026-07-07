@@ -380,6 +380,48 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: false,
     requiresPatientId: false
   },
+  "migration.batch.created": {
+    category: "integration",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "migration.row.resolved": {
+    category: "integration",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "migration.batch.committed": {
+    category: "integration",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "migration.batch.rolled_back": {
+    category: "integration",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "integration.raw_event.received": {
+    category: "integration",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "integration.dead_letter.created": {
+    category: "integration",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "integration.dead_letter.replayed": {
+    category: "integration",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
   "owner_dashboard.viewed": {
     category: "administration",
     riskLevel: "medium",
