@@ -1,0 +1,461 @@
+{
+  "schemaVersion": "clinic-os.cp9.performance-qa-fixture.v1",
+  "fixtureUse": {
+    "localOnly": true,
+    "syntheticOnly": true,
+    "productionUseDenied": true,
+    "allowedEnvironments": ["local", "development", "test", "ci"]
+  },
+  "clock": {
+    "businessDate": "2026-07-07",
+    "timezone": "Asia/Kolkata",
+    "fixedNow": "2026-07-07T13:05:00+05:30",
+    "clinicHoursWindow": {
+      "label": "local chairside read-smoke",
+      "startsAt": "2026-07-07T09:30:00+05:30",
+      "endsAt": "2026-07-07T13:30:00+05:30"
+    }
+  },
+  "tenants": [
+    {
+      "key": "primaryTenant",
+      "id": "91111111-1111-4111-8111-111111111111",
+      "name": "CP9 Synthetic Tenant"
+    },
+    {
+      "key": "wrongTenant",
+      "id": "91222222-2222-4222-8222-222222222222",
+      "name": "CP9 Wrong Synthetic Tenant"
+    }
+  ],
+  "clinics": [
+    {
+      "key": "primaryClinic",
+      "id": "91333333-3333-4333-8333-333333333333",
+      "tenantId": "91111111-1111-4111-8111-111111111111",
+      "name": "CP9 Synthetic Dental Clinic"
+    },
+    {
+      "key": "wrongClinic",
+      "id": "91444444-4444-4444-8444-444444444444",
+      "tenantId": "91222222-2222-4222-8222-222222222222",
+      "name": "CP9 Wrong Synthetic Dental Clinic"
+    }
+  ],
+  "actors": [
+    {
+      "key": "owner",
+      "id": "91555555-5555-4555-8555-555555555555",
+      "tenantId": "91111111-1111-4111-8111-111111111111",
+      "clinicId": "91333333-3333-4333-8333-333333333333",
+      "roleSlug": "owner_admin",
+      "webRoleSlug": "owner",
+      "email": "cp9.owner@example.test"
+    },
+    {
+      "key": "auditor",
+      "id": "91666666-6666-4666-8666-666666666666",
+      "tenantId": "91111111-1111-4111-8111-111111111111",
+      "clinicId": "91333333-3333-4333-8333-333333333333",
+      "roleSlug": "auditor",
+      "webRoleSlug": "owner",
+      "email": "cp9.auditor@example.test"
+    },
+    {
+      "key": "doctor",
+      "id": "91eeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      "tenantId": "91111111-1111-4111-8111-111111111111",
+      "clinicId": "91333333-3333-4333-8333-333333333333",
+      "roleSlug": "doctor",
+      "webRoleSlug": "doctor",
+      "email": "cp9.doctor@example.test"
+    },
+    {
+      "key": "assistant",
+      "id": "91777777-7777-4777-8777-777777777777",
+      "tenantId": "91111111-1111-4111-8111-111111111111",
+      "clinicId": "91333333-3333-4333-8333-333333333333",
+      "roleSlug": "assistant",
+      "webRoleSlug": "assistant",
+      "email": "cp9.assistant@example.test"
+    },
+    {
+      "key": "accountant",
+      "id": "91888888-8888-4888-8888-888888888888",
+      "tenantId": "91111111-1111-4111-8111-111111111111",
+      "clinicId": "91333333-3333-4333-8333-333333333333",
+      "roleSlug": "accountant",
+      "webRoleSlug": "accountant",
+      "email": "cp9.accountant@example.test"
+    },
+    {
+      "key": "platformAdmin",
+      "id": "91999999-9999-4999-8999-999999999999",
+      "tenantId": "91111111-1111-4111-8111-111111111111",
+      "clinicId": "91333333-3333-4333-8333-333333333333",
+      "roleSlug": "platform_admin",
+      "webRoleSlug": "platform_admin",
+      "email": "cp9.platform@example.test"
+    },
+    {
+      "key": "wrongTenantOwner",
+      "id": "91aaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "tenantId": "91222222-2222-4222-8222-222222222222",
+      "clinicId": "91444444-4444-4444-8444-444444444444",
+      "roleSlug": "owner_admin",
+      "webRoleSlug": "owner",
+      "email": "cp9.wrong-owner@example.test"
+    }
+  ],
+  "patients": [
+    {
+      "key": "primaryPatient",
+      "id": "91bbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "tenantId": "91111111-1111-4111-8111-111111111111",
+      "clinicId": "91333333-3333-4333-8333-333333333333",
+      "fullName": "CP9 Synthetic Export Patient",
+      "email": "cp9.patient@example.test",
+      "source": "referral"
+    },
+    {
+      "key": "wrongTenantPatient",
+      "id": "91cccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "tenantId": "91222222-2222-4222-8222-222222222222",
+      "clinicId": "91444444-4444-4444-8444-444444444444",
+      "fullName": "CP9 Wrong Tenant Synthetic Patient",
+      "email": "cp9.wrong-patient@example.test",
+      "source": "google"
+    }
+  ],
+  "routeContracts": [
+    {
+      "key": "request-patient-record-export",
+      "routeFamily": "patient-export",
+      "ownerLane": "security_privacy",
+      "method": "POST",
+      "path": "/v1/patients/91bbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/export-requests",
+      "actorKey": "owner",
+      "requiredPermission": "patient.export",
+      "expectedStatus": 202,
+      "liveImplemented": false,
+      "expectedAuditActions": ["patient.record.exported"],
+      "expectedBodyIncludes": ["exportRequestId", "auditTrail", "synthetic"],
+      "expectedBodyMustNotInclude": ["rawStoragePath", "objectKey", "91cccccc-cccc-4ccc-8ccc-cccccccccccc"],
+      "requestBody": {
+        "scope": ["demographics", "encounters", "billing", "media_references", "audit_trail"],
+        "format": "clinic_os_json",
+        "reason": "Patient requested a synthetic record handover copy."
+      }
+    },
+    {
+      "key": "read-audit-review-events",
+      "routeFamily": "audit-review",
+      "ownerLane": "security_privacy",
+      "method": "GET",
+      "path": "/v1/audit-events?from=2026-07-07T00:00:00.000Z&to=2026-07-07T23:59:59.999Z&category=privacy",
+      "actorKey": "auditor",
+      "requiredPermission": "audit.read",
+      "expectedStatus": 200,
+      "liveImplemented": false,
+      "expectedBodyIncludes": ["events", "privacy", "correlationId"],
+      "expectedBodyMustNotInclude": ["rawAudioBytes", "providerSecret", "objectKey"]
+    },
+    {
+      "key": "read-fhir-patient-bundle",
+      "routeFamily": "fhir-export",
+      "ownerLane": "fhir_abdm",
+      "method": "GET",
+      "path": "/v1/patients/91bbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/fhir-bundle?include=patient,encounter,document",
+      "actorKey": "owner",
+      "requiredPermission": "patient.export",
+      "expectedStatus": 200,
+      "liveImplemented": false,
+      "expectedBodyIncludes": ["resourceType", "Bundle", "Patient"],
+      "expectedBodyMustNotInclude": ["abhaNumber", "rawStoragePath", "91cccccc-cccc-4ccc-8ccc-cccccccccccc"]
+    },
+    {
+      "key": "request-break-glass-access",
+      "routeFamily": "break-glass",
+      "ownerLane": "security_privacy",
+      "method": "POST",
+      "path": "/v1/break-glass/requests",
+      "actorKey": "doctor",
+      "requiredPermission": "break_glass.request",
+      "expectedStatus": 202,
+      "liveImplemented": false,
+      "expectedAuditActions": ["break_glass.requested"],
+      "expectedBodyIncludes": ["expiresAt", "reviewRequired", "auditEventId"],
+      "expectedBodyMustNotInclude": ["permanentAccess", "silentGrant"],
+      "requestBody": {
+        "patientId": "91bbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        "scope": "emergency_patient_record_read",
+        "reason": "Synthetic urgent chairside continuity check.",
+        "requestedMinutes": 30
+      }
+    },
+    {
+      "key": "start-retention-dry-run",
+      "routeFamily": "retention",
+      "ownerLane": "security_privacy",
+      "method": "POST",
+      "path": "/v1/retention/runs",
+      "actorKey": "owner",
+      "requiredPermission": "security.manage",
+      "expectedStatus": 202,
+      "liveImplemented": false,
+      "expectedAuditActions": ["privacy.retention_run.requested"],
+      "expectedBodyIncludes": ["dryRun", "eligibleTransientPayloads", "protectedRecordsSkipped"],
+      "expectedBodyMustNotInclude": ["auditRowsDeleted", "clinicalRecordDeleted"],
+      "requestBody": {
+        "mode": "dry_run",
+        "policyKey": "cp9-synthetic-audio-transient-7d",
+        "asOf": "2026-07-07T13:05:00+05:30"
+      }
+    }
+  ],
+  "tenantIsolationExpectations": [
+    {
+      "key": "wrong-tenant-cannot-export-primary-patient",
+      "routeFamily": "patient-export",
+      "method": "POST",
+      "path": "/v1/patients/91bbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/export-requests",
+      "actorKey": "wrongTenantOwner",
+      "requiredPermission": "patient.export",
+      "expected": "deny",
+      "expectedStatus": 403,
+      "expectedReason": "tenant_mismatch",
+      "liveImplemented": false,
+      "requestBody": {
+        "scope": ["demographics"],
+        "format": "clinic_os_json",
+        "reason": "Negative synthetic tenant isolation probe."
+      }
+    },
+    {
+      "key": "wrong-tenant-cannot-read-primary-audit-events",
+      "routeFamily": "audit-review",
+      "method": "GET",
+      "path": "/v1/audit-events?patientId=91bbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "actorKey": "wrongTenantOwner",
+      "requiredPermission": "audit.read",
+      "expected": "deny",
+      "expectedStatus": 403,
+      "expectedReason": "tenant_mismatch",
+      "liveImplemented": false
+    },
+    {
+      "key": "wrong-tenant-cannot-read-primary-fhir-bundle",
+      "routeFamily": "fhir-export",
+      "method": "GET",
+      "path": "/v1/patients/91bbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/fhir-bundle",
+      "actorKey": "wrongTenantOwner",
+      "requiredPermission": "patient.export",
+      "expected": "deny",
+      "expectedStatus": 403,
+      "expectedReason": "tenant_mismatch",
+      "liveImplemented": false
+    },
+    {
+      "key": "wrong-tenant-cannot-approve-primary-break-glass",
+      "routeFamily": "break-glass",
+      "method": "POST",
+      "path": "/v1/break-glass/requests/91dddddd-dddd-4ddd-8ddd-dddddddddddd/approve",
+      "actorKey": "wrongTenantOwner",
+      "requiredPermission": "break_glass.approve",
+      "expected": "deny",
+      "expectedStatus": 403,
+      "expectedReason": "tenant_mismatch",
+      "liveImplemented": false,
+      "requestBody": {
+        "decision": "approve",
+        "reviewNote": "Negative synthetic tenant isolation probe."
+      }
+    },
+    {
+      "key": "wrong-tenant-cannot-run-primary-retention-policy",
+      "routeFamily": "retention",
+      "method": "POST",
+      "path": "/v1/retention/runs",
+      "actorKey": "wrongTenantOwner",
+      "requiredPermission": "security.manage",
+      "expected": "deny",
+      "expectedStatus": 403,
+      "expectedReason": "tenant_mismatch",
+      "liveImplemented": false,
+      "requestBody": {
+        "mode": "dry_run",
+        "policyKey": "cp9-synthetic-audio-transient-7d",
+        "tenantId": "91111111-1111-4111-8111-111111111111"
+      }
+    }
+  ],
+  "roleExpectations": [
+    {
+      "key": "owner-can-request-patient-export",
+      "actorKey": "owner",
+      "permission": "patient.export",
+      "expected": "allow"
+    },
+    {
+      "key": "auditor-can-read-audit-without-patient-export",
+      "actorKey": "auditor",
+      "permission": "audit.read",
+      "expected": "allow",
+      "mustDenyPermission": "patient.export"
+    },
+    {
+      "key": "accountant-cannot-read-privacy-audit-or-fhir-export",
+      "actorKey": "accountant",
+      "permission": "patient.export",
+      "expected": "deny",
+      "expectedReason": "missing_permission"
+    },
+    {
+      "key": "doctor-can-request-break-glass-but-not-approve",
+      "actorKey": "doctor",
+      "permission": "break_glass.request",
+      "expected": "allow",
+      "mustDenyPermission": "break_glass.approve"
+    },
+    {
+      "key": "platform-admin-can-run-security-retention",
+      "actorKey": "platformAdmin",
+      "permission": "security.manage",
+      "expected": "allow"
+    }
+  ],
+  "performanceSmoke": {
+    "name": "CP9 local clinic-hours read concurrency smoke",
+    "mode": "read_only_local_smoke",
+    "thresholds": {
+      "concurrency": 6,
+      "totalRequests": 48,
+      "maxP95LatencyMs": 750,
+      "maxP99LatencyMs": 1500,
+      "maxErrorRate": 0,
+      "maxStatus429Rate": 0,
+      "maxResponseBytes": 1048576
+    },
+    "endpoints": [
+      {
+        "key": "health-ready",
+        "method": "GET",
+        "path": "/health/ready",
+        "actorKey": null,
+        "expectedStatus": 200,
+        "liveImplemented": true,
+        "requiresAuth": false
+      },
+      {
+        "key": "session-context",
+        "method": "GET",
+        "path": "/v1/me",
+        "actorKey": "owner",
+        "expectedStatus": 200,
+        "liveImplemented": true,
+        "requiresAuth": true
+      },
+      {
+        "key": "appointments-day-read",
+        "method": "GET",
+        "path": "/v1/appointments?date=2026-07-07",
+        "actorKey": "assistant",
+        "expectedStatus": 200,
+        "liveImplemented": true,
+        "requiresAuth": true
+      },
+      {
+        "key": "queue-day-read",
+        "method": "GET",
+        "path": "/v1/queue?date=2026-07-07",
+        "actorKey": "assistant",
+        "expectedStatus": 200,
+        "liveImplemented": true,
+        "requiresAuth": true
+      },
+      {
+        "key": "tasks-open-read",
+        "method": "GET",
+        "path": "/v1/tasks?status=open",
+        "actorKey": "assistant",
+        "expectedStatus": 200,
+        "liveImplemented": true,
+        "requiresAuth": true
+      },
+      {
+        "key": "provider-health-read",
+        "method": "GET",
+        "path": "/v1/provider-health",
+        "actorKey": "owner",
+        "expectedStatus": 200,
+        "liveImplemented": true,
+        "requiresAuth": true
+      },
+      {
+        "key": "owner-dashboard-aggregate-read",
+        "method": "GET",
+        "path": "/v1/owner-dashboard?from=2026-07-01T00:00:00.000Z&to=2026-07-07T23:59:59.999Z",
+        "actorKey": "owner",
+        "expectedStatus": 200,
+        "liveImplemented": true,
+        "requiresAuth": true
+      }
+    ],
+    "deferredEndpoints": [
+      {
+        "key": "audit-review-read-load",
+        "routeFamily": "audit-review",
+        "path": "/v1/audit-events?category=privacy",
+        "reason": "CP9 Security/Privacy lane owns canonical audit read route activation."
+      },
+      {
+        "key": "fhir-export-read-load",
+        "routeFamily": "fhir-export",
+        "path": "/v1/patients/{patientId}/fhir-bundle",
+        "reason": "CP9 FHIR/ABDM lane owns canonical FHIR route activation."
+      }
+    ]
+  },
+  "browserSmokeChecklist": {
+    "activeCp9ProductSurfaces": [],
+    "registeredUnavailableSurfaces": [
+      {
+        "surfaceId": "compliance",
+        "path": "/surface/compliance",
+        "role": "owner",
+        "requiredText": ["Compliance", "Unavailable", "Required API boundary", "No product data is rendered"],
+        "mustNotInclude": ["Export complete", "Audit approved", "FHIR exchange active"]
+      },
+      {
+        "surfaceId": "platform-support",
+        "path": "/surface/platform-support",
+        "role": "platform_admin",
+        "requiredText": ["Platform support", "Unavailable", "Required API boundary", "No product data is rendered"],
+        "mustNotInclude": ["Break-glass approved", "Tenant data exported", "Provider success confirmed"]
+      }
+    ],
+    "mobileViewport": {
+      "width": 390,
+      "height": 844,
+      "maxHorizontalOverflowPx": 1
+    },
+    "integrationDependency": "Activate Playwright CP9 product workflow smoke only after Security/Privacy or FHIR/ABDM lanes expose real CP9 web surfaces."
+  },
+  "fixtureOnlyEvidence": [
+    {
+      "key": "abdm-feature-gate",
+      "reason": "ABDM identifiers and exchange remain disabled because sandbox credentials and compliance activation are absent.",
+      "mustNotInclude": ["live_abdm_call", "real_abha_number"]
+    },
+    {
+      "key": "backup-restore-boundary",
+      "reason": "Restore drill evidence is owned by Infrastructure/Ops using synthetic data and dry-run artifacts, not by this API contract fixture.",
+      "mustNotInclude": ["terraform apply", "production snapshot"]
+    },
+    {
+      "key": "browser-cp9-unavailable-state",
+      "reason": "Registered CP9 shells must show unavailable state until backend/API slices exist.",
+      "mustNotInclude": ["fake export complete", "fake audit reviewed"]
+    }
+  ]
+}
