@@ -151,6 +151,52 @@ The web action helpers and tests pin the implemented granular CP5 route family:
 - `POST /v1/prescriptions/{prescriptionId}/sign`
 - `POST /v1/patients/{patientId}/instructions`
 
+Checkpoint 6 adds a local-only continuity operations fixture for recalls, task assignment,
+SOP checklist runs, lab case progress, inventory checks, incident/CAPA, and owner operations
+status:
+
+```sh
+NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_USE_CP6_OPERATIONS_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_ENV=local \
+NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=assistant \
+npm run dev --workspace apps/web
+```
+
+The CP6 fixture uses explicitly synthetic, non-PHI operations data behind
+`apps/web/lib/cp6-operations.ts`. Recall actions are manual-completion records and never show
+fake WhatsApp sent/delivered states. Inventory low stock creates a manual procurement task and
+never marks a vendor purchase as executed. Lab reconciliation records expected payable amounts but
+does not mark lab invoices paid. Owner source-attributed revenue remains deferred to the
+Analytics/QA-owned owner dashboard read model.
+
+In live mode the workflow is available through `/surface/tasks`, `/surface/recalls`,
+`/surface/continuity`, `/surface/lab`, `/surface/operations`, and `/surface/owner-control`. The
+web read/action helpers and tests pin the CP6 route intent:
+
+- `GET /v1/tasks?status=&dueDate=`
+- `POST /v1/tasks`
+- `PATCH /v1/tasks/{taskId}`
+- `GET /v1/recalls?status=&dueBefore=`
+- `POST /v1/recalls/{recallId}/actions`
+- `GET /v1/sop-runs?date=`
+- `PATCH /v1/sop-runs/{sopRunId}`
+- `POST /v1/lab-cases`
+- `PATCH /v1/lab-cases/{labCaseId}`
+- `GET /v1/lab-cases?status=&dueBefore=`
+- `POST /v1/lab-reconciliations`
+- `POST /v1/inventory/check-runs`
+- `PATCH /v1/inventory/check-runs/{checkRunId}`
+- `GET /v1/inventory/exceptions`
+- `POST /v1/incidents`
+- `POST /v1/corrective-actions`
+- `PATCH /v1/corrective-actions/{correctiveActionId}`
+- `GET /v1/owner-dashboard?from=&to=`
+
+`404` from any CP6 route is classified as `CP6_ENDPOINT_NOT_REGISTERED` so registration/activation
+is diagnosed before permissions or runtime behavior. Accountant navigation remains limited to
+billing/accounting surfaces; owner-control is owner-only.
+
 ## `/me` contract expectation
 
 Until `packages/api-contracts` owns generated types, the web shell keeps a local mirror in `apps/web/lib/me.ts`. The expected shape is:
