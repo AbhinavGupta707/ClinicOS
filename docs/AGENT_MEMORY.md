@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after verified Checkpoint 3 promotion. Checkpoint 4 should start from the latest clean `main`.
+- Branch: `main` after verified Checkpoint 3 promotion. Checkpoint 4 launch packet is active from base `c7b222c`.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -16,6 +16,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Security/Compliance: `019f39f6-c6ef-7691-af95-ef4be605d978`, `/Users/abhinavgupta/.codex/worktrees/4436/ClinicOS`.
   - Doctor/Assistant UX: `019f39f7-0632-7800-9d41-f55b44f38dd0`, `/Users/abhinavgupta/.codex/worktrees/75ee/ClinicOS`.
   - QA/Fixtures: `019f39f7-54bd-72e1-a812-dd0fda503d06`, `/Users/abhinavgupta/.codex/worktrees/08d3/ClinicOS`.
+- Checkpoint 4 is active with planned visible project-scoped lanes: Media Backend, Dental Domain, Dental/Media UX, and Imaging/QA. Record pending worktree IDs, resolved thread IDs, and worktree paths in the checkpoint log immediately after launch.
 - CP1 worker lanes were real Codex-managed worktrees under `.codex/worktrees`.
 - A project-scoped worktree thread test succeeded: `target.type = "project"`, `projectId = "/Users/abhinavgupta/Desktop/ClinicOS"`, and `environment.type = "worktree"` made the worker visible under the `ClinicOS` project in the Codex sidebar.
 

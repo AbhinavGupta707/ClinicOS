@@ -30,6 +30,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 1 - Production platform foundation     | Complete  |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
 | 2 - Lead/patient/appointment/day-start | Complete  |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
 | 3 - Intake/consent/encounter/notes     | Complete  |       `6fe2cbc` |     `eb68abd` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-3`. Master integration aligned live CP3 routes, consent enforcement, prep summary, QA fixtures, web selectors, browser smoke, and security/audit coverage.                                         |
+| 4 - Dental charting/media/imaging      | Active    |       `c7b222c` |       pending | CP4 launch packet created for media backend, dental domain, dental/media UX, and imaging/QA lanes. Visible project-scoped worktree thread IDs will be recorded after launch.                                                                                                     |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -137,3 +138,14 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Audit read API probe remains deferred; backend/security tests verify audit append/classification and PHI redaction.
   - AI/audio capture route remains deferred to a later checkpoint; CP3 verifies the consent-enforcement state later audio/AI workflows must consume.
   - `scripts/cp3-contract-smoke.mjs` live mode is for a deterministic CP3 fixture-loaded environment. The local fixture API intentionally generates runtime IDs, so local runtime evidence comes from API tests.
+
+## Checkpoint 4 Launch - 2026-07-07
+
+- Launch packet: `docs/orchestration/CHECKPOINT_04_DENTAL_CHART_MEDIA.md`.
+- Base commit before launch packet: `c7b222c`.
+- Integration branch rule: CP4 lane commits merge first into `codex/integration/checkpoint-4`; promote to `main` only after full code, live local, browser/user, and media security gates pass.
+- Visible project-scoped lanes to launch:
+  - Media Backend: pending.
+  - Dental Domain: pending.
+  - Dental/Media UX: pending.
+  - Imaging/QA: pending.
