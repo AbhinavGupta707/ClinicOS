@@ -43,8 +43,19 @@ import type {
   ProviderScheduleRecord,
   QueueEntryRecord,
   QueueStatus,
+  RecallRecord,
+  RecallRuleRecord,
   ReceiptRecord,
   RoleAssignment,
+  SopRunDetail,
+  SopRunItemRecord,
+  SopRunItemStatus,
+  SopRunRecord,
+  SopRunStatus,
+  SopScheduleRecord,
+  SopTemplateDetail,
+  SopTemplateItemRecord,
+  SopTemplateRecord,
   TaskRecord,
   Tenant,
   TenantMembership,
@@ -55,7 +66,11 @@ import type {
   UUID
 } from "@clinic-os/domain";
 import {
+  addDaysIso,
   assertInvoiceReceiptable,
+  assertSopRunCompletion,
+  assertTaskCompletionEvidence,
+  assertTaskTransition,
   assertDentalFindingUpdateReason,
   assertClinicalNoteCanBeAmended,
   assertClinicalNoteCanBeSigned,
@@ -65,6 +80,10 @@ import {
   assertTreatmentPlanMutable,
   assertValidDentalFinding,
   buildDentalChartSnapshotState,
+  buildPaymentFollowUpKey,
+  buildPostOpFollowUpKey,
+  buildRecallGenerationKey,
+  buildSopRunGenerationKey,
   calculateBillingLineTotals,
   calculateInvoicePaymentStatus,
   normalizeDentalSurface,
@@ -99,8 +118,15 @@ import type {
   CreatePatientInput,
   CreatePatientInstructionInput,
   CreatePrescriptionInput,
+  CreateRecallRuleInput,
+  CreateSopScheduleInput,
+  CreateSopTemplateInput,
   CreateTaskInput,
   DashboardDataSet,
+  GenerateDueContinuityInput,
+  GenerateDueContinuityResult,
+  GenerateDueSopRunsInput,
+  GenerateDueSopRunsResult,
   CompleteMediaUploadInput,
   DentalFindingMutationResult,
   IdentityAccessSnapshot,
@@ -109,11 +135,16 @@ import type {
   OutboxEventInput,
   PatientSearchFilter,
   RecordPaymentTransactionInput,
+  RecallSearchFilter,
   RepositoryScope,
   RevokeConsentInput,
   SaveClinicalNoteDraftInput,
   SignClinicalNoteResult,
+  SopRunSearchFilter,
+  TaskSearchFilter,
   UpdateDentalFindingRepositoryInput,
+  UpdateSopRunInput,
+  UpdateTaskInput,
   UpdateTreatmentPlanInput,
   UpdatePatientInput
 } from "./repositories.ts";
@@ -1113,6 +1144,71 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
+  async listTasks(scope: RepositoryScope, filter: TaskSearchFilter = {}): Promise<TaskRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "clinic_id = $2"];
+
+      if (filter.status) {
+        values.push(filter.status);
+        where.push(`status = $${values.length}`);
+      }
+      if (filter.patientId) {
+        values.push(filter.patientId);
+        where.push(`patient_id = $${values.length}`);
+      }
+      if (filter.assignedToUserId) {
+        values.push(filter.assignedToUserId);
+        where.push(`assigned_to_user_id = $${values.length}`);
+      }
+      if (filter.sourceWorkflow) {
+        values.push(filter.sourceWorkflow);
+        where.push(`source_workflow = $${values.length}`);
+      }
+      if (filter.dueDate) {
+        const start = new Date(`${filter.dueDate}T00:00:00.000Z`);
+        const end = new Date(start);
+        end.setUTCDate(end.getUTCDate() + 1);
+        values.push(start.toISOString(), end.toISOString());
+        where.push(`due_at >= $${values.length - 1} and due_at < $${values.length}`);
+      }
+      if (filter.dueBefore) {
+        values.push(filter.dueBefore);
+        where.push(`due_at <= $${values.length}`);
+      }
+
+      values.push(Math.min(filter.limit ?? 100, 250));
+      const result = await client.query<TaskRow>(
+        `
+          select *
+          from tasks
+          where ${where.join(" and ")}
+          order by
+            case priority when 'urgent' then 1 when 'high' then 2 when 'normal' then 3 else 4 end,
+            due_at nulls last,
+            updated_at desc
+          limit $${values.length}
+        `,
+        values
+      );
+      return result.rows.map(mapTaskRow);
+    });
+  }
+
+  async findTaskById(scope: RepositoryScope, taskId: UUID): Promise<TaskRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<TaskRow>(
+        `
+          select *
+          from tasks
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+        `,
+        [scope.tenantId, scope.clinicId, taskId]
+      );
+      return result.rows[0] ? mapTaskRow(result.rows[0]) : null;
+    });
+  }
+
   async createTask(scope: RepositoryScope, input: CreateTaskInput): Promise<TaskRecord> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<TaskRow>(
@@ -1123,11 +1219,159 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
             patient_id,
             lead_id,
             appointment_id,
+            invoice_id,
+            encounter_id,
+            treatment_plan_id,
+            procedure_performed_id,
             task_type,
+            source_workflow,
+            source_record_type,
+            source_record_id,
             title,
+            description,
+            priority,
             status,
             due_at,
             assigned_to_user_id,
+            assigned_by_user_id,
+            idempotency_key,
+            created_by_user_id,
+            updated_by_user_id
+          )
+          values (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9,
+            $10, $11, $12, $13, $14, $15, $16, $17,
+            $18, $19, $20, $21, $21
+          )
+          on conflict (tenant_id, clinic_id, idempotency_key) where idempotency_key is not null
+          do update set updated_at = tasks.updated_at
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.patientId ?? null,
+          input.leadId ?? null,
+          input.appointmentId ?? null,
+          input.invoiceId ?? null,
+          input.encounterId ?? null,
+          input.treatmentPlanId ?? null,
+          input.procedurePerformedId ?? null,
+          input.taskType,
+          input.sourceWorkflow ?? "manual",
+          input.sourceRecordType ?? null,
+          input.sourceRecordId ?? null,
+          input.title,
+          input.description ?? null,
+          input.priority ?? "normal",
+          input.status ?? "open",
+          input.dueAt ?? null,
+          input.assignedToUserId ?? null,
+          input.assignedToUserId ? scope.actorUserId : null,
+          input.idempotencyKey ?? null,
+          scope.actorUserId
+        ]
+      );
+
+      return mapTaskRow(result.rows[0]);
+    });
+  }
+
+  async updateTask(
+    scope: RepositoryScope,
+    taskId: UUID,
+    input: UpdateTaskInput
+  ): Promise<TaskRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const existingResult = await client.query<TaskRow>(
+        `
+          select *
+          from tasks
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          for update
+        `,
+        [scope.tenantId, scope.clinicId, taskId]
+      );
+      if (!existingResult.rows[0]) return null;
+      const existing = mapTaskRow(existingResult.rows[0]);
+      const nextStatus = input.status ?? existing.status;
+      assertTaskTransition(existing.status, nextStatus);
+
+      const completionEvidence =
+        input.completionEvidence ?? (nextStatus === "done" ? existing.completionEvidence : {});
+      const completedAt =
+        nextStatus === "done" ? existing.completedAt ?? new Date().toISOString() : null;
+      const completedByUserId =
+        nextStatus === "done" ? existing.completedByUserId ?? scope.actorUserId : null;
+      assertTaskCompletionEvidence({
+        status: nextStatus,
+        evidence: completionEvidence,
+        completedAt,
+        completedByUserId
+      });
+
+      const result = await client.query<TaskRow>(
+        `
+          update tasks
+          set
+            status = $4,
+            title = $5,
+            description = $6,
+            priority = $7,
+            due_at = $8,
+            assigned_to_user_id = $9,
+            assigned_by_user_id = case
+              when $9::uuid is distinct from assigned_to_user_id then $10::uuid
+              else assigned_by_user_id
+            end,
+            completed_by_user_id = $11,
+            completed_at = $12,
+            completion_evidence = $13::jsonb,
+            cancelled_reason = $14,
+            updated_by_user_id = $10,
+            status_changed_at = case when status is distinct from $4 then now() else status_changed_at end
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          taskId,
+          nextStatus,
+          input.title ?? existing.title,
+          input.description === undefined ? existing.description : input.description,
+          input.priority ?? existing.priority,
+          input.dueAt === undefined ? existing.dueAt : input.dueAt,
+          input.assignedToUserId === undefined ? existing.assignedToUserId : input.assignedToUserId,
+          scope.actorUserId,
+          completedByUserId,
+          completedAt,
+          JSON.stringify(completionEvidence),
+          input.cancelledReason ?? existing.cancelledReason
+        ]
+      );
+      return result.rows[0] ? mapTaskRow(result.rows[0]) : null;
+    });
+  }
+
+  async createRecallRule(
+    scope: RepositoryScope,
+    input: CreateRecallRuleInput
+  ): Promise<RecallRuleRecord> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<RecallRuleRow>(
+        `
+          insert into recall_rules (
+            tenant_id,
+            clinic_id,
+            code,
+            title,
+            anchor,
+            offset_days,
+            procedure_category,
+            pricebook_procedure_id,
+            default_task_title,
+            default_task_priority,
             created_by_user_id,
             updated_by_user_id
           )
@@ -1137,19 +1381,651 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         [
           scope.tenantId,
           scope.clinicId,
-          input.patientId ?? null,
-          input.leadId ?? null,
-          input.appointmentId ?? null,
-          input.taskType,
+          input.code,
           input.title,
-          input.status ?? "open",
-          input.dueAt ?? null,
-          input.assignedToUserId ?? null,
+          input.anchor ?? "procedure_completed",
+          input.offsetDays,
+          input.procedureCategory ?? null,
+          input.pricebookProcedureId ?? null,
+          input.defaultTaskTitle ?? input.title,
+          input.defaultTaskPriority ?? "normal",
           scope.actorUserId
         ]
       );
+      return mapRecallRuleRow(result.rows[0]);
+    });
+  }
 
-      return mapTaskRow(result.rows[0]);
+  async listRecalls(scope: RepositoryScope, filter: RecallSearchFilter = {}): Promise<RecallRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "clinic_id = $2"];
+      if (filter.status) {
+        values.push(filter.status);
+        where.push(`status = $${values.length}`);
+      }
+      if (filter.patientId) {
+        values.push(filter.patientId);
+        where.push(`patient_id = $${values.length}`);
+      }
+      if (filter.dueBefore) {
+        values.push(filter.dueBefore);
+        where.push(`due_at <= $${values.length}`);
+      }
+      values.push(Math.min(filter.limit ?? 100, 250));
+      const result = await client.query<RecallRow>(
+        `
+          select *
+          from recalls
+          where ${where.join(" and ")}
+          order by due_at asc, updated_at desc
+          limit $${values.length}
+        `,
+        values
+      );
+      return result.rows.map(mapRecallRow);
+    });
+  }
+
+  async recordRecallAction(
+    scope: RepositoryScope,
+    recallId: UUID,
+    input: RecordRecallActionInput
+  ): Promise<RecallRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const statusByAction = {
+        manual_contact_requested: "contact_requested",
+        manual_contacted: "contacted",
+        appointment_booked: "booked",
+        completed: "completed",
+        skipped: "skipped",
+        cancelled: "cancelled"
+      } as const;
+      const evidence = {
+        actionType: input.actionType,
+        method: input.method ?? null,
+        notes: input.notes ?? null,
+        providerConfirmationReceived: false,
+        ...(input.evidence ?? {})
+      };
+      const result = await client.query<RecallRow>(
+        `
+          update recalls
+          set
+            status = $4,
+            appointment_id = coalesce($5, appointment_id),
+            action_evidence = $6::jsonb,
+            last_action_at = now(),
+            updated_by_user_id = $7
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          recallId,
+          statusByAction[input.actionType],
+          input.appointmentId ?? null,
+          JSON.stringify(evidence),
+          scope.actorUserId
+        ]
+      );
+      const recall = result.rows[0] ? mapRecallRow(result.rows[0]) : null;
+      if (recall?.taskId && ["booked", "completed", "skipped"].includes(recall.status)) {
+        await client.query(
+          `
+            update tasks
+            set
+              status = 'done',
+              completed_by_user_id = $4,
+              completed_at = now(),
+              completion_evidence = $5::jsonb,
+              updated_by_user_id = $4,
+              status_changed_at = now()
+            where tenant_id = $1 and clinic_id = $2 and id = $3 and status <> 'done'
+          `,
+          [scope.tenantId, scope.clinicId, recall.taskId, scope.actorUserId, JSON.stringify(evidence)]
+        );
+      }
+      return recall;
+    });
+  }
+
+  async generateDueContinuityTasks(
+    scope: RepositoryScope,
+    input: GenerateDueContinuityInput
+  ): Promise<GenerateDueContinuityResult> {
+    return this.#withRls(scope, async (client) => {
+      const asOf = input.asOf;
+      const recallTasksCreated: TaskRecord[] = [];
+      const followUpTasksCreated: TaskRecord[] = [];
+      const recallsCreated: RecallRecord[] = [];
+      const skippedExistingKeys: string[] = [];
+
+      const rules = (
+        await client.query<RecallRuleRow>(
+          `
+            select *
+            from recall_rules
+            where tenant_id = $1 and clinic_id = $2 and status = 'active'
+          `,
+          [scope.tenantId, scope.clinicId]
+        )
+      ).rows.map(mapRecallRuleRow);
+
+      const procedureRows = (
+        await client.query<ProcedureRecallSourceRow>(
+          `
+            select
+              procedure_performed_records.*,
+              pricebook_procedures.category as procedure_category
+            from procedure_performed_records
+            join pricebook_procedures on pricebook_procedures.tenant_id = procedure_performed_records.tenant_id
+              and pricebook_procedures.id = procedure_performed_records.pricebook_procedure_id
+            where procedure_performed_records.tenant_id = $1
+              and procedure_performed_records.clinic_id = $2
+              and procedure_performed_records.status = 'completed'
+          `,
+          [scope.tenantId, scope.clinicId]
+        )
+      ).rows;
+
+      for (const rule of rules) {
+        for (const procedure of procedureRows) {
+          if (rule.pricebookProcedureId && rule.pricebookProcedureId !== procedure.pricebook_procedure_id) continue;
+          if (rule.procedureCategory && rule.procedureCategory !== procedure.procedure_category) continue;
+          const dueAt = addDaysIso(toIso(procedure.performed_at), rule.offsetDays);
+          if (new Date(dueAt).getTime() > new Date(asOf).getTime()) continue;
+          const idempotencyKey = buildRecallGenerationKey({
+            recallRuleId: rule.id,
+            sourceProcedurePerformedId: procedure.id,
+            patientId: procedure.patient_id,
+            dueAt
+          });
+          const recallResult = await client.query<RecallRow>(
+            `
+              insert into recalls (
+                tenant_id,
+                clinic_id,
+                recall_rule_id,
+                patient_id,
+                source_procedure_performed_id,
+                status,
+                due_at,
+                created_by_user_id,
+                updated_by_user_id
+              )
+              values ($1, $2, $3, $4, $5, 'due', $6, $7, $7)
+              on conflict (tenant_id, clinic_id, recall_rule_id, source_procedure_performed_id)
+                where source_procedure_performed_id is not null
+              do nothing
+              returning *
+            `,
+            [
+              scope.tenantId,
+              scope.clinicId,
+              rule.id,
+              procedure.patient_id,
+              procedure.id,
+              dueAt,
+              scope.actorUserId
+            ]
+          );
+          if (!recallResult.rows[0]) {
+            skippedExistingKeys.push(idempotencyKey);
+            continue;
+          }
+          const recall = mapRecallRow(recallResult.rows[0]);
+          recallsCreated.push(recall);
+          const task = await this.#insertTaskInTransaction(client, scope, {
+            patientId: procedure.patient_id,
+            encounterId: procedure.encounter_id,
+            treatmentPlanId: procedure.treatment_plan_id,
+            procedurePerformedId: procedure.id,
+            taskType: "recall",
+            sourceWorkflow: "recall_generation",
+            sourceRecordType: "recall",
+            sourceRecordId: recall.id,
+            title: rule.defaultTaskTitle,
+            description: `Recall generated from ${rule.title}.`,
+            priority: rule.defaultTaskPriority,
+            dueAt,
+            idempotencyKey
+          });
+          recallTasksCreated.push(task);
+          await client.query(
+            `
+              update recalls
+              set task_id = $4, updated_by_user_id = $5
+              where tenant_id = $1 and clinic_id = $2 and id = $3
+            `,
+            [scope.tenantId, scope.clinicId, recall.id, task.id, scope.actorUserId]
+          );
+        }
+      }
+
+      for (const procedure of procedureRows) {
+        const dueAt = addDaysIso(toIso(procedure.performed_at), 1);
+        if (new Date(dueAt).getTime() > new Date(asOf).getTime()) continue;
+        const key = buildPostOpFollowUpKey(procedure.id);
+        const task = await this.#insertTaskInTransaction(client, scope, {
+          patientId: procedure.patient_id,
+          encounterId: procedure.encounter_id,
+          treatmentPlanId: procedure.treatment_plan_id,
+          procedurePerformedId: procedure.id,
+          taskType: "post_op_follow_up",
+          sourceWorkflow: "post_op_follow_up",
+          sourceRecordType: "procedure_performed_record",
+          sourceRecordId: procedure.id,
+          title: "Post-op follow-up",
+          description: "Manual patient follow-up after completed procedure. Record phone/WhatsApp evidence only after staff action.",
+          priority: "normal",
+          dueAt,
+          idempotencyKey: key
+        });
+        if (task.idempotencyKey === key && task.createdAt === task.updatedAt) followUpTasksCreated.push(task);
+        else skippedExistingKeys.push(key);
+      }
+
+      const invoiceRows = (
+        await client.query<InvoiceRow>(
+          `
+            select *
+            from invoices
+            where tenant_id = $1
+              and clinic_id = $2
+              and status = 'issued'
+              and balance_minor > 0
+              and due_at is not null
+              and due_at <= $3
+              and payment_status in ('unpaid', 'payment_requested', 'partially_paid', 'reconciliation_required')
+          `,
+          [scope.tenantId, scope.clinicId, asOf]
+        )
+      ).rows;
+      for (const invoice of invoiceRows) {
+        const key = buildPaymentFollowUpKey(invoice.id);
+        const task = await this.#insertTaskInTransaction(client, scope, {
+          patientId: invoice.patient_id,
+          invoiceId: invoice.id,
+          treatmentPlanId: invoice.treatment_plan_id,
+          taskType: "payment_follow_up",
+          sourceWorkflow: "payment_follow_up",
+          sourceRecordType: "invoice",
+          sourceRecordId: invoice.id,
+          title: "Payment follow-up",
+          description: "Manual follow-up for invoice balance due. Do not mark paid without verified provider or manual payment evidence.",
+          priority: "high",
+          dueAt: toIso(invoice.due_at as Date | string),
+          idempotencyKey: key
+        });
+        if (task.idempotencyKey === key && task.createdAt === task.updatedAt) followUpTasksCreated.push(task);
+        else skippedExistingKeys.push(key);
+      }
+
+      return { recallTasksCreated, followUpTasksCreated, recallsCreated, skippedExistingKeys };
+    });
+  }
+
+  async createSopTemplate(
+    scope: RepositoryScope,
+    input: CreateSopTemplateInput
+  ): Promise<SopTemplateDetail> {
+    return this.#withRls(scope, async (client) => {
+      const template = mapSopTemplateRow(
+        (
+          await client.query<SopTemplateRow>(
+            `
+              insert into sop_templates (
+                tenant_id,
+                clinic_id,
+                code,
+                title,
+                description,
+                created_by_user_id,
+                updated_by_user_id
+              )
+              values ($1, $2, $3, $4, $5, $6, $6)
+              returning *
+            `,
+            [
+              scope.tenantId,
+              scope.clinicId,
+              input.code,
+              input.title,
+              input.description ?? null,
+              scope.actorUserId
+            ]
+          )
+        ).rows[0]
+      );
+
+      const items: SopTemplateItemRecord[] = [];
+      for (const [index, item] of input.items.entries()) {
+        const itemResult = await client.query<SopTemplateItemRow>(
+          `
+            insert into sop_template_items (
+              tenant_id,
+              clinic_id,
+              template_id,
+              item_index,
+              title,
+              instructions,
+              evidence_required
+            )
+            values ($1, $2, $3, $4, $5, $6, $7)
+            returning *
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            template.id,
+            index + 1,
+            item.title,
+            item.instructions ?? null,
+            item.evidenceRequired ?? false
+          ]
+        );
+        items.push(mapSopTemplateItemRow(itemResult.rows[0]));
+      }
+
+      return { template, items };
+    });
+  }
+
+  async createSopSchedule(
+    scope: RepositoryScope,
+    input: CreateSopScheduleInput
+  ): Promise<SopScheduleRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const template = await client.query(
+        `
+          select id
+          from sop_templates
+          where tenant_id = $1 and clinic_id = $2 and id = $3 and status = 'active'
+        `,
+        [scope.tenantId, scope.clinicId, input.templateId]
+      );
+      if (template.rows.length === 0) return null;
+
+      const result = await client.query<SopScheduleRow>(
+        `
+          insert into sop_schedules (
+            tenant_id,
+            clinic_id,
+            template_id,
+            title,
+            recurrence_type,
+            interval_days,
+            day_of_week,
+            day_of_month,
+            due_time,
+            timezone,
+            starts_on,
+            ends_on,
+            assigned_to_user_id,
+            default_task_priority,
+            created_by_user_id,
+            updated_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $15)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.templateId,
+          input.title,
+          input.recurrenceType,
+          input.intervalDays ?? null,
+          input.dayOfWeek ?? null,
+          input.dayOfMonth ?? null,
+          input.dueTime,
+          input.timezone ?? "Asia/Kolkata",
+          input.startsOn,
+          input.endsOn ?? null,
+          input.assignedToUserId ?? null,
+          input.defaultTaskPriority ?? "normal",
+          scope.actorUserId
+        ]
+      );
+      return mapSopScheduleRow(result.rows[0]);
+    });
+  }
+
+  async generateDueSopRuns(
+    scope: RepositoryScope,
+    input: GenerateDueSopRunsInput
+  ): Promise<GenerateDueSopRunsResult> {
+    return this.#withRls(scope, async (client) => {
+      const runsCreated: SopRunDetail[] = [];
+      const skippedExistingKeys: string[] = [];
+      const asOf = new Date(input.asOf);
+      const schedules = (
+        await client.query<SopScheduleRow>(
+          `
+            select *
+            from sop_schedules
+            where tenant_id = $1 and clinic_id = $2 and status = 'active'
+          `,
+          [scope.tenantId, scope.clinicId]
+        )
+      ).rows.map(mapSopScheduleRow);
+
+      for (const schedule of schedules) {
+        const dueAt = sopDueAtForAsOf(schedule, asOf);
+        if (!dueAt || new Date(dueAt).getTime() > asOf.getTime()) continue;
+        const key = buildSopRunGenerationKey(schedule.id, dueAt);
+        const runResult = await client.query<SopRunRow>(
+          `
+            insert into sop_runs (
+              tenant_id,
+              clinic_id,
+              template_id,
+              schedule_id,
+              due_at,
+              status,
+              assigned_to_user_id,
+              generated_from_key
+            )
+            values ($1, $2, $3, $4, $5, 'due', $6, $7)
+            on conflict (tenant_id, clinic_id, generated_from_key) do nothing
+            returning *
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            schedule.templateId,
+            schedule.id,
+            dueAt,
+            schedule.assignedToUserId,
+            key
+          ]
+        );
+        if (!runResult.rows[0]) {
+          skippedExistingKeys.push(key);
+          continue;
+        }
+
+        const run = mapSopRunRow(runResult.rows[0]);
+        const templateItems = (
+          await client.query<SopTemplateItemRow>(
+            `
+              select *
+              from sop_template_items
+              where tenant_id = $1 and clinic_id = $2 and template_id = $3
+              order by item_index asc
+            `,
+            [scope.tenantId, scope.clinicId, schedule.templateId]
+          )
+        ).rows.map(mapSopTemplateItemRow);
+        for (const item of templateItems) {
+          await client.query(
+            `
+              insert into sop_run_items (
+                tenant_id,
+                clinic_id,
+                sop_run_id,
+                template_item_id,
+                item_index,
+                title,
+                instructions,
+                evidence_required
+              )
+              values ($1, $2, $3, $4, $5, $6, $7, $8)
+            `,
+            [
+              scope.tenantId,
+              scope.clinicId,
+              run.id,
+              item.id,
+              item.itemIndex,
+              item.title,
+              item.instructions,
+              item.evidenceRequired
+            ]
+          );
+        }
+        const task = await this.#insertTaskInTransaction(client, scope, {
+          taskType: "sop",
+          sourceWorkflow: "sop_run",
+          sourceRecordType: "sop_run",
+          sourceRecordId: run.id,
+          title: schedule.title,
+          description: "Recurring SOP checklist run.",
+          priority: schedule.defaultTaskPriority,
+          dueAt,
+          assignedToUserId: schedule.assignedToUserId,
+          idempotencyKey: key
+        });
+        await client.query(
+          `
+            update sop_runs
+            set task_id = $4
+            where tenant_id = $1 and clinic_id = $2 and id = $3
+          `,
+          [scope.tenantId, scope.clinicId, run.id, task.id]
+        );
+        const detail = await this.#loadSopRunDetail(client, scope, run.id);
+        if (detail) runsCreated.push(detail);
+      }
+
+      return { runsCreated, skippedExistingKeys };
+    });
+  }
+
+  async listSopRuns(
+    scope: RepositoryScope,
+    filter: SopRunSearchFilter = {}
+  ): Promise<SopRunDetail[]> {
+    return this.#withRls(scope, async (client) => {
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "clinic_id = $2"];
+      if (filter.status) {
+        values.push(filter.status);
+        where.push(`status = $${values.length}`);
+      }
+      if (filter.date) {
+        const start = new Date(`${filter.date}T00:00:00.000Z`);
+        const end = new Date(start);
+        end.setUTCDate(end.getUTCDate() + 1);
+        values.push(start.toISOString(), end.toISOString());
+        where.push(`due_at >= $${values.length - 1} and due_at < $${values.length}`);
+      }
+      if (filter.dueBefore) {
+        values.push(filter.dueBefore);
+        where.push(`due_at <= $${values.length}`);
+      }
+      values.push(Math.min(filter.limit ?? 100, 250));
+      const rows = (
+        await client.query<SopRunRow>(
+          `
+            select *
+            from sop_runs
+            where ${where.join(" and ")}
+            order by due_at asc
+            limit $${values.length}
+          `,
+          values
+        )
+      ).rows;
+
+      const details: SopRunDetail[] = [];
+      for (const row of rows) {
+        const detail = await this.#loadSopRunDetail(client, scope, row.id);
+        if (detail) details.push(detail);
+      }
+      return details;
+    });
+  }
+
+  async updateSopRun(
+    scope: RepositoryScope,
+    sopRunId: UUID,
+    input: UpdateSopRunInput
+  ): Promise<SopRunDetail | null> {
+    return this.#withRls(scope, async (client) => {
+      const existing = await this.#loadSopRunDetail(client, scope, sopRunId);
+      if (!existing) return null;
+
+      for (const item of input.items ?? []) {
+        const current = existing.items.find((candidate) => candidate.id === item.itemId);
+        if (!current) continue;
+        await client.query(
+          `
+            update sop_run_items
+            set
+              status = $4,
+              evidence = $5::jsonb,
+              completed_by_user_id = case when $4 = 'done' then $6 else null end,
+              completed_at = case when $4 = 'done' then now() else null end
+            where tenant_id = $1 and clinic_id = $2 and id = $3
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            item.itemId,
+            item.status,
+            JSON.stringify(item.evidence ?? current.evidence),
+            scope.actorUserId
+          ]
+        );
+      }
+
+      const nextStatus = input.status ?? existing.run.status;
+      const completionEvidence = input.completionEvidence ?? existing.run.completionEvidence;
+      const result = await client.query<SopRunRow>(
+        `
+          update sop_runs
+          set
+            status = $4,
+            started_by_user_id = case
+              when $4 = 'in_progress' and started_by_user_id is null then $5
+              else started_by_user_id
+            end,
+            started_at = case
+              when $4 = 'in_progress' and started_at is null then now()
+              else started_at
+            end,
+            completed_by_user_id = case when $4 = 'completed' then $5 else null end,
+            completed_at = case when $4 = 'completed' then now() else null end,
+            completion_evidence = $6::jsonb
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          sopRunId,
+          nextStatus,
+          scope.actorUserId,
+          JSON.stringify(completionEvidence)
+        ]
+      );
+      if (!result.rows[0]) return null;
+      const detail = await this.#loadSopRunDetail(client, scope, sopRunId);
+      if (detail) assertSopRunCompletion(detail);
+      return detail;
     });
   }
 
@@ -3306,6 +4182,103 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
+  async #insertTaskInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    input: CreateTaskInput
+  ): Promise<TaskRecord> {
+    const result = await client.query<TaskRow>(
+      `
+        insert into tasks (
+          tenant_id,
+          clinic_id,
+          patient_id,
+          lead_id,
+          appointment_id,
+          invoice_id,
+          encounter_id,
+          treatment_plan_id,
+          procedure_performed_id,
+          task_type,
+          source_workflow,
+          source_record_type,
+          source_record_id,
+          title,
+          description,
+          priority,
+          status,
+          due_at,
+          assigned_to_user_id,
+          assigned_by_user_id,
+          idempotency_key,
+          created_by_user_id,
+          updated_by_user_id
+        )
+        values (
+          $1, $2, $3, $4, $5, $6, $7, $8, $9,
+          $10, $11, $12, $13, $14, $15, $16, $17,
+          $18, $19, $20, $21, $22, $22
+        )
+        on conflict (tenant_id, clinic_id, idempotency_key) where idempotency_key is not null
+        do update set updated_at = tasks.updated_at
+        returning *
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        input.patientId ?? null,
+        input.leadId ?? null,
+        input.appointmentId ?? null,
+        input.invoiceId ?? null,
+        input.encounterId ?? null,
+        input.treatmentPlanId ?? null,
+        input.procedurePerformedId ?? null,
+        input.taskType,
+        input.sourceWorkflow ?? "manual",
+        input.sourceRecordType ?? null,
+        input.sourceRecordId ?? null,
+        input.title,
+        input.description ?? null,
+        input.priority ?? "normal",
+        input.status ?? "open",
+        input.dueAt ?? null,
+        input.assignedToUserId ?? null,
+        input.assignedToUserId ? scope.actorUserId : null,
+        input.idempotencyKey ?? null,
+        scope.actorUserId
+      ]
+    );
+    return mapTaskRow(result.rows[0]);
+  }
+
+  async #loadSopRunDetail(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    sopRunId: UUID
+  ): Promise<SopRunDetail | null> {
+    const runResult = await client.query<SopRunRow>(
+      `
+        select *
+        from sop_runs
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, sopRunId]
+    );
+    if (!runResult.rows[0]) return null;
+    const items = (
+      await client.query<SopRunItemRow>(
+        `
+          select *
+          from sop_run_items
+          where tenant_id = $1 and clinic_id = $2 and sop_run_id = $3
+          order by item_index asc
+        `,
+        [scope.tenantId, scope.clinicId, sopRunId]
+      )
+    ).rows.map(mapSopRunItemRow);
+    return { run: mapSopRunRow(runResult.rows[0]), items };
+  }
+
   async #findPatientByIdInTransaction(
     client: SqlQueryClient,
     scope: RepositoryScope,
@@ -4295,11 +5268,156 @@ interface TaskRow {
   patient_id: UUID | null;
   lead_id: UUID | null;
   appointment_id: UUID | null;
+  invoice_id: UUID | null;
+  encounter_id: UUID | null;
+  treatment_plan_id: UUID | null;
+  procedure_performed_id: UUID | null;
   task_type: TaskRecord["taskType"];
+  source_workflow: TaskRecord["sourceWorkflow"];
+  source_record_type: string | null;
+  source_record_id: UUID | null;
   title: string;
+  description: string | null;
+  priority: TaskRecord["priority"];
   status: TaskRecord["status"];
   due_at: Date | string | null;
   assigned_to_user_id: UUID | null;
+  assigned_by_user_id: UUID | null;
+  completed_by_user_id: UUID | null;
+  completed_at: Date | string | null;
+  completion_evidence: Record<string, unknown>;
+  cancelled_reason: string | null;
+  idempotency_key: string | null;
+  created_by_user_id: UUID | null;
+  updated_by_user_id: UUID | null;
+  status_changed_at: Date | string;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface RecallRuleRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  code: string;
+  title: string;
+  status: RecallRuleRecord["status"];
+  anchor: RecallRuleRecord["anchor"];
+  offset_days: number;
+  procedure_category: string | null;
+  pricebook_procedure_id: UUID | null;
+  default_task_title: string;
+  default_task_priority: RecallRuleRecord["defaultTaskPriority"];
+  created_by_user_id: UUID;
+  updated_by_user_id: UUID | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface RecallRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  recall_rule_id: UUID;
+  patient_id: UUID;
+  source_procedure_performed_id: UUID | null;
+  source_invoice_id: UUID | null;
+  task_id: UUID | null;
+  appointment_id: UUID | null;
+  status: RecallRecord["status"];
+  due_at: Date | string;
+  last_action_at: Date | string | null;
+  action_evidence: Record<string, unknown>;
+  created_by_user_id: UUID | null;
+  updated_by_user_id: UUID | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface SopTemplateRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  code: string;
+  title: string;
+  description: string | null;
+  status: SopTemplateRecord["status"];
+  created_by_user_id: UUID;
+  updated_by_user_id: UUID | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface SopTemplateItemRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  template_id: UUID;
+  item_index: number;
+  title: string;
+  instructions: string | null;
+  evidence_required: boolean;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface SopScheduleRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  template_id: UUID;
+  title: string;
+  status: SopScheduleRecord["status"];
+  recurrence_type: SopScheduleRecord["recurrenceType"];
+  interval_days: number | null;
+  day_of_week: number | null;
+  day_of_month: number | null;
+  due_time: string;
+  timezone: string;
+  starts_on: Date | string;
+  ends_on: Date | string | null;
+  assigned_to_user_id: UUID | null;
+  default_task_priority: SopScheduleRecord["defaultTaskPriority"];
+  created_by_user_id: UUID;
+  updated_by_user_id: UUID | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface SopRunRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  template_id: UUID;
+  schedule_id: UUID;
+  task_id: UUID | null;
+  due_at: Date | string;
+  status: SopRunStatus;
+  assigned_to_user_id: UUID | null;
+  started_by_user_id: UUID | null;
+  started_at: Date | string | null;
+  completed_by_user_id: UUID | null;
+  completed_at: Date | string | null;
+  completion_evidence: Record<string, unknown>;
+  generated_from_key: string;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface SopRunItemRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  sop_run_id: UUID;
+  template_item_id: UUID | null;
+  item_index: number;
+  title: string;
+  instructions: string | null;
+  evidence_required: boolean;
+  status: SopRunItemStatus;
+  evidence: Record<string, unknown>;
+  completed_by_user_id: UUID | null;
+  completed_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
 }
@@ -4669,6 +5787,10 @@ interface ProcedurePerformedRow {
   updated_at: Date | string;
 }
 
+interface ProcedureRecallSourceRow extends ProcedurePerformedRow {
+  procedure_category: string;
+}
+
 interface InvoiceRow {
   id: UUID;
   tenant_id: UUID;
@@ -4911,11 +6033,170 @@ function mapTaskRow(row: TaskRow): TaskRecord {
     patientId: row.patient_id,
     leadId: row.lead_id,
     appointmentId: row.appointment_id,
+    invoiceId: row.invoice_id ?? null,
+    encounterId: row.encounter_id ?? null,
+    treatmentPlanId: row.treatment_plan_id ?? null,
+    procedurePerformedId: row.procedure_performed_id ?? null,
     taskType: row.task_type,
+    sourceWorkflow: row.source_workflow ?? "manual",
+    sourceRecordType: row.source_record_type ?? null,
+    sourceRecordId: row.source_record_id ?? null,
     title: row.title,
+    description: row.description ?? null,
+    priority: row.priority ?? "normal",
     status: row.status,
     dueAt: row.due_at ? toIso(row.due_at) : null,
     assignedToUserId: row.assigned_to_user_id,
+    assignedByUserId: row.assigned_by_user_id ?? null,
+    completedByUserId: row.completed_by_user_id ?? null,
+    completedAt: row.completed_at ? toIso(row.completed_at) : null,
+    completionEvidence: row.completion_evidence ?? {},
+    cancelledReason: row.cancelled_reason ?? null,
+    idempotencyKey: row.idempotency_key ?? null,
+    createdByUserId: row.created_by_user_id ?? null,
+    updatedByUserId: row.updated_by_user_id ?? null,
+    statusChangedAt: row.status_changed_at ? toIso(row.status_changed_at) : toIso(row.updated_at),
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapRecallRuleRow(row: RecallRuleRow): RecallRuleRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    code: row.code,
+    title: row.title,
+    status: row.status,
+    anchor: row.anchor,
+    offsetDays: row.offset_days,
+    procedureCategory: row.procedure_category,
+    pricebookProcedureId: row.pricebook_procedure_id,
+    defaultTaskTitle: row.default_task_title,
+    defaultTaskPriority: row.default_task_priority,
+    createdByUserId: row.created_by_user_id,
+    updatedByUserId: row.updated_by_user_id,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapRecallRow(row: RecallRow): RecallRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    recallRuleId: row.recall_rule_id,
+    patientId: row.patient_id,
+    sourceProcedurePerformedId: row.source_procedure_performed_id,
+    sourceInvoiceId: row.source_invoice_id,
+    taskId: row.task_id,
+    appointmentId: row.appointment_id,
+    status: row.status,
+    dueAt: toIso(row.due_at),
+    lastActionAt: row.last_action_at ? toIso(row.last_action_at) : null,
+    actionEvidence: row.action_evidence ?? {},
+    createdByUserId: row.created_by_user_id,
+    updatedByUserId: row.updated_by_user_id,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapSopTemplateRow(row: SopTemplateRow): SopTemplateRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    code: row.code,
+    title: row.title,
+    description: row.description,
+    status: row.status,
+    createdByUserId: row.created_by_user_id,
+    updatedByUserId: row.updated_by_user_id,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapSopTemplateItemRow(row: SopTemplateItemRow): SopTemplateItemRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    templateId: row.template_id,
+    itemIndex: row.item_index,
+    title: row.title,
+    instructions: row.instructions,
+    evidenceRequired: row.evidence_required,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapSopScheduleRow(row: SopScheduleRow): SopScheduleRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    templateId: row.template_id,
+    title: row.title,
+    status: row.status,
+    recurrenceType: row.recurrence_type,
+    intervalDays: row.interval_days,
+    dayOfWeek: row.day_of_week,
+    dayOfMonth: row.day_of_month,
+    dueTime: row.due_time,
+    timezone: row.timezone,
+    startsOn: isoDateOnly(row.starts_on),
+    endsOn: row.ends_on ? isoDateOnly(row.ends_on) : null,
+    assignedToUserId: row.assigned_to_user_id,
+    defaultTaskPriority: row.default_task_priority,
+    createdByUserId: row.created_by_user_id,
+    updatedByUserId: row.updated_by_user_id,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapSopRunRow(row: SopRunRow): SopRunRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    templateId: row.template_id,
+    scheduleId: row.schedule_id,
+    taskId: row.task_id,
+    dueAt: toIso(row.due_at),
+    status: row.status,
+    assignedToUserId: row.assigned_to_user_id,
+    startedByUserId: row.started_by_user_id,
+    startedAt: row.started_at ? toIso(row.started_at) : null,
+    completedByUserId: row.completed_by_user_id,
+    completedAt: row.completed_at ? toIso(row.completed_at) : null,
+    completionEvidence: row.completion_evidence ?? {},
+    generatedFromKey: row.generated_from_key,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapSopRunItemRow(row: SopRunItemRow): SopRunItemRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    sopRunId: row.sop_run_id,
+    templateItemId: row.template_item_id,
+    itemIndex: row.item_index,
+    title: row.title,
+    instructions: row.instructions,
+    evidenceRequired: row.evidence_required,
+    status: row.status,
+    evidence: row.evidence ?? {},
+    completedByUserId: row.completed_by_user_id,
+    completedAt: row.completed_at ? toIso(row.completed_at) : null,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at)
   };
@@ -5497,6 +6778,31 @@ function normalizeUpdateDentalFindingInput(
 
   assertValidDentalFinding(normalized);
   return normalized;
+}
+
+function sopDueAtForAsOf(schedule: SopScheduleRecord, asOf: Date): string | null {
+  const asOfDate = asOf.toISOString().slice(0, 10);
+  if (asOfDate < schedule.startsOn) return null;
+  if (schedule.endsOn && asOfDate > schedule.endsOn) return null;
+
+  const dayMatches =
+    schedule.recurrenceType === "daily" ||
+    (schedule.recurrenceType === "weekly" && asOf.getUTCDay() === schedule.dayOfWeek) ||
+    (schedule.recurrenceType === "monthly" && asOf.getUTCDate() === schedule.dayOfMonth) ||
+    (schedule.recurrenceType === "interval_days" &&
+      schedule.intervalDays !== null &&
+      daysBetween(schedule.startsOn, asOfDate) % schedule.intervalDays === 0);
+
+  if (!dayMatches) return null;
+  const dueAt = new Date(`${asOfDate}T${schedule.dueTime.replace(/Z$/, "")}Z`);
+  if (Number.isNaN(dueAt.getTime())) return null;
+  return dueAt.toISOString();
+}
+
+function daysBetween(startDate: string, endDate: string): number {
+  const start = new Date(`${startDate}T00:00:00.000Z`).getTime();
+  const end = new Date(`${endDate}T00:00:00.000Z`).getTime();
+  return Math.floor((end - start) / 86_400_000);
 }
 
 function toIso(value: Date | string): string {
