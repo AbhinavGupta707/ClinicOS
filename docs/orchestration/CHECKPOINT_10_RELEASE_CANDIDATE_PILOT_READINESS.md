@@ -8,7 +8,12 @@
 
 ## Outcome
 
-ClinicOS is release-candidate ready for a selected pilot clinic: pilot configuration is explicit, user-facing rough edges are honest and responsive, end-to-end regression evidence covers the full dental-first clinic day, and operations/support/docs identify go-live gates and deferred whole workflows without weakening shipped behavior.
+Target outcome: after master verification, ClinicOS can be treated as a
+release-candidate package for a selected pilot clinic. Pilot configuration must
+be explicit, user-facing rough edges must be honest and responsive, end-to-end
+regression evidence must cover the full dental-first clinic day, and
+operations/support/docs must identify go-live gates and deferred whole workflows
+without weakening shipped behavior.
 
 ## Credential And Input Preflight
 
@@ -73,7 +78,7 @@ Pilot Configuration -> UX Polish -> End-To-End QA -> Operations/Docs -> master i
 
 ## End-To-End QA Lane Evidence
 
-Pending integration review, the End-To-End QA lane owns these CP10 evidence artifacts:
+The End-To-End QA lane owns these CP10 evidence artifacts:
 
 - `fixtures/synthetic/cp10/clinic_day_regression_flow.json`
 - `scripts/validate-cp10-fixtures.mjs`
@@ -83,3 +88,27 @@ Pending integration review, the End-To-End QA lane owns these CP10 evidence arti
 - `docs/qa/checkpoint-10-end-to-end-qa.md`
 
 The harness is synthetic/local-test only. It covers implemented route families from lead through owner dashboard, verifies role and tenant boundaries, records provider unavailable/no-credential checks, references CP7 migration dry-run and CP9 restore dry-run evidence, and keeps deferred workflows out of passed evidence.
+
+## Operations/Docs Lane Deliverables
+
+The Operations/Docs lane provides the release-candidate documentation package
+for master completion:
+
+- `docs/release/checkpoint-10-release-notes.md` - release-candidate scope,
+  operator-visible changes, and explicit live-verification boundaries.
+- `docs/release/pilot-go-live-checklist.md` - hard go/no-go gates, timeline,
+  rollback/degraded-mode posture, and clinic sign-off table.
+- `docs/training/pilot-training-flow.md` - owner, doctor, assistant,
+  receptionist, accountant, and support/admin training tasks.
+- `infra/runbooks/pilot-support-admin.md` - incident intake, support escalation,
+  provider no-key handling, and degraded-mode playbooks.
+- `docs/release/known-risks-deferred-work.md` - live gaps, deferred whole
+  workflows, and operational risks that must not be papered over.
+- `docs/qa/checkpoint-10-evidence-matrix.md` - evidence slots for code,
+  clinic-day, role/tenant, browser, provider, backup, and manual smoke gates.
+- `docs/orchestration/CHECKPOINT_10_FINAL_REPORT.md` - final report skeleton for
+  master verification and go/no-go closeout.
+
+Operations/Docs does not move CP10 to complete. Master must fill the final
+report with actual lane commits, checks, browser/user evidence, accepted gaps,
+and go/no-go decisions after all lanes are merged.
