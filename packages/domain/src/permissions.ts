@@ -17,6 +17,7 @@ export const PERMISSIONS = [
   "clinical.note.read",
   "clinical.note.write",
   "clinical.note.sign",
+  "prescription.write",
   "prescription.sign",
   "media.read",
   "media.write",
@@ -69,6 +70,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "clinical.note.read",
     "clinical.note.write",
     "clinical.note.sign",
+    "prescription.write",
     "prescription.sign",
     "media.read",
     "media.write",
@@ -94,6 +96,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "clinical.note.read",
     "clinical.note.write",
     "clinical.note.sign",
+    "prescription.write",
     "prescription.sign",
     "media.read",
     "media.write",
@@ -114,6 +117,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "intake.write",
     "clinical.note.read",
     "clinical.note.write",
+    "prescription.write",
     "media.read",
     "media.write",
     "billing.read",
@@ -184,7 +188,7 @@ export function normalizePermissionList(values: readonly string[]): PermissionKe
 export function isClinicalPermission(permission: PermissionKey): boolean {
   return (
     permission.startsWith("clinical.") ||
-    permission === "prescription.sign" ||
+    permission.startsWith("prescription.") ||
     permission === "media.read" ||
     permission === "media.write" ||
     permission === "patient.phi.read"

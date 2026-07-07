@@ -56,6 +56,12 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "patient.timeline.viewed": {
+    category: "phi_access",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
   "lead.created": {
     category: "integration",
     riskLevel: "medium",
@@ -128,6 +134,48 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "form_response.submitted": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "consent.created": {
+    category: "privacy",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "consent.revoked": {
+    category: "privacy",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "encounter.created": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "encounter.started": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "encounter.completed": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "clinical_note.draft_created": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
   "role.permission.changed": {
     category: "administration",
     riskLevel: "high",
@@ -149,6 +197,24 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
   "clinical.note.signed": {
     category: "clinical",
     riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "clinical_note.signed": {
+    category: "clinical",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "clinical_note.amended": {
+    category: "clinical",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "prescription.draft_created": {
+    category: "clinical",
+    riskLevel: "high",
     phiInvolved: true,
     requiresPatientId: true
   },

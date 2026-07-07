@@ -270,7 +270,7 @@ export async function getPatientTimeline(
   const timeline = (
     await dependencies.repository.findPatientTimeline(scopeFrom(context), patientId)
   ).map(toPublicPatientTimelineItem);
-  await audit(context, dependencies, "patient.record.viewed", {
+  await audit(context, dependencies, "patient.timeline.viewed", {
     patientId,
     resourceType: "patient_timeline",
     resourceId: patientId
@@ -808,6 +808,22 @@ function publicTimelineItemType(
       return "queue";
     case "task_created":
       return "task";
+    case "form_response_submitted":
+      return "clinical_note";
+    case "consent_created":
+    case "consent_revoked":
+      return "consent";
+    case "encounter_created":
+    case "encounter_started":
+    case "encounter_completed":
+      return "clinical_note";
+    case "clinical_note_draft_created":
+    case "clinical_note_signed":
+    case "clinical_note_amended":
+      return "clinical_note";
+    case "prescription_draft_created":
+    case "prescription_signed":
+      return "prescription";
   }
 }
 
@@ -833,6 +849,28 @@ function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): Dom
       return "appointment.no_show";
     case "task_created":
       return "task.created";
+    case "form_response_submitted":
+      return "form_response.submitted";
+    case "consent_created":
+      return "consent.created";
+    case "consent_revoked":
+      return "consent.revoked";
+    case "encounter_created":
+      return "encounter.created";
+    case "encounter_started":
+      return "encounter.started";
+    case "encounter_completed":
+      return "encounter.completed";
+    case "clinical_note_draft_created":
+      return "clinical_note.draft_created";
+    case "clinical_note_signed":
+      return "clinical_note.signed";
+    case "clinical_note_amended":
+      return "clinical_note.amended";
+    case "prescription_draft_created":
+      return "prescription.draft_created";
+    case "prescription_signed":
+      return "prescription.signed";
   }
 }
 

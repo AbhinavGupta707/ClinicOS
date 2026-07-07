@@ -8,8 +8,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "node --check src/index.ts",
-    "lint": "node --check src/index.ts",
+    "typecheck": "node --check src/index.ts && node --check src/audit.ts && node --check src/redaction.ts",
+    "lint": "node --check src/index.ts && node --check src/audit.ts && node --check src/redaction.ts",
     "test": "node --test test/*.test.ts"
   }
 }

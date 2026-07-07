@@ -12,6 +12,10 @@ const checkpoint2Migration = readFileSync(
   resolve(import.meta.dirname, "../migrations/0002_lead_patient_appointment_day_start.sql"),
   "utf8"
 );
+const checkpoint1Seed = readFileSync(
+  resolve(import.meta.dirname, "../seeds/checkpoint1_identity_auth.sql"),
+  "utf8"
+);
 
 test("migration enables RLS for first PHI and audit tables", () => {
   assert.match(migration, /alter table patients enable row level security/i);
@@ -102,4 +106,14 @@ test("checkpoint 2 migration protects appointment provider and chair conflicts a
   assert.match(checkpoint2Migration, /appointments_provider_no_overlap exclude using gist/i);
   assert.match(checkpoint2Migration, /appointments_chair_no_overlap exclude using gist/i);
   assert.match(checkpoint2Migration, /status in \('requested', 'booked', 'confirmed', 'checked_in', 'in_consult'\)/i);
+});
+
+test("identity seed keeps prescription draft and sign permissions separated for CP3 roles", () => {
+  assert.match(checkpoint1Seed, /\('prescription\.write', 'Write prescriptions'/i);
+  assert.match(checkpoint1Seed, /\('assistant', 'prescription\.write'\)/i);
+  assert.doesNotMatch(checkpoint1Seed, /\('assistant', 'prescription\.sign'\)/i);
+  assert.match(checkpoint1Seed, /\('doctor', 'prescription\.write'\)/i);
+  assert.match(checkpoint1Seed, /\('doctor', 'prescription\.sign'\)/i);
+  assert.doesNotMatch(checkpoint1Seed, /\('accountant', 'prescription\.write'\)/i);
+  assert.doesNotMatch(checkpoint1Seed, /\('auditor', 'prescription\.write'\)/i);
 });
