@@ -381,7 +381,11 @@ export const SURFACES: SurfaceRegistration[] = [
     icon: ShieldCheck,
     id: "compliance",
     label: "Compliance",
-    requiredApis: ["GET /v1/audit-events", "GET /v1/patients/{patientId}/export"],
+    requiredApis: [
+      "GET /v1/audit-events",
+      "POST /v1/patients/{patientId}/record-exports",
+      "POST /v1/privacy/retention-runs"
+    ],
     roles: ["owner"]
   },
   {
@@ -408,7 +412,11 @@ export const SURFACES: SurfaceRegistration[] = [
     icon: KeyRound,
     id: "platform-support",
     label: "Platform support",
-    requiredApis: ["GET /v1/platform/tenants", "GET /external-systems/accounts/{id}/health"],
+    requiredApis: [
+      "GET /v1/provider-health",
+      "GET /v1/break-glass/access-requests",
+      "POST /v1/break-glass/access-requests/{id}/review"
+    ],
     roles: ["platform_admin"]
   }
 ];
