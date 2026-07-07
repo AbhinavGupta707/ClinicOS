@@ -36,7 +36,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 7 - Live integrations/migration hardening         | Complete |       `e7139c4` |     `92fb2b9` | CP7 visible project-scoped lanes merged into `codex/integration/checkpoint-7`, master integration reconciled live provider health/dead-letter/migration contracts, and verified branch was promoted to `main`.                                                                 |
 | 8 - Mobile capture and AI scribe/action proposals | Complete |       `983cca5` |     `8ac2dae` | CP8 visible project-scoped lanes merged into `codex/integration/checkpoint-8` and promoted to `main`. Master integration reconciled AI safety route contracts, consent blocking semantics, review-role browser gates, and fixture/live evidence boundaries.                    |
 | 9 - Interoperability/security/ops hardening       | Complete |       `0dc9f91` |     `131300b` | CP9 visible project-scoped lanes merged into `codex/integration/checkpoint-9` and promoted to `main`; master integration reconciled Security route contracts, FHIR projection-only evidence, restore/load fixtures, and CP9 registered-unavailable browser smoke.              |
-| 10 - Release candidate/pilot readiness            | Verified |       `a2d6501` |       pending | CP10 visible project-scoped lanes merged into `codex/integration/checkpoint-10`; master closeout verified full gates, API/browser smoke, release docs, and accepted external go-live gaps. Main promotion is recorded after post-promotion checks.                             |
+| 10 - Release candidate/pilot readiness            | Complete |       `a2d6501` |     `226a7b0` | CP10 visible project-scoped lanes merged into `codex/integration/checkpoint-10`, verified, and promoted to `main`; master closeout verified full gates, API/browser smoke, release docs, and accepted external go-live gaps.                                                   |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -453,6 +453,8 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 
 - Integration branch: `codex/integration/checkpoint-10`.
 - Verified integration head before master closeout patch: `fc3511f`.
+- Verified integration closeout commit: `b7c638f`.
+- Main promotion merge commit: `226a7b0`.
 - Merge order:
   - Pilot Configuration commit `148bad5` merged first as `c158969`.
   - Master correction `f6f2716` kept pilot readiness approval conservative by not treating AI data-residency notes as approval.
@@ -464,6 +466,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Replaced the CP10 final report skeleton and evidence matrix with actual verification evidence.
   - Updated the CP10 orchestration packet with lane merge status and closeout evidence.
 - Full repository gates passed after the final ABDM fixture patch: `git diff --check`, `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`.
+- Post-promotion checks on `main` passed: `git diff --check` and `npm run check`.
 - CP10 evidence gates passed: `node scripts/validate-cp10-fixtures.mjs`, `node scripts/cp10-contract-smoke.mjs --dry-run`, `node --test tests/acceptance/cp10-fixture-contract.test.mjs`, and `node --test tests/acceptance/*.test.mjs`.
 - Outside-sandbox API route smoke passed with zero skips: `npm --workspace @clinic-os/api test -- cp10-pilot-readiness.test.ts`, including owner-only `GET /v1/pilot-readiness`.
 - Browser/user smoke passed:

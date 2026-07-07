@@ -2,11 +2,12 @@
 
 Date: 2026-07-07
 
-Status: Integration verified on `codex/integration/checkpoint-10`; main
-promotion is recorded in `docs/orchestration/CHECKPOINT_LOG.md` after the
-post-promotion checks.
+Status: Complete; verified on `codex/integration/checkpoint-10` and promoted to
+`main` via merge commit `226a7b0`.
 
 Integration branch: `codex/integration/checkpoint-10`
+
+Main promotion merge: `226a7b0`
 
 ## Decision Summary
 
@@ -50,6 +51,7 @@ Integration branch: `codex/integration/checkpoint-10`
 | `npm run lint`             | Pass   | All workspace lint gates passed after the final ABDM fixture patch.                                                                                                                                        |
 | `npm run test`             | Pass   | Full workspace test suite passed; sandbox socket skips were separately covered outside the sandbox.                                                                                                        |
 | `npm run build`            | Pass   | API, mobile web export, Next.js web build, worker, FHIR, integrations, config, observability, and workflow builds passed.                                                                                  |
+| Post-promotion guard       | Pass   | `git diff --check` and `npm run check` passed on `main` after merge commit `226a7b0`.                                                                                                                      |
 | CP10 fixture validator     | Pass   | `node scripts/validate-cp10-fixtures.mjs`.                                                                                                                                                                 |
 | CP10 contract dry-run      | Pass   | `node scripts/cp10-contract-smoke.mjs --dry-run`.                                                                                                                                                          |
 | Acceptance contracts       | Pass   | `node --test tests/acceptance/*.test.mjs` passed 53 tests.                                                                                                                                                 |
@@ -70,7 +72,7 @@ processes because `NEXT_PUBLIC_CLINIC_OS_DEV_ROLE` is process-scoped.
 | Assistant clinic-day desktop            | Pass   | `CLINICOS_CP10_E2E_ENABLED=true ... NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=assistant npx playwright test tests/e2e/checkpoint-10-clinic-day-flow.spec.ts --grep assistant`; screenshot `/private/tmp/clinicos-cp10-assistant-clinic-day-desktop.png`. |
 | Assistant 390px mobile                  | Pass   | Same assistant run; no horizontal overflow; screenshot `/private/tmp/clinicos-cp10-assistant-mobile-390.png`.                                                                                                                                 |
 | Owner dashboard/readiness/compliance    | Pass   | Owner run verified owner dashboard, pilot readiness, ABDM external gap visibility, compliance registered-unavailable shell, and no fake completion claims; screenshot `/private/tmp/clinicos-cp10-owner-dashboard-compliance.png`.            |
-| Owner settings desktop and 390px mobile | Pass   | `CLINICOS_CP10_UX_E2E_ENABLED=true ... --grep "owner                                                                                                                                                                                          | settings | 390px"`; screenshots `/private/tmp/clinicos-cp10-settings-unavailable-desktop.png`and`/private/tmp/clinicos-cp10-settings-unavailable-mobile-390.png`. |
+| Owner settings desktop and 390px mobile | Pass   | Owner CP10 UX run covered owner, settings, and 390px cases; screenshots `/private/tmp/clinicos-cp10-settings-unavailable-desktop.png` and `/private/tmp/clinicos-cp10-settings-unavailable-mobile-390.png`.                                   |
 | Platform-support unavailable shell      | Pass   | Platform-admin run verified no break-glass/tenant-diagnostics fake completion.                                                                                                                                                                |
 | Accountant role boundary                | Pass   | Accountant run verified direct clinical route shows role boundary and no clinical workflow controls; screenshot `/private/tmp/clinicos-cp10-accountant-role-boundary.png`.                                                                    |
 

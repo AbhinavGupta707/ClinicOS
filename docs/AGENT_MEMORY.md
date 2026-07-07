@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `codex/integration/checkpoint-10` is verified for CP10 closeout; main promotion is recorded after post-promotion checks.
+- Branch: `main` includes CP10 via merge commit `226a7b0`; post-promotion `git diff --check` and `npm run check` passed.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -60,7 +60,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - UX Polish: `019f3d25-c537-7e43-abed-c56a4938202d`, `/Users/abhinavgupta/.codex/worktrees/9bcb/ClinicOS`.
   - End-To-End QA: `019f3d26-17d5-71a2-ac81-1e94de547afb`, `/Users/abhinavgupta/.codex/worktrees/5cd7/ClinicOS`.
   - Operations/Docs: `019f3d26-4626-7bd1-9043-a968ec6e128b`, `/Users/abhinavgupta/.codex/worktrees/6dce/ClinicOS`.
-- Checkpoint 10 is verified on `codex/integration/checkpoint-10` after merging Pilot Configuration (`c158969` plus `f6f2716`), UX Polish (`4740a10`), End-To-End QA (`23c628e`), and Operations/Docs (`fc3511f`). Master closeout added missing ABDM web fixture/readiness evidence, reran full gates, and recorded release-candidate evidence in `docs/orchestration/CHECKPOINT_10_FINAL_REPORT.md`.
+- Checkpoint 10 is complete on `main` via merge commit `226a7b0` after verifying `codex/integration/checkpoint-10`. CP10 merged Pilot Configuration (`c158969` plus `f6f2716`), UX Polish (`4740a10`), End-To-End QA (`23c628e`), and Operations/Docs (`fc3511f`). Master closeout added missing ABDM web fixture/readiness evidence, reran full gates, and recorded release-candidate evidence in `docs/orchestration/CHECKPOINT_10_FINAL_REPORT.md`.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture

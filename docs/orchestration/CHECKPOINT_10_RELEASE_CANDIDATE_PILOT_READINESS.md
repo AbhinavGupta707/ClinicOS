@@ -119,6 +119,8 @@ accepted gaps, and go/no-go decisions after all lanes were merged.
   evidence only. Pilot go-live, real clinic data, live providers, ABDM, AWS
   apply, GitHub push/remote CI, and physical-device checks remain external
   gates.
+- CP10 was promoted to `main` via merge commit `226a7b0`; post-promotion
+  `git diff --check` and `npm run check` passed.
 - Full gates passed after final integration: `git diff --check`,
   `npm run check`, `npm run security:secrets`, `npm run typecheck`,
   `npm run lint`, `npm run test`, `npm run build`, CP10 fixture validation,
