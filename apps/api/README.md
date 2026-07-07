@@ -41,3 +41,15 @@ CP2 adds tenant/clinic-scoped handlers for:
 - `GET /v1/appointment-types`, `GET /v1/chairs`, `GET /v1/provider-schedules`, `GET/PATCH /v1/queue`, and `GET /v1/dashboard/morning`
 
 Production-like runtime uses PostgreSQL-backed repositories. The in-memory local operations repository is only wired when `CLINIC_OS_API_USE_DEV_AUTH_FIXTURE=true`; it exists for deterministic local/test flows and must not be used as production data.
+
+## Checkpoint 4 Media Contract
+
+CP4 adds backend-mediated media access for patient, encounter, tooth, and dental finding context:
+
+- `POST /v1/media/upload-urls` reserves a private object key and returns an opaque mediated upload URL.
+- `PUT /v1/media/uploads/{uploadId}/content` accepts local/test mediated upload bytes through the storage provider contract.
+- `POST /v1/media/uploads/{uploadId}/complete` validates patient/encounter context and stored object metadata before creating media metadata.
+- `GET /v1/patients/{patientId}/media` lists public media metadata without object keys.
+- `POST /v1/media/assets/{mediaAssetId}/signed-url` returns short-lived opaque signed access after authorization and audit.
+
+Raw object keys and bucket paths are internal repository/storage fields only. Local/dev uses `LocalMediaStorageSimulator`; production-like runtimes must register an official storage provider and cannot silently fall back to the simulator.

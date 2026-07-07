@@ -14,13 +14,23 @@ import type {
   ConsentEnforcementState,
   ConsentPurpose,
   ConsentRecord,
+  CreateDentalFindingInput,
   DomainEventType,
+  DentalChartSnapshotRecord,
+  DentalChartView,
+  DentalFindingHistoryRecord,
+  DentalFindingRecord,
   EncounterRecord,
   EncounterStatus,
   IntakeFormTemplateRecord,
   IntakeFormType,
   IntakeFormSubmissionRecord,
   IntakeSubmissionSource,
+  MediaAssetRecord,
+  MediaScanStatus,
+  MediaStorageProviderKey,
+  MediaType,
+  MediaUploadReservationRecord,
   PatientRecord,
   PatientSource,
   PatientTimelineItem,
@@ -230,6 +240,61 @@ export interface CreatePrescriptionInput {
   notes?: string | null;
 }
 
+export interface CreateMediaUploadReservationInput {
+  id: UUID;
+  patientId: UUID;
+  encounterId?: UUID | null;
+  toothNumber?: string | null;
+  dentalFindingId?: UUID | null;
+  mediaType: MediaType;
+  originalFilename: string;
+  mimeType: string;
+  expectedFileSizeBytes: number;
+  expectedSha256Digest?: string | null;
+  objectKey: string;
+  storageProvider: MediaStorageProviderKey;
+  storageRegion?: string | null;
+  expiresAt: string;
+  tags?: string[];
+  provenance?: Record<string, unknown>;
+}
+
+export interface CompleteMediaUploadInput {
+  contentLength: number;
+  sha256Digest?: string | null;
+  objectVersion?: string | null;
+  scanStatus: MediaScanStatus;
+  quarantineReason?: string | null;
+  dicomMetadata?: Record<string, unknown>;
+}
+
+export interface CreateDentalChartSnapshotInput {
+  encounterId?: UUID | null;
+  reason?: string | null;
+  provenance?: Record<string, unknown>;
+}
+
+export interface UpdateDentalFindingRepositoryInput {
+  encounterId?: UUID | null;
+  toothNumber?: string;
+  surface?: string | null;
+  findingType?: DentalFindingRecord["findingType"];
+  severity?: string | null;
+  status?: DentalFindingRecord["status"];
+  reviewStatus?: DentalFindingRecord["reviewStatus"];
+  source?: DentalFindingRecord["source"];
+  confidence?: number | null;
+  notes?: string | null;
+  provenance?: Record<string, unknown>;
+  treatmentReference?: Record<string, unknown>;
+  changeReason: string;
+}
+
+export interface DentalFindingMutationResult {
+  finding: DentalFindingRecord;
+  history: DentalFindingHistoryRecord;
+}
+
 export interface SignClinicalNoteResult {
   encounter: EncounterRecord;
   note: ClinicalNoteVersionRecord;
@@ -355,4 +420,41 @@ export interface ClinicOperationsRepository {
     prescriptionId: UUID
   ): Promise<PrescriptionRecord | null>;
   signPrescription(scope: RepositoryScope, prescriptionId: UUID): Promise<PrescriptionRecord | null>;
+
+  createMediaUploadReservation(
+    scope: RepositoryScope,
+    input: CreateMediaUploadReservationInput
+  ): Promise<MediaUploadReservationRecord>;
+  findMediaUploadReservationById(
+    scope: RepositoryScope,
+    uploadId: UUID
+  ): Promise<MediaUploadReservationRecord | null>;
+  completeMediaUpload(
+    scope: RepositoryScope,
+    uploadId: UUID,
+    input: CompleteMediaUploadInput
+  ): Promise<MediaAssetRecord | null>;
+  listPatientMediaAssets(scope: RepositoryScope, patientId: UUID): Promise<MediaAssetRecord[]>;
+  findMediaAssetById(scope: RepositoryScope, mediaAssetId: UUID): Promise<MediaAssetRecord | null>;
+
+  getDentalChart(scope: RepositoryScope, patientId: UUID): Promise<DentalChartView | null>;
+  createDentalFinding(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreateDentalFindingInput
+  ): Promise<DentalFindingMutationResult | null>;
+  updateDentalFinding(
+    scope: RepositoryScope,
+    findingId: UUID,
+    input: UpdateDentalFindingRepositoryInput
+  ): Promise<DentalFindingMutationResult | null>;
+  listDentalFindingHistory(
+    scope: RepositoryScope,
+    findingId: UUID
+  ): Promise<DentalFindingHistoryRecord[]>;
+  createDentalChartSnapshot(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreateDentalChartSnapshotInput
+  ): Promise<DentalChartSnapshotRecord | null>;
 }

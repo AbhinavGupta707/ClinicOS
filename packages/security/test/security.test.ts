@@ -21,6 +21,52 @@ test("audit classifications mark sensitive access", () => {
   assert.equal(classification.category, "phi_access");
 });
 
+test("CP4 media audit classifications cover upload and signed access", () => {
+  for (const action of ["media.upload_requested", "media.upload_completed", "media.viewed"] as const) {
+    const classification = classifyAuditAction(action);
+    assert.equal(classification.phiInvolved, true);
+    assert.equal(classification.requiresPatientId, true);
+    assert.equal(classification.category, "phi_access");
+  }
+
+  assert.throws(
+    () =>
+      createAuditEvent({
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000101",
+        actor: { type: "user", id: "10000000-0000-4000-8000-000000001003" },
+        action: "media.upload_completed"
+      }),
+    /requires patientId/
+  );
+});
+
+test("CP4 dental audit classifications cover chart reads findings and snapshots", () => {
+  for (const action of [
+    "dental_chart.viewed",
+    "dental_finding.created",
+    "dental_finding.updated",
+    "dental_chart.snapshot_created"
+  ] as const) {
+    const classification = classifyAuditAction(action);
+    assert.equal(classification.phiInvolved, true, `${action} should involve PHI`);
+    assert.equal(classification.requiresPatientId, true, `${action} should require patientId`);
+  }
+
+  assert.equal(classifyAuditAction("dental_chart.viewed").category, "phi_access");
+  assert.equal(classifyAuditAction("dental_chart.snapshot_created").riskLevel, "critical");
+  assert.throws(
+    () =>
+      createAuditEvent({
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000101",
+        actor: { type: "user", id: "10000000-0000-4000-8000-000000001002" },
+        action: "dental_finding.created"
+      }),
+    /requires patientId/
+  );
+});
+
 test("CP3 audit classifications cover intake consent encounter note prescription and timeline actions", () => {
   for (const action of [
     "patient.timeline.viewed",
@@ -149,4 +195,21 @@ test("PHI redaction covers CP3 intake consent clinical note prescription and aud
   assert.equal(redacted.prescriptionItems, "[REDACTED]");
   assert.equal(redacted.audio.transcript, "[REDACTED]");
   assert.equal(redacted.audio.rawAudioUrl, "[REDACTED]");
+});
+
+test("PHI redaction covers media object keys, filenames, and signed URLs", () => {
+  const redacted = redactPhi({
+    media: {
+      originalFilename: "Rhea Synthetic intraoral photo.jpg",
+      objectKey:
+        "local/tenants/10000000-0000-4000-8000-000000000001/clinics/10000000-0000-4000-8000-000000000101/patients/10000000-0000-4000-8000-000000002001/media/private.jpg",
+      signedUrl: "https://storage.example.test/private-media-token",
+      dicomMetadata: { PatientName: "Rhea Synthetic" }
+    }
+  });
+
+  assert.equal(redacted.media.originalFilename, "[REDACTED]");
+  assert.equal(redacted.media.objectKey, "[REDACTED]");
+  assert.equal(redacted.media.signedUrl, "[REDACTED]");
+  assert.equal(redacted.media.dicomMetadata, "[REDACTED]");
 });

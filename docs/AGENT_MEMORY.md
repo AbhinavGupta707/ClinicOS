@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after verified Checkpoint 3 promotion. Checkpoint 4 launch packet is active from base `c7b222c`.
+- Branch: `codex/integration/checkpoint-4` with Checkpoint 4 verified at code commit `2fd04a5`; promote to `main` after this closeout documentation commit.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -16,7 +16,8 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Security/Compliance: `019f39f6-c6ef-7691-af95-ef4be605d978`, `/Users/abhinavgupta/.codex/worktrees/4436/ClinicOS`.
   - Doctor/Assistant UX: `019f39f7-0632-7800-9d41-f55b44f38dd0`, `/Users/abhinavgupta/.codex/worktrees/75ee/ClinicOS`.
   - QA/Fixtures: `019f39f7-54bd-72e1-a812-dd0fda503d06`, `/Users/abhinavgupta/.codex/worktrees/08d3/ClinicOS`.
-- Checkpoint 4 is active with visible project-scoped lanes:
+- Checkpoint 4 integration is verified on `codex/integration/checkpoint-4`; detailed evidence is in `docs/orchestration/CHECKPOINT_04_DENTAL_CHART_MEDIA.md`.
+- Checkpoint 4 used four visible project-scoped lanes:
   - Media Backend: `019f3a34-a5d9-78c1-a12c-25ce24bc9426`, `/Users/abhinavgupta/.codex/worktrees/7725/ClinicOS`.
   - Dental Domain: `019f3a34-d36e-7680-b3cd-1ad47240f656`, `/Users/abhinavgupta/.codex/worktrees/d4aa/ClinicOS`.
   - Dental/Media UX: `019f3a35-0fd0-73e3-a35b-5c33f236a270`, `/Users/abhinavgupta/.codex/worktrees/16fc/ClinicOS`.
@@ -90,6 +91,15 @@ Follow `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
 - For web workflows, keep the app-owned Playwright spec and root mirrored E2E spec aligned with actual `data-testid` selectors. Stale selector proposals are a merge-time smell, not an accepted gap.
 - Browser role-denial smoke should use a separate fixture server/profile when the local dev identity fixture is selected by build-time environment variables.
 - AI/audio capture remains deferred after CP3. Do not add fake capture routes; consume the consent-enforcement state in the later checkpoint that owns AI/audio.
+
+## CP4 Integration Lessons
+
+- Keep deterministic fixture contract plans and live API route contracts synchronized before merge. CP4 caught a dry-run script that still described older external imaging-link route shapes while the durable media API used upload, complete, list, and signed-access routes.
+- When a web workflow relies on checkpoint fixtures, start the web server with the matching fixture flag. CP4 required `NEXT_PUBLIC_CLINIC_OS_USE_CP4_WORKFLOW_FIXTURE=true` in addition to the dev identity fixture.
+- Media and dental schema changes should land in one canonical numbered migration during integration. Lane-local schema proposal docs are useful, but the integration branch owns the migration actually applied by the app.
+- Browser/mobile smoke remains useful for temporary UI because it proves route registration, role-conditioned controls, responsive reachability, and no horizontal overflow. Do not spend time on final visual polish before the design pass unless usability or safety is broken.
+- Never expose bucket names, object keys, raw storage paths, or PHI-bearing private media references in patient-facing API payloads. Use mediated signed access and audit media view/write operations.
+- If multi-tooth chart editing is not explicitly in scope, preserve a complete one-finding-per-row workflow and defer bulk chart patching as a whole workflow rather than hiding partial bulk behavior inside a weak endpoint.
 
 ## Shared-File Mistakes To Avoid
 

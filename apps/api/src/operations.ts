@@ -9,17 +9,20 @@ import type {
   ClinicOperationsRepository,
   CreateAppointmentInput,
   CreateConsentInput,
+  CreateDentalChartSnapshotInput,
   CreateEncounterInput,
   CreateIntakeFormSubmissionInput,
   CreateIntakeFormTemplateInput,
   CreateLeadInput,
   CreatePatientInput,
   CreatePrescriptionInput,
-  RepositoryScope
+  RepositoryScope,
+  UpdateDentalFindingRepositoryInput
 } from "@clinic-os/db";
 import {
   assertAppointmentTransition,
   assertEncounterTransition,
+  assertMediaMimeType,
   assertPrescriptionMedicationList,
   assertLeadTransition,
   assertPatientCreateMinimum,
@@ -30,16 +33,26 @@ import {
   isAppointmentStatus,
   isConsentCaptureMethod,
   isConsentPurpose,
+  isDentalFindingReviewStatus,
+  isDentalFindingSource,
+  isDentalFindingStatus,
+  isDentalFindingType,
   isEncounterStatus,
   isIntakeFormType,
   isIntakeSubmissionSource,
+  isMediaScanStatus,
+  isMediaType,
   isValidLeadStatus,
+  mediaAssetCanBeViewed,
   isUuid,
+  toPublicMediaAsset,
+  toPublicMediaUploadReservation,
   type AppointmentRecord,
   type AppointmentStatus,
   type ClinicalNoteContent,
   type ConsentCaptureMethod,
   type ConsentPurpose,
+  type CreateDentalFindingInput,
   type DomainEventType,
   type EncounterStatus,
   type IntakeFormType,
@@ -47,6 +60,8 @@ import {
   type LeadIntent,
   type LeadSource,
   type LeadStatus,
+  type MediaScanStatus,
+  type MediaType,
   type PatientTimelineItem as DomainPatientTimelineItem,
   type PatientSource,
   type PrescriptionMedication,
@@ -59,6 +74,7 @@ import {
   type KnownAuditAction
 } from "@clinic-os/security";
 import { ApiError } from "./errors.ts";
+import type { MediaStorageProvider } from "./media-storage.ts";
 
 export interface OperationsRequestContext {
   requestId: string;
@@ -74,6 +90,7 @@ export interface OperationsDependencies {
   auditSink?: {
     appendAuditEvent(event: AuditEventRecord): Promise<void>;
   };
+  mediaStorage?: MediaStorageProvider;
 }
 
 export interface ApiSuccess<T> {
@@ -1259,6 +1276,465 @@ export async function signPrescription(
   return ok({ prescription });
 }
 
+export async function getPatientDentalChart(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.read" });
+  const scope = scopeFrom(context);
+  const patient = await dependencies.repository.findPatientById(scope, patientId);
+  if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
+
+  const view = await dependencies.repository.getDentalChart(scope, patientId);
+  if (!view) throw notFound("Dental chart not found.", { patient_id: patientId });
+
+  const history = await Promise.all(
+    view.findings.map(async (finding) => ({
+      findingId: finding.id,
+      entries: (await dependencies.repository.listDentalFindingHistory(scope, finding.id)).map(
+        publicDentalFindingHistory
+      )
+    }))
+  );
+
+  await audit(context, dependencies, "dental_chart.viewed", {
+    patientId,
+    resourceType: "dental_chart",
+    resourceId: view.chart.id,
+    metadata: {
+      findingCount: view.findings.length,
+      snapshotCount: view.snapshots.length,
+      numberingSystem: publicDentalNumberingSystem(view.chart.numberingSystem)
+    }
+  });
+
+  return ok({
+    dentalChart: publicDentalChart(view.chart),
+    findings: view.findings.map(publicDentalFinding),
+    history,
+    snapshots: view.snapshots.map(publicDentalChartSnapshot)
+  });
+}
+
+export async function createPatientDentalFinding(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  body: unknown
+) {
+  const input = parseCreateDentalFinding(body);
+  return createDentalFindingForPatient(context, dependencies, patientId, input);
+}
+
+export async function createEncounterDentalFinding(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  encounterId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.write" });
+  const scope = scopeFrom(context);
+  const encounter = await dependencies.repository.findEncounterById(scope, encounterId);
+  if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+
+  const input = parseCreateDentalFinding(body, { encounterId });
+  return createDentalFindingForPatient(context, dependencies, encounter.patientId, input, {
+    preauthorized: true
+  });
+}
+
+export async function updateDentalFinding(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  findingId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.write" });
+  const input = parseUpdateDentalFinding(body);
+  const result = await dependencies.repository.updateDentalFinding(
+    scopeFrom(context),
+    findingId,
+    input
+  );
+  if (!result) throw notFound("Dental finding not found.", { dental_finding_id: findingId });
+
+  await audit(context, dependencies, "dental_finding.updated", {
+    patientId: result.finding.patientId,
+    resourceType: "dental_finding",
+    resourceId: result.finding.id,
+    metadata: dentalFindingAuditMetadata(result.finding)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "dental.finding.updated",
+    aggregateType: "dental_finding",
+    aggregateId: result.finding.id,
+    patientId: result.finding.patientId,
+    payload: {
+      findingId: result.finding.id,
+      patientId: result.finding.patientId,
+      encounterId: result.finding.encounterId,
+      toothNumber: result.finding.toothNumber,
+      surface: result.finding.surface,
+      findingType: result.finding.findingType,
+      reviewStatus: result.finding.reviewStatus
+    }
+  });
+
+  return ok({
+    finding: publicDentalFinding(result.finding),
+    history: publicDentalFindingHistory(result.history)
+  });
+}
+
+export async function listDentalFindingHistory(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  findingId: UUID
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.read" });
+  const history = await dependencies.repository.listDentalFindingHistory(
+    scopeFrom(context),
+    findingId
+  );
+
+  return ok({ history: history.map(publicDentalFindingHistory) });
+}
+
+export async function createDentalChartSnapshot(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.snapshot" });
+  const input = parseDentalChartSnapshot(body);
+  const snapshot = await dependencies.repository.createDentalChartSnapshot(
+    scopeFrom(context),
+    patientId,
+    input
+  );
+  if (!snapshot) throw notFound("Patient or dental chart context not found.", { patient_id: patientId });
+
+  await audit(context, dependencies, "dental_chart.snapshot_created", {
+    patientId: snapshot.patientId,
+    resourceType: "dental_chart_snapshot",
+    resourceId: snapshot.id,
+    metadata: {
+      encounterId: snapshot.encounterId,
+      snapshotVersion: snapshot.snapshotVersion,
+      findingCount: snapshot.chartState.findingCount
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "dental.chart.snapshot_created",
+    aggregateType: "dental_chart_snapshot",
+    aggregateId: snapshot.id,
+    patientId: snapshot.patientId,
+    payload: {
+      snapshotId: snapshot.id,
+      patientId: snapshot.patientId,
+      encounterId: snapshot.encounterId,
+      snapshotVersion: snapshot.snapshotVersion,
+      findingCount: snapshot.chartState.findingCount
+    }
+  });
+
+  return created({ snapshot: publicDentalChartSnapshot(snapshot) });
+}
+
+export async function requestMediaUploadUrl(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "media.write" });
+  const storage = mediaStorageFrom(dependencies);
+  const input = parseMediaUploadRequest(body);
+  const scope = scopeFrom(context);
+  const patient = await dependencies.repository.findPatientById(scope, input.patientId);
+  if (!patient) throw notFound("Patient not found.", { patient_id: input.patientId });
+
+  if (input.encounterId) {
+    const encounter = await dependencies.repository.findEncounterById(scope, input.encounterId);
+    if (!encounter) throw notFound("Encounter not found.", { encounter_id: input.encounterId });
+    if (encounter.patientId !== input.patientId) {
+      throw validation("Encounter does not belong to the media patient.", {
+        encounter_id: encounter.id,
+        patient_id: input.patientId
+      });
+    }
+  }
+
+  const uploadId = randomUUID() as UUID;
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  const objectKey = storage.buildObjectKey({
+    tenantId: scope.tenantId,
+    clinicId: scope.clinicId,
+    patientId: input.patientId,
+    uploadId,
+    originalFilename: input.originalFilename
+  });
+  const reservation = await dependencies.repository.createMediaUploadReservation(scope, {
+    id: uploadId,
+    patientId: input.patientId,
+    encounterId: input.encounterId,
+    toothNumber: input.toothNumber,
+    dentalFindingId: input.dentalFindingId,
+    mediaType: input.mediaType,
+    originalFilename: input.originalFilename,
+    mimeType: input.mimeType,
+    expectedFileSizeBytes: input.fileSizeBytes,
+    expectedSha256Digest: input.sha256Digest,
+    objectKey,
+    storageProvider: storage.providerKey,
+    storageRegion: storage.region,
+    expiresAt,
+    tags: input.tags,
+    provenance: input.provenance
+  });
+  const uploadTarget = await storage.createUploadTarget({
+    uploadId,
+    tenantId: scope.tenantId,
+    clinicId: scope.clinicId,
+    patientId: input.patientId,
+    objectKey,
+    mimeType: input.mimeType,
+    expectedFileSizeBytes: input.fileSizeBytes,
+    expectedSha256Digest: input.sha256Digest,
+    expiresAt
+  });
+
+  await audit(context, dependencies, "media.upload_requested", {
+    patientId: input.patientId,
+    resourceType: "media_upload",
+    resourceId: reservation.id,
+    metadata: mediaAuditMetadata(reservation)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "media.upload_requested",
+    aggregateType: "media_upload",
+    aggregateId: reservation.id,
+    patientId: input.patientId,
+    payload: {
+      uploadId: reservation.id,
+      patientId: input.patientId,
+      mediaType: input.mediaType,
+      encounterId: input.encounterId,
+      toothNumber: input.toothNumber,
+      dentalFindingId: input.dentalFindingId
+    }
+  });
+
+  return created({
+    upload: toPublicMediaUploadReservation(reservation),
+    uploadTarget
+  });
+}
+
+export async function receiveMediaUploadContent(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  uploadId: UUID,
+  input: { body: Buffer; contentType?: string | null }
+) {
+  authorize(context, { permission: "media.write" });
+  const storage = mediaStorageFrom(dependencies);
+  const reservation = await dependencies.repository.findMediaUploadReservationById(
+    scopeFrom(context),
+    uploadId
+  );
+  if (!reservation) throw notFound("Media upload reservation not found.", { upload_id: uploadId });
+  assertMediaUploadOpen(reservation);
+  if (input.body.byteLength !== reservation.expectedFileSizeBytes) {
+    throw validation("Uploaded object size does not match the reserved media metadata.", {
+      upload_id: uploadId,
+      expected_bytes: reservation.expectedFileSizeBytes,
+      received_bytes: input.body.byteLength
+    });
+  }
+  const contentType = input.contentType?.split(";")[0]?.trim().toLowerCase() ?? "";
+  if (contentType !== reservation.mimeType.toLowerCase()) {
+    throw validation("Uploaded object content-type does not match the reserved media metadata.", {
+      upload_id: uploadId,
+      expected_mime_type: reservation.mimeType,
+      received_mime_type: contentType || null
+    });
+  }
+
+  const object = await storage.receiveUpload({
+    objectKey: reservation.objectKey,
+    body: input.body,
+    mimeType: reservation.mimeType,
+    metadata: {
+      tenant_id: reservation.tenantId,
+      clinic_id: reservation.clinicId,
+      patient_id: reservation.patientId,
+      upload_id: reservation.id
+    }
+  });
+  if (
+    reservation.expectedSha256Digest &&
+    object.sha256Digest !== reservation.expectedSha256Digest
+  ) {
+    throw validation("Uploaded object digest does not match the reserved media metadata.", {
+      upload_id: uploadId
+    });
+  }
+
+  return ok({
+    upload: toPublicMediaUploadReservation(reservation),
+    object: {
+      contentLength: object.contentLength,
+      mimeType: object.mimeType,
+      sha256Digest: object.sha256Digest,
+      storedAt: object.storedAt
+    }
+  });
+}
+
+export async function completeMediaUpload(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  uploadId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "media.write" });
+  const storage = mediaStorageFrom(dependencies);
+  const input = parseCompleteMediaUpload(body);
+  const scope = scopeFrom(context);
+  const reservation = await dependencies.repository.findMediaUploadReservationById(scope, uploadId);
+  if (!reservation) throw notFound("Media upload reservation not found.", { upload_id: uploadId });
+  assertMediaUploadOpen(reservation);
+  if (input.patientId !== reservation.patientId) {
+    throw validation("Complete-upload patient context does not match the upload reservation.", {
+      upload_id: uploadId,
+      expected_patient_id: reservation.patientId,
+      received_patient_id: input.patientId
+    });
+  }
+  if ((input.encounterId ?? null) !== reservation.encounterId) {
+    throw validation("Complete-upload encounter context does not match the upload reservation.", {
+      upload_id: uploadId,
+      expected_encounter_id: reservation.encounterId,
+      received_encounter_id: input.encounterId ?? null
+    });
+  }
+
+  const object = await storage.statObject(reservation.objectKey);
+  if (!object) {
+    throw conflict("Reserved media object has not been uploaded.", { upload_id: uploadId });
+  }
+  validateCompletedMediaObject(reservation, object, input);
+
+  const asset = await dependencies.repository.completeMediaUpload(scope, uploadId, {
+    contentLength: object.contentLength,
+    sha256Digest: object.sha256Digest,
+    objectVersion: input.objectVersion,
+    scanStatus: input.scanStatus,
+    quarantineReason: input.quarantineReason,
+    dicomMetadata: input.dicomMetadata
+  });
+  if (!asset) throw conflict("Media upload reservation is no longer completable.", { upload_id: uploadId });
+
+  await audit(context, dependencies, "media.upload_completed", {
+    patientId: asset.patientId,
+    resourceType: "media_asset",
+    resourceId: asset.id,
+    metadata: mediaAuditMetadata(asset)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "media.upload_completed",
+    aggregateType: "media_asset",
+    aggregateId: asset.id,
+    patientId: asset.patientId,
+    payload: {
+      mediaAssetId: asset.id,
+      uploadId,
+      patientId: asset.patientId,
+      mediaType: asset.mediaType,
+      encounterId: asset.encounterId,
+      toothNumber: asset.toothNumber,
+      dentalFindingId: asset.dentalFindingId,
+      scanStatus: asset.scanStatus
+    }
+  });
+
+  return created({ mediaAsset: toPublicMediaAsset(asset) });
+}
+
+export async function listPatientMediaAssets(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "media.read" });
+  const scope = scopeFrom(context);
+  const patient = await dependencies.repository.findPatientById(scope, patientId);
+  if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
+
+  const mediaAssets = (await dependencies.repository.listPatientMediaAssets(scope, patientId)).map(
+    toPublicMediaAsset
+  );
+  return ok({ mediaAssets });
+}
+
+export async function createSignedMediaAccess(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  mediaAssetId: UUID,
+  body: unknown = {}
+) {
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "media.read" });
+  const storage = mediaStorageFrom(dependencies);
+  const requested = parseSignedMediaAccessRequest(body);
+  const asset = await dependencies.repository.findMediaAssetById(scopeFrom(context), mediaAssetId);
+  if (!asset) throw notFound("Media asset not found.", { media_asset_id: mediaAssetId });
+  if (!mediaAssetCanBeViewed(asset)) {
+    throw conflict("Media asset cannot be viewed until scanning clears it.", {
+      media_asset_id: mediaAssetId,
+      scan_status: asset.scanStatus
+    });
+  }
+  const expiresInSeconds = Math.min(requested.expiresInSeconds ?? 300, 300);
+  const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+  const access = await storage.createSignedReadAccess({
+    objectKey: asset.objectKey,
+    mimeType: asset.mimeType,
+    expiresAt
+  });
+
+  await audit(context, dependencies, "media.viewed", {
+    patientId: asset.patientId,
+    resourceType: "media_asset",
+    resourceId: asset.id,
+    metadata: {
+      mediaAssetId: asset.id,
+      mediaType: asset.mediaType,
+      expiresAt: access.expiresAt,
+      expiresInSeconds
+    }
+  });
+
+  return ok({
+    mediaAsset: toPublicMediaAsset(asset),
+    access
+  });
+}
+
 async function bookAppointment(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
@@ -1324,6 +1800,54 @@ async function bookAppointment(
   });
 
   return appointment;
+}
+
+async function createDentalFindingForPatient(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  input: CreateDentalFindingInput,
+  options: { preauthorized?: boolean } = {}
+) {
+  if (!options.preauthorized) {
+    authorize(context, { permission: "patient.read" });
+    authorize(context, { permission: "patient.phi.read" });
+    authorize(context, { permission: "dental.chart.write" });
+  }
+
+  const result = await dependencies.repository.createDentalFinding(
+    scopeFrom(context),
+    patientId,
+    input
+  );
+  if (!result) throw notFound("Patient or encounter not found.", { patient_id: patientId });
+
+  await audit(context, dependencies, "dental_finding.created", {
+    patientId: result.finding.patientId,
+    resourceType: "dental_finding",
+    resourceId: result.finding.id,
+    metadata: dentalFindingAuditMetadata(result.finding)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "dental.finding.created",
+    aggregateType: "dental_finding",
+    aggregateId: result.finding.id,
+    patientId: result.finding.patientId,
+    payload: {
+      findingId: result.finding.id,
+      patientId: result.finding.patientId,
+      encounterId: result.finding.encounterId,
+      toothNumber: result.finding.toothNumber,
+      surface: result.finding.surface,
+      findingType: result.finding.findingType,
+      reviewStatus: result.finding.reviewStatus
+    }
+  });
+
+  return created({
+    finding: publicDentalFinding(result.finding),
+    history: publicDentalFindingHistory(result.history)
+  });
 }
 
 async function transitionAppointment(
@@ -1419,6 +1943,7 @@ type PublicTimelineItemType =
   | "queue"
   | "message"
   | "clinical_note"
+  | "dental"
   | "prescription"
   | "media"
   | "invoice"
@@ -1476,9 +2001,15 @@ function publicTimelineItemType(
     case "clinical_note_signed":
     case "clinical_note_amended":
       return "clinical_note";
+    case "dental_finding_created":
+    case "dental_finding_updated":
+    case "dental_chart_snapshot_created":
+      return "dental";
     case "prescription_draft_created":
     case "prescription_signed":
       return "prescription";
+    case "media_uploaded":
+      return "media";
   }
 }
 
@@ -1522,10 +2053,18 @@ function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): Dom
       return "clinical_note.signed";
     case "clinical_note_amended":
       return "clinical_note.amended";
+    case "dental_finding_created":
+      return "dental.finding.created";
+    case "dental_finding_updated":
+      return "dental.finding.updated";
+    case "dental_chart_snapshot_created":
+      return "dental.chart.snapshot_created";
     case "prescription_draft_created":
       return "prescription.draft_created";
     case "prescription_signed":
       return "prescription.signed";
+    case "media_uploaded":
+      return "media.upload_completed";
   }
 }
 
@@ -1720,6 +2259,173 @@ function parseCreatePrescription(body: unknown): CreatePrescriptionInput {
   };
 }
 
+function parseCreateDentalFinding(
+  body: unknown,
+  defaults: { encounterId?: UUID | null } = {}
+): CreateDentalFindingInput {
+  const input = objectBody(body);
+  const bodyEncounterId = optionalUuid(input.encounterId, "encounterId");
+  if (
+    defaults.encounterId &&
+    bodyEncounterId &&
+    bodyEncounterId !== defaults.encounterId
+  ) {
+    throw validation("Dental finding encounter context does not match the route.", {
+      expected_encounter_id: defaults.encounterId,
+      received_encounter_id: bodyEncounterId
+    });
+  }
+  const statusFields = parseDentalStatusFields(input.status, input.reviewStatus ?? input.reviewState);
+
+  return {
+    encounterId: defaults.encounterId ?? bodyEncounterId,
+    toothNumber: requiredString(input.toothNumber, "toothNumber"),
+    surface: parseDentalSurfaceField(input.surface ?? input.surfaces),
+    findingType: parseDentalFindingType(requiredString(input.findingType, "findingType")),
+    severity: optionalNullableString(input.severity, "severity"),
+    status: statusFields.status,
+    reviewStatus: statusFields.reviewStatus,
+    source: input.source === undefined ? undefined : parseDentalFindingSource(requiredString(input.source, "source")),
+    confidence: optionalUnitNumber(input.confidence, "confidence"),
+    notes: optionalNullableString(input.notes ?? input.note ?? input.doctorNote, "notes"),
+    provenance: recordField(input.provenance, "provenance"),
+    treatmentReference: recordField(input.treatmentReference, "treatmentReference")
+  };
+}
+
+function parseUpdateDentalFinding(body: unknown): UpdateDentalFindingRepositoryInput {
+  const input = objectBody(body);
+  const statusFields = parseDentalStatusFields(input.status, input.reviewStatus ?? input.reviewState);
+
+  return {
+    encounterId:
+      input.encounterId === undefined ? undefined : optionalUuid(input.encounterId, "encounterId"),
+    toothNumber:
+      input.toothNumber === undefined ? undefined : requiredString(input.toothNumber, "toothNumber"),
+    surface:
+      input.surface === undefined && input.surfaces === undefined
+        ? undefined
+        : parseDentalSurfaceField(input.surface ?? input.surfaces),
+    findingType:
+      input.findingType === undefined
+        ? undefined
+        : parseDentalFindingType(requiredString(input.findingType, "findingType")),
+    severity:
+      input.severity === undefined ? undefined : optionalNullableString(input.severity, "severity"),
+    status: statusFields.status,
+    reviewStatus: statusFields.reviewStatus,
+    source:
+      input.source === undefined
+        ? undefined
+        : parseDentalFindingSource(requiredString(input.source, "source")),
+    confidence:
+      input.confidence === undefined ? undefined : optionalUnitNumber(input.confidence, "confidence"),
+    notes:
+      input.notes === undefined && input.note === undefined && input.doctorNote === undefined
+        ? undefined
+        : optionalNullableString(input.notes ?? input.note ?? input.doctorNote, "notes"),
+    provenance: recordField(input.provenance, "provenance"),
+    treatmentReference: recordField(input.treatmentReference, "treatmentReference"),
+    changeReason: requiredString(
+      input.changeReason ?? input.reason ?? input.doctorNote ?? input.note,
+      "changeReason"
+    )
+  };
+}
+
+function parseDentalChartSnapshot(body: unknown): CreateDentalChartSnapshotInput {
+  const input = objectBody(body);
+  return {
+    encounterId: optionalUuid(input.encounterId, "encounterId"),
+    reason: optionalNullableString(input.reason, "reason"),
+    provenance: recordField(input.provenance, "provenance")
+  };
+}
+
+function parseMediaUploadRequest(body: unknown): {
+  patientId: UUID;
+  encounterId: UUID | null;
+  toothNumber: string | null;
+  dentalFindingId: UUID | null;
+  mediaType: MediaType;
+  originalFilename: string;
+  mimeType: string;
+  fileSizeBytes: number;
+  sha256Digest: string | null;
+  tags: string[];
+  provenance: Record<string, unknown>;
+} {
+  const input = objectBody(body);
+  const mediaType = parseMediaType(requiredString(input.mediaType, "mediaType"));
+  const mimeType = requiredString(input.mimeType, "mimeType").toLowerCase();
+
+  try {
+    assertMediaMimeType(mediaType, mimeType);
+  } catch (error) {
+    throw validation(error instanceof Error ? error.message : "Invalid media mime type.", {
+      field: "mimeType",
+      mediaType,
+      mimeType
+    });
+  }
+
+  return {
+    patientId: uuidField(input.patientId, "patientId"),
+    encounterId: optionalUuid(input.encounterId, "encounterId"),
+    toothNumber: optionalNullableString(input.toothNumber, "toothNumber") ?? null,
+    dentalFindingId: optionalUuid(input.dentalFindingId, "dentalFindingId"),
+    mediaType,
+    originalFilename: requiredString(input.originalFilename, "originalFilename"),
+    mimeType,
+    fileSizeBytes: integerField(input.fileSizeBytes, "fileSizeBytes", {
+      min: 1,
+      max: 100 * 1024 * 1024
+    }),
+    sha256Digest: optionalSha256Digest(input.sha256Digest, "sha256Digest"),
+    tags: stringArrayField(input.tags, "tags"),
+    provenance: recordField(input.provenance, "provenance")
+  };
+}
+
+function parseCompleteMediaUpload(body: unknown): {
+  patientId: UUID;
+  encounterId: UUID | null;
+  contentLength?: number | null;
+  sha256Digest?: string | null;
+  mimeType?: string | null;
+  objectVersion?: string | null;
+  scanStatus: MediaScanStatus;
+  quarantineReason?: string | null;
+  dicomMetadata: Record<string, unknown>;
+} {
+  const input = objectBody(body);
+  return {
+    patientId: uuidField(input.patientId, "patientId"),
+    encounterId: optionalUuid(input.encounterId, "encounterId"),
+    contentLength:
+      input.contentLength === undefined || input.contentLength === null
+        ? null
+        : integerField(input.contentLength, "contentLength", { min: 1, max: 100 * 1024 * 1024 }),
+    sha256Digest: optionalSha256Digest(input.sha256Digest, "sha256Digest"),
+    mimeType: optionalNullableString(input.mimeType, "mimeType")?.toLowerCase() ?? null,
+    objectVersion: optionalNullableString(input.objectVersion, "objectVersion"),
+    scanStatus: parseMediaScanStatus(requiredString(input.scanStatus ?? "pending", "scanStatus")),
+    quarantineReason: optionalNullableString(input.quarantineReason, "quarantineReason"),
+    dicomMetadata: recordField(input.dicomMetadata, "dicomMetadata")
+  };
+}
+
+function parseSignedMediaAccessRequest(body: unknown): { expiresInSeconds?: number } {
+  const input = body === undefined ? {} : objectBody(body);
+  if (input.expiresInSeconds === undefined) return {};
+  return {
+    expiresInSeconds: integerField(input.expiresInSeconds, "expiresInSeconds", {
+      min: 30,
+      max: 300
+    })
+  };
+}
+
 function parseClinicalNoteContent(value: unknown): ClinicalNoteContent {
   const input = objectField(value, "content");
   return {
@@ -1841,6 +2547,268 @@ function parseQueueStatus(value: string): QueueStatus {
   return value as QueueStatus;
 }
 
+function parseMediaType(value: string): MediaType {
+  if (!isMediaType(value)) {
+    throw validation("Invalid media type.", { field: "mediaType", value });
+  }
+  return value;
+}
+
+function parseDentalFindingType(value: string): CreateDentalFindingInput["findingType"] {
+  if (!isDentalFindingType(value)) {
+    throw validation("Invalid dental finding type.", { field: "findingType", value });
+  }
+  return value;
+}
+
+function parseDentalFindingStatus(
+  value: string
+): NonNullable<UpdateDentalFindingRepositoryInput["status"]> {
+  if (!isDentalFindingStatus(value)) {
+    throw validation("Invalid dental finding status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseDentalFindingReviewStatus(
+  value: string
+): NonNullable<UpdateDentalFindingRepositoryInput["reviewStatus"]> {
+  if (!isDentalFindingReviewStatus(value)) {
+    throw validation("Invalid dental finding review status.", { field: "reviewStatus", value });
+  }
+  return value;
+}
+
+function parseDentalFindingSource(
+  value: string
+): NonNullable<UpdateDentalFindingRepositoryInput["source"]> {
+  if (!isDentalFindingSource(value)) {
+    throw validation("Invalid dental finding source.", { field: "source", value });
+  }
+  return value;
+}
+
+function parseDentalStatusFields(status: unknown, reviewStatus: unknown): {
+  status?: UpdateDentalFindingRepositoryInput["status"];
+  reviewStatus?: UpdateDentalFindingRepositoryInput["reviewStatus"];
+} {
+  const parsed: {
+    status?: UpdateDentalFindingRepositoryInput["status"];
+    reviewStatus?: UpdateDentalFindingRepositoryInput["reviewStatus"];
+  } = {};
+
+  if (status !== undefined) {
+    const value = requiredString(status, "status");
+    if (value === "reviewed") {
+      parsed.reviewStatus = "reviewed";
+    } else if (value === "resolved") {
+      parsed.status = "treated";
+    } else {
+      parsed.status = parseDentalFindingStatus(value);
+    }
+  }
+
+  if (reviewStatus !== undefined) {
+    parsed.reviewStatus = parseDentalFindingReviewStatus(requiredString(reviewStatus, "reviewStatus"));
+  }
+
+  return parsed;
+}
+
+function parseDentalSurfaceField(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    if (value.length === 0) return null;
+    if (value.length > 1) {
+      throw validation("Dental findings currently accept one surface per finding row.", {
+        field: "surfaces"
+      });
+    }
+    return optionalNullableString(value[0], "surfaces[0]") ?? null;
+  }
+  return optionalNullableString(value, "surface") ?? null;
+}
+
+function parseMediaScanStatus(value: string): MediaScanStatus {
+  if (!isMediaScanStatus(value)) {
+    throw validation("Invalid media scan status.", { field: "scanStatus", value });
+  }
+  return value;
+}
+
+function mediaStorageFrom(dependencies: OperationsDependencies): MediaStorageProvider {
+  if (!dependencies.mediaStorage) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Media storage provider is not configured for this ClinicOS runtime."
+    );
+  }
+  return dependencies.mediaStorage;
+}
+
+function assertMediaUploadOpen(input: {
+  id: UUID;
+  status: string;
+  expiresAt: string;
+}): void {
+  if (input.status !== "reserved") {
+    throw conflict("Media upload reservation is not open.", {
+      upload_id: input.id,
+      status: input.status
+    });
+  }
+  if (new Date(input.expiresAt).getTime() <= Date.now()) {
+    throw conflict("Media upload reservation has expired.", {
+      upload_id: input.id,
+      expires_at: input.expiresAt
+    });
+  }
+}
+
+function validateCompletedMediaObject(
+  reservation: {
+    id: UUID;
+    expectedFileSizeBytes: number;
+    expectedSha256Digest: string | null;
+    mimeType: string;
+  },
+  object: { contentLength: number; sha256Digest: string; mimeType: string },
+  input: { contentLength?: number | null; sha256Digest?: string | null; mimeType?: string | null }
+): void {
+  if (object.contentLength !== reservation.expectedFileSizeBytes) {
+    throw validation("Stored media object size does not match the upload reservation.", {
+      upload_id: reservation.id
+    });
+  }
+  if (input.contentLength !== undefined && input.contentLength !== null && input.contentLength !== object.contentLength) {
+    throw validation("Complete-upload size does not match stored object metadata.", {
+      upload_id: reservation.id
+    });
+  }
+  if (object.mimeType.toLowerCase() !== reservation.mimeType.toLowerCase()) {
+    throw validation("Stored media object content-type does not match the upload reservation.", {
+      upload_id: reservation.id
+    });
+  }
+  if (input.mimeType && input.mimeType.toLowerCase() !== object.mimeType.toLowerCase()) {
+    throw validation("Complete-upload content-type does not match stored object metadata.", {
+      upload_id: reservation.id
+    });
+  }
+  if (reservation.expectedSha256Digest && object.sha256Digest !== reservation.expectedSha256Digest) {
+    throw validation("Stored media object digest does not match the upload reservation.", {
+      upload_id: reservation.id
+    });
+  }
+  if (input.sha256Digest && input.sha256Digest !== object.sha256Digest) {
+    throw validation("Complete-upload digest does not match stored object metadata.", {
+      upload_id: reservation.id
+    });
+  }
+}
+
+function mediaAuditMetadata(input: {
+  mediaType: MediaType;
+  mimeType: string;
+  encounterId?: UUID | null;
+  toothNumber?: string | null;
+  dentalFindingId?: UUID | null;
+  tags?: string[];
+  scanStatus?: MediaScanStatus;
+}) {
+  return {
+    mediaType: input.mediaType,
+    mimeType: input.mimeType,
+    encounterId: input.encounterId ?? null,
+    toothNumber: input.toothNumber ?? null,
+    dentalFindingId: input.dentalFindingId ?? null,
+    tagCount: input.tags?.length ?? 0,
+    ...(input.scanStatus ? { scanStatus: input.scanStatus } : {})
+  };
+}
+
+function publicDentalNumberingSystem(value: string): string {
+  return value.toUpperCase();
+}
+
+function publicDentalChart<T extends { numberingSystem: string }>(chart: T) {
+  return {
+    ...chart,
+    numberingSystem: publicDentalNumberingSystem(chart.numberingSystem),
+    notation: publicDentalNumberingSystem(chart.numberingSystem)
+  };
+}
+
+function publicDentalFinding<T extends { numberingSystem: string; surface?: string | null }>(
+  finding: T
+) {
+  return {
+    ...finding,
+    numberingSystem: publicDentalNumberingSystem(finding.numberingSystem),
+    surfaces: finding.surface ? [finding.surface] : []
+  };
+}
+
+function publicDentalFindingHistory<T extends {
+  beforeState: Record<string, unknown> | null;
+  afterState: Record<string, unknown>;
+}>(history: T) {
+  return {
+    ...history,
+    beforeState: history.beforeState ? publicDentalSnapshotFinding(history.beforeState) : null,
+    afterState: publicDentalSnapshotFinding(history.afterState)
+  };
+}
+
+function publicDentalSnapshotFinding<T extends Record<string, unknown>>(finding: T) {
+  const numberingSystem =
+    typeof finding.numberingSystem === "string"
+      ? publicDentalNumberingSystem(finding.numberingSystem)
+      : "FDI";
+  const surface = typeof finding.surface === "string" ? finding.surface : null;
+
+  return {
+    ...finding,
+    numberingSystem,
+    surfaces: surface ? [surface] : []
+  };
+}
+
+function publicDentalChartSnapshot<T extends { chartState: { numberingSystem: string } }>(
+  snapshot: T
+) {
+  return {
+    ...snapshot,
+    chartState: {
+      ...snapshot.chartState,
+      numberingSystem: publicDentalNumberingSystem(snapshot.chartState.numberingSystem)
+    }
+  };
+}
+
+function dentalFindingAuditMetadata(input: {
+  toothNumber: string;
+  surface?: string | null;
+  findingType: string;
+  severity?: string | null;
+  status: string;
+  reviewStatus: string;
+  source: string;
+  encounterId?: UUID | null;
+}) {
+  return {
+    toothNumber: input.toothNumber,
+    surfaces: input.surface ? [input.surface] : [],
+    findingType: input.findingType,
+    severity: input.severity ?? null,
+    status: input.status,
+    reviewState: input.reviewStatus,
+    source: input.source,
+    encounterId: input.encounterId ?? null
+  };
+}
+
 function appointmentAuditAction(status: AppointmentStatus): KnownAuditAction {
   if (status === "confirmed") return "appointment.confirmed";
   if (status === "checked_in") return "patient.checked_in";
@@ -1900,6 +2868,16 @@ function numberField(value: unknown, field: string): number {
   return value;
 }
 
+function optionalUnitNumber(value: unknown, field: string): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const number = numberField(value, field);
+  if (number < 0 || number > 1) {
+    throw validation(`${field} must be between 0 and 1.`, { field });
+  }
+  return number;
+}
+
 function integerField(
   value: unknown,
   field: string,
@@ -1931,6 +2909,29 @@ function recordField(value: unknown, field: string): Record<string, unknown> {
     throw validation(`${field} must be a JSON object.`, { field });
   }
   return value as Record<string, unknown>;
+}
+
+function stringArrayField(value: unknown, field: string): string[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw validation(`${field} must be an array.`, { field });
+
+  return value.map((item, index) => {
+    if (typeof item !== "string" || item.trim().length === 0) {
+      throw validation(`${field}[${index}] must be a non-empty string.`, {
+        field: `${field}[${index}]`
+      });
+    }
+    return item.trim();
+  });
+}
+
+function optionalSha256Digest(value: unknown, field: string): string | null {
+  const digest = optionalNullableString(value, field);
+  if (digest === undefined || digest === null) return null;
+  if (!/^[a-f0-9]{64}$/i.test(digest)) {
+    throw validation(`${field} must be a lowercase SHA-256 hex digest.`, { field });
+  }
+  return digest.toLowerCase();
 }
 
 function objectField(value: unknown, field: string): Record<string, unknown> {

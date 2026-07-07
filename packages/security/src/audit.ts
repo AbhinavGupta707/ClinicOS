@@ -236,6 +236,42 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "media.upload_requested": {
+    category: "phi_access",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "media.upload_completed": {
+    category: "phi_access",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "dental_chart.viewed": {
+    category: "phi_access",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "dental_finding.created": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "dental_finding.updated": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "dental_chart.snapshot_created": {
+    category: "clinical",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
   "billing.payment.changed": {
     category: "billing",
     riskLevel: "medium",

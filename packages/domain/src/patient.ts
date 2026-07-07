@@ -67,8 +67,12 @@ export type PatientTimelineItemType =
   | "clinical_note_draft_created"
   | "clinical_note_signed"
   | "clinical_note_amended"
+  | "dental_finding_created"
+  | "dental_finding_updated"
+  | "dental_chart_snapshot_created"
   | "prescription_draft_created"
-  | "prescription_signed";
+  | "prescription_signed"
+  | "media_uploaded";
 
 export interface PatientTimelineItem {
   id: UUID;
