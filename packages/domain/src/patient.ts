@@ -70,9 +70,23 @@ export type PatientTimelineItemType =
   | "dental_finding_created"
   | "dental_finding_updated"
   | "dental_chart_snapshot_created"
+  | "treatment_plan_created"
+  | "treatment_plan_accepted"
+  | "procedure_completed"
+  | "invoice_created"
+  | "payment_recorded"
+  | "receipt_generated"
   | "prescription_draft_created"
   | "prescription_signed"
-  | "media_uploaded";
+  | "instruction_print_requested"
+  | "instruction_send_requested"
+  | "media_uploaded"
+  | "invoice_created"
+  | "payment_requested"
+  | "payment_succeeded"
+  | "payment_manually_recorded"
+  | "payment_reconciliation_required"
+  | "receipt_generated";
 
 export interface PatientTimelineItem {
   id: UUID;

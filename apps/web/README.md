@@ -110,6 +110,47 @@ Live external-imaging reference/link routes are deferred as a whole imaging-adap
 live media attachment binds patient, encounter, tooth, and finding context through the upload
 reservation and completion contract above.
 
+Checkpoint 5 adds a local-only checkout workflow fixture for treatment planning, invoice/payment,
+receipt, prescription, and instruction browser smoke before the billing/payment API lanes are
+merged:
+
+```sh
+NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_USE_CP5_WORKFLOW_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_ENV=local \
+NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=assistant \
+npm run dev --workspace apps/web
+```
+
+The CP5 fixture uses explicitly synthetic, non-PHI checkout data behind
+`apps/web/lib/cp5-workflow.ts`. Payment requests in fixture mode never mark an invoice paid.
+Manual payment recording is available only with actor, amount, method, reference, and audit reason,
+and the UI shows provider no-key/hosted-webhook-not-configured states honestly. Accountant role
+smoke should use `NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=accountant`; that view shows billing/account labels
+without default clinical PHI, prescriptions, or instruction content.
+
+In live mode the workflow is available through `/surface/checkout`, `/surface/accounting`, and the
+aliases `/surface/billing` and `/surface/payments`. The temporary checkout UI intentionally uses
+the local synthetic fixture as its read model until a production aggregate CP5 read endpoint is
+implemented as a complete workflow. In non-fixture live mode the loader returns
+`CP5_READ_MODEL_DEFERRED` rather than calling a stale or partial aggregate route.
+
+The web action helpers and tests pin the implemented granular CP5 route family:
+
+- `GET /v1/pricebook/procedures`
+- `POST /v1/patients/{patientId}/treatment-plans`
+- `PATCH /v1/treatment-plans/{treatmentPlanId}`
+- `POST /v1/treatment-plans/{treatmentPlanId}/accept`
+- `POST /v1/encounters/{encounterId}/procedures`
+- `POST /v1/invoices`
+- `GET /v1/invoices/{invoiceId}`
+- `POST /v1/invoices/{invoiceId}/payment-requests`
+- `POST /v1/invoices/{invoiceId}/manual-payments`
+- `POST /v1/invoices/{invoiceId}/receipts`
+- `POST /v1/encounters/{encounterId}/prescriptions`
+- `POST /v1/prescriptions/{prescriptionId}/sign`
+- `POST /v1/patients/{patientId}/instructions`
+
 ## `/me` contract expectation
 
 Until `packages/api-contracts` owns generated types, the web shell keeps a local mirror in `apps/web/lib/me.ts`. The expected shape is:

@@ -11,26 +11,36 @@ import type {
   CreateConsentInput,
   CreateDentalChartSnapshotInput,
   CreateEncounterInput,
+  CreateInvoiceInput,
   CreateIntakeFormSubmissionInput,
   CreateIntakeFormTemplateInput,
   CreateLeadInput,
   CreatePatientInput,
+  CreatePatientInstructionInput,
+  CreateProcedurePerformedInput,
   CreatePrescriptionInput,
+  CreateReceiptInput,
+  CreateTreatmentPlanInput,
   RepositoryScope,
-  UpdateDentalFindingRepositoryInput
+  UpdateDentalFindingRepositoryInput,
+  UpdateTreatmentPlanInput
 } from "@clinic-os/db";
 import {
   assertAppointmentTransition,
   assertEncounterTransition,
   assertMediaMimeType,
+  assertManualPaymentEvidence,
   assertPrescriptionMedicationList,
   assertLeadTransition,
   assertPatientCreateMinimum,
+  applyPaymentToInvoice,
   buildMorningDashboard,
   buildPatientDuplicateSuggestions,
+  calculateBillingLineTotals,
   calculateEndAt,
   hasClinicalNoteContent,
   isAppointmentStatus,
+  isBillingCurrency,
   isConsentCaptureMethod,
   isConsentPurpose,
   isDentalFindingReviewStatus,
@@ -40,8 +50,11 @@ import {
   isEncounterStatus,
   isIntakeFormType,
   isIntakeSubmissionSource,
+  isPatientInstructionChannel,
   isMediaScanStatus,
   isMediaType,
+  isTreatmentPlanStatus,
+  isManualPaymentMethod,
   isValidLeadStatus,
   mediaAssetCanBeViewed,
   isUuid,
@@ -57,17 +70,34 @@ import {
   type EncounterStatus,
   type IntakeFormType,
   type IntakeSubmissionSource,
+  type InvoiceDetail,
   type LeadIntent,
   type LeadSource,
   type LeadStatus,
   type MediaScanStatus,
   type MediaType,
+  type ManualPaymentMethod,
+  type PaymentProviderKey as BillingPaymentProviderKey,
+  type PaymentRequestRecord,
+  type PaymentRequestType,
+  type PaymentTransactionRecord,
   type PatientTimelineItem as DomainPatientTimelineItem,
+  type PatientInstructionRecord,
   type PatientSource,
+  type PricebookProcedureRecord,
   type PrescriptionMedication,
   type QueueStatus,
+  type TreatmentPlanDetail,
   type UUID
 } from "@clinic-os/domain";
+import {
+  PaymentProviderError,
+  type PaymentProvider,
+  type PaymentProviderRequestKind,
+  type PaymentProviderRequestResult,
+  type PaymentProviderWebhookEvent,
+  type RawPaymentWebhook
+} from "@clinic-os/integrations";
 import {
   createAuditEvent,
   type AuditEventRecord,
@@ -91,11 +121,172 @@ export interface OperationsDependencies {
     appendAuditEvent(event: AuditEventRecord): Promise<void>;
   };
   mediaStorage?: MediaStorageProvider;
+  paymentProvider?: PaymentProvider;
+  paymentRepository?: PaymentOperationsRepository;
 }
+
+const SYSTEM_INTEGRATION_ACTOR_USER_ID = "00000000-0000-4000-8000-000000000000" as UUID;
 
 export interface ApiSuccess<T> {
   status: number;
   body: T;
+}
+
+export type ApiPaymentState =
+  | "payment_requested"
+  | "qr_created"
+  | "link_created"
+  | "partially_paid"
+  | "paid"
+  | "failed"
+  | "reconciliation_required"
+  | "manually_recorded";
+
+export interface PaymentRouteInvoiceRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  patientId: UUID;
+  invoiceNumber: string;
+  paymentState: ApiPaymentState;
+  totalAmountPaise: number;
+  amountPaidPaise: number;
+  amountDuePaise: number;
+  currency: string;
+  updatedAt: string;
+}
+
+export interface PaymentRouteRequestRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  patientId: UUID;
+  invoiceId: UUID;
+  requestType: PaymentProviderRequestKind;
+  status: "created" | "sent" | "failed" | "cancelled" | "expired";
+  providerKey: string;
+  providerRequestId: string;
+  amountPaise: number;
+  currency: string;
+  paymentUrl: string | null;
+  qrImageUrl: string | null;
+  qrString: string | null;
+  expiresAt: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface PaymentRouteTransactionRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  patientId: UUID;
+  invoiceId: UUID;
+  source: "provider_webhook" | "manual";
+  status: "succeeded" | "failed" | "ignored_duplicate" | "reconciliation_required";
+  providerKey: string | null;
+  providerPaymentId: string | null;
+  providerEventId: string | null;
+  idempotencyKey: string;
+  amountPaise: number;
+  appliedAmountPaise: number;
+  currency: string;
+  method: string | null;
+  recordedByUserId: UUID | null;
+  auditReason: string | null;
+  reference: string | null;
+  receivedAt: string;
+  createdAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface PaymentRouteReconciliationItemRecord {
+  id: UUID;
+  tenantId: UUID | null;
+  clinicId: UUID | null;
+  patientId: UUID | null;
+  invoiceId: UUID | null;
+  providerKey: string | null;
+  providerPaymentId: string | null;
+  providerEventId: string | null;
+  reason:
+    | "overpayment"
+    | "duplicate_provider_transaction"
+    | "missing_invoice_reference"
+    | "currency_mismatch"
+    | "provider_failure"
+    | "manual_review_required";
+  amountPaise: number;
+  currency: string | null;
+  status: "open" | "resolved";
+  createdAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface PaymentWebhookReceiptRecord {
+  id: UUID;
+  providerKey: string;
+  providerEventId: string | null;
+  receivedAt: string;
+  status: "received" | "verified" | "rejected" | "processed";
+  rawBodySha256: string;
+}
+
+export interface PaymentProviderWebhookApplicationResult {
+  status: "processed" | "duplicate" | "ignored" | "reconciliation_required";
+  invoice: PaymentRouteInvoiceRecord | null;
+  transaction: PaymentRouteTransactionRecord | null;
+  reconciliationItem: PaymentRouteReconciliationItemRecord | null;
+  replayed: boolean;
+}
+
+export interface PaymentOperationsRepository {
+  findPaymentInvoiceById(
+    scope: RepositoryScope,
+    invoiceId: UUID
+  ): Promise<PaymentRouteInvoiceRecord | null>;
+  createPaymentRequestFromProvider(
+    scope: RepositoryScope,
+    input: {
+      invoice: PaymentRouteInvoiceRecord;
+      providerResult: PaymentProviderRequestResult;
+      createdByUserId: UUID;
+    }
+  ): Promise<{ invoice: PaymentRouteInvoiceRecord; paymentRequest: PaymentRouteRequestRecord }>;
+  recordManualPayment(
+    scope: RepositoryScope,
+    input: {
+      invoice: PaymentRouteInvoiceRecord;
+      amountPaise: number;
+      currency: string;
+      method: ManualPaymentMethod;
+      reason: string;
+      reference: string;
+      receivedAt: string;
+      idempotencyKey: string;
+      evidence: Record<string, unknown>;
+    }
+  ): Promise<{
+    invoice: PaymentRouteInvoiceRecord;
+    transaction: PaymentRouteTransactionRecord;
+    reconciliationItem: PaymentRouteReconciliationItemRecord | null;
+    replayed: boolean;
+  }>;
+  recordPaymentWebhookReceipt(input: {
+    providerKey: string;
+    providerEventId: string | null;
+    receivedAt: string;
+    headers: Record<string, string | undefined>;
+    rawBody: string;
+  }): Promise<PaymentWebhookReceiptRecord>;
+  markPaymentWebhookReceiptRejected(
+    receiptId: UUID,
+    input: { reason: string; providerEventId?: string | null }
+  ): Promise<void>;
+  applyPaymentProviderWebhook(
+    event: PaymentProviderWebhookEvent,
+    input: { receiptId: UUID }
+  ): Promise<PaymentProviderWebhookApplicationResult>;
 }
 
 const LEAD_INTENTS = new Set<LeadIntent>([
@@ -763,6 +954,310 @@ export async function getMorningDashboard(
   return ok({ dashboard: buildMorningDashboard({ date, ...data }) });
 }
 
+export async function listPricebookProcedures(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "billing.read" });
+  const procedures = await dependencies.repository.listPricebookProcedures(scopeFrom(context));
+
+  await audit(context, dependencies, "pricebook.procedure_catalog.viewed", {
+    resourceType: "pricebook_procedure",
+    resourceId: context.clinicId,
+    metadata: { procedureCount: procedures.length }
+  });
+
+  return ok({ procedures: procedures.map(publicPricebookProcedure) });
+}
+
+export async function createPatientTreatmentPlan(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.write" });
+  const scope = scopeFrom(context);
+  const patient = await dependencies.repository.findPatientById(scope, patientId);
+  if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
+
+  const input = parseCreateTreatmentPlan(body);
+  const result = await billingRepositoryOperation(
+    () => dependencies.repository.createTreatmentPlan(scope, patientId, input),
+    { patient_id: patientId }
+  );
+  if (!result) throw notFound("Patient or encounter not found.", { patient_id: patientId });
+
+  await audit(context, dependencies, "treatment_plan.created", {
+    patientId,
+    resourceType: "treatment_plan",
+    resourceId: result.detail.treatmentPlan.id,
+    metadata: treatmentPlanAuditMetadata(result.detail)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "treatment_plan.created",
+    aggregateType: "treatment_plan",
+    aggregateId: result.detail.treatmentPlan.id,
+    patientId,
+    payload: {
+      treatmentPlanId: result.detail.treatmentPlan.id,
+      patientId,
+      status: result.detail.treatmentPlan.status,
+      totalMinor: result.detail.treatmentPlan.totalMinor,
+      itemCount: treatmentPlanItemCount(result.detail)
+    }
+  });
+
+  return created({ treatmentPlan: publicTreatmentPlanDetail(result.detail) });
+}
+
+export async function updateTreatmentPlan(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  treatmentPlanId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.write" });
+  const input = parseUpdateTreatmentPlan(body);
+  const result = await billingRepositoryOperation(
+    () =>
+      dependencies.repository.updateTreatmentPlan(
+        scopeFrom(context),
+        treatmentPlanId,
+        input
+      ),
+    { treatment_plan_id: treatmentPlanId }
+  );
+  if (!result) throw notFound("Treatment plan not found.", { treatment_plan_id: treatmentPlanId });
+
+  await audit(context, dependencies, "treatment_plan.updated", {
+    patientId: result.detail.treatmentPlan.patientId,
+    resourceType: "treatment_plan",
+    resourceId: result.detail.treatmentPlan.id,
+    metadata: treatmentPlanAuditMetadata(result.detail)
+  });
+
+  return ok({ treatmentPlan: publicTreatmentPlanDetail(result.detail) });
+}
+
+export async function acceptTreatmentPlan(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  treatmentPlanId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.write" });
+  const input = parseAcceptTreatmentPlan(body);
+  const result = await billingRepositoryOperation(
+    () =>
+      dependencies.repository.acceptTreatmentPlan(
+        scopeFrom(context),
+        treatmentPlanId,
+        input
+      ),
+    { treatment_plan_id: treatmentPlanId }
+  );
+  if (!result) throw notFound("Treatment plan not found.", { treatment_plan_id: treatmentPlanId });
+
+  await audit(context, dependencies, "treatment_plan.accepted", {
+    patientId: result.detail.treatmentPlan.patientId,
+    resourceType: "treatment_plan",
+    resourceId: result.detail.treatmentPlan.id,
+    metadata: treatmentPlanAuditMetadata(result.detail)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "treatment_plan.accepted",
+    aggregateType: "treatment_plan",
+    aggregateId: result.detail.treatmentPlan.id,
+    patientId: result.detail.treatmentPlan.patientId,
+    payload: {
+      treatmentPlanId: result.detail.treatmentPlan.id,
+      patientId: result.detail.treatmentPlan.patientId,
+      acceptedAt: result.detail.treatmentPlan.acceptedAt,
+      totalMinor: result.detail.treatmentPlan.totalMinor
+    }
+  });
+
+  return ok({ treatmentPlan: publicTreatmentPlanDetail(result.detail) });
+}
+
+export async function createEncounterProcedurePerformed(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  encounterId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "clinical.note.write" });
+  const input = parseCreateProcedurePerformed(body);
+  const result = await billingRepositoryOperation(
+    () =>
+      dependencies.repository.createProcedurePerformed(
+        scopeFrom(context),
+        encounterId,
+        input
+      ),
+    {
+      encounter_id: encounterId,
+      treatment_plan_id: input.treatmentPlanId,
+      treatment_plan_estimate_item_id: input.treatmentPlanEstimateItemId
+    }
+  );
+  if (!result) throw notFound("Encounter or accepted treatment plan item not found.", {
+    encounter_id: encounterId
+  });
+
+  await audit(context, dependencies, "procedure.completed", {
+    patientId: result.procedure.patientId,
+    resourceType: "procedure_performed",
+    resourceId: result.procedure.id,
+    metadata: {
+      encounterId,
+      treatmentPlanId: result.procedure.treatmentPlanId,
+      estimateItemId: result.procedure.treatmentPlanEstimateItemId,
+      totalMinor: result.procedure.totalMinor
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "procedure.completed",
+    aggregateType: "procedure_performed",
+    aggregateId: result.procedure.id,
+    patientId: result.procedure.patientId,
+    payload: {
+      procedurePerformedId: result.procedure.id,
+      encounterId,
+      patientId: result.procedure.patientId,
+      treatmentPlanId: result.procedure.treatmentPlanId,
+      treatmentPlanEstimateItemId: result.procedure.treatmentPlanEstimateItemId
+    }
+  });
+
+  return created({
+    procedure: publicProcedurePerformed(result.procedure),
+    treatmentPlan: publicTreatmentPlanDetail(result.treatmentPlan)
+  });
+}
+
+export async function createInvoice(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "billing.write" });
+  const input = parseCreateInvoice(body);
+  const result = await billingRepositoryOperation(
+    () => dependencies.repository.createInvoice(scopeFrom(context), input),
+    {
+      treatment_plan_id: input.treatmentPlanId ?? null,
+      procedure_performed_ids: input.procedurePerformedIds ?? []
+    }
+  );
+  if (!result) {
+    throw conflict("Invoice requires completed, accepted, uninvoiced procedure evidence.", {
+      treatment_plan_id: input.treatmentPlanId ?? null,
+      procedure_performed_ids: input.procedurePerformedIds ?? []
+    });
+  }
+
+  await audit(context, dependencies, "invoice.created", {
+    patientId: result.invoiceDetail.invoice.patientId,
+    resourceType: "invoice",
+    resourceId: result.invoiceDetail.invoice.id,
+    metadata: invoiceAuditMetadata(result.invoiceDetail)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "invoice.created",
+    aggregateType: "invoice",
+    aggregateId: result.invoiceDetail.invoice.id,
+    patientId: result.invoiceDetail.invoice.patientId,
+    payload: {
+      invoiceId: result.invoiceDetail.invoice.id,
+      invoiceNumber: result.invoiceDetail.invoice.invoiceNumber,
+      patientId: result.invoiceDetail.invoice.patientId,
+      totalMinor: result.invoiceDetail.invoice.totalMinor,
+      procedurePerformedIds: result.procedures.map((procedure) => procedure.id)
+    }
+  });
+
+  return created({ invoice: publicInvoiceDetail(result.invoiceDetail) });
+}
+
+export async function getInvoice(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  invoiceId: UUID
+) {
+  authorize(context, { permission: "billing.read" });
+  const invoice = await dependencies.repository.findInvoiceById(scopeFrom(context), invoiceId);
+  if (!invoice) throw notFound("Invoice not found.", { invoice_id: invoiceId });
+
+  await audit(context, dependencies, "invoice.viewed", {
+    patientId: invoice.invoice.patientId,
+    resourceType: "invoice",
+    resourceId: invoice.invoice.id,
+    metadata: invoiceAuditMetadata(invoice)
+  });
+
+  return ok({ invoice: publicInvoiceDetail(invoice) });
+}
+
+export async function createInvoiceReceipt(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  invoiceId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "billing.write" });
+  const input = parseCreateReceipt(body);
+  const result = await billingRepositoryOperation(
+    () => dependencies.repository.createReceipt(scopeFrom(context), invoiceId, input),
+    {
+      invoice_id: invoiceId,
+      payment_transaction_ids: input.paymentTransactionIds ?? []
+    }
+  );
+  if (!result) throw notFound("Invoice not found.", { invoice_id: invoiceId });
+
+  await audit(context, dependencies, "receipt.generated", {
+    patientId: result.receipt.patientId,
+    resourceType: "receipt",
+    resourceId: result.receipt.id,
+    metadata: {
+      invoiceId,
+      receiptNumber: result.receipt.receiptNumber,
+      amountMinor: result.receipt.amountMinor,
+      paymentTransactionIds: result.receipt.paymentAllocations.map(
+        (allocation) => allocation.paymentTransactionId
+      )
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "receipt.generated",
+    aggregateType: "receipt",
+    aggregateId: result.receipt.id,
+    patientId: result.receipt.patientId,
+    payload: {
+      receiptId: result.receipt.id,
+      invoiceId,
+      patientId: result.receipt.patientId,
+      receiptNumber: result.receipt.receiptNumber,
+      amountMinor: result.receipt.amountMinor
+    }
+  });
+
+  return created({
+    receipt: publicReceipt(result.receipt),
+    invoice: publicInvoiceDetail(result.invoiceDetail)
+  });
+}
+
 export async function listIntakeFormTemplates(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies
@@ -1276,6 +1771,60 @@ export async function signPrescription(
   return ok({ prescription });
 }
 
+export async function createPatientInstruction(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient_instruction.write" });
+  const input = parseCreatePatientInstruction(body);
+  const outboxEventId = input.channel === "whatsapp" ? (randomUUID() as UUID) : null;
+  const instruction = await dependencies.repository.createPatientInstruction(
+    scopeFrom(context),
+    patientId,
+    {
+      ...input,
+      outboxEventId
+    }
+  );
+  if (!instruction) throw notFound("Patient not found.", { patient_id: patientId });
+
+  const eventType =
+    instruction.channel === "print" ? "instruction.print_requested" : "instruction.send_requested";
+  const payload = {
+    instructionId: instruction.id,
+    patientId,
+    templateId: instruction.templateId,
+    channel: instruction.channel,
+    status: instruction.status,
+    printJobId: instruction.printJobId,
+    outboxEventId: instruction.outboxEventId,
+    providerConfirmationReceived: false,
+    providerDeliveryConfirmedAt: null,
+    deliveredAt: null,
+    readAt: null
+  };
+
+  await audit(context, dependencies, eventType, {
+    patientId,
+    resourceType: "patient_instruction",
+    resourceId: instruction.id,
+    metadata: payload
+  });
+  await appendOutbox(context, dependencies, {
+    eventType,
+    aggregateType: "patient_instruction",
+    aggregateId: instruction.id,
+    patientId,
+    payload
+  });
+
+  const responseBody = { instruction: publicPatientInstruction(instruction) };
+  return instruction.channel === "whatsapp" ? accepted(responseBody) : created(responseBody);
+}
+
 export async function getPatientDentalChart(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
@@ -1735,6 +2284,461 @@ export async function createSignedMediaAccess(
   });
 }
 
+export async function createInvoicePaymentRequest(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  invoiceId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "billing.write" });
+  const provider = paymentProviderFrom(dependencies);
+  const scope = scopeFrom(context);
+  const invoiceDetail = await dependencies.repository.findInvoiceById(scope, invoiceId);
+  if (!invoiceDetail) throw notFound("Invoice not found.", { invoice_id: invoiceId });
+  const invoice = invoiceDetail.invoice;
+  if (invoice.balanceMinor <= 0) {
+    throw conflict("Invoice has no amount due for a new payment request.", {
+      invoice_id: invoiceId,
+      payment_status: invoice.paymentStatus
+    });
+  }
+
+  const input = parsePaymentRequest(body, invoice);
+  const health = await provider.healthCheck();
+  if (!health.capabilities.includes(input.requestType === "invoice_qr" ? "CREATE_PAYMENT_QR" : "CREATE_PAYMENT_LINKS")) {
+    await audit(context, dependencies, "payment.provider.unavailable", {
+      patientId: invoice.patientId,
+      resourceType: "invoice",
+      resourceId: invoice.id,
+      metadata: { providerKey: provider.providerKey, providerHealth: health }
+    });
+    throw new ApiError(503, "CONFIGURATION_ERROR", "Payment provider is unavailable for this request type.", {
+      provider_health: health,
+      request_type: input.requestType
+    });
+  }
+
+  const providerInput = {
+    tenantId: scope.tenantId,
+    clinicId: scope.clinicId,
+    patientId: invoice.patientId,
+    invoiceId: invoice.id,
+    amountPaise: input.amountMinor,
+    currency: invoice.currency,
+    description: input.description,
+    expiresAt: input.expiresAt,
+    idempotencyKey: context.idempotencyKey,
+    customer: input.customer,
+    metadata: input.metadata
+  };
+  let providerResult: PaymentProviderRequestResult;
+  try {
+    providerResult =
+      input.requestType === "invoice_qr"
+        ? await provider.createInvoiceQr(providerInput)
+        : await provider.createPaymentLink(providerInput);
+  } catch (error) {
+    if (error instanceof PaymentProviderError) {
+      await audit(context, dependencies, "payment.provider.unavailable", {
+        patientId: invoice.patientId,
+        resourceType: "invoice",
+        resourceId: invoice.id,
+        metadata: { providerKey: error.providerKey, providerStatus: error.status, ...error.details }
+      });
+      throw new ApiError(503, "CONFIGURATION_ERROR", error.message, error.details);
+    }
+    throw error;
+  }
+
+  const paymentRequest = await dependencies.repository.createPaymentRequest(scope, {
+    invoiceId: invoice.id,
+    provider: normalizeBillingPaymentProvider(providerResult.providerKey),
+    requestType: normalizePaymentRequestType(providerResult.requestKind),
+    amountMinor: providerResult.amountPaise,
+    currency: invoice.currency,
+    providerReferenceId: providerResult.providerRequestId,
+    providerUrl: providerResult.paymentUrl ?? null,
+    providerQrPayload: providerResult.qrString ?? providerResult.qrImageUrl ?? null,
+    expiresAt: providerResult.expiresAt ?? null,
+    metadata: {
+      providerStatus: providerResult.status,
+      qrImageUrl: providerResult.qrImageUrl ?? null,
+      providerMetadata: providerResult.metadata,
+      providerHealth: providerResult.providerHealth
+    }
+  });
+  if (!paymentRequest) {
+    throw conflict("Payment request could not be created for this invoice state.", {
+      invoice_id: invoice.id,
+      payment_status: invoice.paymentStatus
+    });
+  }
+  const updatedInvoiceDetail = await dependencies.repository.findInvoiceById(scope, invoice.id);
+  if (!updatedInvoiceDetail) throw notFound("Invoice not found after payment request.", { invoice_id: invoice.id });
+
+  await audit(context, dependencies, "payment.requested", {
+    patientId: invoice.patientId,
+    resourceType: "payment_request",
+    resourceId: paymentRequest.id,
+    metadata: {
+      invoiceId,
+      providerKey: providerResult.providerKey,
+      requestType: paymentRequest.requestType,
+      amountMinor: paymentRequest.amountMinor,
+      providerHealth: providerResult.providerHealth
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "payment.requested",
+    aggregateType: "payment_request",
+    aggregateId: paymentRequest.id,
+    patientId: invoice.patientId,
+    payload: {
+      invoiceId,
+      paymentRequestId: paymentRequest.id,
+      providerKey: providerResult.providerKey,
+      requestType: paymentRequest.requestType,
+      amountMinor: paymentRequest.amountMinor
+    }
+  });
+
+  return created({
+    invoice: publicInvoiceDetail(updatedInvoiceDetail),
+    paymentRequest: publicPaymentRequest(paymentRequest),
+    provider: {
+      key: provider.providerKey,
+      health: providerResult.providerHealth
+    }
+  });
+}
+
+export async function recordInvoiceManualPayment(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  invoiceId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "billing.write" });
+  const scope = scopeFrom(context);
+  const invoiceDetail = await dependencies.repository.findInvoiceById(scope, invoiceId);
+  if (!invoiceDetail) throw notFound("Invoice not found.", { invoice_id: invoiceId });
+  const invoice = invoiceDetail.invoice;
+
+  const input = parseManualPayment(body);
+  if (input.currency !== invoice.currency) {
+    throw validation("Manual payment currency must match the invoice currency.", {
+      invoice_id: invoiceId,
+      invoice_currency: invoice.currency,
+      payment_currency: input.currency
+    });
+  }
+  if (input.amountMinor > invoice.balanceMinor) {
+    throw conflict("Manual payment amount exceeds the invoice amount due.", {
+      invoice_id: invoiceId,
+      balance_minor: invoice.balanceMinor,
+      received_amount_minor: input.amountMinor
+    });
+  }
+
+  const idempotencyKey = context.idempotencyKey ?? `manual:${invoiceId}:${input.reference}`;
+  const existing = invoiceDetail.payments.find(
+    (payment) => payment.provider === "manual" && payment.idempotencyKey === idempotencyKey
+  );
+  const transaction = await dependencies.repository.recordPaymentTransaction(scope, {
+    invoiceId: invoice.id,
+    provider: "manual",
+    amountMinor: input.amountMinor,
+    currency: input.currency,
+    method: input.method,
+    status: "manually_recorded",
+    verificationStatus: "not_required_manual",
+    reconciliationStatus: "matched",
+    receivedAt: input.receivedAt ?? new Date().toISOString(),
+    idempotencyKey,
+    recordedByUserId: scope.actorUserId,
+    metadata: {
+      reason: input.reason,
+      reference: input.reference,
+      evidence: input.evidence
+    }
+  });
+  if (!transaction) throw notFound("Invoice not found.", { invoice_id: invoiceId });
+  const updatedInvoiceDetail = await dependencies.repository.findInvoiceById(scope, invoice.id);
+  if (!updatedInvoiceDetail) throw notFound("Invoice not found after payment recording.", { invoice_id: invoice.id });
+  const replayed = existing?.id === transaction.id;
+
+  await audit(context, dependencies, "payment.manually_recorded", {
+    patientId: invoice.patientId,
+    resourceType: "payment_transaction",
+    resourceId: transaction.id,
+    metadata: {
+      invoiceId,
+      amountMinor: input.amountMinor,
+      method: input.method,
+      reference: input.reference,
+      reason: input.reason,
+      replayed
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "payment.manually_recorded",
+    aggregateType: "payment_transaction",
+    aggregateId: transaction.id,
+    patientId: invoice.patientId,
+    payload: {
+      invoiceId,
+      paymentTransactionId: transaction.id,
+      amountMinor: transaction.amountMinor,
+      paymentStatus: updatedInvoiceDetail.invoice.paymentStatus,
+      replayed
+    }
+  });
+
+  return created({
+    invoice: publicInvoiceDetail(updatedInvoiceDetail),
+    transaction: publicPaymentTransaction(transaction),
+    reconciliationItem: null,
+    replayed
+  });
+}
+
+export async function processPaymentWebhook(
+  dependencies: OperationsDependencies,
+  input: {
+    requestId: string;
+    providerKey: string;
+    rawBody: string;
+    headers: Record<string, string | undefined>;
+    receivedAt: string;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  }
+) {
+  const provider = paymentProviderFrom(dependencies);
+  const raw: RawPaymentWebhook = {
+    providerKey: input.providerKey,
+    headers: input.headers,
+    rawBody: input.rawBody,
+    receivedAt: input.receivedAt
+  };
+  const verification = await provider.verifyWebhook(raw);
+
+  if (verification.status !== "verified") {
+    throw new ApiError(
+      verification.status === "invalid_signature" ? 403 : 400,
+      verification.status === "invalid_signature" ? "PERMISSION_DENIED" : "VALIDATION_ERROR",
+      verification.message,
+      { verification_status: verification.status, provider_event_id: verification.providerEventId ?? null }
+    );
+  }
+
+  let event: PaymentProviderWebhookEvent;
+  try {
+    event = await provider.parseWebhook(raw);
+  } catch (error) {
+    throw error;
+  }
+
+  const webhookReceiptId = randomUUID() as UUID;
+  const eventScope = scopeFromPaymentWebhook(event);
+  if (!eventScope || !event.invoiceId || !isUuid(event.invoiceId)) {
+    return ok({
+      status: "reconciliation_required",
+      replayed: false,
+      invoice: null,
+      transaction: null,
+      reconciliationItem: providerReconciliationItem(event, "missing_invoice_reference", event.amountPaise ?? 0),
+      providerEvent: publicProviderWebhookEvent(event)
+    });
+  }
+
+  const invoiceDetail = await dependencies.repository.findInvoiceById(eventScope, event.invoiceId);
+  if (!invoiceDetail) {
+    return ok({
+      status: "reconciliation_required",
+      replayed: false,
+      invoice: null,
+      transaction: null,
+      reconciliationItem: providerReconciliationItem(event, "missing_invoice_reference", event.amountPaise ?? 0),
+      providerEvent: publicProviderWebhookEvent(event)
+    });
+  }
+
+  const invoice = invoiceDetail.invoice;
+  const providerKey = normalizeBillingPaymentProvider(event.providerKey);
+  const existing = invoiceDetail.payments.find(
+    (payment) =>
+      payment.provider === providerKey &&
+      (payment.idempotencyKey === event.idempotencyKey ||
+        (event.providerPaymentId && payment.providerPaymentId === event.providerPaymentId))
+  );
+  if (existing) {
+    return ok({
+      status: "duplicate",
+      replayed: true,
+      invoice: publicInvoiceDetail(invoiceDetail),
+      transaction: publicPaymentTransaction(existing),
+      reconciliationItem: null,
+      providerEvent: publicProviderWebhookEvent(event)
+    });
+  }
+
+  let transaction: PaymentTransactionRecord | null = null;
+  let reconciliationItem: PaymentRouteReconciliationItemRecord | null = null;
+  let status: "processed" | "ignored" | "reconciliation_required" = "processed";
+
+  if (event.eventKind === "payment_failed") {
+    transaction = await dependencies.repository.recordPaymentTransaction(eventScope, {
+      invoiceId: invoice.id,
+      provider: providerKey,
+      providerPaymentId: event.providerPaymentId ?? null,
+      providerOrderId: event.providerPaymentRequestId ?? null,
+      amountMinor: positiveProviderAmountMinor(event.amountPaise),
+      currency: event.currency ?? invoice.currency,
+      method: event.method ?? "provider_failure",
+      status: "failed",
+      verificationStatus: "verified",
+      reconciliationStatus: "matched",
+      idempotencyKey: event.idempotencyKey,
+      receivedAt: event.occurredAt,
+      recordedByUserId: null,
+      metadata: providerPaymentMetadata(event, { webhookReceiptId })
+    });
+  } else if (event.eventKind !== "payment_succeeded") {
+    status = "ignored";
+  } else if (event.currency !== invoice.currency || !event.amountPaise || event.amountPaise <= 0) {
+    status = "reconciliation_required";
+    reconciliationItem = providerReconciliationItem(
+      event,
+      event.currency !== invoice.currency ? "currency_mismatch" : "manual_review_required",
+      event.amountPaise ?? 0
+    );
+  } else {
+    const appliedAmountMinor = Math.min(event.amountPaise, Math.max(invoice.balanceMinor, 0));
+    const overpaymentMinor = Math.max(event.amountPaise - appliedAmountMinor, 0);
+    if (appliedAmountMinor > 0) {
+      transaction = await dependencies.repository.recordPaymentTransaction(eventScope, {
+        invoiceId: invoice.id,
+        provider: providerKey,
+        providerPaymentId: event.providerPaymentId ?? null,
+        providerOrderId: event.providerPaymentRequestId ?? null,
+        amountMinor: appliedAmountMinor,
+        currency: event.currency,
+        method: event.method ?? "provider",
+        status: "succeeded",
+        verificationStatus: "verified",
+        reconciliationStatus: overpaymentMinor > 0 ? "requires_review" : "matched",
+        idempotencyKey: event.idempotencyKey,
+        receivedAt: event.occurredAt,
+        recordedByUserId: null,
+        metadata: providerPaymentMetadata(event, {
+          webhookReceiptId,
+          providerCapturedAmountMinor: event.amountPaise,
+          appliedAmountMinor,
+          overpaymentMinor
+        })
+      });
+      if (overpaymentMinor > 0) {
+        status = "reconciliation_required";
+        reconciliationItem = providerReconciliationItem(event, "overpayment", overpaymentMinor);
+      }
+    } else {
+      status = "reconciliation_required";
+      transaction = await dependencies.repository.recordPaymentTransaction(eventScope, {
+        invoiceId: invoice.id,
+        provider: providerKey,
+        providerPaymentId: event.providerPaymentId ?? null,
+        providerOrderId: event.providerPaymentRequestId ?? null,
+        amountMinor: event.amountPaise,
+        currency: event.currency,
+        method: event.method ?? "provider",
+        status: "reconciliation_required",
+        verificationStatus: "verified",
+        reconciliationStatus: "requires_review",
+        idempotencyKey: event.idempotencyKey,
+        receivedAt: event.occurredAt,
+        recordedByUserId: null,
+        metadata: providerPaymentMetadata(event, {
+          webhookReceiptId,
+          providerCapturedAmountMinor: event.amountPaise,
+          appliedAmountMinor: 0,
+          overpaymentMinor: event.amountPaise
+        })
+      });
+      reconciliationItem = providerReconciliationItem(event, "overpayment", event.amountPaise);
+    }
+  }
+
+  const updatedInvoiceDetail = await dependencies.repository.findInvoiceById(eventScope, invoice.id);
+  if (!updatedInvoiceDetail) throw notFound("Invoice not found after webhook processing.", { invoice_id: invoice.id });
+
+  if (transaction) {
+    const eventType =
+      status === "reconciliation_required"
+        ? "payment.reconciliation_required"
+        : event.eventKind === "payment_failed"
+          ? "payment.failed"
+          : "payment.succeeded";
+    await dependencies.repository.appendOutboxEvent(eventScope, {
+      eventType,
+      aggregateType: "payment_transaction",
+      aggregateId: transaction.id,
+      patientId: invoice.patientId,
+      payload: {
+        invoiceId: invoice.id,
+        paymentTransactionId: transaction.id,
+        providerKey: event.providerKey,
+        providerEventId: event.providerEventId,
+        providerPaymentId: event.providerPaymentId ?? null,
+        status,
+        reconciliationItemId: reconciliationItem?.id ?? null
+      }
+    });
+  }
+
+  if (dependencies.auditSink && updatedInvoiceDetail) {
+    const auditAction =
+      status === "reconciliation_required"
+        ? "payment.reconciliation_required"
+        : event.eventKind === "payment_failed"
+          ? "payment.failed"
+          : "payment.succeeded";
+    await dependencies.auditSink.appendAuditEvent(
+      createAuditEvent({
+        tenantId: updatedInvoiceDetail.invoice.tenantId,
+        clinicId: updatedInvoiceDetail.invoice.clinicId,
+        actor: { type: "integration", id: event.providerKey },
+        action: auditAction,
+        patientId: updatedInvoiceDetail.invoice.patientId,
+        resourceType: "payment_webhook",
+        resourceId: webhookReceiptId,
+        metadata: {
+          providerKey: event.providerKey,
+          providerEventId: event.providerEventId,
+          providerPaymentId: event.providerPaymentId ?? null,
+          invoiceId: updatedInvoiceDetail.invoice.id,
+          replayed: false,
+          status,
+          reconciliationItemId: reconciliationItem?.id ?? null,
+          transactionId: transaction?.id ?? null
+        },
+        ipAddress: input.ipAddress ?? null,
+        userAgent: input.userAgent ?? null,
+        correlationId: input.requestId
+      })
+    );
+  }
+
+  return ok({
+    status,
+    replayed: false,
+    invoice: publicInvoiceDetail(updatedInvoiceDetail),
+    transaction: transaction ? publicPaymentTransaction(transaction) : null,
+    reconciliationItem,
+    providerEvent: publicProviderWebhookEvent(event)
+  });
+}
+
 async function bookAppointment(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
@@ -1944,10 +2948,14 @@ type PublicTimelineItemType =
   | "message"
   | "clinical_note"
   | "dental"
+  | "treatment_plan"
+  | "procedure"
   | "prescription"
+  | "instruction"
   | "media"
   | "invoice"
   | "payment"
+  | "receipt"
   | "task"
   | "consent";
 
@@ -2005,11 +3013,34 @@ function publicTimelineItemType(
     case "dental_finding_updated":
     case "dental_chart_snapshot_created":
       return "dental";
+    case "treatment_plan_created":
+    case "treatment_plan_accepted":
+      return "treatment_plan";
+    case "procedure_completed":
+      return "procedure";
+    case "invoice_created":
+      return "invoice";
+    case "payment_recorded":
+      return "payment";
+    case "receipt_generated":
+      return "receipt";
     case "prescription_draft_created":
     case "prescription_signed":
       return "prescription";
+    case "instruction_print_requested":
+    case "instruction_send_requested":
+      return "instruction";
     case "media_uploaded":
       return "media";
+    case "invoice_created":
+      return "invoice";
+    case "payment_requested":
+    case "payment_succeeded":
+    case "payment_manually_recorded":
+    case "payment_reconciliation_required":
+      return "payment";
+    case "receipt_generated":
+      return "invoice";
   }
 }
 
@@ -2059,12 +3090,40 @@ function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): Dom
       return "dental.finding.updated";
     case "dental_chart_snapshot_created":
       return "dental.chart.snapshot_created";
+    case "treatment_plan_created":
+      return "treatment_plan.created";
+    case "treatment_plan_accepted":
+      return "treatment_plan.accepted";
+    case "procedure_completed":
+      return "procedure.completed";
+    case "invoice_created":
+      return "invoice.created";
+    case "payment_recorded":
+      return "payment.succeeded";
+    case "receipt_generated":
+      return "receipt.generated";
     case "prescription_draft_created":
       return "prescription.draft_created";
     case "prescription_signed":
       return "prescription.signed";
+    case "instruction_print_requested":
+      return "instruction.print_requested";
+    case "instruction_send_requested":
+      return "instruction.send_requested";
     case "media_uploaded":
       return "media.upload_completed";
+    case "invoice_created":
+      return "invoice.created";
+    case "payment_requested":
+      return "payment.requested";
+    case "payment_succeeded":
+      return "payment.succeeded";
+    case "payment_manually_recorded":
+      return "payment.manually_recorded";
+    case "payment_reconciliation_required":
+      return "payment.reconciliation_required";
+    case "receipt_generated":
+      return "receipt.generated";
   }
 }
 
@@ -2259,6 +3318,21 @@ function parseCreatePrescription(body: unknown): CreatePrescriptionInput {
   };
 }
 
+function parseCreatePatientInstruction(body: unknown): CreatePatientInstructionInput {
+  const input = objectBody(body);
+  const channel = requiredString(input.channel ?? "print", "channel");
+  if (!isPatientInstructionChannel(channel)) {
+    throw validation("channel must be print or whatsapp.", { field: "channel" });
+  }
+
+  return {
+    channel,
+    templateId: requiredString(input.templateId, "templateId"),
+    title: optionalNullableString(input.title, "title"),
+    body: optionalNullableString(input.body, "body")
+  };
+}
+
 function parseCreateDentalFinding(
   body: unknown,
   defaults: { encounterId?: UUID | null } = {}
@@ -2342,6 +3416,193 @@ function parseDentalChartSnapshot(body: unknown): CreateDentalChartSnapshotInput
   };
 }
 
+function parseCreateTreatmentPlan(body: unknown): CreateTreatmentPlanInput {
+  const input = objectBody(body);
+  return {
+    encounterId: optionalUuid(input.encounterId, "encounterId"),
+    title: requiredString(input.title, "title"),
+    clinicalSummary: optionalNullableString(input.clinicalSummary, "clinicalSummary"),
+    status:
+      input.status === undefined
+        ? undefined
+        : parseDraftTreatmentPlanStatus(requiredString(input.status, "status")),
+    phases: parseTreatmentPlanPhases(input.phases)
+  };
+}
+
+function parseUpdateTreatmentPlan(body: unknown): UpdateTreatmentPlanInput {
+  const input = objectBody(body);
+  return {
+    title: input.title === undefined ? undefined : requiredString(input.title, "title"),
+    clinicalSummary:
+      input.clinicalSummary === undefined
+        ? undefined
+        : optionalNullableString(input.clinicalSummary, "clinicalSummary"),
+    status:
+      input.status === undefined
+        ? undefined
+        : parseMutableTreatmentPlanStatus(requiredString(input.status, "status")),
+    phases: input.phases === undefined ? undefined : parseTreatmentPlanPhases(input.phases)
+  };
+}
+
+function parseAcceptTreatmentPlan(body: unknown) {
+  const input = body === undefined ? {} : objectBody(body);
+  return {
+    acceptedByName: optionalNullableString(input.acceptedByName, "acceptedByName"),
+    acceptanceEvidence: recordField(input.acceptanceEvidence, "acceptanceEvidence")
+  };
+}
+
+function parseCreateProcedurePerformed(body: unknown): CreateProcedurePerformedInput {
+  const input = objectBody(body);
+  return {
+    treatmentPlanId: uuidField(input.treatmentPlanId, "treatmentPlanId"),
+    treatmentPlanEstimateItemId: uuidField(
+      input.treatmentPlanEstimateItemId ?? input.estimateItemId,
+      "treatmentPlanEstimateItemId"
+    ),
+    performedAt: optionalNullableString(input.performedAt, "performedAt"),
+    notes: optionalNullableString(input.notes, "notes"),
+    outcome: optionalNullableString(input.outcome, "outcome"),
+    provenance: recordField(input.provenance, "provenance")
+  };
+}
+
+function parseCreateInvoice(body: unknown): CreateInvoiceInput {
+  const input = objectBody(body);
+  if (input.items !== undefined || input.lineItems !== undefined) {
+    throw validation("Invoice line items must be derived from completed procedure evidence.", {
+      forbidden_fields: ["items", "lineItems"]
+    });
+  }
+  const procedurePerformedIds = uuidArrayField(
+    input.procedurePerformedIds ?? input.procedureIds,
+    "procedurePerformedIds"
+  );
+  const treatmentPlanId = optionalUuid(input.treatmentPlanId, "treatmentPlanId");
+
+  if (!treatmentPlanId && procedurePerformedIds.length === 0) {
+    throw validation("Invoice creation requires treatmentPlanId or procedurePerformedIds.", {
+      required_any: ["treatmentPlanId", "procedurePerformedIds"]
+    });
+  }
+
+  return {
+    patientId: optionalUuid(input.patientId, "patientId"),
+    treatmentPlanId,
+    procedurePerformedIds,
+    dueAt: optionalNullableString(input.dueAt, "dueAt")
+  };
+}
+
+function parseCreateReceipt(body: unknown): CreateReceiptInput {
+  const input = body === undefined ? {} : objectBody(body);
+  return {
+    paymentTransactionIds: uuidArrayField(input.paymentTransactionIds, "paymentTransactionIds")
+  };
+}
+
+function parseTreatmentPlanPhases(value: unknown): CreateTreatmentPlanInput["phases"] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw validation("phases must be a non-empty array.", { field: "phases" });
+  }
+
+  return value.map((phaseValue, phaseIndex) => {
+    const phase = objectField(phaseValue, `phases[${phaseIndex}]`);
+    const items = phase.items;
+    if (!Array.isArray(items) || items.length === 0) {
+      throw validation(`phases[${phaseIndex}].items must be a non-empty array.`, {
+        field: `phases[${phaseIndex}].items`
+      });
+    }
+
+    return {
+      title: requiredString(phase.title, `phases[${phaseIndex}].title`),
+      description: optionalNullableString(phase.description, `phases[${phaseIndex}].description`),
+      estimatedStartAfterDays:
+        phase.estimatedStartAfterDays === undefined || phase.estimatedStartAfterDays === null
+          ? null
+          : integerField(phase.estimatedStartAfterDays, `phases[${phaseIndex}].estimatedStartAfterDays`, {
+              min: 0
+            }),
+      items: items.map((itemValue, itemIndex) => {
+        const item = objectField(itemValue, `phases[${phaseIndex}].items[${itemIndex}]`);
+        const quantity = integerField(item.quantity ?? 1, `phases[${phaseIndex}].items[${itemIndex}].quantity`, {
+          min: 1,
+          max: 999
+        });
+        const unitPriceMinor =
+          item.unitPriceMinor === undefined || item.unitPriceMinor === null
+            ? null
+            : integerField(item.unitPriceMinor, `phases[${phaseIndex}].items[${itemIndex}].unitPriceMinor`, {
+                min: 0
+              });
+        const discountMinor = integerField(
+          item.discountMinor ?? 0,
+          `phases[${phaseIndex}].items[${itemIndex}].discountMinor`,
+          { min: 0 }
+        );
+        const taxRateBasisPoints =
+          item.taxRateBasisPoints === undefined || item.taxRateBasisPoints === null
+            ? null
+            : integerField(
+                item.taxRateBasisPoints,
+                `phases[${phaseIndex}].items[${itemIndex}].taxRateBasisPoints`,
+                { min: 0, max: 10000 }
+              );
+
+        if (unitPriceMinor !== null) {
+          try {
+            calculateBillingLineTotals({
+              quantity,
+              unitPriceMinor,
+              discountMinor,
+              taxRateBasisPoints: taxRateBasisPoints ?? 0
+            });
+          } catch (error) {
+            throw validation(error instanceof Error ? error.message : "Invalid estimate item total.", {
+              field: `phases[${phaseIndex}].items[${itemIndex}]`
+            });
+          }
+        }
+
+        return {
+          pricebookProcedureId: uuidField(
+            item.pricebookProcedureId,
+            `phases[${phaseIndex}].items[${itemIndex}].pricebookProcedureId`
+          ),
+          dentalFindingId: optionalUuid(
+            item.dentalFindingId,
+            `phases[${phaseIndex}].items[${itemIndex}].dentalFindingId`
+          ),
+          toothNumber: optionalNullableString(
+            item.toothNumber,
+            `phases[${phaseIndex}].items[${itemIndex}].toothNumber`
+          ),
+          quantity,
+          unitPriceMinor,
+          discountMinor,
+          taxRateBasisPoints,
+          estimatedVisits: integerField(
+            item.estimatedVisits ?? 1,
+            `phases[${phaseIndex}].items[${itemIndex}].estimatedVisits`,
+            { min: 1, max: 99 }
+          ),
+          priority: optionalNullableString(
+            item.priority,
+            `phases[${phaseIndex}].items[${itemIndex}].priority`
+          ),
+          notes: optionalNullableString(
+            item.notes,
+            `phases[${phaseIndex}].items[${itemIndex}].notes`
+          )
+        };
+      })
+    };
+  });
+}
+
 function parseMediaUploadRequest(body: unknown): {
   patientId: UUID;
   encounterId: UUID | null;
@@ -2423,6 +3684,97 @@ function parseSignedMediaAccessRequest(body: unknown): { expiresInSeconds?: numb
       min: 30,
       max: 300
     })
+  };
+}
+
+function parsePaymentRequest(
+  body: unknown,
+  invoice: { id: UUID; balanceMinor: number }
+): {
+  requestType: PaymentProviderRequestKind;
+  amountMinor: number;
+  expiresAt: string | null;
+  description: string | null;
+  customer: { name?: string | null; email?: string | null; contact?: string | null } | null;
+  metadata: Record<string, unknown>;
+} {
+  const input = objectBody(body);
+  const requestType = parsePaymentRequestType(
+    requiredString(input.requestType ?? input.type ?? "payment_link", "requestType")
+  );
+  const amountMinor =
+    input.amountMinor === undefined && input.amountPaise === undefined
+      ? invoice.balanceMinor
+      : integerField(input.amountMinor ?? input.amountPaise, "amountMinor", { min: 1 });
+
+  if (amountMinor > invoice.balanceMinor) {
+    throw conflict("Payment request amount exceeds the invoice amount due.", {
+      invoice_id: invoice.id,
+      balance_minor: invoice.balanceMinor,
+      requested_amount_minor: amountMinor
+    });
+  }
+
+  return {
+    requestType,
+    amountMinor,
+    expiresAt: optionalNullableString(input.expiresAt, "expiresAt") ?? null,
+    description: optionalNullableString(input.description, "description") ?? null,
+    customer: parsePaymentCustomer(input.customer),
+    metadata: recordField(input.metadata, "metadata")
+  };
+}
+
+function parseManualPayment(body: unknown): {
+  amountMinor: number;
+  currency: string;
+  method: ManualPaymentMethod;
+  reason: string;
+  reference: string;
+  receivedAt: string | null;
+  evidence: Record<string, unknown>;
+} {
+  const input = objectBody(body);
+  const method = parseManualPaymentMethod(requiredString(input.method, "method"));
+  const amountMinor = integerField(input.amountMinor ?? input.amountPaise, "amountMinor", { min: 1 });
+  const parsed = {
+    amountPaise: amountMinor,
+    currency: requiredString(input.currency ?? "INR", "currency").toUpperCase(),
+    method,
+    reason: requiredString(input.reason, "reason"),
+    reference: requiredString(input.reference, "reference"),
+    receivedAt: optionalNullableString(input.receivedAt, "receivedAt") ?? null,
+    evidence: recordField(input.evidence, "evidence")
+  };
+
+  try {
+    assertManualPaymentEvidence(parsed);
+  } catch (error) {
+    throw validation(error instanceof Error ? error.message : "Manual payment evidence is invalid.", {
+      field: "manualPayment"
+    });
+  }
+
+  return {
+    amountMinor,
+    currency: parsed.currency,
+    method: parsed.method,
+    reason: parsed.reason,
+    reference: parsed.reference,
+    receivedAt: parsed.receivedAt,
+    evidence: parsed.evidence
+  };
+}
+
+function parsePaymentCustomer(
+  value: unknown
+): { name?: string | null; email?: string | null; contact?: string | null } | null {
+  if (value === undefined || value === null) return null;
+  const input = objectField(value, "customer");
+  return {
+    name: optionalNullableString(input.name, "customer.name"),
+    email: optionalNullableString(input.email, "customer.email"),
+    contact: optionalNullableString(input.contact, "customer.contact")
   };
 }
 
@@ -2540,6 +3892,28 @@ function parseEncounterStatus(value: string): EncounterStatus {
   return value;
 }
 
+function parseDraftTreatmentPlanStatus(value: string): "draft" | "presented" {
+  if (value !== "draft" && value !== "presented") {
+    throw validation("Treatment plan creation only supports draft or presented status.", {
+      field: "status",
+      value
+    });
+  }
+  return value;
+}
+
+function parseMutableTreatmentPlanStatus(
+  value: string
+): "draft" | "presented" | "declined" | "deferred" | "cancelled" {
+  if (!isTreatmentPlanStatus(value) || value === "accepted") {
+    throw validation("Treatment plan status must be draft, presented, declined, deferred, or cancelled.", {
+      field: "status",
+      value
+    });
+  }
+  return value;
+}
+
 function parseQueueStatus(value: string): QueueStatus {
   if (!QUEUE_STATUSES.has(value as QueueStatus)) {
     throw validation("Invalid queue status.", { field: "status", value });
@@ -2636,6 +4010,91 @@ function parseMediaScanStatus(value: string): MediaScanStatus {
   return value;
 }
 
+function parsePaymentRequestType(value: string): PaymentProviderRequestKind {
+  if (value === "payment_link") return "payment_link";
+  if (value === "invoice_qr" || value === "dynamic_qr" || value === "qr" || value === "qr_code")
+    return "invoice_qr";
+  throw validation("Invalid payment request type.", { field: "requestType", value });
+}
+
+function parseManualPaymentMethod(value: string): ManualPaymentMethod {
+  if (!isManualPaymentMethod(value)) {
+    throw validation("Invalid manual payment method.", { field: "method", value });
+  }
+  return value;
+}
+
+function normalizePaymentRequestType(kind: PaymentProviderRequestKind): PaymentRequestType {
+  return kind === "invoice_qr" ? "dynamic_qr" : "payment_link";
+}
+
+function normalizeBillingPaymentProvider(providerKey: string): BillingPaymentProviderKey {
+  if (providerKey === "razorpay") return "razorpay";
+  if (providerKey === "simulator") return "simulator";
+  return "simulator";
+}
+
+function scopeFromPaymentWebhook(event: PaymentProviderWebhookEvent): RepositoryScope | null {
+  if (!event.tenantId || !event.clinicId || !isUuid(event.tenantId) || !isUuid(event.clinicId)) {
+    return null;
+  }
+  return {
+    tenantId: event.tenantId,
+    clinicId: event.clinicId,
+    actorUserId: SYSTEM_INTEGRATION_ACTOR_USER_ID
+  };
+}
+
+function positiveProviderAmountMinor(amountMinor: number | null | undefined): number {
+  return amountMinor && amountMinor > 0 ? amountMinor : 1;
+}
+
+function providerPaymentMetadata(
+  event: PaymentProviderWebhookEvent,
+  metadata: Record<string, unknown>
+): Record<string, unknown> {
+  return {
+    ...metadata,
+    providerEventId: event.providerEventId,
+    providerEventName: event.eventName,
+    providerEventKind: event.eventKind,
+    rawBodySha256: event.rawBodySha256,
+    providerPayload: event.payload
+  };
+}
+
+function providerReconciliationItem(
+  event: PaymentProviderWebhookEvent,
+  reason: PaymentRouteReconciliationItemRecord["reason"],
+  amountMinor: number
+): PaymentRouteReconciliationItemRecord {
+  return {
+    id: randomUUID() as UUID,
+    tenantId: event.tenantId && isUuid(event.tenantId) ? event.tenantId : null,
+    clinicId: event.clinicId && isUuid(event.clinicId) ? event.clinicId : null,
+    patientId: event.patientId && isUuid(event.patientId) ? event.patientId : null,
+    invoiceId: event.invoiceId && isUuid(event.invoiceId) ? event.invoiceId : null,
+    providerKey: event.providerKey,
+    providerPaymentId: event.providerPaymentId ?? null,
+    providerEventId: event.providerEventId,
+    reason,
+    amountPaise: amountMinor,
+    currency: event.currency ?? null,
+    status: "open",
+    createdAt: new Date().toISOString(),
+    metadata: providerPaymentMetadata(event, {})
+  };
+}
+
+function publicProviderWebhookEvent(event: PaymentProviderWebhookEvent) {
+  return {
+    providerKey: event.providerKey,
+    providerEventId: event.providerEventId,
+    eventName: event.eventName,
+    eventKind: event.eventKind
+  };
+}
+
 function mediaStorageFrom(dependencies: OperationsDependencies): MediaStorageProvider {
   if (!dependencies.mediaStorage) {
     throw new ApiError(
@@ -2645,6 +4104,28 @@ function mediaStorageFrom(dependencies: OperationsDependencies): MediaStoragePro
     );
   }
   return dependencies.mediaStorage;
+}
+
+function paymentProviderFrom(dependencies: OperationsDependencies): PaymentProvider {
+  if (!dependencies.paymentProvider) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Payment provider is not configured for this ClinicOS runtime."
+    );
+  }
+  return dependencies.paymentProvider;
+}
+
+function paymentRepositoryFrom(dependencies: OperationsDependencies): PaymentOperationsRepository {
+  if (!dependencies.paymentRepository) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Payment repository adapter is not configured yet. Merge the CP5 Billing Domain storage adapter before enabling durable payment routes."
+    );
+  }
+  return dependencies.paymentRepository;
 }
 
 function assertMediaUploadOpen(input: {
@@ -2787,6 +4268,208 @@ function publicDentalChartSnapshot<T extends { chartState: { numberingSystem: st
   };
 }
 
+function publicPricebookProcedure(procedure: PricebookProcedureRecord) {
+  return {
+    id: procedure.id,
+    code: procedure.code,
+    displayName: procedure.displayName,
+    category: procedure.category,
+    description: procedure.description,
+    defaultUnitPriceMinor: procedure.defaultUnitPriceMinor,
+    currency: procedure.currency,
+    taxRateBasisPoints: procedure.taxRateBasisPoints,
+    status: procedure.status
+  };
+}
+
+function publicTreatmentPlanDetail(detail: TreatmentPlanDetail) {
+  return {
+    ...detail.treatmentPlan,
+    phases: detail.phases.map((phase) => ({
+      ...phase,
+      estimateItems: phase.estimateItems.map((item) => ({ ...item }))
+    }))
+  };
+}
+
+function publicProcedurePerformed<T extends { provenance?: Record<string, unknown> }>(
+  procedure: T
+) {
+  const { provenance: _provenance, ...publicProcedure } = procedure;
+  return publicProcedure;
+}
+
+function publicInvoiceDetail(detail: InvoiceDetail) {
+  return {
+    ...detail.invoice,
+    items: detail.items.map((item) => ({
+      id: item.id,
+      invoiceId: item.invoiceId,
+      patientId: item.patientId,
+      procedurePerformedId: item.procedurePerformedId,
+      treatmentPlanEstimateItemId: item.treatmentPlanEstimateItemId,
+      pricebookProcedureId: item.pricebookProcedureId,
+      description: item.description,
+      quantity: item.quantity,
+      unitPriceMinor: item.unitPriceMinor,
+      discountMinor: item.discountMinor,
+      taxRateBasisPoints: item.taxRateBasisPoints,
+      taxMinor: item.taxMinor,
+      totalMinor: item.totalMinor,
+      createdAt: item.createdAt
+    })),
+    paymentRequests: detail.paymentRequests.map((request) => ({
+      id: request.id,
+      invoiceId: request.invoiceId,
+      patientId: request.patientId,
+      provider: request.provider,
+      requestType: request.requestType,
+      status: request.status,
+      amountMinor: request.amountMinor,
+      currency: request.currency,
+      providerReferenceId: request.providerReferenceId,
+      providerUrl: request.providerUrl,
+      providerQrPayload: request.providerQrPayload,
+      expiresAt: request.expiresAt,
+      createdAt: request.createdAt,
+      updatedAt: request.updatedAt
+    })),
+    payments: detail.payments.map((payment) => ({
+      id: payment.id,
+      invoiceId: payment.invoiceId,
+      patientId: payment.patientId,
+      paymentRequestId: payment.paymentRequestId,
+      provider: payment.provider,
+      providerPaymentId: payment.providerPaymentId,
+      providerOrderId: payment.providerOrderId,
+      amountMinor: payment.amountMinor,
+      currency: payment.currency,
+      method: payment.method,
+      status: payment.status,
+      verificationStatus: payment.verificationStatus,
+      reconciliationStatus: payment.reconciliationStatus,
+      receivedAt: payment.receivedAt,
+      receiptId: payment.receiptId,
+      createdAt: payment.createdAt,
+      updatedAt: payment.updatedAt
+    })),
+    receipts: detail.receipts.map(publicReceipt)
+  };
+}
+
+function publicPaymentRequest(request: PaymentRequestRecord) {
+  return {
+    id: request.id,
+    invoiceId: request.invoiceId,
+    patientId: request.patientId,
+    provider: request.provider,
+    requestType: request.requestType,
+    status: request.status,
+    amountMinor: request.amountMinor,
+    currency: request.currency,
+    providerReferenceId: request.providerReferenceId,
+    providerUrl: request.providerUrl,
+    providerQrPayload: request.providerQrPayload,
+    expiresAt: request.expiresAt,
+    createdAt: request.createdAt,
+    updatedAt: request.updatedAt
+  };
+}
+
+function publicPaymentTransaction(payment: PaymentTransactionRecord) {
+  return {
+    id: payment.id,
+    invoiceId: payment.invoiceId,
+    patientId: payment.patientId,
+    paymentRequestId: payment.paymentRequestId,
+    provider: payment.provider,
+    providerPaymentId: payment.providerPaymentId,
+    providerOrderId: payment.providerOrderId,
+    amountMinor: payment.amountMinor,
+    currency: payment.currency,
+    method: payment.method,
+    status: payment.status,
+    verificationStatus: payment.verificationStatus,
+    reconciliationStatus: payment.reconciliationStatus,
+    receivedAt: payment.receivedAt,
+    receiptId: payment.receiptId,
+    createdAt: payment.createdAt,
+    updatedAt: payment.updatedAt
+  };
+}
+
+function publicPatientInstruction(instruction: PatientInstructionRecord) {
+  return {
+    id: instruction.id,
+    patientId: instruction.patientId,
+    channel: instruction.channel,
+    templateId: instruction.templateId,
+    title: instruction.title,
+    body: instruction.body,
+    status: instruction.status,
+    renderedAt: instruction.renderedAt,
+    printJobId: instruction.printJobId,
+    outboxEventId: instruction.outboxEventId,
+    providerConfirmationReceived: instruction.providerConfirmationReceived,
+    providerDeliveryConfirmedAt: instruction.providerDeliveryConfirmedAt,
+    deliveredAt: instruction.deliveredAt,
+    readAt: instruction.readAt,
+    createdAt: instruction.createdAt
+  };
+}
+
+function publicReceipt<T extends {
+  id: UUID;
+  invoiceId: UUID;
+  patientId: UUID;
+  receiptNumber: string;
+  status: string;
+  amountMinor: number;
+  currency: string;
+  paymentAllocations: readonly unknown[];
+  generatedAt: string;
+}>(receipt: T) {
+  return {
+    id: receipt.id,
+    invoiceId: receipt.invoiceId,
+    patientId: receipt.patientId,
+    receiptNumber: receipt.receiptNumber,
+    status: receipt.status,
+    amountMinor: receipt.amountMinor,
+    currency: receipt.currency,
+    paymentAllocations: receipt.paymentAllocations,
+    generatedAt: receipt.generatedAt
+  };
+}
+
+function treatmentPlanItemCount(detail: TreatmentPlanDetail): number {
+  return detail.phases.reduce((count, phase) => count + phase.estimateItems.length, 0);
+}
+
+function treatmentPlanAuditMetadata(detail: TreatmentPlanDetail) {
+  return {
+    status: detail.treatmentPlan.status,
+    phaseCount: detail.phases.length,
+    itemCount: treatmentPlanItemCount(detail),
+    totalMinor: detail.treatmentPlan.totalMinor,
+    currency: detail.treatmentPlan.currency
+  };
+}
+
+function invoiceAuditMetadata(detail: InvoiceDetail) {
+  return {
+    invoiceNumber: detail.invoice.invoiceNumber,
+    status: detail.invoice.status,
+    paymentStatus: detail.invoice.paymentStatus,
+    totalMinor: detail.invoice.totalMinor,
+    paidMinor: detail.invoice.paidMinor,
+    balanceMinor: detail.invoice.balanceMinor,
+    itemCount: detail.items.length,
+    paymentCount: detail.payments.length,
+    receiptCount: detail.receipts.length
+  };
+}
+
 function dentalFindingAuditMetadata(input: {
   toothNumber: string;
   surface?: string | null;
@@ -2925,6 +4608,13 @@ function stringArrayField(value: unknown, field: string): string[] {
   });
 }
 
+function uuidArrayField(value: unknown, field: string): UUID[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw validation(`${field} must be an array.`, { field });
+
+  return value.map((item, index) => uuidField(item, `${field}[${index}]`));
+}
+
 function optionalSha256Digest(value: unknown, field: string): string | null {
   const digest = optionalNullableString(value, field);
   if (digest === undefined || digest === null) return null;
@@ -2949,6 +4639,10 @@ function created<T>(body: T): ApiSuccess<T> {
   return { status: 201, body };
 }
 
+function accepted<T>(body: T): ApiSuccess<T> {
+  return { status: 202, body };
+}
+
 function notFound(message: string, details: Record<string, unknown>): ApiError {
   return new ApiError(404, "NOT_FOUND", message, details);
 }
@@ -2959,6 +4653,21 @@ function validation(message: string, details: Record<string, unknown> = {}): Api
 
 function conflict(message: string, details: Record<string, unknown> = {}): ApiError {
   return new ApiError(409, "CONFLICT", message, details);
+}
+
+async function billingRepositoryOperation<T>(
+  operation: () => Promise<T>,
+  details: Record<string, unknown>
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw conflict(
+      error instanceof Error ? error.message : "Billing operation violated a domain invariant.",
+      details
+    );
+  }
 }
 
 export function randomRequestId(): string {

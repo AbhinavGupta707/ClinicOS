@@ -1,5 +1,6 @@
 export * from "./appointment.ts";
 export * from "./audit.ts";
+export * from "./billing.ts";
 export * from "./clinical.ts";
 export * from "./dashboard.ts";
 export * from "./dental.ts";
@@ -8,5 +9,6 @@ export * from "./ids.ts";
 export * from "./lead.ts";
 export * from "./media.ts";
 export * from "./patient.ts";
+export * from "./payments.ts";
 export * from "./permissions.ts";
 export * from "./tenancy.ts";

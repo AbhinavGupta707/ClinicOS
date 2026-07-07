@@ -22,6 +22,9 @@ Doctor, assistant, and receptionist users can convert clinical treatment intent 
 
 ## Non-Goals
 
+- A production aggregate checkout read model such as `GET /v1/clinical-workflows/cp5?date=`
+  is deferred as a whole workflow. CP5 ships durable granular route contracts plus the local
+  synthetic browser fixture for the temporary checkout UI.
 - Live deployed Razorpay webhook callback registration is deferred until a deployed HTTPS endpoint exists. CP5 must still implement webhook verification and replay-safe local/provider-simulator tests.
 - Refund execution can be represented but not sent to a live provider unless already supported by the provider interface in this checkpoint.
 - Accounting exports beyond accurate billing/payment state are deferred to later operations/analytics checkpoints.
@@ -103,6 +106,8 @@ Workers should converge on these route families unless a better contract is docu
 - `POST /v1/invoices/:invoiceId/manual-payments`
 - `POST /v1/payment-webhooks/razorpay`
 - `POST /v1/invoices/:invoiceId/receipts`
+- `POST /v1/encounters/:encounterId/prescriptions`
+- `POST /v1/prescriptions/:prescriptionId/sign`
 - `POST /v1/patients/:patientId/instructions`
 
 ## Required Verification
@@ -126,6 +131,42 @@ Workers should converge on these route families unless a better contract is docu
 4. Clinical Output QA
 5. Master integration patch on `codex/integration/checkpoint-5`
 6. Verified promotion to `main`
+
+## Integration Evidence
+
+- Integration branch: `codex/integration/checkpoint-5`.
+- Worker commits integrated:
+  - Billing Domain: `86e8669`.
+  - Payment Provider: `6ed5350`.
+  - Checkout UX: `2dca52f`.
+  - Clinical Output QA: `6d88749`.
+- Master integration resolved the billing/payment data model split by using the billing repository invoice/payment aggregate as canonical. Payment provider routes now create payment requests and record provider/manual transactions through `ClinicOperationsRepository` instead of a separate local payment invoice store.
+- Master integration added the CP5 patient-instruction workflow as production code: domain record/permission/events, migration table with RLS and no-fake-delivery constraint, local/Postgres repository writes, API route `POST /v1/patients/:patientId/instructions`, audit/outbox/timeline evidence, and API tests for assistant print, receptionist WhatsApp request, accountant denial, and no delivered/read state without provider confirmation.
+- Master integration corrected the temporary web checkout live helper contracts. The UI maps to backend `title`, `pricebookProcedureId`, `unitPriceMinor`, `treatmentPlanEstimateItemId`, `amountMinor`, `requestType`, and audited manual-payment evidence. The live aggregate read model is not called; non-fixture mode returns `CP5_READ_MODEL_DEFERRED`.
+
+Checks passed:
+
+- `git diff --check`
+- `npm run typecheck`
+- `npm run lint`
+- `npm run test`
+- `npm run build`
+- `npm run check`
+- `npm run security:secrets`
+- `node scripts/validate-cp5-fixtures.mjs`
+- `node scripts/cp5-contract-smoke.mjs --dry-run`
+- `node --test tests/acceptance/cp5-fixture-contract.test.mjs`
+- `node --test tests/acceptance/*.test.mjs`
+
+Browser/user checks passed:
+
+- Assistant checkout desktop workflow plus 390px mobile no-overflow smoke with `CLINICOS_CP5_E2E_ENABLED=true`.
+- Accountant-safe checkout view with `CLINICOS_CP5_ACCOUNTANT_SMOKE_ENABLED=true`.
+- Evidence screenshots: `/private/tmp/clinicos-cp5-web-checkout-desktop.png` and `/private/tmp/clinicos-cp5-web-checkout-mobile-390.png`.
+
+Security audit note:
+
+- `npm run security:audit` failed in the sandbox on DNS to `registry.npmjs.org`; escalation was policy-rejected because npm audit discloses dependency inventory to an external registry audit service. This remains an accepted verification limitation unless the user explicitly approves that disclosure later.
 
 ## Exit Criteria
 

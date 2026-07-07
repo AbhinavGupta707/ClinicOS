@@ -110,6 +110,15 @@ Follow `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
 - Never expose bucket names, object keys, raw storage paths, or PHI-bearing private media references in patient-facing API payloads. Use mediated signed access and audit media view/write operations.
 - If multi-tooth chart editing is not explicitly in scope, preserve a complete one-finding-per-row workflow and defer bulk chart patching as a whole workflow rather than hiding partial bulk behavior inside a weak endpoint.
 
+## CP5 Integration Lessons
+
+- Before declaring a checkout workflow live, reconcile browser helper request bodies with backend parsers. CP5 needed explicit mapping from web `amountCents`, treatment phase `name`, and selected estimate-item UI state to backend `amountMinor`, phase `title`, and `treatmentPlanEstimateItemId`.
+- Do not advertise aggregate workflow read routes that are not implemented. CP5 keeps `GET /v1/clinical-workflows/cp5` deferred as a whole read-model workflow and returns `CP5_READ_MODEL_DEFERRED` in non-fixture web mode instead of calling a stale route.
+- Instruction print/send request is a real CP5 workflow. It must persist `patient_instruction_requests`, emit audit/outbox/timeline evidence, and keep `providerConfirmationReceived`, `providerDeliveryConfirmedAt`, `deliveredAt`, and `readAt` empty until a real provider confirms delivery.
+- Prefer narrow workflow permissions over broad PHI permissions when a role needs a specific clinical-output action. CP5 receptionists can create instruction request evidence through `patient_instruction.write` without gaining general `patient.phi.read`.
+- Browser negative assertions should avoid accidental word matches. The CP5 "no delivered/read" smoke must match whole words so it does not fail on legitimate states like "print ready."
+- `npm run security:audit` may be blocked by policy because npm audit discloses dependency inventory to the external registry audit service. Record the rejection exactly and keep `npm run security:secrets` plus code/test/build/browser evidence; do not try to bypass the policy.
+
 ## Shared-File Mistakes To Avoid
 
 - Do not let multiple lanes independently own `package-lock.json`.

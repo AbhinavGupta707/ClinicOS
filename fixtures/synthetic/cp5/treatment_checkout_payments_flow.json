@@ -1,0 +1,1383 @@
+{
+  "schemaVersion": "clinic-os.cp5.qa-fixture.v1",
+  "fixtureUse": {
+    "name": "Checkpoint 5 treatment checkout, payment, receipt, prescription, and instruction QA scenario",
+    "localOnly": true,
+    "syntheticOnly": true,
+    "productionUseDenied": true,
+    "allowedEnvironments": ["local", "development", "test", "ci"],
+    "notes": "Deterministic local/test fixture. Do not seed this into production or present it as clinic data."
+  },
+  "sourceReferences": [
+    "docs/orchestration/CHECKPOINT_05_TREATMENT_CHECKOUT_PAYMENTS.md",
+    "clinic_os_specs_v2/18_IMPLEMENTATION_PLAN_CLINIC_OS_DENTAL.md#slice-5-treatment-plan-estimate-and-checkout",
+    "clinic_os_specs_v2/18_IMPLEMENTATION_PLAN_CLINIC_OS_DENTAL.md#slice-6-prescriptions-and-instructions",
+    "clinic_os_specs_v2/20_ORCHESTRATION_CHECKPOINT_PLAN.md#checkpoint-5-treatment-plan-checkout-payments-prescriptions-and-instructions"
+  ],
+  "clock": {
+    "businessDate": "2026-07-07",
+    "fixedNow": "2026-07-07T12:30:00+05:30",
+    "timezone": "Asia/Kolkata"
+  },
+  "tenants": [
+    {
+      "key": "primary",
+      "id": "50000000-0000-4000-8000-000000000001",
+      "slug": "cp5-sunrise-dental",
+      "displayName": "CP5 Sunrise Dental Synthetic Tenant"
+    },
+    {
+      "key": "wrongTenant",
+      "id": "50000000-0000-4000-8000-000000000002",
+      "slug": "cp5-monsoon-dental",
+      "displayName": "CP5 Monsoon Dental Synthetic Tenant"
+    }
+  ],
+  "clinics": [
+    {
+      "key": "primaryClinic",
+      "id": "50000000-0000-4000-8000-000000000101",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "slug": "indiranagar-cp5",
+      "displayName": "CP5 Synthetic Indiranagar Dental",
+      "timezone": "Asia/Kolkata"
+    },
+    {
+      "key": "wrongTenantClinic",
+      "id": "50000000-0000-4000-8000-000000000201",
+      "tenantId": "50000000-0000-4000-8000-000000000002",
+      "slug": "koramangala-cp5",
+      "displayName": "CP5 Synthetic Koramangala Dental",
+      "timezone": "Asia/Kolkata"
+    }
+  ],
+  "actors": [
+    {
+      "key": "owner",
+      "id": "50000000-0000-4000-8000-000000001001",
+      "displayName": "Dr Kavya Owner Synthetic CP5",
+      "email": "cp5.owner@example.test",
+      "roleSlug": "owner_admin",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "doctor",
+      "id": "50000000-0000-4000-8000-000000001002",
+      "displayName": "Dr Neel Doctor Synthetic CP5",
+      "email": "cp5.doctor@example.test",
+      "roleSlug": "doctor",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "assistant",
+      "id": "50000000-0000-4000-8000-000000001003",
+      "displayName": "Mira Assistant Synthetic CP5",
+      "email": "cp5.assistant@example.test",
+      "roleSlug": "assistant",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "receptionist",
+      "id": "50000000-0000-4000-8000-000000001004",
+      "displayName": "Rohan Reception Synthetic CP5",
+      "email": "cp5.receptionist@example.test",
+      "roleSlug": "receptionist",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "accountant",
+      "id": "50000000-0000-4000-8000-000000001005",
+      "displayName": "Isha Accountant Synthetic CP5",
+      "email": "cp5.accountant@example.test",
+      "roleSlug": "accountant",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "wrongTenantAssistant",
+      "id": "50000000-0000-4000-8000-000000001006",
+      "displayName": "Nina Wrong Tenant Assistant Synthetic CP5",
+      "email": "cp5.wrongtenant.assistant@example.test",
+      "roleSlug": "assistant",
+      "tenantId": "50000000-0000-4000-8000-000000000002",
+      "clinicId": "50000000-0000-4000-8000-000000000201"
+    },
+    {
+      "key": "razorpayProvider",
+      "id": "50000000-0000-4000-8000-000000001007",
+      "displayName": "Razorpay Simulator Synthetic CP5",
+      "email": "cp5.razorpay-provider@example.test",
+      "roleSlug": "payment_provider",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101"
+    }
+  ],
+  "patients": [
+    {
+      "key": "checkoutPatient",
+      "id": "50000000-0000-4000-8000-000000002001",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101",
+      "displayName": "Anika Synthetic CP5",
+      "phone": "+919950000001",
+      "email": "cp5.checkout.patient@example.test",
+      "patientClassification": "returning",
+      "timelineSeed": [
+        {
+          "type": "encounter.started",
+          "occurredAt": "2026-07-07T09:30:00+05:30"
+        },
+        {
+          "type": "dental_finding.created",
+          "occurredAt": "2026-07-07T09:42:00+05:30"
+        }
+      ]
+    }
+  ],
+  "appointments": [
+    {
+      "key": "checkoutAppointment",
+      "id": "50000000-0000-4000-8000-000000003001",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101",
+      "patientId": "50000000-0000-4000-8000-000000002001",
+      "providerActorKey": "doctor",
+      "scheduledStart": "2026-07-07T09:15:00+05:30",
+      "scheduledEnd": "2026-07-07T10:15:00+05:30",
+      "statusSequence": ["booked", "confirmed", "checked_in", "encounter_started"]
+    }
+  ],
+  "encounters": [
+    {
+      "key": "checkoutEncounter",
+      "id": "50000000-0000-4000-8000-000000004001",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101",
+      "patientId": "50000000-0000-4000-8000-000000002001",
+      "appointmentId": "50000000-0000-4000-8000-000000003001",
+      "providerActorKey": "doctor",
+      "startedAt": "2026-07-07T09:30:00+05:30",
+      "lifecycle": ["encounter_started", "dental_charting", "treatment_planning", "checkout"]
+    }
+  ],
+  "pricebookProcedures": [
+    {
+      "key": "anteriorRct",
+      "id": "50000000-0000-4000-8000-000000005001",
+      "code": "DENT-RCT-ANTERIOR",
+      "displayName": "Synthetic anterior root canal therapy",
+      "category": "endodontics",
+      "currency": "INR",
+      "amountPaise": 1200000,
+      "taxInclusive": true,
+      "active": true
+    },
+    {
+      "key": "ceramicCrown",
+      "id": "50000000-0000-4000-8000-000000005002",
+      "code": "DENT-CROWN-CERAMIC",
+      "displayName": "Synthetic ceramic crown",
+      "category": "prosthodontics",
+      "currency": "INR",
+      "amountPaise": 950000,
+      "taxInclusive": true,
+      "active": true
+    }
+  ],
+  "treatmentPlans": [
+    {
+      "key": "rootCanalPlan",
+      "id": "50000000-0000-4000-8000-000000006001",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101",
+      "patientId": "50000000-0000-4000-8000-000000002001",
+      "encounterId": "50000000-0000-4000-8000-000000004001",
+      "createdByActorKey": "doctor",
+      "createdAt": "2026-07-07T10:05:00+05:30",
+      "status": "accepted",
+      "acceptedAt": "2026-07-07T10:18:00+05:30",
+      "acceptedByActorKey": "receptionist",
+      "patientAcceptanceEvidence": {
+        "method": "chairside_verbal_acceptance",
+        "capturedByActorKey": "receptionist",
+        "notes": "Synthetic patient accepted phase 1 estimate at checkout."
+      },
+      "totalEstimatePaise": 2150000,
+      "currency": "INR"
+    }
+  ],
+  "treatmentPlanPhases": [
+    {
+      "key": "phaseOnePainRelief",
+      "id": "50000000-0000-4000-8000-000000006101",
+      "treatmentPlanId": "50000000-0000-4000-8000-000000006001",
+      "sequence": 1,
+      "title": "Phase 1 - pain relief and restoration",
+      "status": "accepted",
+      "estimateTotalPaise": 2150000
+    }
+  ],
+  "treatmentPlanItems": [
+    {
+      "key": "rctItem",
+      "id": "50000000-0000-4000-8000-000000006201",
+      "treatmentPlanId": "50000000-0000-4000-8000-000000006001",
+      "phaseId": "50000000-0000-4000-8000-000000006101",
+      "procedureId": "50000000-0000-4000-8000-000000005001",
+      "toothNumber": "11",
+      "quantity": 1,
+      "unitAmountPaise": 1200000,
+      "totalAmountPaise": 1200000,
+      "status": "accepted"
+    },
+    {
+      "key": "crownItem",
+      "id": "50000000-0000-4000-8000-000000006202",
+      "treatmentPlanId": "50000000-0000-4000-8000-000000006001",
+      "phaseId": "50000000-0000-4000-8000-000000006101",
+      "procedureId": "50000000-0000-4000-8000-000000005002",
+      "toothNumber": "11",
+      "quantity": 1,
+      "unitAmountPaise": 950000,
+      "totalAmountPaise": 950000,
+      "status": "accepted"
+    }
+  ],
+  "proceduresPerformed": [
+    {
+      "key": "completedRct",
+      "id": "50000000-0000-4000-8000-000000007001",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101",
+      "patientId": "50000000-0000-4000-8000-000000002001",
+      "encounterId": "50000000-0000-4000-8000-000000004001",
+      "treatmentPlanId": "50000000-0000-4000-8000-000000006001",
+      "treatmentPlanItemId": "50000000-0000-4000-8000-000000006201",
+      "procedureId": "50000000-0000-4000-8000-000000005001",
+      "performedByActorKey": "doctor",
+      "completedAt": "2026-07-07T10:45:00+05:30",
+      "billableAmountPaise": 1200000,
+      "currency": "INR",
+      "status": "completed"
+    }
+  ],
+  "invoices": [
+    {
+      "key": "rctInvoice",
+      "id": "50000000-0000-4000-8000-000000008001",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101",
+      "patientId": "50000000-0000-4000-8000-000000002001",
+      "createdByActorKey": "receptionist",
+      "createdAt": "2026-07-07T11:00:00+05:30",
+      "state": "paid",
+      "currency": "INR",
+      "subtotalPaise": 1200000,
+      "taxPaise": 0,
+      "totalAmountPaise": 1200000,
+      "paidAmountPaise": 1200000,
+      "outstandingAmountPaise": 0,
+      "sourceProcedureIds": ["50000000-0000-4000-8000-000000007001"],
+      "stateHistory": [
+        {
+          "state": "draft",
+          "occurredAt": "2026-07-07T11:00:00+05:30"
+        },
+        {
+          "state": "payment_requested",
+          "occurredAt": "2026-07-07T11:03:00+05:30"
+        },
+        {
+          "state": "partially_paid",
+          "occurredAt": "2026-07-07T11:08:00+05:30"
+        },
+        {
+          "state": "paid",
+          "occurredAt": "2026-07-07T11:16:00+05:30"
+        }
+      ]
+    }
+  ],
+  "invoiceItems": [
+    {
+      "key": "rctInvoiceItem",
+      "id": "50000000-0000-4000-8000-000000008101",
+      "invoiceId": "50000000-0000-4000-8000-000000008001",
+      "procedurePerformedId": "50000000-0000-4000-8000-000000007001",
+      "description": "Synthetic anterior root canal therapy tooth 11",
+      "quantity": 1,
+      "unitAmountPaise": 1200000,
+      "totalAmountPaise": 1200000,
+      "currency": "INR"
+    }
+  ],
+  "paymentRequests": [
+    {
+      "key": "rctRazorpayPaymentLink",
+      "id": "50000000-0000-4000-8000-000000009001",
+      "invoiceId": "50000000-0000-4000-8000-000000008001",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101",
+      "patientId": "50000000-0000-4000-8000-000000002001",
+      "provider": "razorpay",
+      "mode": "payment_link_qr",
+      "amountPaise": 1200000,
+      "currency": "INR",
+      "status": "created",
+      "requestedByActorKey": "receptionist",
+      "requestedAt": "2026-07-07T11:03:00+05:30",
+      "providerReference": "plink_cp5_synthetic_001",
+      "providerVerificationRequired": true,
+      "patientVisibleUrlSynthetic": "https://payments.example.test/cp5/plink_cp5_synthetic_001",
+      "qrRenderedByClinicOs": true
+    }
+  ],
+  "paymentWebhookEvents": [
+    {
+      "key": "badSignatureWebhook",
+      "id": "50000000-0000-4000-8000-000000010001",
+      "provider": "razorpay",
+      "providerEventId": "evt_cp5_synthetic_bad_signature",
+      "paymentRequestId": "50000000-0000-4000-8000-000000009001",
+      "invoiceId": "50000000-0000-4000-8000-000000008001",
+      "receivedAt": "2026-07-07T11:05:00+05:30",
+      "signatureVerified": false,
+      "accepted": false,
+      "rejectedReason": "signature_invalid",
+      "rawPayloadHash": "sha256:cp5badpayloadhash0001",
+      "createdTransactionId": null,
+      "invoiceStateAfterEvent": "payment_requested",
+      "invoicePaidAmountPaiseAfterEvent": 0
+    },
+    {
+      "key": "partialPaymentWebhook",
+      "id": "50000000-0000-4000-8000-000000010002",
+      "provider": "razorpay",
+      "providerEventId": "evt_cp5_synthetic_partial_payment",
+      "paymentRequestId": "50000000-0000-4000-8000-000000009001",
+      "invoiceId": "50000000-0000-4000-8000-000000008001",
+      "receivedAt": "2026-07-07T11:08:00+05:30",
+      "signatureVerified": true,
+      "accepted": true,
+      "rejectedReason": null,
+      "rawPayloadHash": "sha256:cp5partialpayloadhash0001",
+      "createdTransactionId": "50000000-0000-4000-8000-000000011001",
+      "invoiceStateAfterEvent": "partially_paid",
+      "invoicePaidAmountPaiseAfterEvent": 350000,
+      "invoiceOutstandingAmountPaiseAfterEvent": 850000
+    },
+    {
+      "key": "partialPaymentReplayWebhook",
+      "id": "50000000-0000-4000-8000-000000010003",
+      "provider": "razorpay",
+      "providerEventId": "evt_cp5_synthetic_partial_payment",
+      "paymentRequestId": "50000000-0000-4000-8000-000000009001",
+      "invoiceId": "50000000-0000-4000-8000-000000008001",
+      "receivedAt": "2026-07-07T11:10:00+05:30",
+      "signatureVerified": true,
+      "accepted": true,
+      "replayOfWebhookEventId": "50000000-0000-4000-8000-000000010002",
+      "duplicateIgnored": true,
+      "rejectedReason": "duplicate_provider_event",
+      "rawPayloadHash": "sha256:cp5partialpayloadhash0001",
+      "createdTransactionId": null,
+      "invoiceStateAfterEvent": "partially_paid",
+      "invoicePaidAmountPaiseAfterEvent": 350000,
+      "invoiceOutstandingAmountPaiseAfterEvent": 850000
+    }
+  ],
+  "paymentTransactions": [
+    {
+      "key": "razorpayPartialPayment",
+      "id": "50000000-0000-4000-8000-000000011001",
+      "invoiceId": "50000000-0000-4000-8000-000000008001",
+      "paymentRequestId": "50000000-0000-4000-8000-000000009001",
+      "source": "provider_webhook",
+      "provider": "razorpay",
+      "providerPaymentId": "pay_cp5_synthetic_partial_001",
+      "amountPaise": 350000,
+      "currency": "INR",
+      "status": "succeeded",
+      "signatureVerified": true,
+      "providerEventId": "evt_cp5_synthetic_partial_payment",
+      "recordedAt": "2026-07-07T11:08:00+05:30"
+    },
+    {
+      "key": "manualBalancePayment",
+      "id": "50000000-0000-4000-8000-000000011002",
+      "invoiceId": "50000000-0000-4000-8000-000000008001",
+      "paymentRequestId": null,
+      "source": "manual",
+      "provider": "manual",
+      "amountPaise": 850000,
+      "currency": "INR",
+      "status": "succeeded",
+      "method": "upi_manual",
+      "reference": "SYNTH-UPI-CP5-0001",
+      "reason": "Front desk verified the synthetic UPI collection against the clinic-approved manual payment workflow.",
+      "capturedByActorKey": "receptionist",
+      "recordedAt": "2026-07-07T11:16:00+05:30"
+    }
+  ],
+  "receipts": [
+    {
+      "key": "rctReceipt",
+      "id": "50000000-0000-4000-8000-000000012001",
+      "invoiceId": "50000000-0000-4000-8000-000000008001",
+      "patientId": "50000000-0000-4000-8000-000000002001",
+      "generatedByActorKey": "receptionist",
+      "generatedAt": "2026-07-07T11:20:00+05:30",
+      "receiptNumber": "CP5-SYNTH-REC-0001",
+      "totalPaidPaise": 1200000,
+      "currency": "INR",
+      "paymentTransactionIds": [
+        "50000000-0000-4000-8000-000000011001",
+        "50000000-0000-4000-8000-000000011002"
+      ]
+    }
+  ],
+  "prescriptions": [
+    {
+      "key": "postRctPrescription",
+      "id": "50000000-0000-4000-8000-000000013001",
+      "tenantId": "50000000-0000-4000-8000-000000000001",
+      "clinicId": "50000000-0000-4000-8000-000000000101",
+      "encounterId": "50000000-0000-4000-8000-000000004001",
+      "patientId": "50000000-0000-4000-8000-000000002001",
+      "status": "signed",
+      "createdByActorKey": "assistant",
+      "createdAt": "2026-07-07T11:23:00+05:30",
+      "signedByActorKey": "doctor",
+      "signedAt": "2026-07-07T11:25:00+05:30",
+      "signedHash": "sha256:cp5signedprescriptionhash0001",
+      "items": [
+        {
+          "name": "Synthetic ibuprofen",
+          "strength": "400mg",
+          "frequency": "TDS",
+          "duration": "3 days",
+          "instructions": "After food"
+        }
+      ]
+    }
+  ],
+  "instructionTemplates": [
+    {
+      "key": "postRctCare",
+      "id": "50000000-0000-4000-8000-000000014001",
+      "code": "POST_RCT_CARE_CP5",
+      "displayName": "Synthetic post-RCT care instructions",
+      "category": "post_op",
+      "approvedByActorKey": "doctor",
+      "approvedAt": "2026-07-07T10:55:00+05:30",
+      "requiresProviderConfirmationForDeliveredStatus": true
+    }
+  ],
+  "instructionRequests": [
+    {
+      "key": "postRctPrintInstruction",
+      "id": "50000000-0000-4000-8000-000000015001",
+      "patientId": "50000000-0000-4000-8000-000000002001",
+      "templateId": "50000000-0000-4000-8000-000000014001",
+      "prescriptionId": "50000000-0000-4000-8000-000000013001",
+      "receiptId": "50000000-0000-4000-8000-000000012001",
+      "channel": "print",
+      "status": "ready_for_print",
+      "requestedByActorKey": "assistant",
+      "requestedAt": "2026-07-07T11:28:00+05:30",
+      "printJobId": "50000000-0000-4000-8000-000000017001",
+      "renderedAt": "2026-07-07T11:28:30+05:30",
+      "timelineEventType": "instruction.print_requested"
+    },
+    {
+      "key": "postRctWhatsAppInstructionRequest",
+      "id": "50000000-0000-4000-8000-000000015002",
+      "patientId": "50000000-0000-4000-8000-000000002001",
+      "templateId": "50000000-0000-4000-8000-000000014001",
+      "prescriptionId": "50000000-0000-4000-8000-000000013001",
+      "receiptId": "50000000-0000-4000-8000-000000012001",
+      "channel": "whatsapp",
+      "provider": "whatsapp_simulator",
+      "status": "requested",
+      "patientVisibleDeliveryStatus": "requested",
+      "providerConfirmationReceived": false,
+      "requestedByActorKey": "receptionist",
+      "requestedAt": "2026-07-07T11:30:00+05:30",
+      "outboxEventId": "50000000-0000-4000-8000-000000016001",
+      "outboxEventType": "instruction.send_requested",
+      "timelineEventType": "instruction.send_requested",
+      "deliveryClaimed": false
+    }
+  ],
+  "flow": {
+    "name": "treatment plan -> invoice -> payment request -> verified/manual payment -> receipt -> prescription and instructions",
+    "actorSequence": [
+      "receptionist",
+      "doctor",
+      "doctor",
+      "receptionist",
+      "doctor",
+      "receptionist",
+      "receptionist",
+      "receptionist",
+      "razorpayProvider",
+      "razorpayProvider",
+      "razorpayProvider",
+      "receptionist",
+      "receptionist",
+      "assistant",
+      "doctor",
+      "assistant",
+      "receptionist"
+    ],
+    "steps": [
+      {
+        "key": "read-pricebook-procedures",
+        "actorKey": "receptionist",
+        "method": "GET",
+        "path": "/v1/pricebook/procedures",
+        "idempotencyKey": "cp5-read-pricebook-procedures",
+        "expectedStatus": 200,
+        "expectedEvents": [],
+        "expectedAudit": [
+          {
+            "action": "pricebook.procedures.read",
+            "resourceType": "pricebook",
+            "resourceId": "pricebook",
+            "phiFields": []
+          }
+        ],
+        "timelineExpectations": [],
+        "expectedBodyIncludes": ["DENT-RCT-ANTERIOR", "DENT-CROWN-CERAMIC", "amountPaise"]
+      },
+      {
+        "key": "create-treatment-plan-as-doctor",
+        "actorKey": "doctor",
+        "method": "POST",
+        "path": "/v1/patients/50000000-0000-4000-8000-000000002001/treatment-plans",
+        "idempotencyKey": "cp5-create-treatment-plan",
+        "expectedStatus": 201,
+        "requestBody": {
+          "encounterId": "50000000-0000-4000-8000-000000004001",
+          "title": "Synthetic root canal and crown plan",
+          "phases": [
+            {
+              "title": "Phase 1 - pain relief and restoration",
+              "items": [
+                {
+                  "procedureId": "50000000-0000-4000-8000-000000005001",
+                  "toothNumber": "11",
+                  "quantity": 1
+                },
+                {
+                  "procedureId": "50000000-0000-4000-8000-000000005002",
+                  "toothNumber": "11",
+                  "quantity": 1
+                }
+              ]
+            }
+          ]
+        },
+        "expectedEvents": ["treatment_plan.created"],
+        "expectedAudit": [
+          {
+            "action": "treatment_plan.created",
+            "resourceType": "treatment_plan",
+            "resourceId": "50000000-0000-4000-8000-000000006001",
+            "phiFields": ["patientId", "encounterId", "toothNumber", "procedureId"]
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "treatment_plan.created"
+          }
+        ],
+        "expectedBodyIncludes": ["treatmentPlan", "accepted", "totalEstimatePaise"]
+      },
+      {
+        "key": "update-treatment-plan-estimate",
+        "actorKey": "doctor",
+        "method": "PATCH",
+        "path": "/v1/treatment-plans/50000000-0000-4000-8000-000000006001",
+        "idempotencyKey": "cp5-update-treatment-plan-estimate",
+        "expectedStatus": 200,
+        "requestBody": {
+          "status": "ready_for_acceptance",
+          "phaseUpdates": [
+            {
+              "phaseId": "50000000-0000-4000-8000-000000006101",
+              "estimateTotalPaise": 2150000
+            }
+          ]
+        },
+        "expectedEvents": ["treatment_plan.updated"],
+        "expectedAudit": [
+          {
+            "action": "treatment_plan.updated",
+            "resourceType": "treatment_plan",
+            "resourceId": "50000000-0000-4000-8000-000000006001",
+            "phiFields": ["patientId", "estimateTotalPaise"]
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "treatment_plan.updated"
+          }
+        ],
+        "expectedBodyIncludes": ["ready_for_acceptance", "2150000"]
+      },
+      {
+        "key": "accept-treatment-plan",
+        "actorKey": "receptionist",
+        "method": "POST",
+        "path": "/v1/treatment-plans/50000000-0000-4000-8000-000000006001/accept",
+        "idempotencyKey": "cp5-accept-treatment-plan",
+        "expectedStatus": 200,
+        "requestBody": {
+          "acceptedBy": "patient",
+          "acceptanceMethod": "chairside_verbal_acceptance",
+          "capturedByActorId": "50000000-0000-4000-8000-000000001004",
+          "notes": "Synthetic acceptance captured at checkout."
+        },
+        "expectedEvents": ["treatment_plan.accepted"],
+        "expectedAudit": [
+          {
+            "action": "treatment_plan.accepted",
+            "resourceType": "treatment_plan",
+            "resourceId": "50000000-0000-4000-8000-000000006001",
+            "phiFields": ["patientId", "acceptanceMethod"]
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "treatment_plan.accepted"
+          }
+        ],
+        "expectedBodyIncludes": ["accepted", "acceptedAt"]
+      },
+      {
+        "key": "record-completed-procedure",
+        "actorKey": "doctor",
+        "method": "POST",
+        "path": "/v1/encounters/50000000-0000-4000-8000-000000004001/procedures",
+        "idempotencyKey": "cp5-record-completed-procedure",
+        "expectedStatus": 201,
+        "requestBody": {
+          "treatmentPlanItemId": "50000000-0000-4000-8000-000000006201",
+          "procedureId": "50000000-0000-4000-8000-000000005001",
+          "toothNumber": "11",
+          "completedAt": "2026-07-07T10:45:00+05:30"
+        },
+        "expectedEvents": ["procedure.completed"],
+        "expectedAudit": [
+          {
+            "action": "procedure.completed",
+            "resourceType": "procedure_performed",
+            "resourceId": "50000000-0000-4000-8000-000000007001",
+            "phiFields": ["patientId", "encounterId", "procedureId", "toothNumber"]
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "procedure.completed"
+          }
+        ],
+        "expectedBodyIncludes": ["procedure", "completed", "billableAmountPaise"]
+      },
+      {
+        "key": "create-invoice-from-procedure",
+        "actorKey": "receptionist",
+        "method": "POST",
+        "path": "/v1/invoices",
+        "idempotencyKey": "cp5-create-invoice-from-procedure",
+        "expectedStatus": 201,
+        "requestBody": {
+          "patientId": "50000000-0000-4000-8000-000000002001",
+          "sourceProcedureIds": ["50000000-0000-4000-8000-000000007001"],
+          "currency": "INR"
+        },
+        "expectedEvents": ["invoice.created"],
+        "expectedAudit": [
+          {
+            "action": "invoice.created",
+            "resourceType": "invoice",
+            "resourceId": "50000000-0000-4000-8000-000000008001",
+            "phiFields": ["patientId", "procedurePerformedId", "totalAmountPaise"]
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "invoice.created"
+          }
+        ],
+        "expectedBodyIncludes": ["invoice", "1200000", "draft"]
+      },
+      {
+        "key": "read-invoice-before-payment",
+        "actorKey": "receptionist",
+        "method": "GET",
+        "path": "/v1/invoices/50000000-0000-4000-8000-000000008001",
+        "idempotencyKey": "cp5-read-invoice-before-payment",
+        "expectedStatus": 200,
+        "expectedEvents": [],
+        "expectedAudit": [
+          {
+            "action": "invoice.viewed",
+            "resourceType": "invoice",
+            "resourceId": "50000000-0000-4000-8000-000000008001",
+            "phiFields": ["patientId", "invoiceId", "amount"]
+          }
+        ],
+        "timelineExpectations": [],
+        "expectedBodyIncludes": ["invoice", "1200000", "outstandingAmountPaise"]
+      },
+      {
+        "key": "create-payment-request",
+        "actorKey": "receptionist",
+        "method": "POST",
+        "path": "/v1/invoices/50000000-0000-4000-8000-000000008001/payment-requests",
+        "idempotencyKey": "cp5-create-payment-request",
+        "expectedStatus": 201,
+        "requestBody": {
+          "provider": "razorpay",
+          "mode": "payment_link_qr",
+          "amountPaise": 1200000,
+          "currency": "INR"
+        },
+        "expectedEvents": ["payment.requested"],
+        "expectedAudit": [
+          {
+            "action": "payment.requested",
+            "resourceType": "payment_request",
+            "resourceId": "50000000-0000-4000-8000-000000009001",
+            "phiFields": ["patientId", "invoiceId", "amountPaise"]
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "payment.requested"
+          }
+        ],
+        "expectedBodyIncludes": ["paymentRequest", "plink_cp5_synthetic_001", "payment_link_qr"]
+      },
+      {
+        "key": "reject-bad-signature-webhook",
+        "actorKey": "razorpayProvider",
+        "method": "POST",
+        "path": "/v1/payment-webhooks/razorpay",
+        "idempotencyKey": "cp5-reject-bad-signature-webhook",
+        "expectedStatus": [400, 401],
+        "providerWebhook": true,
+        "requestHeaders": {
+          "X-Razorpay-Signature": "bad-synthetic-signature"
+        },
+        "requestBody": {
+          "event": "payment_link.paid",
+          "providerEventId": "evt_cp5_synthetic_bad_signature",
+          "paymentLinkId": "plink_cp5_synthetic_001",
+          "paymentId": "pay_cp5_untrusted",
+          "amountPaise": 1200000,
+          "currency": "INR"
+        },
+        "expectedEvents": ["payment.webhook.rejected"],
+        "expectedAudit": [
+          {
+            "action": "payment.webhook.rejected",
+            "resourceType": "payment_webhook_event",
+            "resourceId": "50000000-0000-4000-8000-000000010001",
+            "phiFields": ["invoiceId", "providerEventId", "amountPaise"]
+          }
+        ],
+        "timelineExpectations": [],
+        "expectedBodyIncludes": ["signature_invalid"],
+        "expectedState": {
+          "invoiceId": "50000000-0000-4000-8000-000000008001",
+          "invoiceState": "payment_requested",
+          "invoicePaidAmountPaise": 0,
+          "createdTransactionCount": 0
+        }
+      },
+      {
+        "key": "apply-partial-provider-webhook",
+        "actorKey": "razorpayProvider",
+        "method": "POST",
+        "path": "/v1/payment-webhooks/razorpay",
+        "idempotencyKey": "cp5-apply-partial-provider-webhook",
+        "expectedStatus": [200, 202],
+        "providerWebhook": true,
+        "requestHeaders": {
+          "X-Razorpay-Signature": "synthetic-valid-signature-for-cp5-partial"
+        },
+        "requestBody": {
+          "event": "payment_link.partially_paid",
+          "providerEventId": "evt_cp5_synthetic_partial_payment",
+          "paymentLinkId": "plink_cp5_synthetic_001",
+          "paymentId": "pay_cp5_synthetic_partial_001",
+          "amountPaise": 350000,
+          "currency": "INR"
+        },
+        "expectedEvents": ["payment.partial_received", "payment.transaction_recorded"],
+        "expectedAudit": [
+          {
+            "action": "payment.webhook.verified",
+            "resourceType": "payment_webhook_event",
+            "resourceId": "50000000-0000-4000-8000-000000010002",
+            "phiFields": ["invoiceId", "providerEventId", "amountPaise"]
+          },
+          {
+            "action": "payment.transaction_recorded",
+            "resourceType": "payment_transaction",
+            "resourceId": "50000000-0000-4000-8000-000000011001",
+            "phiFields": ["invoiceId", "amountPaise", "providerPaymentId"]
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "payment.partial_received"
+          }
+        ],
+        "expectedBodyIncludes": ["partially_paid", "350000", "850000"]
+      },
+      {
+        "key": "replay-partial-provider-webhook",
+        "actorKey": "razorpayProvider",
+        "method": "POST",
+        "path": "/v1/payment-webhooks/razorpay",
+        "idempotencyKey": "cp5-replay-partial-provider-webhook",
+        "expectedStatus": [200, 202],
+        "providerWebhook": true,
+        "requestHeaders": {
+          "X-Razorpay-Signature": "synthetic-valid-signature-for-cp5-partial"
+        },
+        "requestBody": {
+          "event": "payment_link.partially_paid",
+          "providerEventId": "evt_cp5_synthetic_partial_payment",
+          "paymentLinkId": "plink_cp5_synthetic_001",
+          "paymentId": "pay_cp5_synthetic_partial_001",
+          "amountPaise": 350000,
+          "currency": "INR"
+        },
+        "expectedEvents": ["payment.webhook.replayed"],
+        "expectedAudit": [
+          {
+            "action": "payment.webhook.replayed",
+            "resourceType": "payment_webhook_event",
+            "resourceId": "50000000-0000-4000-8000-000000010003",
+            "phiFields": ["invoiceId", "providerEventId"]
+          }
+        ],
+        "timelineExpectations": [],
+        "expectedBodyIncludes": ["duplicate_provider_event", "ignored", "50000000-0000-4000-8000-000000011001"],
+        "expectedState": {
+          "invoiceId": "50000000-0000-4000-8000-000000008001",
+          "invoiceState": "partially_paid",
+          "invoicePaidAmountPaise": 350000,
+          "createdTransactionCount": 1
+        }
+      },
+      {
+        "key": "record-manual-balance-payment",
+        "actorKey": "receptionist",
+        "method": "POST",
+        "path": "/v1/invoices/50000000-0000-4000-8000-000000008001/manual-payments",
+        "idempotencyKey": "cp5-record-manual-balance-payment",
+        "expectedStatus": 201,
+        "requestBody": {
+          "amountPaise": 850000,
+          "currency": "INR",
+          "method": "upi_manual",
+          "reference": "SYNTH-UPI-CP5-0001",
+          "reason": "Front desk verified the synthetic UPI collection against the clinic-approved manual payment workflow."
+        },
+        "expectedEvents": ["payment.manual_recorded", "invoice.paid"],
+        "expectedAudit": [
+          {
+            "action": "payment.manual_recorded",
+            "resourceType": "payment_transaction",
+            "resourceId": "50000000-0000-4000-8000-000000011002",
+            "phiFields": ["patientId", "invoiceId", "amountPaise", "method", "reference", "reason"]
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "payment.manual_recorded"
+          },
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "invoice.paid"
+          }
+        ],
+        "expectedBodyIncludes": ["paid", "1200000", "SYNTH-UPI-CP5-0001"]
+      },
+      {
+        "key": "generate-receipt",
+        "actorKey": "receptionist",
+        "method": "POST",
+        "path": "/v1/invoices/50000000-0000-4000-8000-000000008001/receipts",
+        "idempotencyKey": "cp5-generate-receipt",
+        "expectedStatus": 201,
+        "requestBody": {
+          "format": "clinic_receipt",
+          "includePaymentBreakdown": true
+        },
+        "expectedEvents": ["receipt.generated"],
+        "expectedAudit": [
+          {
+            "action": "receipt.generated",
+            "resourceType": "receipt",
+            "resourceId": "50000000-0000-4000-8000-000000012001",
+            "phiFields": ["patientId", "invoiceId", "receiptNumber", "totalPaidPaise"]
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "receipt.generated"
+          }
+        ],
+        "expectedBodyIncludes": ["receipt", "CP5-SYNTH-REC-0001", "1200000"]
+      },
+      {
+        "key": "create-prescription-draft",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/encounters/50000000-0000-4000-8000-000000004001/prescriptions",
+        "idempotencyKey": "cp5-create-prescription-draft",
+        "expectedStatus": 201,
+        "requestBody": {
+          "medications": [
+            {
+              "name": "Synthetic ibuprofen",
+              "strength": "400mg",
+              "frequency": "TDS",
+              "duration": "3 days",
+              "instructions": "After food"
+            }
+          ],
+          "notes": "Synthetic post-RCT analgesic prescription."
+        },
+        "expectedEvents": ["prescription.draft_created"],
+        "expectedAudit": [
+          {
+            "action": "prescription.draft_created",
+            "resourceType": "prescription",
+            "resourceId": "50000000-0000-4000-8000-000000013001",
+            "phiFields": ["patientId", "encounterId", "medications"]
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "prescription.draft_created"
+          }
+        ],
+        "expectedBodyIncludes": ["prescription", "draft"]
+      },
+      {
+        "key": "sign-prescription-as-doctor",
+        "actorKey": "doctor",
+        "method": "POST",
+        "path": "/v1/prescriptions/50000000-0000-4000-8000-000000013001/sign",
+        "idempotencyKey": "cp5-sign-prescription-as-doctor",
+        "expectedStatus": 200,
+        "requestBody": {},
+        "expectedEvents": ["prescription.signed"],
+        "expectedAudit": [
+          {
+            "action": "prescription.signed",
+            "resourceType": "prescription",
+            "resourceId": "50000000-0000-4000-8000-000000013001",
+            "phiFields": ["patientId", "encounterId", "signedHash"]
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "prescription.signed"
+          }
+        ],
+        "expectedBodyIncludes": ["signed", "signedHash"]
+      },
+      {
+        "key": "request-instruction-print",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/patients/50000000-0000-4000-8000-000000002001/instructions",
+        "idempotencyKey": "cp5-request-instruction-print",
+        "expectedStatus": 201,
+        "requestBody": {
+          "templateId": "50000000-0000-4000-8000-000000014001",
+          "channel": "print",
+          "prescriptionId": "50000000-0000-4000-8000-000000013001",
+          "receiptId": "50000000-0000-4000-8000-000000012001"
+        },
+        "expectedEvents": ["instruction.generated", "instruction.print_requested"],
+        "expectedAudit": [
+          {
+            "action": "instruction.print_requested",
+            "resourceType": "patient_instruction",
+            "resourceId": "50000000-0000-4000-8000-000000015001",
+            "phiFields": ["patientId", "templateId", "prescriptionId", "receiptId"]
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "instruction.print_requested"
+          }
+        ],
+        "expectedBodyIncludes": ["ready_for_print", "printJobId", "renderedAt"]
+      },
+      {
+        "key": "request-instruction-send",
+        "actorKey": "receptionist",
+        "method": "POST",
+        "path": "/v1/patients/50000000-0000-4000-8000-000000002001/instructions",
+        "idempotencyKey": "cp5-request-instruction-send",
+        "expectedStatus": 202,
+        "requestBody": {
+          "templateId": "50000000-0000-4000-8000-000000014001",
+          "channel": "whatsapp",
+          "prescriptionId": "50000000-0000-4000-8000-000000013001",
+          "receiptId": "50000000-0000-4000-8000-000000012001",
+          "provider": "whatsapp_simulator"
+        },
+        "expectedEvents": ["instruction.generated", "instruction.send_requested", "outbox.message_queued"],
+        "expectedAudit": [
+          {
+            "action": "instruction.send_requested",
+            "resourceType": "patient_instruction",
+            "resourceId": "50000000-0000-4000-8000-000000015002",
+            "phiFields": ["patientId", "templateId", "prescriptionId", "receiptId", "channel"]
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "50000000-0000-4000-8000-000000002001",
+            "entryType": "instruction.send_requested"
+          }
+        ],
+        "expectedBodyIncludes": ["requested", "providerConfirmationReceived", "false", "outboxEventId"],
+        "expectedBodyMustNotInclude": ["deliveredAt", "readAt", "providerDeliveryConfirmedAt"]
+      }
+    ]
+  },
+  "roleTenantExpectations": [
+    {
+      "key": "doctor-can-sign-prescription",
+      "actorKey": "doctor",
+      "operation": "POST /v1/prescriptions/{prescriptionId}/sign",
+      "targetTenantId": "50000000-0000-4000-8000-000000000001",
+      "targetClinicId": "50000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["prescription.sign"],
+      "expected": "allow",
+      "method": "POST",
+      "path": "/v1/prescriptions/50000000-0000-4000-8000-000000013001/sign",
+      "expectedStatus": [200],
+      "requestBody": {}
+    },
+    {
+      "key": "assistant-cannot-sign-prescription",
+      "actorKey": "assistant",
+      "operation": "POST /v1/prescriptions/{prescriptionId}/sign",
+      "targetTenantId": "50000000-0000-4000-8000-000000000001",
+      "targetClinicId": "50000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["prescription.sign"],
+      "expected": "deny",
+      "expectedReason": "missing_permission",
+      "method": "POST",
+      "path": "/v1/prescriptions/50000000-0000-4000-8000-000000013001/sign",
+      "expectedStatus": [403],
+      "requestBody": {}
+    },
+    {
+      "key": "receptionist-cannot-sign-prescription",
+      "actorKey": "receptionist",
+      "operation": "POST /v1/prescriptions/{prescriptionId}/sign",
+      "targetTenantId": "50000000-0000-4000-8000-000000000001",
+      "targetClinicId": "50000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["prescription.sign"],
+      "expected": "deny",
+      "expectedReason": "missing_permission",
+      "method": "POST",
+      "path": "/v1/prescriptions/50000000-0000-4000-8000-000000013001/sign",
+      "expectedStatus": [403],
+      "requestBody": {}
+    },
+    {
+      "key": "receptionist-can-record-manual-payment",
+      "actorKey": "receptionist",
+      "operation": "POST /v1/invoices/{invoiceId}/manual-payments",
+      "targetTenantId": "50000000-0000-4000-8000-000000000001",
+      "targetClinicId": "50000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["billing.payment.manual_record"],
+      "expected": "allow",
+      "method": "POST",
+      "path": "/v1/invoices/50000000-0000-4000-8000-000000008001/manual-payments",
+      "expectedStatus": [201],
+      "requestBody": {
+        "amountPaise": 850000,
+        "currency": "INR",
+        "method": "upi_manual",
+        "reference": "SYNTH-UPI-CP5-0001",
+        "reason": "Front desk verified the synthetic UPI collection."
+      }
+    },
+    {
+      "key": "accountant-can-read-invoice-summary",
+      "actorKey": "accountant",
+      "operation": "GET /v1/invoices/{invoiceId}",
+      "targetTenantId": "50000000-0000-4000-8000-000000000001",
+      "targetClinicId": "50000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["billing.invoice.read"],
+      "expected": "allow",
+      "method": "GET",
+      "path": "/v1/invoices/50000000-0000-4000-8000-000000008001",
+      "expectedStatus": [200]
+    },
+    {
+      "key": "accountant-cannot-read-treatment-plan-clinical-detail",
+      "actorKey": "accountant",
+      "operation": "GET /v1/treatment-plans/{treatmentPlanId}",
+      "targetTenantId": "50000000-0000-4000-8000-000000000001",
+      "targetClinicId": "50000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["clinical.treatment_plan.read"],
+      "expected": "deny",
+      "expectedReason": "missing_permission",
+      "method": "GET",
+      "path": "/v1/treatment-plans/50000000-0000-4000-8000-000000006001",
+      "expectedStatus": [403]
+    },
+    {
+      "key": "accountant-cannot-request-instructions",
+      "actorKey": "accountant",
+      "operation": "POST /v1/patients/{patientId}/instructions",
+      "targetTenantId": "50000000-0000-4000-8000-000000000001",
+      "targetClinicId": "50000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["patient_instruction.write"],
+      "expected": "deny",
+      "expectedReason": "missing_permission",
+      "method": "POST",
+      "path": "/v1/patients/50000000-0000-4000-8000-000000002001/instructions",
+      "expectedStatus": [403],
+      "requestBody": {
+        "templateId": "50000000-0000-4000-8000-000000014001",
+        "channel": "whatsapp"
+      }
+    },
+    {
+      "key": "wrong-tenant-assistant-cannot-read-treatment-plan",
+      "actorKey": "wrongTenantAssistant",
+      "operation": "GET /v1/treatment-plans/{treatmentPlanId}",
+      "targetTenantId": "50000000-0000-4000-8000-000000000001",
+      "targetClinicId": "50000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["clinical.treatment_plan.read"],
+      "expected": "deny",
+      "expectedReason": "tenant_mismatch",
+      "method": "GET",
+      "path": "/v1/treatment-plans/50000000-0000-4000-8000-000000006001",
+      "expectedStatus": [403, 404]
+    },
+    {
+      "key": "wrong-tenant-assistant-cannot-read-invoice",
+      "actorKey": "wrongTenantAssistant",
+      "operation": "GET /v1/invoices/{invoiceId}",
+      "targetTenantId": "50000000-0000-4000-8000-000000000001",
+      "targetClinicId": "50000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["billing.invoice.read"],
+      "expected": "deny",
+      "expectedReason": "tenant_mismatch",
+      "method": "GET",
+      "path": "/v1/invoices/50000000-0000-4000-8000-000000008001",
+      "expectedStatus": [403, 404]
+    },
+    {
+      "key": "wrong-tenant-assistant-cannot-create-payment-request",
+      "actorKey": "wrongTenantAssistant",
+      "operation": "POST /v1/invoices/{invoiceId}/payment-requests",
+      "targetTenantId": "50000000-0000-4000-8000-000000000001",
+      "targetClinicId": "50000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["billing.payment_request.create"],
+      "expected": "deny",
+      "expectedReason": "tenant_mismatch",
+      "method": "POST",
+      "path": "/v1/invoices/50000000-0000-4000-8000-000000008001/payment-requests",
+      "expectedStatus": [403, 404],
+      "requestBody": {
+        "provider": "razorpay",
+        "mode": "payment_link_qr",
+        "amountPaise": 1200000,
+        "currency": "INR"
+      }
+    },
+    {
+      "key": "wrong-tenant-assistant-cannot-create-receipt",
+      "actorKey": "wrongTenantAssistant",
+      "operation": "POST /v1/invoices/{invoiceId}/receipts",
+      "targetTenantId": "50000000-0000-4000-8000-000000000001",
+      "targetClinicId": "50000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["billing.receipt.create"],
+      "expected": "deny",
+      "expectedReason": "tenant_mismatch",
+      "method": "POST",
+      "path": "/v1/invoices/50000000-0000-4000-8000-000000008001/receipts",
+      "expectedStatus": [403, 404],
+      "requestBody": {
+        "format": "clinic_receipt"
+      }
+    },
+    {
+      "key": "wrong-tenant-assistant-cannot-request-instruction",
+      "actorKey": "wrongTenantAssistant",
+      "operation": "POST /v1/patients/{patientId}/instructions",
+      "targetTenantId": "50000000-0000-4000-8000-000000000001",
+      "targetClinicId": "50000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["patient_instruction.write"],
+      "expected": "deny",
+      "expectedReason": "tenant_mismatch",
+      "method": "POST",
+      "path": "/v1/patients/50000000-0000-4000-8000-000000002001/instructions",
+      "expectedStatus": [403, 404],
+      "requestBody": {
+        "templateId": "50000000-0000-4000-8000-000000014001",
+        "channel": "whatsapp"
+      }
+    }
+  ],
+  "responseAssertions": {
+    "timeline": {
+      "checkoutPatientMustInclude": [
+        "treatment_plan.created",
+        "treatment_plan.accepted",
+        "procedure.completed",
+        "invoice.created",
+        "payment.requested",
+        "payment.partial_received",
+        "payment.manual_recorded",
+        "invoice.paid",
+        "receipt.generated",
+        "prescription.draft_created",
+        "prescription.signed",
+        "instruction.print_requested",
+        "instruction.send_requested"
+      ],
+      "sensitiveViewsAndMutationsRequireAudit": true
+    },
+    "paymentIntegrity": {
+      "unverifiedWebhookCannotMarkPaid": {
+        "flowStepKey": "reject-bad-signature-webhook",
+        "webhookEventId": "50000000-0000-4000-8000-000000010001",
+        "expectedReason": "signature_invalid",
+        "invoiceStateAfterAttempt": "payment_requested",
+        "invoicePaidAmountPaiseAfterAttempt": 0,
+        "acceptedTransactionCountAfterAttempt": 0
+      },
+      "partialPaymentKeepsInvoiceAccurate": {
+        "flowStepKey": "apply-partial-provider-webhook",
+        "transactionId": "50000000-0000-4000-8000-000000011001",
+        "invoiceState": "partially_paid",
+        "paidAmountPaise": 350000,
+        "outstandingAmountPaise": 850000
+      },
+      "webhookReplayDoesNotDuplicatePayment": {
+        "flowStepKey": "replay-partial-provider-webhook",
+        "replayWebhookEventId": "50000000-0000-4000-8000-000000010003",
+        "duplicateOfWebhookEventId": "50000000-0000-4000-8000-000000010002",
+        "expectedReason": "duplicate_provider_event",
+        "transactionCountAfterReplay": 1,
+        "invoicePaidAmountPaiseAfterReplay": 350000
+      },
+      "manualPaymentRequiresAuditEvidence": {
+        "flowStepKey": "record-manual-balance-payment",
+        "transactionId": "50000000-0000-4000-8000-000000011002",
+        "amountPaise": 850000,
+        "methodRequired": true,
+        "referenceRequired": true,
+        "reasonRequired": true,
+        "actorRequired": true,
+        "auditAction": "payment.manual_recorded"
+      },
+      "finalInvoiceState": {
+        "invoiceId": "50000000-0000-4000-8000-000000008001",
+        "state": "paid",
+        "totalAmountPaise": 1200000,
+        "paidAmountPaise": 1200000,
+        "outstandingAmountPaise": 0
+      }
+    },
+    "prescriptionSigning": {
+      "assistantDeniedExpectationKey": "assistant-cannot-sign-prescription",
+      "receptionistDeniedExpectationKey": "receptionist-cannot-sign-prescription",
+      "doctorAllowedExpectationKey": "doctor-can-sign-prescription",
+      "signedPrescriptionId": "50000000-0000-4000-8000-000000013001",
+      "signedHashRequired": true
+    },
+    "instructionDelivery": {
+      "printRequestKey": "postRctPrintInstruction",
+      "sendRequestKey": "postRctWhatsAppInstructionRequest",
+      "requestedProvider": "whatsapp_simulator",
+      "providerConfirmationReceived": false,
+      "patientVisibleDeliveryStatus": "requested",
+      "mustNotClaimStatuses": ["sent", "delivered", "read"],
+      "outboxEventTypes": ["instruction.send_requested"],
+      "printEvidenceFields": ["printJobId", "renderedAt", "requestedByActorKey"],
+      "fakeWhatsAppDeliveryAllowed": false
+    },
+    "clinicalOutputVisibility": {
+      "accountantBillingAllowedExpectationKey": "accountant-can-read-invoice-summary",
+      "accountantClinicalPlanDeniedExpectationKey": "accountant-cannot-read-treatment-plan-clinical-detail",
+      "accountantInstructionDeniedExpectationKey": "accountant-cannot-request-instructions"
+    }
+  },
+  "e2eSelectorContract": {
+    "route": "/surface/checkout?scenario=cp5-treatment-checkout",
+    "requiredTestIds": [
+      "cp5-checkout-workspace",
+      "cp5-fixture-alert",
+      "cp5-patient-context",
+      "cp5-pricebook-list",
+      "cp5-treatment-plan-builder",
+      "cp5-plan-phase-card",
+      "cp5-add-estimate-item",
+      "cp5-estimate-preview",
+      "cp5-accept-plan",
+      "cp5-procedure-picker",
+      "cp5-record-procedure",
+      "cp5-create-invoice",
+      "cp5-invoice-summary",
+      "cp5-create-payment-request",
+      "cp5-payment-request-evidence",
+      "cp5-payment-status",
+      "cp5-bad-webhook-guard",
+      "cp5-partial-payment-badge",
+      "cp5-replay-guard",
+      "cp5-manual-payment-form",
+      "cp5-record-manual-payment",
+      "cp5-generate-receipt",
+      "cp5-receipt-panel",
+      "cp5-prescription-builder",
+      "cp5-prescription-sign-denied",
+      "cp5-sign-prescription",
+      "cp5-instruction-picker",
+      "cp5-request-instruction-print",
+      "cp5-request-instruction-send",
+      "cp5-outbox-evidence",
+      "cp5-provider-delivery-status",
+      "cp5-patient-timeline",
+      "cp5-accountant-billing-summary",
+      "cp5-clinical-output-access-denied"
+    ]
+  }
+}

@@ -14,7 +14,13 @@ import type {
   ConsentEnforcementState,
   ConsentPurpose,
   ConsentRecord,
+  AcceptTreatmentPlanInput,
+  CreateInvoiceInput,
+  CreatePaymentRequestInput,
+  CreateProcedurePerformedInput,
+  CreateReceiptInput,
   CreateDentalFindingInput,
+  CreateTreatmentPlanInput,
   DomainEventType,
   DentalChartSnapshotRecord,
   DentalChartView,
@@ -30,21 +36,31 @@ import type {
   MediaScanStatus,
   MediaStorageProviderKey,
   MediaType,
+  InvoiceDetail,
+  PaymentRequestRecord,
+  PaymentTransactionRecord,
   MediaUploadReservationRecord,
   PatientRecord,
+  PatientInstructionRecord,
   PatientSource,
   PatientTimelineItem,
+  PricebookProcedureRecord,
   PrescriptionMedication,
   PrescriptionRecord,
+  ProcedurePerformedRecord,
   ProviderScheduleRecord,
   QueueEntryRecord,
   QueueStatus,
+  ReceiptRecord,
+  RecordPaymentTransactionInput,
   RoleAssignment,
   TaskRecord,
   TaskStatus,
   TaskType,
   Tenant,
   TenantMembership,
+  TreatmentPlanDetail,
+  UpdateTreatmentPlanInput,
   UUID
 } from "@clinic-os/domain";
 import type { LeadIntent, LeadRecord, LeadSource, LeadStatus } from "@clinic-os/domain";
@@ -240,6 +256,14 @@ export interface CreatePrescriptionInput {
   notes?: string | null;
 }
 
+export interface CreatePatientInstructionInput {
+  channel: PatientInstructionRecord["channel"];
+  templateId: string;
+  title?: string | null;
+  body?: string | null;
+  outboxEventId?: UUID | null;
+}
+
 export interface CreateMediaUploadReservationInput {
   id: UUID;
   patientId: UUID;
@@ -293,6 +317,33 @@ export interface UpdateDentalFindingRepositoryInput {
 export interface DentalFindingMutationResult {
   finding: DentalFindingRecord;
   history: DentalFindingHistoryRecord;
+}
+
+export interface CreateTreatmentPlanResult {
+  detail: TreatmentPlanDetail;
+}
+
+export interface UpdateTreatmentPlanResult {
+  detail: TreatmentPlanDetail;
+}
+
+export interface AcceptTreatmentPlanResult {
+  detail: TreatmentPlanDetail;
+}
+
+export interface CreateProcedurePerformedResult {
+  procedure: ProcedurePerformedRecord;
+  treatmentPlan: TreatmentPlanDetail;
+}
+
+export interface CreateInvoiceResult {
+  invoiceDetail: InvoiceDetail;
+  procedures: ProcedurePerformedRecord[];
+}
+
+export interface CreateReceiptResult {
+  invoiceDetail: InvoiceDetail;
+  receipt: ReceiptRecord;
 }
 
 export interface SignClinicalNoteResult {
@@ -360,6 +411,12 @@ export interface ClinicOperationsRepository {
   appendOutboxEvent(scope: RepositoryScope, event: OutboxEventInput): Promise<void>;
   loadDashboardData(scope: RepositoryScope, date: string): Promise<DashboardDataSet>;
 
+  listPricebookProcedures(scope: RepositoryScope): Promise<PricebookProcedureRecord[]>;
+  findPricebookProcedureById(
+    scope: RepositoryScope,
+    procedureId: UUID
+  ): Promise<PricebookProcedureRecord | null>;
+
   listIntakeFormTemplates(scope: RepositoryScope): Promise<IntakeFormTemplateRecord[]>;
   findIntakeFormTemplateById(
     scope: RepositoryScope,
@@ -420,6 +477,11 @@ export interface ClinicOperationsRepository {
     prescriptionId: UUID
   ): Promise<PrescriptionRecord | null>;
   signPrescription(scope: RepositoryScope, prescriptionId: UUID): Promise<PrescriptionRecord | null>;
+  createPatientInstruction(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreatePatientInstructionInput
+  ): Promise<PatientInstructionRecord | null>;
 
   createMediaUploadReservation(
     scope: RepositoryScope,
@@ -457,4 +519,48 @@ export interface ClinicOperationsRepository {
     patientId: UUID,
     input: CreateDentalChartSnapshotInput
   ): Promise<DentalChartSnapshotRecord | null>;
+
+  createTreatmentPlan(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreateTreatmentPlanInput
+  ): Promise<CreateTreatmentPlanResult | null>;
+  findTreatmentPlanById(
+    scope: RepositoryScope,
+    treatmentPlanId: UUID
+  ): Promise<TreatmentPlanDetail | null>;
+  updateTreatmentPlan(
+    scope: RepositoryScope,
+    treatmentPlanId: UUID,
+    input: UpdateTreatmentPlanInput
+  ): Promise<UpdateTreatmentPlanResult | null>;
+  acceptTreatmentPlan(
+    scope: RepositoryScope,
+    treatmentPlanId: UUID,
+    input: AcceptTreatmentPlanInput
+  ): Promise<AcceptTreatmentPlanResult | null>;
+  createProcedurePerformed(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    input: CreateProcedurePerformedInput
+  ): Promise<CreateProcedurePerformedResult | null>;
+  listCompletedProceduresForInvoice(
+    scope: RepositoryScope,
+    input: CreateInvoiceInput
+  ): Promise<ProcedurePerformedRecord[]>;
+  createInvoice(scope: RepositoryScope, input: CreateInvoiceInput): Promise<CreateInvoiceResult | null>;
+  findInvoiceById(scope: RepositoryScope, invoiceId: UUID): Promise<InvoiceDetail | null>;
+  createPaymentRequest(
+    scope: RepositoryScope,
+    input: CreatePaymentRequestInput
+  ): Promise<PaymentRequestRecord | null>;
+  recordPaymentTransaction(
+    scope: RepositoryScope,
+    input: RecordPaymentTransactionInput
+  ): Promise<PaymentTransactionRecord | null>;
+  createReceipt(
+    scope: RepositoryScope,
+    invoiceId: UUID,
+    input: CreateReceiptInput
+  ): Promise<CreateReceiptResult | null>;
 }

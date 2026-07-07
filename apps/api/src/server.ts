@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import { safeParseClinicOsEnv, type ClinicOsConfig } from "@clinic-os/config";
+import { createPaymentProvider, type PaymentProvider } from "@clinic-os/integrations";
 import {
   AuthenticationError,
   AuthorizationError,
@@ -31,6 +32,7 @@ import {
 import { getMe } from "./me.ts";
 import {
   checkInAppointment,
+  acceptTreatmentPlan,
   amendEncounterClinicalNote,
   confirmAppointment,
   convertLeadToAppointment,
@@ -38,20 +40,28 @@ import {
   createEncounter,
   createDentalChartSnapshot,
   createEncounterDentalFinding,
+  createEncounterProcedurePerformed,
   createEncounterPrescription,
+  createInvoice,
+  createInvoiceReceipt,
   createIntakeFormTemplate,
   createLead,
   completeMediaUpload,
   createSignedMediaAccess,
+  createInvoicePaymentRequest,
   createPatientDentalFinding,
+  createPatientInstruction,
   createPatient,
   createPatientConsent,
+  createPatientTreatmentPlan,
   getMorningDashboard,
   getEncounter,
+  getInvoice,
   getPatientDentalChart,
   getPatient,
   getPatientPrepSummary,
   getPatientTimeline,
+  listPricebookProcedures,
   listDentalFindingHistory,
   listAppointmentTypes,
   listAppointments,
@@ -67,7 +77,9 @@ import {
   matchLeadToPatient,
   revokePatientConsent,
   receiveMediaUploadContent,
+  recordInvoiceManualPayment,
   requestMediaUploadUrl,
+  processPaymentWebhook,
   saveEncounterClinicalNoteDraft,
   signEncounterClinicalNote,
   signPrescription,
@@ -76,8 +88,10 @@ import {
   updateDentalFinding,
   updateAppointment,
   updateLeadStatus,
+  updateTreatmentPlan,
   updatePatient,
   updateQueueEntry,
+  type PaymentOperationsRepository,
   type OperationsRequestContext
 } from "./operations.ts";
 import { LocalMediaStorageSimulator, type MediaStorageProvider } from "./media-storage.ts";
@@ -98,6 +112,7 @@ export interface ClinicOsApiServerOptions {
   operationsRepository?: ClinicOperationsRepository;
   auditSink?: AuditSink;
   mediaStorage?: MediaStorageProvider;
+  paymentProvider?: PaymentProvider;
   tokenVerifier?: TokenVerifier;
   useLocalAuthFixture?: boolean;
   fixtureSubject?: string;
@@ -172,6 +187,37 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
             },
             identityRepository: options.identityRepository,
             auditSink: options.auditSink
+          }
+        );
+
+        return sendJson(response, result.status, result.body);
+      }
+
+      if (request.method === "POST" && request.url === "/v1/payment-webhooks/razorpay") {
+        if (!options.operationsRepository) {
+          throw new ApiError(
+            503,
+            "CONFIGURATION_ERROR",
+            "ClinicOS operations repository is not configured."
+          );
+        }
+
+        const rawBody = (await readRawBody(request, 1024 * 1024)).toString("utf8");
+        const result = await processPaymentWebhook(
+          {
+            repository: options.operationsRepository,
+            auditSink: options.auditSink,
+            paymentProvider: options.paymentProvider ?? createRuntimePaymentProvider(options.config),
+            paymentRepository: paymentRepositoryFromOperationsRepository(options.operationsRepository)
+          },
+          {
+            requestId,
+            providerKey: "razorpay",
+            rawBody,
+            receivedAt: new Date().toISOString(),
+            headers: requestHeadersRecord(request),
+            ipAddress: request.socket.remoteAddress ?? null,
+            userAgent: headerValue(request, "user-agent") ?? null
           }
         );
 
@@ -253,6 +299,7 @@ export function createRuntimeApiServer(env: NodeJS.ProcessEnv = process.env): Ru
     operationsRepository: repositorySet.operationsRepository,
     auditSink: repositorySet.auditSink,
     mediaStorage: createRuntimeMediaStorage(parsed.data, env),
+    paymentProvider: createRuntimePaymentProvider(parsed.data),
     useLocalAuthFixture
   };
 
@@ -277,6 +324,7 @@ async function routeOperationsRequest(input: {
   repository: ClinicOperationsRepository;
   auditSink?: AuditSink;
   mediaStorage?: MediaStorageProvider;
+  paymentProvider?: PaymentProvider;
   useLocalAuthFixture: boolean;
   fixtureSubject?: string | undefined;
 }) {
@@ -294,7 +342,9 @@ async function routeOperationsRequest(input: {
   const dependencies = {
     repository: input.repository,
     auditSink: input.auditSink,
-    mediaStorage: input.mediaStorage
+    mediaStorage: input.mediaStorage,
+    paymentProvider: input.paymentProvider,
+    paymentRepository: paymentRepositoryFromOperationsRepository(input.repository)
   };
   const isMediaContentUpload =
     input.request.method === "PUT" && /^\/v1\/media\/uploads\/[^/]+\/content$/.test(pathname);
@@ -497,6 +547,65 @@ async function routeOperationsRequest(input: {
     );
   }
 
+  if (input.request.method === "GET" && pathname === "/v1/pricebook/procedures") {
+    return listPricebookProcedures(operationsContext, dependencies);
+  }
+
+  const patientTreatmentPlansMatch = pathname.match(
+    /^\/v1\/patients\/([^/]+)\/treatment-plans$/
+  );
+  if (patientTreatmentPlansMatch && input.request.method === "POST") {
+    return createPatientTreatmentPlan(
+      operationsContext,
+      dependencies,
+      pathUuid(patientTreatmentPlansMatch[1], "patientId"),
+      body
+    );
+  }
+
+  const treatmentPlanMatch = pathname.match(/^\/v1\/treatment-plans\/([^/]+)$/);
+  if (treatmentPlanMatch && input.request.method === "PATCH") {
+    return updateTreatmentPlan(
+      operationsContext,
+      dependencies,
+      pathUuid(treatmentPlanMatch[1], "treatmentPlanId"),
+      body
+    );
+  }
+
+  const treatmentPlanAcceptMatch = pathname.match(/^\/v1\/treatment-plans\/([^/]+)\/accept$/);
+  if (treatmentPlanAcceptMatch && input.request.method === "POST") {
+    return acceptTreatmentPlan(
+      operationsContext,
+      dependencies,
+      pathUuid(treatmentPlanAcceptMatch[1], "treatmentPlanId"),
+      body
+    );
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/invoices") {
+    return createInvoice(operationsContext, dependencies, body);
+  }
+
+  const invoiceMatch = pathname.match(/^\/v1\/invoices\/([^/]+)$/);
+  if (invoiceMatch && input.request.method === "GET") {
+    return getInvoice(
+      operationsContext,
+      dependencies,
+      pathUuid(invoiceMatch[1], "invoiceId")
+    );
+  }
+
+  const invoiceReceiptMatch = pathname.match(/^\/v1\/invoices\/([^/]+)\/receipts$/);
+  if (invoiceReceiptMatch && input.request.method === "POST") {
+    return createInvoiceReceipt(
+      operationsContext,
+      dependencies,
+      pathUuid(invoiceReceiptMatch[1], "invoiceId"),
+      body
+    );
+  }
+
   if (input.request.method === "POST" && pathname === "/v1/media/upload-urls") {
     return requestMediaUploadUrl(operationsContext, dependencies, body);
   }
@@ -667,6 +776,16 @@ async function routeOperationsRequest(input: {
     );
   }
 
+  const encounterProcedureMatch = pathname.match(/^\/v1\/encounters\/([^/]+)\/procedures$/);
+  if (encounterProcedureMatch && input.request.method === "POST") {
+    return createEncounterProcedurePerformed(
+      operationsContext,
+      dependencies,
+      pathUuid(encounterProcedureMatch[1], "encounterId"),
+      body
+    );
+  }
+
   const dentalFindingHistoryMatch = pathname.match(/^\/v1\/dental-findings\/([^/]+)\/history$/);
   if (dentalFindingHistoryMatch && input.request.method === "GET") {
     return listDentalFindingHistory(
@@ -692,6 +811,36 @@ async function routeOperationsRequest(input: {
       operationsContext,
       dependencies,
       pathUuid(prescriptionSignMatch[1], "prescriptionId")
+    );
+  }
+
+  const patientInstructionMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/instructions$/);
+  if (patientInstructionMatch && input.request.method === "POST") {
+    return createPatientInstruction(
+      operationsContext,
+      dependencies,
+      pathUuid(patientInstructionMatch[1], "patientId"),
+      body
+    );
+  }
+
+  const invoicePaymentRequestMatch = pathname.match(/^\/v1\/invoices\/([^/]+)\/payment-requests$/);
+  if (invoicePaymentRequestMatch && input.request.method === "POST") {
+    return createInvoicePaymentRequest(
+      operationsContext,
+      dependencies,
+      pathUuid(invoicePaymentRequestMatch[1], "invoiceId"),
+      body
+    );
+  }
+
+  const invoiceManualPaymentMatch = pathname.match(/^\/v1\/invoices\/([^/]+)\/manual-payments$/);
+  if (invoiceManualPaymentMatch && input.request.method === "POST") {
+    return recordInvoiceManualPayment(
+      operationsContext,
+      dependencies,
+      pathUuid(invoiceManualPaymentMatch[1], "invoiceId"),
+      body
     );
   }
 
@@ -807,6 +956,36 @@ function createRuntimeMediaStorage(
   });
 }
 
+function createRuntimePaymentProvider(config: ClinicOsConfig): PaymentProvider {
+  return createPaymentProvider({
+    provider: config.providers.payment.provider,
+    qrMode: config.providers.payment.qrMode,
+    razorpayKeyId: config.providers.payment.razorpayKeyId,
+    razorpayKeySecret: config.providers.payment.razorpayKeySecret,
+    razorpayWebhookSecret: config.providers.payment.razorpayWebhookSecret,
+    razorpayWebhookUrl: config.providers.payment.razorpayWebhookUrl
+  });
+}
+
+function paymentRepositoryFromOperationsRepository(
+  repository: ClinicOperationsRepository
+): PaymentOperationsRepository | undefined {
+  const candidate = repository as Partial<PaymentOperationsRepository>;
+  const requiredMethods = [
+    "findPaymentInvoiceById",
+    "createPaymentRequestFromProvider",
+    "recordManualPayment",
+    "recordPaymentWebhookReceipt",
+    "markPaymentWebhookReceiptRejected",
+    "applyPaymentProviderWebhook"
+  ] as const;
+
+  if (requiredMethods.every((method) => typeof candidate[method] === "function")) {
+    return candidate as PaymentOperationsRepository;
+  }
+  return undefined;
+}
+
 function resolveClaims(input: {
   request: IncomingMessage;
   tokenVerifier: TokenVerifier;
@@ -894,7 +1073,10 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   }
 }
 
-async function readRawBody(request: IncomingMessage): Promise<Buffer> {
+async function readRawBody(
+  request: IncomingMessage,
+  maxBytes = 100 * 1024 * 1024
+): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let totalBytes = 0;
 
@@ -902,8 +1084,8 @@ async function readRawBody(request: IncomingMessage): Promise<Buffer> {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     totalBytes += buffer.byteLength;
 
-    if (totalBytes > 100 * 1024 * 1024) {
-      throw new ApiError(400, "VALIDATION_ERROR", "Uploaded media exceeds the 100MB limit.");
+    if (totalBytes > maxBytes) {
+      throw new ApiError(400, "VALIDATION_ERROR", "Request body exceeds the configured byte limit.");
     }
 
     chunks.push(buffer);
@@ -918,6 +1100,15 @@ function pathUuid(value: string, label: string): UUID {
   }
 
   return value;
+}
+
+function requestHeadersRecord(request: IncomingMessage): Record<string, string | undefined> {
+  return Object.fromEntries(
+    Object.entries(request.headers).map(([key, value]) => [
+      key,
+      Array.isArray(value) ? value[0] : value
+    ])
+  );
 }
 
 function todayIsoDate(): string {

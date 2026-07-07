@@ -13,12 +13,18 @@ import {
   type CreateDentalChartSnapshotInput,
   type CreateEncounterInput,
   type CreateDentalFindingInput,
+  type CreateInvoiceInput,
   type CreateIntakeFormSubmissionInput,
   type CreateIntakeFormTemplateInput,
   type CreateLeadInput,
   type CreateMediaUploadReservationInput,
   type CreatePatientInput,
+  type CreatePatientInstructionInput,
+  type CreatePaymentRequestInput,
   type CreatePrescriptionInput,
+  type CreateProcedurePerformedInput,
+  type CreateReceiptInput,
+  type CreateTreatmentPlanInput,
   type CreateTaskInput,
   type CompleteMediaUploadInput,
   type DashboardDataSet,
@@ -29,22 +35,32 @@ import {
   type OutboxEventInput,
   type PatientSearchFilter,
   type RepositoryScope,
+  type RecordPaymentTransactionInput,
   type RevokeConsentInput,
   type SaveClinicalNoteDraftInput,
   type SignClinicalNoteResult,
   type UpdateDentalFindingRepositoryInput,
+  type UpdateTreatmentPlanInput,
   type UpdatePatientInput
 } from "@clinic-os/db";
 import {
+  assertInvoiceReceiptable,
+  assertMinorCurrencyAmount,
+  assertPositiveMinorCurrencyAmount,
   assertDentalFindingUpdateReason,
   assertClinicalNoteCanBeAmended,
   assertClinicalNoteCanBeSigned,
   assertEncounterTransition,
   assertPrescriptionCanBeSigned,
+  assertTreatmentPlanAcceptable,
+  assertTreatmentPlanMutable,
   assertValidDentalFinding,
   buildDentalChartSnapshotState,
+  calculateBillingLineTotals,
+  calculateInvoicePaymentStatus,
   buildConsentEnforcementState,
   detectAppointmentConflicts,
+  isSettledPaymentTransaction,
   normalizeClinicalNoteContent,
   normalizeDentalSurface,
   normalizeDentalToothNumber,
@@ -63,19 +79,33 @@ import {
   type DentalFindingHistoryRecord,
   type DentalFindingRecord,
   type EncounterRecord,
+  type InvoiceDetail,
+  type InvoiceItemRecord,
+  type InvoiceRecord,
   type IntakeFormSubmissionRecord,
   type IntakeFormTemplateRecord,
   type LeadRecord,
   mediaAssetStatusForScan,
   type MediaAssetRecord,
   type MediaUploadReservationRecord,
+  type PaymentRequestRecord,
+  type PaymentTransactionRecord,
   type PatientRecord,
+  type PatientInstructionRecord,
   type PatientTimelineItem,
+  type PricebookProcedureRecord,
   type PrescriptionRecord,
+  type ProcedurePerformedRecord,
   type ProviderScheduleRecord,
   type QueueEntryRecord,
   type QueueStatus,
+  type ReceiptPaymentAllocation,
+  type ReceiptRecord,
   type TaskRecord,
+  type TreatmentPlanDetail,
+  type TreatmentPlanEstimateItemRecord,
+  type TreatmentPlanPhaseRecord,
+  type TreatmentPlanRecord,
   type UUID
 } from "@clinic-os/domain";
 import type { AuditEventRecord } from "@clinic-os/security";
@@ -248,6 +278,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly encounters: EncounterRecord[] = [];
   readonly clinicalNoteVersions: ClinicalNoteVersionRecord[] = [];
   readonly prescriptions: PrescriptionRecord[] = [];
+  readonly patientInstructions: PatientInstructionRecord[] = [];
   readonly mediaUploadReservations: MediaUploadReservationRecord[] = [];
   readonly mediaAssets: MediaAssetRecord[] = [];
   readonly dentalCharts: DentalChartRecord[] = [
@@ -266,6 +297,77 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly dentalFindings: DentalFindingRecord[] = [];
   readonly dentalFindingHistory: DentalFindingHistoryRecord[] = [];
   readonly dentalChartSnapshots: DentalChartSnapshotRecord[] = [];
+  readonly pricebookProcedures: PricebookProcedureRecord[] = [
+    {
+      id: uuid(),
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      code: "CONSULT",
+      displayName: "Dental consultation",
+      category: "consultation",
+      description: "Chairside examination and treatment discussion",
+      defaultUnitPriceMinor: 50000,
+      currency: "INR",
+      taxRateBasisPoints: 0,
+      status: "active",
+      createdAt: "2026-07-07T08:00:00.000Z",
+      updatedAt: "2026-07-07T08:00:00.000Z"
+    },
+    {
+      id: uuid(),
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      code: "SCALING",
+      displayName: "Scaling and polishing",
+      category: "periodontics",
+      description: "Full-mouth scaling and polishing",
+      defaultUnitPriceMinor: 150000,
+      currency: "INR",
+      taxRateBasisPoints: 0,
+      status: "active",
+      createdAt: "2026-07-07T08:00:00.000Z",
+      updatedAt: "2026-07-07T08:00:00.000Z"
+    },
+    {
+      id: uuid(),
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      code: "RESTORE-COMP",
+      displayName: "Composite restoration",
+      category: "restorative",
+      description: "Tooth-coloured direct restoration",
+      defaultUnitPriceMinor: 250000,
+      currency: "INR",
+      taxRateBasisPoints: 0,
+      status: "active",
+      createdAt: "2026-07-07T08:00:00.000Z",
+      updatedAt: "2026-07-07T08:00:00.000Z"
+    },
+    {
+      id: uuid(),
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      code: "RCT",
+      displayName: "Root canal treatment",
+      category: "endodontics",
+      description: "Root canal therapy excluding crown",
+      defaultUnitPriceMinor: 650000,
+      currency: "INR",
+      taxRateBasisPoints: 0,
+      status: "active",
+      createdAt: "2026-07-07T08:00:00.000Z",
+      updatedAt: "2026-07-07T08:00:00.000Z"
+    }
+  ];
+  readonly treatmentPlans: TreatmentPlanRecord[] = [];
+  readonly treatmentPlanPhases: TreatmentPlanPhaseRecord[] = [];
+  readonly treatmentPlanEstimateItems: TreatmentPlanEstimateItemRecord[] = [];
+  readonly proceduresPerformed: ProcedurePerformedRecord[] = [];
+  readonly invoices: InvoiceRecord[] = [];
+  readonly invoiceItems: InvoiceItemRecord[] = [];
+  readonly paymentRequests: PaymentRequestRecord[] = [];
+  readonly paymentTransactions: PaymentTransactionRecord[] = [];
+  readonly receipts: ReceiptRecord[] = [];
 
   async listPatients(
     scope: RepositoryScope,
@@ -723,6 +825,30 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     };
   }
 
+  async listPricebookProcedures(scope: RepositoryScope): Promise<PricebookProcedureRecord[]> {
+    return this.pricebookProcedures
+      .filter((procedure) => matchesScope(procedure, scope) && procedure.status === "active")
+      .sort(
+        (left, right) =>
+          left.category.localeCompare(right.category) ||
+          left.displayName.localeCompare(right.displayName)
+      );
+  }
+
+  async findPricebookProcedureById(
+    scope: RepositoryScope,
+    procedureId: UUID
+  ): Promise<PricebookProcedureRecord | null> {
+    return (
+      this.pricebookProcedures.find(
+        (procedure) =>
+          matchesScope(procedure, scope) &&
+          procedure.id === procedureId &&
+          procedure.status === "active"
+      ) ?? null
+    );
+  }
+
   async listIntakeFormTemplates(scope: RepositoryScope): Promise<IntakeFormTemplateRecord[]> {
     return this.intakeFormTemplates
       .filter((template) => matchesScope(template, scope) && template.active)
@@ -1152,6 +1278,58 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return prescription;
   }
 
+  async createPatientInstruction(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreatePatientInstructionInput
+  ): Promise<PatientInstructionRecord | null> {
+    const patient = await this.findPatientById(scope, patientId);
+    if (!patient) return null;
+
+    const now = new Date().toISOString();
+    const instruction: PatientInstructionRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId,
+      channel: input.channel,
+      templateId: input.templateId.trim(),
+      title: input.title?.trim() || "Post-care instructions",
+      body:
+        input.body?.trim() ||
+        "Follow the clinic-approved post-care instructions. Contact the clinic if symptoms worsen.",
+      status: input.channel === "print" ? "ready_for_print" : "send_requested",
+      renderedAt: now,
+      printJobId: input.channel === "print" ? `print_${uuid()}` : null,
+      outboxEventId: input.channel === "whatsapp" ? (input.outboxEventId ?? uuid()) : null,
+      providerConfirmationReceived: false,
+      providerDeliveryConfirmedAt: null,
+      deliveredAt: null,
+      readAt: null,
+      createdByUserId: scope.actorUserId,
+      createdAt: now
+    };
+    this.patientInstructions.push(instruction);
+    this.timelineItems.push(
+      timeline(
+        scope,
+        patientId,
+        input.channel === "print" ? "instruction_print_requested" : "instruction_send_requested",
+        "patient_instruction_requests",
+        instruction.id,
+        input.channel === "print" ? "Instruction print requested" : "Instruction send requested",
+        {
+          instructionId: instruction.id,
+          templateId: instruction.templateId,
+          channel: instruction.channel,
+          outboxEventId: instruction.outboxEventId,
+          providerConfirmationReceived: false
+        }
+      )
+    );
+    return instruction;
+  }
+
   async createMediaUploadReservation(
     scope: RepositoryScope,
     input: CreateMediaUploadReservationInput
@@ -1498,6 +1676,740 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return snapshot;
   }
 
+  async createTreatmentPlan(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreateTreatmentPlanInput
+  ) {
+    const patient = await this.findPatientById(scope, patientId);
+    if (!patient) return null;
+    if (input.encounterId) {
+      const encounter = await this.findEncounterById(scope, input.encounterId);
+      if (!encounter || encounter.patientId !== patientId) return null;
+    }
+
+    const now = new Date().toISOString();
+    const treatmentPlan: TreatmentPlanRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId,
+      encounterId: input.encounterId ?? null,
+      title: input.title.trim(),
+      status: input.status ?? "draft",
+      currency: "INR",
+      subtotalMinor: 0,
+      discountMinor: 0,
+      taxMinor: 0,
+      totalMinor: 0,
+      clinicalSummary: input.clinicalSummary?.trim() || null,
+      presentedAt: input.status === "presented" ? now : null,
+      acceptedAt: null,
+      acceptedByUserId: null,
+      acceptedByName: null,
+      acceptanceEvidence: {},
+      createdByUserId: scope.actorUserId,
+      updatedByUserId: null,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.treatmentPlans.push(treatmentPlan);
+    this.replaceTreatmentPlanPhases(scope, treatmentPlan, input.phases);
+    this.recalculateTreatmentPlanTotals(treatmentPlan);
+    this.timelineItems.push(
+      timeline(
+        scope,
+        patientId,
+        "treatment_plan_created",
+        "treatment_plans",
+        treatmentPlan.id,
+        "Treatment plan created",
+        { treatmentPlanId: treatmentPlan.id, status: treatmentPlan.status }
+      )
+    );
+
+    return { detail: this.treatmentPlanDetail(scope, treatmentPlan.id) };
+  }
+
+  async findTreatmentPlanById(
+    scope: RepositoryScope,
+    treatmentPlanId: UUID
+  ): Promise<TreatmentPlanDetail | null> {
+    const plan = this.treatmentPlans.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === treatmentPlanId
+    );
+    return plan ? this.treatmentPlanDetail(scope, treatmentPlanId) : null;
+  }
+
+  async updateTreatmentPlan(
+    scope: RepositoryScope,
+    treatmentPlanId: UUID,
+    input: UpdateTreatmentPlanInput
+  ) {
+    const plan = this.treatmentPlans.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === treatmentPlanId
+    );
+    if (!plan) return null;
+
+    assertTreatmentPlanMutable(plan);
+
+    if (input.title !== undefined) plan.title = input.title.trim();
+    if (input.clinicalSummary !== undefined) {
+      plan.clinicalSummary = input.clinicalSummary?.trim() || null;
+    }
+    if (input.status !== undefined) {
+      if (input.status === "accepted") {
+        throw new Error("Use acceptTreatmentPlan to record patient acceptance evidence.");
+      }
+      plan.status = input.status;
+      if (input.status === "presented") {
+        plan.presentedAt = plan.presentedAt ?? new Date().toISOString();
+      }
+    }
+    if (input.phases) {
+      this.treatmentPlanPhases.splice(
+        0,
+        this.treatmentPlanPhases.length,
+        ...this.treatmentPlanPhases.filter(
+          (phase) => !matchesScope(phase, scope) || phase.treatmentPlanId !== treatmentPlanId
+        )
+      );
+      this.treatmentPlanEstimateItems.splice(
+        0,
+        this.treatmentPlanEstimateItems.length,
+        ...this.treatmentPlanEstimateItems.filter(
+          (item) => !matchesScope(item, scope) || item.treatmentPlanId !== treatmentPlanId
+        )
+      );
+      this.replaceTreatmentPlanPhases(scope, plan, input.phases);
+      this.recalculateTreatmentPlanTotals(plan);
+    }
+    plan.updatedByUserId = scope.actorUserId;
+    plan.updatedAt = new Date().toISOString();
+
+    return { detail: this.treatmentPlanDetail(scope, treatmentPlanId) };
+  }
+
+  async acceptTreatmentPlan(
+    scope: RepositoryScope,
+    treatmentPlanId: UUID,
+    input: AcceptTreatmentPlanInput
+  ) {
+    const plan = this.treatmentPlans.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === treatmentPlanId
+    );
+    if (!plan) return null;
+    const items = this.treatmentPlanEstimateItems.filter(
+      (item) => matchesScope(item, scope) && item.treatmentPlanId === treatmentPlanId
+    );
+
+    assertTreatmentPlanAcceptable(plan, items.length);
+    const now = new Date().toISOString();
+    plan.status = "accepted";
+    plan.presentedAt = plan.presentedAt ?? now;
+    plan.acceptedAt = now;
+    plan.acceptedByUserId = scope.actorUserId;
+    plan.acceptedByName = input.acceptedByName?.trim() || null;
+    plan.acceptanceEvidence = input.acceptanceEvidence ?? {};
+    plan.updatedByUserId = scope.actorUserId;
+    plan.updatedAt = now;
+    for (const item of items) {
+      item.status = "accepted";
+      item.updatedAt = now;
+    }
+    this.timelineItems.push(
+      timeline(
+        scope,
+        plan.patientId,
+        "treatment_plan_accepted",
+        "treatment_plans",
+        plan.id,
+        "Treatment plan accepted",
+        { treatmentPlanId: plan.id, totalMinor: plan.totalMinor, currency: plan.currency }
+      )
+    );
+
+    return { detail: this.treatmentPlanDetail(scope, treatmentPlanId) };
+  }
+
+  async createProcedurePerformed(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    input: CreateProcedurePerformedInput
+  ) {
+    const encounter = await this.findEncounterById(scope, encounterId);
+    if (!encounter) return null;
+    const detail = await this.findTreatmentPlanById(scope, input.treatmentPlanId);
+    if (!detail || detail.treatmentPlan.patientId !== encounter.patientId) return null;
+    if (detail.treatmentPlan.status !== "accepted") {
+      throw new Error("Procedures can only be completed from an accepted treatment plan.");
+    }
+    const estimateItem = detail.phases
+      .flatMap((phase) => phase.estimateItems)
+      .find((item) => item.id === input.treatmentPlanEstimateItemId);
+    if (!estimateItem || estimateItem.status !== "accepted") return null;
+    const duplicate = this.proceduresPerformed.find(
+      (procedure) =>
+        matchesScope(procedure, scope) &&
+        procedure.treatmentPlanEstimateItemId === estimateItem.id &&
+        procedure.status === "completed"
+    );
+    if (duplicate) {
+      throw new Error("This accepted treatment plan item is already completed.");
+    }
+
+    const now = new Date().toISOString();
+    const procedure: ProcedurePerformedRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: encounter.patientId,
+      encounterId,
+      treatmentPlanId: detail.treatmentPlan.id,
+      treatmentPlanEstimateItemId: estimateItem.id,
+      pricebookProcedureId: estimateItem.pricebookProcedureId,
+      dentalFindingId: estimateItem.dentalFindingId,
+      invoiceId: null,
+      toothNumber: estimateItem.toothNumber,
+      quantity: estimateItem.quantity,
+      unitPriceMinor: estimateItem.unitPriceMinor,
+      discountMinor: estimateItem.discountMinor,
+      taxRateBasisPoints: estimateItem.taxRateBasisPoints,
+      taxMinor: estimateItem.taxMinor,
+      totalMinor: estimateItem.totalMinor,
+      status: "completed",
+      performedByUserId: scope.actorUserId,
+      performedAt: input.performedAt ?? now,
+      notes: input.notes?.trim() || null,
+      outcome: input.outcome?.trim() || null,
+      provenance: input.provenance ?? {},
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.proceduresPerformed.push(procedure);
+    estimateItem.status = "completed";
+    estimateItem.updatedAt = now;
+    this.timelineItems.push(
+      timeline(
+        scope,
+        procedure.patientId,
+        "procedure_completed",
+        "procedure_performed_records",
+        procedure.id,
+        "Procedure completed",
+        {
+          procedurePerformedId: procedure.id,
+          treatmentPlanId: procedure.treatmentPlanId,
+          estimateItemId: procedure.treatmentPlanEstimateItemId
+        }
+      )
+    );
+
+    return {
+      procedure,
+      treatmentPlan: this.treatmentPlanDetail(scope, detail.treatmentPlan.id)
+    };
+  }
+
+  async listCompletedProceduresForInvoice(
+    scope: RepositoryScope,
+    input: CreateInvoiceInput
+  ): Promise<ProcedurePerformedRecord[]> {
+    const requestedIds = new Set(input.procedurePerformedIds ?? []);
+    return this.proceduresPerformed
+      .filter((procedure) => matchesScope(procedure, scope))
+      .filter((procedure) => procedure.status === "completed" && !procedure.invoiceId)
+      .filter((procedure) => !input.patientId || procedure.patientId === input.patientId)
+      .filter((procedure) => !input.treatmentPlanId || procedure.treatmentPlanId === input.treatmentPlanId)
+      .filter((procedure) => requestedIds.size === 0 || requestedIds.has(procedure.id))
+      .sort((left, right) => left.performedAt.localeCompare(right.performedAt));
+  }
+
+  async createInvoice(scope: RepositoryScope, input: CreateInvoiceInput) {
+    const procedures = await this.listCompletedProceduresForInvoice(scope, input);
+    if (procedures.length === 0) return null;
+    const patientIds = new Set(procedures.map((procedure) => procedure.patientId));
+    if (patientIds.size !== 1) {
+      throw new Error("Invoice procedures must belong to exactly one patient.");
+    }
+    const treatmentPlanIds = new Set(procedures.map((procedure) => procedure.treatmentPlanId));
+    if (input.treatmentPlanId && treatmentPlanIds.size !== 1) {
+      throw new Error("Invoice procedures must belong to the requested treatment plan.");
+    }
+
+    const totals = procedures.reduce(
+      (total, procedure) => ({
+        subtotalMinor: total.subtotalMinor + procedure.unitPriceMinor * procedure.quantity,
+        discountMinor: total.discountMinor + procedure.discountMinor,
+        taxMinor: total.taxMinor + procedure.taxMinor,
+        totalMinor: total.totalMinor + procedure.totalMinor
+      }),
+      { subtotalMinor: 0, discountMinor: 0, taxMinor: 0, totalMinor: 0 }
+    );
+    const now = new Date().toISOString();
+    const invoice: InvoiceRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: procedures[0].patientId,
+      invoiceNumber: this.nextInvoiceNumber(scope),
+      status: "issued",
+      paymentStatus: "unpaid",
+      currency: "INR",
+      subtotalMinor: totals.subtotalMinor,
+      discountMinor: totals.discountMinor,
+      taxMinor: totals.taxMinor,
+      totalMinor: totals.totalMinor,
+      paidMinor: 0,
+      refundedMinor: 0,
+      balanceMinor: totals.totalMinor,
+      treatmentPlanId: input.treatmentPlanId ?? (treatmentPlanIds.size === 1 ? procedures[0].treatmentPlanId : null),
+      issuedAt: now,
+      dueAt: input.dueAt ?? null,
+      createdByUserId: scope.actorUserId,
+      updatedByUserId: null,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.invoices.push(invoice);
+    for (const procedure of procedures) {
+      procedure.invoiceId = invoice.id;
+      procedure.updatedAt = now;
+      const pricebookProcedure = this.pricebookProcedures.find(
+        (candidate) => candidate.id === procedure.pricebookProcedureId
+      );
+      this.invoiceItems.push({
+        id: uuid(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        invoiceId: invoice.id,
+        patientId: invoice.patientId,
+        procedurePerformedId: procedure.id,
+        treatmentPlanEstimateItemId: procedure.treatmentPlanEstimateItemId,
+        pricebookProcedureId: procedure.pricebookProcedureId,
+        description: pricebookProcedure?.displayName ?? "Completed dental procedure",
+        quantity: procedure.quantity,
+        unitPriceMinor: procedure.unitPriceMinor,
+        discountMinor: procedure.discountMinor,
+        taxRateBasisPoints: procedure.taxRateBasisPoints,
+        taxMinor: procedure.taxMinor,
+        totalMinor: procedure.totalMinor,
+        createdAt: now
+      });
+    }
+    this.timelineItems.push(
+      timeline(scope, invoice.patientId, "invoice_created", "invoices", invoice.id, "Invoice created", {
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber,
+        totalMinor: invoice.totalMinor,
+        currency: invoice.currency
+      })
+    );
+
+    return {
+      invoiceDetail: this.invoiceDetail(scope, invoice.id),
+      procedures
+    };
+  }
+
+  async findInvoiceById(scope: RepositoryScope, invoiceId: UUID): Promise<InvoiceDetail | null> {
+    const invoice = this.invoices.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === invoiceId
+    );
+    return invoice ? this.invoiceDetail(scope, invoiceId) : null;
+  }
+
+  async createPaymentRequest(
+    scope: RepositoryScope,
+    input: CreatePaymentRequestInput
+  ): Promise<PaymentRequestRecord | null> {
+    const invoice = this.invoices.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === input.invoiceId
+    );
+    if (!invoice || invoice.status !== "issued") return null;
+    assertPositiveMinorCurrencyAmount(input.amountMinor, "amountMinor");
+    if (input.amountMinor > invoice.balanceMinor) {
+      throw new Error("Payment request amount cannot exceed invoice balance.");
+    }
+
+    const now = new Date().toISOString();
+    const request: PaymentRequestRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      invoiceId: invoice.id,
+      patientId: invoice.patientId,
+      provider: input.provider,
+      requestType: input.requestType,
+      status: input.providerReferenceId ? "provider_created" : "requested",
+      amountMinor: input.amountMinor,
+      currency: input.currency ?? "INR",
+      providerReferenceId: input.providerReferenceId ?? null,
+      providerUrl: input.providerUrl ?? null,
+      providerQrPayload: input.providerQrPayload ?? null,
+      expiresAt: input.expiresAt ?? null,
+      metadata: input.metadata ?? {},
+      createdByUserId: scope.actorUserId,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.paymentRequests.push(request);
+    invoice.paymentStatus = calculateInvoicePaymentStatus({
+      totalMinor: invoice.totalMinor,
+      paidMinor: invoice.paidMinor,
+      refundedMinor: invoice.refundedMinor,
+      hasPaymentRequest: true,
+      invoiceStatus: invoice.status
+    });
+    invoice.updatedByUserId = scope.actorUserId;
+    invoice.updatedAt = now;
+    return request;
+  }
+
+  async recordPaymentTransaction(
+    scope: RepositoryScope,
+    input: RecordPaymentTransactionInput
+  ): Promise<PaymentTransactionRecord | null> {
+    const invoice = this.invoices.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === input.invoiceId
+    );
+    if (!invoice) return null;
+    if (input.paymentRequestId) {
+      const request = this.paymentRequests.find(
+        (candidate) =>
+          matchesScope(candidate, scope) &&
+          candidate.id === input.paymentRequestId &&
+          candidate.invoiceId === invoice.id
+      );
+      if (!request) return null;
+    }
+    if (input.idempotencyKey) {
+      const existing = this.paymentTransactions.find(
+        (payment) =>
+          matchesScope(payment, scope) &&
+          payment.provider === input.provider &&
+          payment.idempotencyKey === input.idempotencyKey
+      );
+      if (existing) return existing;
+    }
+    assertPositiveMinorCurrencyAmount(input.amountMinor, "amountMinor");
+    if (input.currency && input.currency !== invoice.currency) {
+      throw new Error("Payment currency must match invoice currency.");
+    }
+    if (input.status === "succeeded" && input.verificationStatus !== "verified") {
+      throw new Error("Provider payment success requires verified provider evidence.");
+    }
+    if (
+      input.status === "manually_recorded" &&
+      input.verificationStatus !== "not_required_manual"
+    ) {
+      throw new Error("Manual payment requires not_required_manual verification status.");
+    }
+
+    const now = new Date().toISOString();
+    const payment: PaymentTransactionRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      invoiceId: invoice.id,
+      patientId: invoice.patientId,
+      paymentRequestId: input.paymentRequestId ?? null,
+      provider: input.provider,
+      providerPaymentId: input.providerPaymentId ?? null,
+      providerOrderId: input.providerOrderId ?? null,
+      amountMinor: input.amountMinor,
+      currency: input.currency ?? invoice.currency,
+      method: input.method.trim(),
+      status: input.status,
+      verificationStatus: input.verificationStatus,
+      reconciliationStatus: input.reconciliationStatus ?? "matched",
+      idempotencyKey: input.idempotencyKey ?? null,
+      receivedAt: input.receivedAt ?? now,
+      recordedByUserId: input.recordedByUserId === undefined ? scope.actorUserId : input.recordedByUserId,
+      receiptId: null,
+      metadata: input.metadata ?? {},
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.paymentTransactions.push(payment);
+    this.recalculateInvoicePaymentState(scope, invoice);
+    if (isSettledPaymentTransaction(payment)) {
+      this.timelineItems.push(
+        timeline(scope, invoice.patientId, "payment_recorded", "payment_transactions", payment.id, "Payment recorded", {
+          invoiceId: invoice.id,
+          paymentTransactionId: payment.id,
+          amountMinor: payment.amountMinor,
+          provider: payment.provider,
+          method: payment.method
+        })
+      );
+    }
+    return payment;
+  }
+
+  async createReceipt(
+    scope: RepositoryScope,
+    invoiceId: UUID,
+    input: CreateReceiptInput
+  ) {
+    const invoice = this.invoices.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === invoiceId
+    );
+    if (!invoice) return null;
+    const requestedIds = new Set(input.paymentTransactionIds ?? []);
+    const payments = this.paymentTransactions.filter(
+      (payment) =>
+        matchesScope(payment, scope) &&
+        payment.invoiceId === invoiceId &&
+        (requestedIds.size === 0 || requestedIds.has(payment.id))
+    );
+
+    assertInvoiceReceiptable({ invoice, payments });
+    const receiptablePayments = payments.filter(
+      (payment) => isSettledPaymentTransaction(payment) && !payment.receiptId
+    );
+    const allocations: ReceiptPaymentAllocation[] = receiptablePayments.map((payment) => ({
+      paymentTransactionId: payment.id,
+      amountMinor: payment.amountMinor
+    }));
+    const amountMinor = allocations.reduce((sum, allocation) => sum + allocation.amountMinor, 0);
+    assertPositiveMinorCurrencyAmount(amountMinor, "receiptAmountMinor");
+
+    const now = new Date().toISOString();
+    const receipt: ReceiptRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      invoiceId,
+      patientId: invoice.patientId,
+      receiptNumber: this.nextReceiptNumber(scope),
+      status: "generated",
+      amountMinor,
+      currency: invoice.currency,
+      paymentAllocations: allocations,
+      generatedByUserId: scope.actorUserId,
+      generatedAt: now,
+      voidedByUserId: null,
+      voidedAt: null,
+      voidReason: null
+    };
+
+    this.receipts.push(receipt);
+    for (const payment of receiptablePayments) {
+      payment.receiptId = receipt.id;
+      payment.updatedAt = now;
+    }
+    this.timelineItems.push(
+      timeline(scope, invoice.patientId, "receipt_generated", "receipts", receipt.id, "Receipt generated", {
+        invoiceId,
+        receiptId: receipt.id,
+        receiptNumber: receipt.receiptNumber,
+        amountMinor
+      })
+    );
+
+    return {
+      invoiceDetail: this.invoiceDetail(scope, invoiceId),
+      receipt
+    };
+  }
+
+  replaceTreatmentPlanPhases(
+    scope: RepositoryScope,
+    plan: TreatmentPlanRecord,
+    phases: CreateTreatmentPlanInput["phases"]
+  ): void {
+    if (phases.length === 0) {
+      throw new Error("Treatment plan requires at least one phase.");
+    }
+
+    phases.forEach((phaseInput, phaseIndex) => {
+      if (phaseInput.items.length === 0) {
+        throw new Error("Treatment plan phases require at least one estimate item.");
+      }
+
+      const now = new Date().toISOString();
+      const phase: TreatmentPlanPhaseRecord = {
+        id: uuid(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        treatmentPlanId: plan.id,
+        phaseIndex: phaseIndex + 1,
+        title: phaseInput.title.trim(),
+        description: phaseInput.description?.trim() || null,
+        estimatedStartAfterDays: phaseInput.estimatedStartAfterDays ?? null,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.treatmentPlanPhases.push(phase);
+
+      for (const itemInput of phaseInput.items) {
+        const pricebookProcedure = this.pricebookProcedures.find(
+          (procedure) =>
+            matchesScope(procedure, scope) &&
+            procedure.id === itemInput.pricebookProcedureId &&
+            procedure.status === "active"
+        );
+        if (!pricebookProcedure) {
+          throw new Error("Pricebook procedure is not active or not available.");
+        }
+
+        if (itemInput.dentalFindingId) {
+          const finding = this.dentalFindings.find(
+            (candidate) =>
+              matchesScope(candidate, scope) &&
+              candidate.id === itemInput.dentalFindingId &&
+              candidate.patientId === plan.patientId
+          );
+          if (!finding) {
+            throw new Error("Dental finding does not belong to the treatment plan patient.");
+          }
+        }
+
+        const quantity = itemInput.quantity ?? 1;
+        const unitPriceMinor = itemInput.unitPriceMinor ?? pricebookProcedure.defaultUnitPriceMinor;
+        const taxRateBasisPoints =
+          itemInput.taxRateBasisPoints ?? pricebookProcedure.taxRateBasisPoints;
+        const totals = calculateBillingLineTotals({
+          quantity,
+          unitPriceMinor,
+          discountMinor: itemInput.discountMinor ?? 0,
+          taxRateBasisPoints
+        });
+        const item: TreatmentPlanEstimateItemRecord = {
+          id: uuid(),
+          tenantId: scope.tenantId,
+          clinicId: scope.clinicId,
+          treatmentPlanId: plan.id,
+          phaseId: phase.id,
+          pricebookProcedureId: pricebookProcedure.id,
+          dentalFindingId: itemInput.dentalFindingId ?? null,
+          toothNumber: itemInput.toothNumber ? normalizeDentalToothNumber(itemInput.toothNumber) : null,
+          quantity,
+          unitPriceMinor,
+          discountMinor: totals.discountMinor,
+          taxRateBasisPoints,
+          taxMinor: totals.taxMinor,
+          totalMinor: totals.totalMinor,
+          estimatedVisits: itemInput.estimatedVisits ?? 1,
+          priority: itemInput.priority?.trim() || null,
+          notes: itemInput.notes?.trim() || null,
+          status: plan.status === "accepted" ? "accepted" : "planned",
+          createdAt: now,
+          updatedAt: now
+        };
+        this.treatmentPlanEstimateItems.push(item);
+      }
+    });
+  }
+
+  recalculateTreatmentPlanTotals(plan: TreatmentPlanRecord): void {
+    const items = this.treatmentPlanEstimateItems.filter(
+      (item) => item.tenantId === plan.tenantId && item.treatmentPlanId === plan.id
+    );
+    plan.subtotalMinor = items.reduce(
+      (total, item) => total + item.unitPriceMinor * item.quantity,
+      0
+    );
+    plan.discountMinor = items.reduce((total, item) => total + item.discountMinor, 0);
+    plan.taxMinor = items.reduce((total, item) => total + item.taxMinor, 0);
+    plan.totalMinor = items.reduce((total, item) => total + item.totalMinor, 0);
+    plan.updatedAt = new Date().toISOString();
+  }
+
+  treatmentPlanDetail(scope: RepositoryScope, treatmentPlanId: UUID): TreatmentPlanDetail {
+    const treatmentPlan = this.treatmentPlans.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === treatmentPlanId
+    );
+    if (!treatmentPlan) throw new Error("Treatment plan not found.");
+
+    const phases = this.treatmentPlanPhases
+      .filter((phase) => matchesScope(phase, scope) && phase.treatmentPlanId === treatmentPlanId)
+      .sort((left, right) => left.phaseIndex - right.phaseIndex)
+      .map((phase) => ({
+        ...phase,
+        estimateItems: this.treatmentPlanEstimateItems
+          .filter((item) => matchesScope(item, scope) && item.phaseId === phase.id)
+          .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+      }));
+
+    return { treatmentPlan, phases };
+  }
+
+  invoiceDetail(scope: RepositoryScope, invoiceId: UUID): InvoiceDetail {
+    const invoice = this.invoices.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === invoiceId
+    );
+    if (!invoice) throw new Error("Invoice not found.");
+    this.recalculateInvoicePaymentState(scope, invoice);
+
+    return {
+      invoice,
+      items: this.invoiceItems
+        .filter((item) => matchesScope(item, scope) && item.invoiceId === invoiceId)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+      paymentRequests: this.paymentRequests
+        .filter((request) => matchesScope(request, scope) && request.invoiceId === invoiceId)
+        .sort((left, right) => right.createdAt.localeCompare(left.createdAt)),
+      payments: this.paymentTransactions
+        .filter((payment) => matchesScope(payment, scope) && payment.invoiceId === invoiceId)
+        .sort((left, right) => right.receivedAt.localeCompare(left.receivedAt)),
+      receipts: this.receipts
+        .filter((receipt) => matchesScope(receipt, scope) && receipt.invoiceId === invoiceId)
+        .sort((left, right) => right.generatedAt.localeCompare(left.generatedAt))
+    };
+  }
+
+  nextInvoiceNumber(scope: RepositoryScope): string {
+    const next =
+      this.invoices.filter((invoice) => matchesScope(invoice, scope)).length + 1;
+    return `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(next).padStart(4, "0")}`;
+  }
+
+  nextReceiptNumber(scope: RepositoryScope): string {
+    const next =
+      this.receipts.filter((receipt) => matchesScope(receipt, scope)).length + 1;
+    return `RCT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(next).padStart(4, "0")}`;
+  }
+
+  recalculateInvoicePaymentState(scope: RepositoryScope, invoice: InvoiceRecord): void {
+    const payments = this.paymentTransactions.filter(
+      (payment) => matchesScope(payment, scope) && payment.invoiceId === invoice.id
+    );
+    const hasPaymentRequest = this.paymentRequests.some(
+      (request) => matchesScope(request, scope) && request.invoiceId === invoice.id
+    );
+    const hasReconciliationIssue = payments.some(
+      (payment) =>
+        payment.status === "reconciliation_required" ||
+        payment.reconciliationStatus === "requires_review"
+    );
+    const paidMinor = payments
+      .filter((payment) => isSettledPaymentTransaction(payment))
+      .reduce((total, payment) => total + payment.amountMinor, 0);
+    const refundedMinor = payments
+      .filter((payment) => payment.status === "refunded")
+      .reduce((total, payment) => total + payment.amountMinor, 0);
+
+    invoice.paidMinor = paidMinor;
+    invoice.refundedMinor = refundedMinor;
+    invoice.balanceMinor = Math.max(invoice.totalMinor - paidMinor + refundedMinor, 0);
+    invoice.paymentStatus = calculateInvoicePaymentStatus({
+      totalMinor: invoice.totalMinor,
+      paidMinor,
+      refundedMinor,
+      hasPaymentRequest,
+      hasReconciliationIssue,
+      invoiceStatus: invoice.status
+    });
+    invoice.updatedAt = new Date().toISOString();
+  }
+
   nextClinicalNoteVersion(scope: RepositoryScope, encounterId: UUID): number {
     return (
       Math.max(
@@ -1610,6 +2522,13 @@ export function createLocalFixtureClaims(input: {
 
 function uuid(): UUID {
   return randomUUID() as UUID;
+}
+
+function uuidOrNull(value: string | null | undefined): UUID | null {
+  if (!value || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(value)) {
+    return null;
+  }
+  return value as UUID;
 }
 
 function matchesScope(record: { tenantId: UUID; clinicId: UUID }, scope: RepositoryScope): boolean {

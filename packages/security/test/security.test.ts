@@ -67,6 +67,57 @@ test("CP4 dental audit classifications cover chart reads findings and snapshots"
   );
 });
 
+test("CP5 billing audit classifications separate catalog access from patient-linked billing evidence", () => {
+  const catalogClassification = classifyAuditAction("pricebook.procedure_catalog.viewed");
+  assert.equal(catalogClassification.category, "billing");
+  assert.equal(catalogClassification.phiInvolved, false);
+  assert.equal(catalogClassification.requiresPatientId, false);
+
+  for (const action of [
+    "treatment_plan.created",
+    "treatment_plan.updated",
+    "treatment_plan.accepted",
+    "procedure.completed",
+    "invoice.created",
+    "invoice.viewed",
+    "payment.requested",
+    "payment.recorded",
+    "payment.succeeded",
+    "payment.failed",
+    "payment.manually_recorded",
+    "payment.reconciliation_required",
+    "receipt.generated"
+  ] as const) {
+    const classification = classifyAuditAction(action);
+    assert.equal(classification.phiInvolved, true, `${action} should involve patient evidence`);
+    assert.equal(classification.requiresPatientId, true, `${action} should require patientId`);
+  }
+
+  assert.equal(classifyAuditAction("treatment_plan.accepted").riskLevel, "critical");
+  assert.equal(classifyAuditAction("payment.recorded").riskLevel, "high");
+  assert.throws(
+    () =>
+      createAuditEvent({
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000101",
+        actor: { type: "user", id: "10000000-0000-4000-8000-000000001004" },
+        action: "invoice.created"
+      }),
+    /requires patientId/
+  );
+});
+
+test("CP5 provider audit classifications separate config health from invoice payment evidence", () => {
+  const unavailable = classifyAuditAction("payment.provider.unavailable");
+  assert.equal(unavailable.requiresPatientId, false);
+  assert.equal(unavailable.phiInvolved, false);
+  assert.equal(unavailable.category, "integration");
+
+  assert.equal(classifyAuditAction("payment.succeeded").riskLevel, "high");
+  assert.equal(classifyAuditAction("payment.manually_recorded").riskLevel, "high");
+  assert.equal(classifyAuditAction("payment.reconciliation_required").category, "billing");
+});
+
 test("CP3 audit classifications cover intake consent encounter note prescription and timeline actions", () => {
   for (const action of [
     "patient.timeline.viewed",
@@ -82,7 +133,9 @@ test("CP3 audit classifications cover intake consent encounter note prescription
     "clinical_note.signed",
     "clinical_note.amended",
     "prescription.draft_created",
-    "prescription.signed"
+    "prescription.signed",
+    "instruction.print_requested",
+    "instruction.send_requested"
   ] as const) {
     const classification = classifyAuditAction(action);
     assert.equal(classification.phiInvolved, true, `${action} should involve PHI`);

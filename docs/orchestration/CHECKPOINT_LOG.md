@@ -224,3 +224,24 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Checkout UX: pending `local:e7a4b597-aa4a-4a50-9543-9c1da12ff7d1`, thread `019f3bcc-213b-7191-8424-284dd78c7323`, worktree `/Users/abhinavgupta/.codex/worktrees/82db/ClinicOS`.
   - Clinical Output QA: pending `local:8997eec3-d82f-4348-b27d-b4349d72ab19`, thread `019f3bcc-216e-79b3-bd9d-db6d77e928a5`, worktree `/Users/abhinavgupta/.codex/worktrees/1f2d/ClinicOS`.
 - All four fresh lanes resolved as active in `list_threads`; the old `CP5 FAILED - ...` threads remain historical and must not be integrated.
+
+## Checkpoint 5 Integration Verification - 2026-07-07
+
+- Integration branch: `codex/integration/checkpoint-5`.
+- Merge order:
+  - Billing Domain commit `86e8669` merged first.
+  - Payment Provider commit `6ed5350` merged second with master conflict resolution into the canonical billing repository/payment provider contract.
+  - Checkout UX commit `2dca52f` merged third.
+  - Clinical Output QA commit `6d88749` merged fourth with root E2E selector/body assertions reconciled to the implemented checkout surface.
+- Master integration patch added the missing durable patient-instruction workflow: domain types, permission, migration table/RLS/no-fake-delivery constraint, local and Postgres repository methods, API operation, route registration, audit/outbox/timeline evidence, and API tests.
+- Master integration patch also corrected CP5 web live helper contract drift: treatment plan phase/body mapping, procedure evidence item id, payment `amountMinor`/`requestType`, manual payment evidence, receipt request shape, and explicit `CP5_READ_MODEL_DEFERRED` for the deferred aggregate read model.
+- Targeted checks passed: `npm --workspace @clinic-os/domain test`, `npm --workspace @clinic-os/security test`, `npm --workspace @clinic-os/db run typecheck`, `npm --workspace @clinic-os/api run typecheck`, `npm --workspace @clinic-os/api test`, `npm --workspace @clinic-os/web run typecheck`, `npm --workspace @clinic-os/web test`, `npm --workspace @clinic-os/db test`, `node scripts/validate-cp5-fixtures.mjs`, `node scripts/cp5-contract-smoke.mjs --dry-run`, and `node --test tests/acceptance/cp5-fixture-contract.test.mjs`.
+- Full gates passed before promotion: `git diff --check`, `npm run typecheck`, `npm run lint`, `npm run test`, `npm run build`, `npm run check`, `npm run security:secrets`, and `node --test tests/acceptance/*.test.mjs`.
+- Browser smoke passed against the CP5 fixture:
+  - Assistant checkout workflow and 390px mobile no-overflow smoke: `CLINICOS_CP5_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000 npx playwright test apps/web/tests/checkpoint-5-checkout-workflow.spec.ts tests/e2e/checkpoint-5-checkout-flow.spec.ts`.
+  - Accountant-safe billing view: `CLINICOS_CP5_ACCOUNTANT_SMOKE_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3001 npx playwright test apps/web/tests/checkpoint-5-checkout-workflow.spec.ts tests/e2e/checkpoint-5-checkout-flow.spec.ts --grep "accountant"`.
+  - Screenshots refreshed: `/private/tmp/clinicos-cp5-web-checkout-desktop.png` and `/private/tmp/clinicos-cp5-web-checkout-mobile-390.png`.
+- `npm run security:audit` did not pass because sandbox DNS failed for `registry.npmjs.org`; escalation was policy-rejected because npm audit discloses dependency inventory to an external registry audit service. Do not rerun through an alternate path without explicit user approval for that disclosure.
+- Accepted gaps:
+  - Live hosted Razorpay webhook callback registration remains deferred until deployment owns a reachable HTTPS callback; provider verification/idempotent replay is covered by simulator/contract tests.
+  - Production aggregate CP5 checkout read model is deferred as a whole workflow. The temporary web checkout surface uses explicit local fixture mode, while granular CP5 API routes are implemented and tested.

@@ -7,6 +7,7 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AssistantWorkflow, isCp2WorkflowSurface } from "@/components/assistant-workflow";
 import { AuthStatusPanel } from "@/components/auth-status-panel";
+import { CheckoutWorkflow, isCp5WorkflowSurface } from "@/components/checkout-workflow";
 import { ClinicalWorkflow, isCp3WorkflowSurface } from "@/components/clinical-workflow";
 import { DentalMediaWorkflow, isCp4WorkflowSurface } from "@/components/dental-media-workflow";
 import { SurfaceView } from "@/components/surface-view";
@@ -182,6 +183,8 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
             />
           ) : isCp4WorkflowSurface(activeSurface.id) ? (
             <DentalMediaWorkflow profile={profile} />
+          ) : isCp5WorkflowSurface(activeSurface.id) ? (
+            <CheckoutWorkflow profile={profile} />
           ) : (
             <SurfaceView profile={profile} surface={activeSurface} />
           )}

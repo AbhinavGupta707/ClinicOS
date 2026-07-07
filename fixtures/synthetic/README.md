@@ -13,3 +13,6 @@ The domain/model checkpoints may expand these files or replace them with richer 
 - `transcripts/` - synthetic consultation transcript text for scribe tests.
 - `media/` - placeholder location for synthetic X-ray/photo metadata or generated non-PHI media.
 - `cp2/` - deterministic Checkpoint 2 lead/patient/appointment/day-start QA scenarios.
+- `cp3/` - deterministic Checkpoint 3 intake/consent/encounter/prescription QA scenarios.
+- `cp4/` - deterministic Checkpoint 4 dental chart/media/imaging QA scenarios.
+- `cp5/` - deterministic Checkpoint 5 checkout/payment/receipt/instruction QA scenarios.
