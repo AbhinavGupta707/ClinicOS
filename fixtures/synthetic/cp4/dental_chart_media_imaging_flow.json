@@ -1,0 +1,946 @@
+{
+  "schemaVersion": "clinic-os.cp4.qa-fixture.v1",
+  "fixtureUse": {
+    "name": "Checkpoint 4 dental chart, media, and imaging coexistence QA scenario",
+    "localOnly": true,
+    "syntheticOnly": true,
+    "productionUseDenied": true,
+    "allowedEnvironments": ["local", "development", "test", "ci"],
+    "notes": "Deterministic local/test fixture. Do not seed this into production or present it as clinic data."
+  },
+  "sourceReferences": [
+    "docs/orchestration/CHECKPOINT_04_DENTAL_CHART_MEDIA.md",
+    "clinic_os_specs_v2/18_IMPLEMENTATION_PLAN_CLINIC_OS_DENTAL.md#slice-4-dental-chart-media-and-diagnosis",
+    "clinic_os_specs_v2/19_IMPLEMENTATION_PLAN_INTEGRATIONS_AI_MOBILE.md#imaging-and-x-ray-coexistence",
+    "clinic_os_specs_v2/20_ORCHESTRATION_CHECKPOINT_PLAN.md#checkpoint-4-dental-charting-media-and-imaging-coexistence"
+  ],
+  "clock": {
+    "businessDate": "2026-07-07",
+    "fixedNow": "2026-07-07T11:00:00+05:30",
+    "timezone": "Asia/Kolkata"
+  },
+  "tenants": [
+    {
+      "key": "primary",
+      "id": "40000000-0000-4000-8000-000000000001",
+      "slug": "cp4-sunrise-dental",
+      "displayName": "CP4 Sunrise Dental Synthetic Tenant"
+    },
+    {
+      "key": "wrongTenant",
+      "id": "40000000-0000-4000-8000-000000000002",
+      "slug": "cp4-monsoon-dental",
+      "displayName": "CP4 Monsoon Dental Synthetic Tenant"
+    }
+  ],
+  "clinics": [
+    {
+      "key": "primaryClinic",
+      "id": "40000000-0000-4000-8000-000000000101",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "slug": "indiranagar-cp4",
+      "displayName": "CP4 Synthetic Indiranagar Dental",
+      "timezone": "Asia/Kolkata"
+    },
+    {
+      "key": "wrongTenantClinic",
+      "id": "40000000-0000-4000-8000-000000000201",
+      "tenantId": "40000000-0000-4000-8000-000000000002",
+      "slug": "koramangala-cp4",
+      "displayName": "CP4 Synthetic Koramangala Dental",
+      "timezone": "Asia/Kolkata"
+    }
+  ],
+  "actors": [
+    {
+      "key": "owner",
+      "id": "40000000-0000-4000-8000-000000001001",
+      "displayName": "Dr Kavya Owner Synthetic CP4",
+      "email": "cp4.owner@example.test",
+      "roleSlug": "owner_admin",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "doctor",
+      "id": "40000000-0000-4000-8000-000000001002",
+      "displayName": "Dr Neel Doctor Synthetic CP4",
+      "email": "cp4.doctor@example.test",
+      "roleSlug": "doctor",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "assistant",
+      "id": "40000000-0000-4000-8000-000000001003",
+      "displayName": "Mira Assistant Synthetic CP4",
+      "email": "cp4.assistant@example.test",
+      "roleSlug": "assistant",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "receptionist",
+      "id": "40000000-0000-4000-8000-000000001004",
+      "displayName": "Rohan Reception Synthetic CP4",
+      "email": "cp4.reception@example.test",
+      "roleSlug": "receptionist",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "accountant",
+      "id": "40000000-0000-4000-8000-000000001005",
+      "displayName": "Ishaan Accounts Synthetic CP4",
+      "email": "cp4.accounts@example.test",
+      "roleSlug": "accountant",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "wrongTenantAssistant",
+      "id": "40000000-0000-4000-8000-000000001006",
+      "displayName": "Tara Other Assistant Synthetic CP4",
+      "email": "cp4.other.assistant@example.test",
+      "roleSlug": "assistant",
+      "tenantId": "40000000-0000-4000-8000-000000000002",
+      "clinicId": "40000000-0000-4000-8000-000000000201"
+    }
+  ],
+  "patients": [
+    {
+      "key": "chartingPatient",
+      "id": "40000000-0000-4000-8000-000000002001",
+      "externalId": "CP4-PAT-CHART-001",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101",
+      "fullName": "Anya Synthetic CP4",
+      "phone": "+919940001001",
+      "email": "cp4.anya.synthetic@example.test",
+      "dateOfBirth": "1994-04-18",
+      "gender": "female",
+      "timelineSeed": [
+        {
+          "type": "patient.created",
+          "occurredAt": "2026-07-07T09:20:00+05:30",
+          "summary": "Synthetic patient exists before CP4 dental chart workflow."
+        },
+        {
+          "type": "encounter.started",
+          "occurredAt": "2026-07-07T10:12:00+05:30",
+          "summary": "Synthetic encounter started before dental charting."
+        }
+      ]
+    }
+  ],
+  "appointments": [
+    {
+      "key": "chartingAppointment",
+      "id": "40000000-0000-4000-8000-000000003001",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101",
+      "patientId": "40000000-0000-4000-8000-000000002001",
+      "providerActorKey": "doctor",
+      "scheduledStart": "2026-07-07T10:15:00+05:30",
+      "scheduledEnd": "2026-07-07T10:45:00+05:30",
+      "chair": "Chair 1",
+      "statusSequence": ["booked", "confirmed", "checked_in", "encounter_started"]
+    }
+  ],
+  "encounters": [
+    {
+      "key": "chartingEncounter",
+      "id": "40000000-0000-4000-8000-000000004001",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101",
+      "patientId": "40000000-0000-4000-8000-000000002001",
+      "appointmentId": "40000000-0000-4000-8000-000000003001",
+      "providerActorKey": "doctor",
+      "startedAt": "2026-07-07T10:12:00+05:30",
+      "status": "charting",
+      "lifecycle": ["scheduled", "checked_in", "encounter_started", "dental_charting"]
+    }
+  ],
+  "dentalCharts": [
+    {
+      "key": "chartingPatientAdultChart",
+      "id": "40000000-0000-4000-8000-000000005001",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101",
+      "patientId": "40000000-0000-4000-8000-000000002001",
+      "numberingSystem": "FDI",
+      "dentition": "adult",
+      "activeSnapshotId": "40000000-0000-4000-8000-000000007002"
+    }
+  ],
+  "dentalFindings": [
+    {
+      "key": "tooth16OcclusalCaries",
+      "id": "40000000-0000-4000-8000-000000006001",
+      "chartId": "40000000-0000-4000-8000-000000005001",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101",
+      "patientId": "40000000-0000-4000-8000-000000002001",
+      "encounterId": "40000000-0000-4000-8000-000000004001",
+      "toothNumber": "16",
+      "surfaces": ["occlusal"],
+      "findingType": "caries",
+      "severity": "moderate",
+      "status": "active",
+      "reviewState": "reviewed",
+      "createdByActorKey": "assistant",
+      "createdAt": "2026-07-07T10:21:00+05:30",
+      "lastReviewedByActorKey": "doctor",
+      "lastReviewedAt": "2026-07-07T10:24:00+05:30",
+      "provenance": {
+        "source": "chairside_charting",
+        "enteredByRole": "assistant",
+        "reviewedByRole": "doctor"
+      },
+      "history": [
+        {
+          "version": 1,
+          "action": "created",
+          "actorKey": "assistant",
+          "occurredAt": "2026-07-07T10:21:00+05:30",
+          "summary": "Synthetic moderate occlusal caries charted on tooth 16."
+        },
+        {
+          "version": 2,
+          "action": "reviewed",
+          "actorKey": "doctor",
+          "occurredAt": "2026-07-07T10:24:00+05:30",
+          "summary": "Synthetic doctor review confirmed finding and requested X-ray comparison."
+        }
+      ]
+    }
+  ],
+  "dentalChartSnapshots": [
+    {
+      "key": "baselineBeforeCp4Finding",
+      "id": "40000000-0000-4000-8000-000000007001",
+      "chartId": "40000000-0000-4000-8000-000000005001",
+      "patientId": "40000000-0000-4000-8000-000000002001",
+      "encounterId": "40000000-0000-4000-8000-000000004001",
+      "createdByActorKey": "doctor",
+      "createdAt": "2026-07-07T10:13:00+05:30",
+      "reason": "encounter_start_baseline",
+      "findingIds": []
+    },
+    {
+      "key": "afterTooth16Finding",
+      "id": "40000000-0000-4000-8000-000000007002",
+      "chartId": "40000000-0000-4000-8000-000000005001",
+      "patientId": "40000000-0000-4000-8000-000000002001",
+      "encounterId": "40000000-0000-4000-8000-000000004001",
+      "createdByActorKey": "doctor",
+      "createdAt": "2026-07-07T10:25:00+05:30",
+      "reason": "finding_reviewed",
+      "findingIds": ["40000000-0000-4000-8000-000000006001"]
+    }
+  ],
+  "mediaAssets": [
+    {
+      "key": "uploadedBitewingXray",
+      "id": "40000000-0000-4000-8000-000000008001",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101",
+      "patientId": "40000000-0000-4000-8000-000000002001",
+      "kind": "xray",
+      "mimeType": "image/png",
+      "uploadMode": "manual_upload",
+      "status": "available",
+      "quarantineState": "scan_passed",
+      "createdByActorKey": "assistant",
+      "createdAt": "2026-07-07T10:26:00+05:30",
+      "tags": ["x-ray", "bitewing", "tooth:16"],
+      "provenance": {
+        "source": "manual_upload",
+        "captureDevice": "synthetic-local-fixture",
+        "patientContextRequired": true,
+        "clinicApprovedManualWorkflow": true
+      },
+      "privacy": {
+        "access": "mediated_signed_url_only",
+        "objectKeyUserVisible": false,
+        "rawStoragePathUserVisible": false,
+        "signedUrlTtlSeconds": 300
+      }
+    },
+    {
+      "key": "importedDicomBitewingMetadata",
+      "id": "40000000-0000-4000-8000-000000008002",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101",
+      "patientId": "40000000-0000-4000-8000-000000002001",
+      "kind": "dicom_metadata",
+      "mimeType": "application/dicom",
+      "uploadMode": "metadata_import",
+      "status": "metadata_only",
+      "quarantineState": "not_applicable_metadata_only",
+      "createdByActorKey": "assistant",
+      "createdAt": "2026-07-07T10:28:00+05:30",
+      "tags": ["x-ray", "dicom", "bitewing", "tooth:16"],
+      "provenance": {
+        "source": "clinic_approved_file_import",
+        "pixelDataIncluded": false,
+        "metadataOnly": true,
+        "clinicApprovedManualWorkflow": true
+      },
+      "privacy": {
+        "access": "metadata_record_only",
+        "objectKeyUserVisible": false,
+        "rawStoragePathUserVisible": false,
+        "signedUrlTtlSeconds": 0
+      }
+    }
+  ],
+  "mediaAttachments": [
+    {
+      "key": "xrayAttachedToPatient",
+      "id": "40000000-0000-4000-8000-000000009001",
+      "mediaAssetId": "40000000-0000-4000-8000-000000008001",
+      "contextType": "patient",
+      "contextId": "40000000-0000-4000-8000-000000002001",
+      "createdByActorKey": "assistant",
+      "createdAt": "2026-07-07T10:30:00+05:30"
+    },
+    {
+      "key": "xrayAttachedToEncounter",
+      "id": "40000000-0000-4000-8000-000000009002",
+      "mediaAssetId": "40000000-0000-4000-8000-000000008001",
+      "contextType": "encounter",
+      "contextId": "40000000-0000-4000-8000-000000004001",
+      "createdByActorKey": "assistant",
+      "createdAt": "2026-07-07T10:30:00+05:30"
+    },
+    {
+      "key": "xrayAttachedToFinding",
+      "id": "40000000-0000-4000-8000-000000009003",
+      "mediaAssetId": "40000000-0000-4000-8000-000000008001",
+      "contextType": "dental_finding",
+      "contextId": "40000000-0000-4000-8000-000000006001",
+      "createdByActorKey": "assistant",
+      "createdAt": "2026-07-07T10:30:00+05:30"
+    },
+    {
+      "key": "dicomMetadataAttachedToTooth",
+      "id": "40000000-0000-4000-8000-000000009004",
+      "mediaAssetId": "40000000-0000-4000-8000-000000008002",
+      "contextType": "tooth",
+      "contextId": "40000000-0000-4000-8000-000000002001:FDI:16",
+      "createdByActorKey": "assistant",
+      "createdAt": "2026-07-07T10:31:00+05:30"
+    }
+  ],
+  "imagingStudies": [
+    {
+      "key": "syntheticBitewingStudy",
+      "id": "40000000-0000-4000-8000-000000010001",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101",
+      "patientId": "40000000-0000-4000-8000-000000002001",
+      "encounterId": "40000000-0000-4000-8000-000000004001",
+      "mediaAssetIds": [
+        "40000000-0000-4000-8000-000000008001",
+        "40000000-0000-4000-8000-000000008002"
+      ],
+      "studyType": "bitewing",
+      "status": "coexistence_imported",
+      "provenance": "manual_upload_and_metadata_import"
+    }
+  ],
+  "dicomMetadataFixtures": [
+    {
+      "key": "syntheticBitewingDicomMetadata",
+      "mediaAssetId": "40000000-0000-4000-8000-000000008002",
+      "studyInstanceUid": "2.25.400000000000000000000000000000000001",
+      "seriesInstanceUid": "2.25.400000000000000000000000000000000002",
+      "sopInstanceUid": "2.25.400000000000000000000000000000000003",
+      "modality": "DX",
+      "bodyPartExamined": "TEETH",
+      "acquisitionDateTime": "20260707102800+0530",
+      "manufacturer": "ClinicOS Synthetic DICOM Fixture",
+      "laterality": "R",
+      "toothNumbers": ["16"],
+      "pixelDataIncluded": false,
+      "sourceFileHandling": "metadata_fixture_only_no_binary_phi"
+    }
+  ],
+  "externalMediaLinks": [
+    {
+      "key": "externalXraySoftwareReference",
+      "id": "40000000-0000-4000-8000-000000011001",
+      "tenantId": "40000000-0000-4000-8000-000000000001",
+      "clinicId": "40000000-0000-4000-8000-000000000101",
+      "patientId": "40000000-0000-4000-8000-000000002001",
+      "encounterId": "40000000-0000-4000-8000-000000004001",
+      "toothNumber": "16",
+      "externalSystemName": "Synthetic X-ray Workstation",
+      "externalReferenceId": "CP4-XRAY-REF-0001",
+      "referenceType": "manual_external_reference",
+      "launchUrlStored": false,
+      "createdByActorKey": "doctor",
+      "createdAt": "2026-07-07T10:29:00+05:30",
+      "provenance": {
+        "source": "clinic_approved_manual_link",
+        "coexistenceFirst": true,
+        "doesNotReplaceExternalSoftware": true,
+        "doesNotAutomateExternalUi": true
+      }
+    }
+  ],
+  "flow": {
+    "name": "encounter -> dental finding -> media upload/import/link -> signed URL view -> timeline",
+    "actorSequence": [
+      "doctor",
+      "assistant",
+      "doctor",
+      "doctor",
+      "assistant",
+      "assistant",
+      "assistant",
+      "doctor",
+      "assistant",
+      "assistant",
+      "doctor",
+      "doctor"
+    ],
+    "steps": [
+      {
+        "key": "read-encounter-for-dental-chart",
+        "actorKey": "doctor",
+        "method": "GET",
+        "path": "/v1/encounters/40000000-0000-4000-8000-000000004001",
+        "idempotencyKey": "cp4-read-encounter-for-dental-chart",
+        "expectedStatus": 200,
+        "expectedEvents": [],
+        "expectedAudit": [
+          {
+            "action": "encounter.viewed",
+            "phiFields": ["patientId", "encounterId"],
+            "resourceType": "encounter",
+            "resourceId": "40000000-0000-4000-8000-000000004001"
+          }
+        ],
+        "timelineExpectations": []
+      },
+      {
+        "key": "create-tooth-finding-as-assistant",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/encounters/40000000-0000-4000-8000-000000004001/dental-findings",
+        "idempotencyKey": "cp4-create-tooth16-occlusal-caries",
+        "expectedStatus": 201,
+        "expectedEvents": ["dental_finding.created"],
+        "expectedAudit": [
+          {
+            "action": "dental_finding.created",
+            "phiFields": ["patientId", "toothNumber", "surfaces", "findingType", "severity"],
+            "resourceType": "dental_finding",
+            "resourceId": "40000000-0000-4000-8000-000000006001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "40000000-0000-4000-8000-000000002001",
+            "entryType": "dental_finding.created"
+          }
+        ],
+        "requestBody": {
+          "findingId": "40000000-0000-4000-8000-000000006001",
+          "chartId": "40000000-0000-4000-8000-000000005001",
+          "toothNumber": "16",
+          "surfaces": ["occlusal"],
+          "findingType": "caries",
+          "severity": "moderate",
+          "status": "active",
+          "provenance": {
+            "source": "chairside_charting",
+            "enteredBy": "assistant"
+          }
+        }
+      },
+      {
+        "key": "review-update-finding-as-doctor",
+        "actorKey": "doctor",
+        "method": "PATCH",
+        "path": "/v1/dental-findings/40000000-0000-4000-8000-000000006001",
+        "idempotencyKey": "cp4-review-tooth16-finding",
+        "expectedStatus": 200,
+        "expectedEvents": ["dental_finding.updated"],
+        "expectedAudit": [
+          {
+            "action": "dental_finding.updated",
+            "phiFields": ["patientId", "toothNumber", "reviewState"],
+            "resourceType": "dental_finding",
+            "resourceId": "40000000-0000-4000-8000-000000006001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "40000000-0000-4000-8000-000000002001",
+            "entryType": "dental_finding.updated"
+          }
+        ],
+        "requestBody": {
+          "reviewState": "reviewed",
+          "doctorNote": "Synthetic doctor confirmed moderate caries and requested X-ray comparison."
+        }
+      },
+      {
+        "key": "create-chart-snapshot",
+        "actorKey": "doctor",
+        "method": "POST",
+        "path": "/v1/patients/40000000-0000-4000-8000-000000002001/dental-chart/snapshots",
+        "idempotencyKey": "cp4-create-chart-snapshot-after-finding",
+        "expectedStatus": 201,
+        "expectedEvents": ["dental_chart.snapshot_created"],
+        "expectedAudit": [
+          {
+            "action": "dental_chart.snapshot_created",
+            "phiFields": ["patientId", "chartId", "findingIds"],
+            "resourceType": "dental_chart_snapshot",
+            "resourceId": "40000000-0000-4000-8000-000000007002"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "40000000-0000-4000-8000-000000002001",
+            "entryType": "dental_chart.snapshot_created"
+          }
+        ],
+        "requestBody": {
+          "snapshotId": "40000000-0000-4000-8000-000000007002",
+          "chartId": "40000000-0000-4000-8000-000000005001",
+          "encounterId": "40000000-0000-4000-8000-000000004001",
+          "reason": "finding_reviewed",
+          "findingIds": ["40000000-0000-4000-8000-000000006001"]
+        }
+      },
+      {
+        "key": "request-xray-upload-url",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/patients/40000000-0000-4000-8000-000000002001/media/upload-url",
+        "idempotencyKey": "cp4-request-xray-upload-url",
+        "expectedStatus": 201,
+        "expectedEvents": ["media.created"],
+        "expectedAudit": [
+          {
+            "action": "media.created",
+            "phiFields": ["patientId", "mediaKind", "tags"],
+            "resourceType": "media_asset",
+            "resourceId": "40000000-0000-4000-8000-000000008001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "40000000-0000-4000-8000-000000002001",
+            "entryType": "media.created"
+          }
+        ],
+        "expectedBodyIncludes": ["assetId", "uploadUrl", "expiresAt"],
+        "expectedBodyMustNotInclude": ["objectKey", "rawStoragePath", "bucket", "storagePath"],
+        "requestBody": {
+          "assetId": "40000000-0000-4000-8000-000000008001",
+          "kind": "xray",
+          "mimeType": "image/png",
+          "tags": ["x-ray", "bitewing", "tooth:16"],
+          "provenance": {
+            "source": "manual_upload",
+            "clinicApprovedManualWorkflow": true
+          }
+        }
+      },
+      {
+        "key": "complete-xray-upload",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/media-assets/40000000-0000-4000-8000-000000008001/complete-upload",
+        "idempotencyKey": "cp4-complete-xray-upload",
+        "expectedStatus": 200,
+        "expectedEvents": ["media.upload_completed"],
+        "expectedAudit": [
+          {
+            "action": "media.upload_completed",
+            "phiFields": ["patientId", "mediaAssetId", "quarantineState"],
+            "resourceType": "media_asset",
+            "resourceId": "40000000-0000-4000-8000-000000008001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "40000000-0000-4000-8000-000000002001",
+            "entryType": "media.upload_completed"
+          }
+        ],
+        "expectedBodyIncludes": ["assetId", "status", "scan_passed"],
+        "expectedBodyMustNotInclude": ["objectKey", "rawStoragePath", "bucket", "storagePath"],
+        "requestBody": {
+          "checksumSha256": "sha256:cp4-synthetic-xray-upload-fixture",
+          "fileSizeBytes": 24576,
+          "quarantineState": "scan_passed"
+        }
+      },
+      {
+        "key": "import-dicom-metadata",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/patients/40000000-0000-4000-8000-000000002001/imaging/dicom-metadata",
+        "idempotencyKey": "cp4-import-dicom-metadata",
+        "expectedStatus": 201,
+        "expectedEvents": ["imaging.dicom_metadata_imported"],
+        "expectedAudit": [
+          {
+            "action": "imaging.dicom_metadata_imported",
+            "phiFields": ["patientId", "studyInstanceUid", "toothNumbers"],
+            "resourceType": "media_asset",
+            "resourceId": "40000000-0000-4000-8000-000000008002"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "40000000-0000-4000-8000-000000002001",
+            "entryType": "imaging.dicom_metadata_imported"
+          }
+        ],
+        "expectedBodyIncludes": ["assetId", "metadata_only", "studyInstanceUid"],
+        "expectedBodyMustNotInclude": ["objectKey", "rawStoragePath", "bucket", "storagePath"],
+        "requestBody": {
+          "assetId": "40000000-0000-4000-8000-000000008002",
+          "metadataFixtureKey": "syntheticBitewingDicomMetadata",
+          "pixelDataIncluded": false,
+          "toothNumbers": ["16"]
+        }
+      },
+      {
+        "key": "link-external-xray-reference",
+        "actorKey": "doctor",
+        "method": "POST",
+        "path": "/v1/patients/40000000-0000-4000-8000-000000002001/external-media-links",
+        "idempotencyKey": "cp4-link-external-xray-reference",
+        "expectedStatus": 201,
+        "expectedEvents": ["external_media_link.created"],
+        "expectedAudit": [
+          {
+            "action": "external_media_link.created",
+            "phiFields": ["patientId", "externalSystemName", "externalReferenceId", "toothNumber"],
+            "resourceType": "external_media_link",
+            "resourceId": "40000000-0000-4000-8000-000000011001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "40000000-0000-4000-8000-000000002001",
+            "entryType": "external_media_link.created"
+          }
+        ],
+        "requestBody": {
+          "externalMediaLinkId": "40000000-0000-4000-8000-000000011001",
+          "encounterId": "40000000-0000-4000-8000-000000004001",
+          "toothNumber": "16",
+          "externalSystemName": "Synthetic X-ray Workstation",
+          "externalReferenceId": "CP4-XRAY-REF-0001",
+          "referenceType": "manual_external_reference",
+          "launchUrlStored": false,
+          "coexistenceFirst": true
+        }
+      },
+      {
+        "key": "attach-uploaded-xray-to-finding",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/media-assets/40000000-0000-4000-8000-000000008001/links",
+        "idempotencyKey": "cp4-attach-uploaded-xray-to-finding",
+        "expectedStatus": 201,
+        "expectedEvents": ["media.linked"],
+        "expectedAudit": [
+          {
+            "action": "media.linked",
+            "phiFields": ["patientId", "mediaAssetId", "contextType", "contextId"],
+            "resourceType": "media_asset",
+            "resourceId": "40000000-0000-4000-8000-000000008001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "40000000-0000-4000-8000-000000002001",
+            "entryType": "media.linked"
+          }
+        ],
+        "expectedBodyIncludes": ["assetId", "links", "dental_finding"],
+        "expectedBodyMustNotInclude": ["objectKey", "rawStoragePath", "bucket", "storagePath"],
+        "requestBody": {
+          "links": [
+            {
+              "contextType": "patient",
+              "contextId": "40000000-0000-4000-8000-000000002001"
+            },
+            {
+              "contextType": "encounter",
+              "contextId": "40000000-0000-4000-8000-000000004001"
+            },
+            {
+              "contextType": "dental_finding",
+              "contextId": "40000000-0000-4000-8000-000000006001"
+            }
+          ]
+        }
+      },
+      {
+        "key": "attach-dicom-import-to-tooth",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/media-assets/40000000-0000-4000-8000-000000008002/links",
+        "idempotencyKey": "cp4-attach-dicom-import-to-tooth",
+        "expectedStatus": 201,
+        "expectedEvents": ["media.linked"],
+        "expectedAudit": [
+          {
+            "action": "media.linked",
+            "phiFields": ["patientId", "mediaAssetId", "toothNumber"],
+            "resourceType": "media_asset",
+            "resourceId": "40000000-0000-4000-8000-000000008002"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "40000000-0000-4000-8000-000000002001",
+            "entryType": "media.linked"
+          }
+        ],
+        "expectedBodyIncludes": ["assetId", "links", "tooth"],
+        "expectedBodyMustNotInclude": ["objectKey", "rawStoragePath", "bucket", "storagePath"],
+        "requestBody": {
+          "links": [
+            {
+              "contextType": "tooth",
+              "patientId": "40000000-0000-4000-8000-000000002001",
+              "numberingSystem": "FDI",
+              "toothNumber": "16"
+            }
+          ]
+        }
+      },
+      {
+        "key": "request-signed-media-view",
+        "actorKey": "doctor",
+        "method": "POST",
+        "path": "/v1/media-assets/40000000-0000-4000-8000-000000008001/signed-access",
+        "idempotencyKey": "cp4-request-signed-media-view",
+        "expectedStatus": 200,
+        "expectedEvents": ["media.viewed"],
+        "expectedAudit": [
+          {
+            "action": "media.viewed",
+            "phiFields": ["patientId", "mediaAssetId", "viewerActorId"],
+            "resourceType": "media_asset",
+            "resourceId": "40000000-0000-4000-8000-000000008001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "40000000-0000-4000-8000-000000002001",
+            "entryType": "media.viewed"
+          }
+        ],
+        "expectedBodyIncludes": ["signedUrl", "expiresAt", "auditEventId"],
+        "expectedBodyMustNotInclude": ["objectKey", "rawStoragePath", "bucket", "storagePath"],
+        "requestBody": {
+          "purpose": "clinical_review",
+          "context": {
+            "encounterId": "40000000-0000-4000-8000-000000004001",
+            "findingId": "40000000-0000-4000-8000-000000006001"
+          }
+        }
+      },
+      {
+        "key": "read-patient-timeline-after-media",
+        "actorKey": "doctor",
+        "method": "GET",
+        "path": "/v1/patients/40000000-0000-4000-8000-000000002001/timeline",
+        "idempotencyKey": "cp4-read-patient-timeline-after-media",
+        "expectedStatus": 200,
+        "expectedEvents": [],
+        "expectedAudit": [
+          {
+            "action": "patient.timeline.viewed",
+            "phiFields": ["patientId", "timelineEntryTypes"],
+            "resourceType": "patient",
+            "resourceId": "40000000-0000-4000-8000-000000002001"
+          }
+        ],
+        "timelineExpectations": [],
+        "expectedBodyIncludes": [
+          "dental_finding.created",
+          "dental_chart.snapshot_created",
+          "media.linked",
+          "media.viewed"
+        ],
+        "expectedBodyMustNotInclude": ["objectKey", "rawStoragePath", "bucket", "storagePath"]
+      }
+    ]
+  },
+  "roleTenantExpectations": [
+    {
+      "key": "doctor-can-read-dental-chart",
+      "actorKey": "doctor",
+      "operation": "GET /v1/patients/{patientId}/dental-chart",
+      "targetTenantId": "40000000-0000-4000-8000-000000000001",
+      "targetClinicId": "40000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["dental_chart.read"],
+      "expected": "allow"
+    },
+    {
+      "key": "assistant-can-link-media",
+      "actorKey": "assistant",
+      "operation": "POST /v1/media-assets/{mediaAssetId}/links",
+      "targetTenantId": "40000000-0000-4000-8000-000000000001",
+      "targetClinicId": "40000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["media.link.write"],
+      "expected": "allow"
+    },
+    {
+      "key": "accountant-cannot-read-dental-chart",
+      "actorKey": "accountant",
+      "operation": "GET /v1/patients/{patientId}/dental-chart",
+      "targetTenantId": "40000000-0000-4000-8000-000000000001",
+      "targetClinicId": "40000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["dental_chart.read"],
+      "expected": "deny",
+      "expectedReason": "missing_permission",
+      "method": "GET",
+      "path": "/v1/patients/40000000-0000-4000-8000-000000002001/dental-chart",
+      "expectedStatus": [403]
+    },
+    {
+      "key": "accountant-cannot-request-signed-media",
+      "actorKey": "accountant",
+      "operation": "POST /v1/media-assets/{mediaAssetId}/signed-access",
+      "targetTenantId": "40000000-0000-4000-8000-000000000001",
+      "targetClinicId": "40000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["media.view"],
+      "expected": "deny",
+      "expectedReason": "missing_permission",
+      "method": "POST",
+      "path": "/v1/media-assets/40000000-0000-4000-8000-000000008001/signed-access",
+      "expectedStatus": [403],
+      "requestBody": {
+        "purpose": "billing_review_disallowed"
+      }
+    },
+    {
+      "key": "wrong-tenant-assistant-cannot-read-dental-chart",
+      "actorKey": "wrongTenantAssistant",
+      "operation": "GET /v1/patients/{patientId}/dental-chart",
+      "targetTenantId": "40000000-0000-4000-8000-000000000001",
+      "targetClinicId": "40000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["dental_chart.read"],
+      "expected": "deny",
+      "expectedReason": "tenant_mismatch",
+      "method": "GET",
+      "path": "/v1/patients/40000000-0000-4000-8000-000000002001/dental-chart",
+      "expectedStatus": [403, 404]
+    },
+    {
+      "key": "wrong-tenant-assistant-cannot-request-signed-media",
+      "actorKey": "wrongTenantAssistant",
+      "operation": "POST /v1/media-assets/{mediaAssetId}/signed-access",
+      "targetTenantId": "40000000-0000-4000-8000-000000000001",
+      "targetClinicId": "40000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["media.view"],
+      "expected": "deny",
+      "expectedReason": "tenant_mismatch",
+      "method": "POST",
+      "path": "/v1/media-assets/40000000-0000-4000-8000-000000008001/signed-access",
+      "expectedStatus": [403, 404],
+      "requestBody": {
+        "purpose": "clinical_review"
+      }
+    },
+    {
+      "key": "wrong-tenant-assistant-cannot-link-media",
+      "actorKey": "wrongTenantAssistant",
+      "operation": "POST /v1/media-assets/{mediaAssetId}/links",
+      "targetTenantId": "40000000-0000-4000-8000-000000000001",
+      "targetClinicId": "40000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["media.link.write"],
+      "expected": "deny",
+      "expectedReason": "tenant_mismatch",
+      "method": "POST",
+      "path": "/v1/media-assets/40000000-0000-4000-8000-000000008001/links",
+      "expectedStatus": [403, 404],
+      "requestBody": {
+        "links": [
+          {
+            "contextType": "dental_finding",
+            "contextId": "40000000-0000-4000-8000-000000006001"
+          }
+        ]
+      }
+    }
+  ],
+  "responseAssertions": {
+    "timeline": {
+      "chartingPatientMustInclude": [
+        "encounter.started",
+        "dental_finding.created",
+        "dental_finding.updated",
+        "dental_chart.snapshot_created",
+        "media.created",
+        "media.upload_completed",
+        "imaging.dicom_metadata_imported",
+        "external_media_link.created",
+        "media.linked",
+        "media.viewed"
+      ],
+      "sensitiveViewsAndMutationsRequireAudit": true
+    },
+    "mediaPrivacy": {
+      "signedAccessOnly": true,
+      "uploadUrlMayBeReturnedOnlyByUploadInitialization": true,
+      "signedUrlTtlSecondsMax": 900,
+      "publicResponsesMustNotExpose": ["objectKey", "rawStoragePath", "bucket", "storagePath"],
+      "actualStoragePathFixturesIncluded": false
+    },
+    "imagingCoexistence": {
+      "manualUploadSupported": true,
+      "metadataImportSupported": true,
+      "externalReferenceLinkSupported": true,
+      "dicomMetadataPreservedWhenAvailable": true,
+      "pacsReplacementRequired": false,
+      "dicomwebAdapterRequiredInCp4": false,
+      "unauthorizedExternalUiAutomationAllowed": false
+    },
+    "attachmentContexts": {
+      "mustInclude": ["patient", "encounter", "tooth", "dental_finding"]
+    }
+  },
+  "e2eSelectorContract": {
+    "route": "/surface/clinical?scenario=cp4-dental-chart-media",
+    "requiredTestIds": [
+      "cp4-dental-media-workspace",
+      "cp4-fixture-alert",
+      "cp4-encounter-context",
+      "cp4-odontogram",
+      "cp4-tooth-16",
+      "cp4-finding-editor",
+      "cp4-create-finding",
+      "cp4-finding-history",
+      "cp4-chart-snapshots",
+      "cp4-media-gallery",
+      "cp4-request-upload",
+      "cp4-complete-upload",
+      "cp4-import-dicom-metadata",
+      "cp4-link-external-xray",
+      "cp4-attach-media-to-finding",
+      "cp4-request-signed-view",
+      "cp4-signed-media-viewer",
+      "cp4-storage-privacy-guard",
+      "cp4-media-comparison",
+      "cp4-patient-timeline",
+      "cp4-clinical-access-denied"
+    ]
+  }
+}
