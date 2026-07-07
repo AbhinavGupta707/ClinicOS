@@ -1780,6 +1780,129 @@ button.duplicate-item {
   line-height: 1.4;
 }
 
+.surface-hero--checkout {
+  background:
+    linear-gradient(110deg, rgba(231, 240, 251, 0.82), rgba(255, 243, 216, 0.64)), var(--paper);
+}
+
+.cp5-workflow .workflow-tabs {
+  gap: var(--space-3);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: var(--space-2);
+}
+
+.workflow-grid--checkout {
+  grid-template-columns: minmax(0, 1fr) minmax(360px, 0.86fr);
+}
+
+.readiness-grid--checkout {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.estimate-list,
+.payment-ledger,
+.invoice-summary {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.estimate-phase {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.estimate-phase__heading,
+.estimate-row,
+.ledger-row,
+.checkout-total {
+  align-items: center;
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.estimate-phase__heading {
+  background: #eef3f7;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 10px 12px;
+}
+
+.estimate-phase__heading strong,
+.estimate-phase__heading span,
+.estimate-row span,
+.estimate-row strong,
+.ledger-row span,
+.ledger-row strong,
+.ledger-row small,
+.checkout-total span,
+.checkout-total strong {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.estimate-phase__heading span,
+.estimate-row span,
+.ledger-row span,
+.ledger-row small,
+.checkout-total span {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.estimate-row,
+.ledger-row {
+  border-top: 1px solid var(--border);
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  padding: 10px 12px;
+}
+
+.ledger-row {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+}
+
+.ledger-row small {
+  grid-column: 1 / -1;
+  line-height: 1.4;
+}
+
+.checkout-total {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  padding: 12px;
+}
+
+.checkout-total strong {
+  font-size: 1.18rem;
+}
+
+.checkout-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: 14px;
+  min-width: 0;
+}
+
+.cp5-estimate-form {
+  border-top: 1px solid var(--border);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-top: 14px;
+  padding-top: 14px;
+}
+
+.cp5-manual-form,
+.cp5-output-form {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
 @keyframes pulse {
   0% {
     background-position: 100% 0;
@@ -1799,6 +1922,7 @@ button.duplicate-item {
   }
 
   .workflow-grid--dashboard,
+  .workflow-grid--checkout,
   .workflow-grid--dental,
   .workflow-grid--encounter,
   .workflow-grid--split {
@@ -1888,6 +2012,7 @@ button.duplicate-item {
   .activation-layout,
   .note-section-grid,
   .prep-grid,
+  .readiness-grid--checkout,
   .readiness-grid--clinical {
     grid-template-columns: 1fr;
   }
@@ -1905,6 +2030,10 @@ button.duplicate-item {
   }
 
   .cp4-workflow .workflow-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cp5-workflow .workflow-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -1986,13 +2115,17 @@ button.duplicate-item {
   .clinical-form,
   .cp4-finding-form,
   .cp4-media-form,
+  .cp5-estimate-form,
+  .cp5-manual-form,
+  .cp5-output-form,
   .patient-switcher,
   .prescription-grid {
     grid-template-columns: 1fr;
   }
 
   .cp3-workflow .workflow-tabs,
-  .cp4-workflow .workflow-tabs {
+  .cp4-workflow .workflow-tabs,
+  .cp5-workflow .workflow-tabs {
     grid-template-columns: 1fr;
   }
 
@@ -2004,6 +2137,10 @@ button.duplicate-item {
   .patient-row,
   .queue-entry,
   .consent-row,
+  .estimate-phase__heading,
+  .estimate-row,
+  .ledger-row,
+  .checkout-total,
   .timeline-item,
   .signed-media-panel,
   .comparison-grid,
