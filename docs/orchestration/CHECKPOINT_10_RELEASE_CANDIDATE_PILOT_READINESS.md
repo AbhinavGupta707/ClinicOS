@@ -2,6 +2,7 @@
 
 - Launch date: 2026-07-07
 - Launch base: `a2d6501`
+- Worker launch commit: `e41af66`
 - Source plan: `clinic_os_specs_v2/20_ORCHESTRATION_CHECKPOINT_PLAN.md` section 18
 - Integration branch: `codex/integration/checkpoint-10`
 
@@ -21,6 +22,17 @@ ClinicOS is release-candidate ready for a selected pilot clinic: pilot configura
 | UX Polish           | Rough but production-honest web/mobile release-candidate UI states: empty/loading/error/offline/unavailable copy, responsive polish, role-safe navigation, and safety wording                                         | May edit `apps/web/**`, `apps/mobile/**`, UI tests, and narrow docs. Do not redesign the product or add marketing/landing pages. Do not introduce fake PHI, fake completions, or broad new workflows. Coordinate route assumptions with Pilot Configuration and QA.                                                                                                                                        | Web/mobile typecheck/tests, browser smoke at desktop and 390px for touched surfaces, no horizontal overflow, honest unavailable/error states         |
 | End-To-End QA       | Full CP10 clinic-day regression harness, role matrix, tenant isolation, provider unavailable/no-key state checks, migration dry-run evidence, and E2E bug triage                                                      | May edit `fixtures/synthetic/cp10/**`, `scripts/*cp10*`, `tests/acceptance/**`, `tests/e2e/**`, and `docs/qa/**`. Do not change product code except narrow testability fixes agreed in handoff. Route names must be canonical and reconciled with live APIs.                                                                                                                                               | CP10 fixture validator, CP10 contract/e2e dry-run, full role matrix assertions, provider unavailable/no-key checks, targeted Playwright smoke        |
 | Operations/Docs     | Release notes, pilot operator/training runbooks, support/admin checklists, known-risk/deferred-work register, final release-candidate report                                                                          | May edit `docs/**`, `infra/runbooks/**`, `docs/orchestration/**`, and docs-only support checklists. Do not create live cloud/provider resources. Do not move checkpoint state to complete until master records verification evidence.                                                                                                                                                                      | Docs formatting, runbook consistency checks, release checklist completeness, accepted-gap register                                                   |
+
+## Visible Worktree Lanes
+
+All CP10 lanes were launched as project-scoped Codex worktree threads from `main` at `e41af66`, so they should appear under the `ClinicOS` project in the Codex sidebar.
+
+| Lane                | Pending Worktree ID                          | Thread ID                              | Worktree                                             | Current status |
+| ------------------- | -------------------------------------------- | -------------------------------------- | ---------------------------------------------------- | -------------- |
+| Pilot Configuration | `local:794b8505-4f39-4563-ac0f-83f146f1519a` | `019f3d25-61be-7d92-a99a-a558e578a53d` | `/Users/abhinavgupta/.codex/worktrees/b1c9/ClinicOS` | active         |
+| UX Polish           | `local:1120e0db-a119-47b2-81e0-e399c07f7c3d` | `019f3d25-c537-7e43-abed-c56a4938202d` | `/Users/abhinavgupta/.codex/worktrees/9bcb/ClinicOS` | active         |
+| End-To-End QA       | `local:32d83d19-e3eb-486f-acd1-c269f237a7f6` | `019f3d26-17d5-71a2-ac81-1e94de547afb` | `/Users/abhinavgupta/.codex/worktrees/5cd7/ClinicOS` | active         |
+| Operations/Docs     | `local:e2eb88a3-5c16-4f6f-b546-7422f4ada13a` | `019f3d26-4626-7bd1-9043-a968ec6e128b` | `/Users/abhinavgupta/.codex/worktrees/6dce/ClinicOS` | active         |
 
 ## Shared-File Policy
 

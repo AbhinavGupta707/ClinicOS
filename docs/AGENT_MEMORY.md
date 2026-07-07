@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after CP9 promotion merge `131300b`; launch Checkpoint 10 from this baseline.
+- Branch: `main` at CP10 launch commit `e41af66`; CP10 worker lanes are active from this baseline.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -55,7 +55,11 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Infrastructure/Ops: `019f3cec-d3a3-7a71-ba13-ab7ceaf09f69`, `/Users/abhinavgupta/.codex/worktrees/7e8c/ClinicOS`.
   - Performance/QA: `019f3ced-1911-78e1-9301-ce5df9e8e934`, `/Users/abhinavgupta/.codex/worktrees/1091/ClinicOS`.
 - Checkpoint 9 is verified on `codex/integration/checkpoint-9` at `ea13a97` and promoted to `main` via `131300b`. Security/Privacy, FHIR/ABDM, Infrastructure/Ops, and Performance/QA lanes were merged in dependency order. Full gates passed: `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`. Post-promotion checks passed: `git diff --check` and `npm run check`. CP9 browser smoke passed for owner compliance desktop/mobile and platform-support unavailable shells.
-- Checkpoint 10 launch packet is `docs/orchestration/CHECKPOINT_10_RELEASE_CANDIDATE_PILOT_READINESS.md`. Planned visible project-scoped lanes: Pilot Configuration, UX Polish, End-To-End QA, and Operations/Docs.
+- Checkpoint 10 launch packet is `docs/orchestration/CHECKPOINT_10_RELEASE_CANDIDATE_PILOT_READINESS.md`. CP10 visible project-scoped worktree lanes:
+  - Pilot Configuration: `019f3d25-61be-7d92-a99a-a558e578a53d`, `/Users/abhinavgupta/.codex/worktrees/b1c9/ClinicOS`.
+  - UX Polish: `019f3d25-c537-7e43-abed-c56a4938202d`, `/Users/abhinavgupta/.codex/worktrees/9bcb/ClinicOS`.
+  - End-To-End QA: `019f3d26-17d5-71a2-ac81-1e94de547afb`, `/Users/abhinavgupta/.codex/worktrees/5cd7/ClinicOS`.
+  - Operations/Docs: `019f3d26-4626-7bd1-9043-a968ec6e128b`, `/Users/abhinavgupta/.codex/worktrees/6dce/ClinicOS`.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture

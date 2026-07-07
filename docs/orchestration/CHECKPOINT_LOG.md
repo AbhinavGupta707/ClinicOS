@@ -440,10 +440,11 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 
 - Launch packet: `docs/orchestration/CHECKPOINT_10_RELEASE_CANDIDATE_PILOT_READINESS.md`.
 - Base commit before launch packet: `a2d6501`.
+- Worker launch commit: `e41af66`.
 - Integration branch rule: CP10 lane commits merge first into `codex/integration/checkpoint-10`; promote to `main` only after full code checks, end-to-end regression evidence, browser/user evidence, release docs, and accepted-gap review pass.
 - Credential/input posture: `.secrets/orchestration.env` is present locally; CP10 can proceed with local/synthetic/simulator evidence. Live provider, ABDM, AWS apply, GitHub push, and physical-device checks remain explicit external verification gaps unless separately approved and configured.
-- Visible project-scoped lanes planned:
-  - Pilot Configuration.
-  - UX Polish.
-  - End-To-End QA.
-  - Operations/Docs.
+- Visible project-scoped lanes launched from `main` at `e41af66`:
+  - Pilot Configuration: pending `local:794b8505-4f39-4563-ac0f-83f146f1519a`, thread `019f3d25-61be-7d92-a99a-a558e578a53d`, worktree `/Users/abhinavgupta/.codex/worktrees/b1c9/ClinicOS`.
+  - UX Polish: pending `local:1120e0db-a119-47b2-81e0-e399c07f7c3d`, thread `019f3d25-c537-7e43-abed-c56a4938202d`, worktree `/Users/abhinavgupta/.codex/worktrees/9bcb/ClinicOS`.
+  - End-To-End QA: pending `local:32d83d19-e3eb-486f-acd1-c269f237a7f6`, thread `019f3d26-17d5-71a2-ac81-1e94de547afb`, worktree `/Users/abhinavgupta/.codex/worktrees/5cd7/ClinicOS`.
+  - Operations/Docs: pending `local:e2eb88a3-5c16-4f6f-b546-7422f4ada13a`, thread `019f3d26-4626-7bd1-9043-a968ec6e128b`, worktree `/Users/abhinavgupta/.codex/worktrees/6dce/ClinicOS`.
