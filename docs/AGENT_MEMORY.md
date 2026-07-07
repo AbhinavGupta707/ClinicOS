@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after Checkpoint 6 promotion merge commit `af93fde`; next checkpoint is Checkpoint 7.
+- Branch: `main` after Checkpoint 6 final post-promotion format/check fix `08ddab9`; next checkpoint is Checkpoint 7.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -30,7 +30,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Payment Provider: `019f3bcc-213b-7191-8424-2856a60a85a0`, `/Users/abhinavgupta/.codex/worktrees/fae5/ClinicOS`.
   - Checkout UX: `019f3bcc-213b-7191-8424-284dd78c7323`, `/Users/abhinavgupta/.codex/worktrees/82db/ClinicOS`.
   - Clinical Output QA: `019f3bcc-216e-79b3-bd9d-db6d77e928a5`, `/Users/abhinavgupta/.codex/worktrees/1f2d/ClinicOS`.
-- Checkpoint 6 is verified and promoted to `main` via merge commit `af93fde`; evidence docs commit is `d9bb50b`.
+- Checkpoint 6 is verified and promoted to `main` via merge commit `af93fde`; evidence docs commit is `d9bb50b` and final post-promotion check fix is `08ddab9`.
 - Checkpoint 6 used four visible project-scoped lanes:
   - Workflow/Task Backend: `019f3c1d-1708-7893-bfd7-1329dff99220`, `/Users/abhinavgupta/.codex/worktrees/dbc7/ClinicOS`.
   - Lab/Inventory/Event: `019f3c1d-6d96-7310-ba40-bed750544a62`, `/Users/abhinavgupta/.codex/worktrees/0166/ClinicOS`.

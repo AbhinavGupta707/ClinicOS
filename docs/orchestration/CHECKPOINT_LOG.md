@@ -32,7 +32,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 3 - Intake/consent/encounter/notes     | Complete  |       `6fe2cbc` |     `eb68abd` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-3`. Master integration aligned live CP3 routes, consent enforcement, prep summary, QA fixtures, web selectors, browser smoke, and security/audit coverage.                                         |
 | 4 - Dental charting/media/imaging      | Complete  |       `c7b222c` |     `248496a` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4` and promoted to `main`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                     |
 | 5 - Treatment/checkout/payments         | Complete  |       `d3d341f` |     `d679a78` | CP5 visible project-scoped lanes merged into `codex/integration/checkpoint-5`, promoted to `main`, and followed by closeout docs commit `6f9fe1c`.                                                                                                           |
-| 6 - Continuity/operations/owner dashboard | Complete  |       `6f9fe1c` |     `af93fde` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`, verified, documented, and promoted to `main`.                                                                 |
+| 6 - Continuity/operations/owner dashboard | Complete  |       `6f9fe1c` |     `08ddab9` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`, verified, documented, promoted to `main`, and post-promotion format gate repaired.                                                                 |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -268,6 +268,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Verified integration merge head before evidence docs: `c1485b5`.
 - Evidence docs commit: `d9bb50b`.
 - Main promotion merge commit: `af93fde`.
+- Final post-promotion main head: `08ddab9` (`fix(cp6): format contract smoke script`).
 - Merge order:
   - Workflow/Task Backend commit `bdfb4d8` merged first.
   - Lab/Inventory/Event commit `eea10e4` merged second with master conflict resolution across permissions, events, audit classes, API routes, repositories, and fixture data.
@@ -281,6 +282,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Targeted checks passed during integration: `npm --workspace @clinic-os/domain test`, `npm --workspace @clinic-os/security test`, `npm --workspace @clinic-os/db run typecheck`, `npm --workspace @clinic-os/api run typecheck`, `npm --workspace @clinic-os/db test`, `npm --workspace @clinic-os/api test`, `npm --workspace @clinic-os/web test`, `npm --workspace @clinic-os/web run typecheck`, `npm --workspace @clinic-os/web run lint`, and `npm --workspace @clinic-os/web run build`.
 - Contract and fixture checks passed: `node scripts/validate-cp6-fixtures.mjs`, `node --test tests/acceptance/cp6-fixture-contract.test.mjs`, and `node scripts/cp6-contract-smoke.mjs --dry-run`.
 - Full repository gates passed before promotion: `npm run typecheck`, `npm run lint`, `npm run test`, `npm run build`, `npm run security:secrets`, and `git diff --check`.
+- Post-promotion guard: `npm run check` initially found a Prettier-only formatting issue in `scripts/cp6-contract-smoke.mjs`; commit `08ddab9` applied the mechanical format fix, then `npm run check` and `git diff --check` passed on `main`.
 - Browser/user smoke passed against the CP6 fixture using `CLINICOS_CP6_E2E_ENABLED=true`, `CLINICOS_CP6_OWNER_SMOKE_ENABLED=true`, `NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true`, `NEXT_PUBLIC_CLINIC_OS_USE_CP6_OPERATIONS_FIXTURE=true`, and `CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000`: `npx playwright test tests/e2e/checkpoint-6-operations-flow.spec.ts`.
 - Browser evidence screenshots:
   - `/private/tmp/clinicos-cp6-operations-desktop.png`.
