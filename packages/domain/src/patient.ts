@@ -86,7 +86,14 @@ export type PatientTimelineItemType =
   | "payment_succeeded"
   | "payment_manually_recorded"
   | "payment_reconciliation_required"
-  | "receipt_generated";
+  | "receipt_generated"
+  | "lab_case_created"
+  | "lab_case_sent"
+  | "lab_case_returned"
+  | "lab_case_completed"
+  | "incident_created"
+  | "corrective_action_created"
+  | "corrective_action_completed";
 
 export interface PatientTimelineItem {
   id: UUID;

@@ -8,6 +8,7 @@ export * from "./events.ts";
 export * from "./ids.ts";
 export * from "./lead.ts";
 export * from "./media.ts";
+export * from "./operations.ts";
 export * from "./patient.ts";
 export * from "./payments.ts";
 export * from "./permissions.ts";

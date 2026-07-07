@@ -13,6 +13,7 @@ import type {
   ConsentEnforcementState,
   ConsentRecord,
   AcceptTreatmentPlanInput,
+  CorrectiveActionRecord,
   CreateTreatmentPlanInput,
   CreateDentalFindingInput,
   DentalChartRecord,
@@ -24,8 +25,25 @@ import type {
   InvoiceDetail,
   InvoiceItemRecord,
   InvoiceRecord,
+  IncidentRecord,
+  InventoryCategoryRecord,
+  InventoryCheckRunDetail,
+  InventoryCheckRunLineRecord,
+  InventoryCheckRunRecord,
+  InventoryCheckTemplateLineRecord,
+  InventoryCheckTemplateRecord,
+  InventoryExceptionRecord,
+  InventoryItemRecord,
   IntakeFormSubmissionRecord,
   IntakeFormTemplateRecord,
+  LabCaseDetail,
+  LabCaseItemRecord,
+  LabCaseRecord,
+  LabCaseStatusHistoryRecord,
+  LabReconciliationDetail,
+  LabReconciliationEntryRecord,
+  LabReconciliationRecord,
+  LabVendorRecord,
   LeadRecord,
   MediaAssetRecord,
   MediaScanStatus,
@@ -39,12 +57,14 @@ import type {
   PatientTimelineItem,
   PricebookProcedureRecord,
   PrescriptionRecord,
+  ProcurementSuggestionRecord,
   ProcedurePerformedRecord,
   ProviderScheduleRecord,
   QueueEntryRecord,
   QueueStatus,
   ReceiptRecord,
   RoleAssignment,
+  StockLedgerEntryRecord,
   TaskRecord,
   Tenant,
   TenantMembership,
@@ -56,6 +76,8 @@ import type {
 } from "@clinic-os/domain";
 import {
   assertInvoiceReceiptable,
+  assertFiniteQuantity,
+  assertLabCaseTransition,
   assertDentalFindingUpdateReason,
   assertClinicalNoteCanBeAmended,
   assertClinicalNoteCanBeSigned,
@@ -67,6 +89,8 @@ import {
   buildDentalChartSnapshotState,
   calculateBillingLineTotals,
   calculateInvoicePaymentStatus,
+  calculateInventoryVariance,
+  classifyInventoryException,
   normalizeDentalSurface,
   normalizeDentalToothNumber,
   buildConsentEnforcementState,
@@ -91,20 +115,33 @@ import type {
   CreateAppointmentInput,
   CreateAttributionTouchInput,
   CreateConsentInput,
+  CreateCorrectiveActionInput,
   CreateEncounterInput,
+  CreateInventoryCategoryInput,
+  CreateInventoryCheckRunInput,
+  CreateInventoryCheckTemplateInput,
+  CreateInventoryItemInput,
+  CreateIncidentInput,
   CreateIntakeFormSubmissionInput,
   CreateIntakeFormTemplateInput,
+  CreateLabCaseInput,
+  CreateLabReconciliationInput,
+  CreateLabVendorInput,
   CreateLeadInput,
   CreateMediaUploadReservationInput,
   CreatePatientInput,
   CreatePatientInstructionInput,
   CreatePrescriptionInput,
+  CreateStockLedgerEntryInput,
   CreateTaskInput,
   DashboardDataSet,
   CompleteMediaUploadInput,
   DentalFindingMutationResult,
   IdentityAccessSnapshot,
   IdentityRepository,
+  IncidentSearchFilter,
+  InventoryExceptionFilter,
+  LabCaseSearchFilter,
   LeadSearchFilter,
   OutboxEventInput,
   PatientSearchFilter,
@@ -113,7 +150,10 @@ import type {
   RevokeConsentInput,
   SaveClinicalNoteDraftInput,
   SignClinicalNoteResult,
+  UpdateCorrectiveActionInput,
   UpdateDentalFindingRepositoryInput,
+  UpdateInventoryCheckRunInput,
+  UpdateLabCaseStatusInput,
   UpdateTreatmentPlanInput,
   UpdatePatientInput
 } from "./repositories.ts";
@@ -3289,6 +3329,1126 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
+  async listLabVendors(scope: RepositoryScope): Promise<LabVendorRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<LabVendorRow>(
+        `
+          select *
+          from lab_vendors
+          where tenant_id = $1 and clinic_id = $2 and status = 'active'
+          order by display_name
+        `,
+        [scope.tenantId, scope.clinicId]
+      );
+      return result.rows.map(mapLabVendorRow);
+    });
+  }
+
+  async findLabVendorById(scope: RepositoryScope, vendorId: UUID): Promise<LabVendorRecord | null> {
+    return this.#withRls(scope, async (client) =>
+      this.#findLabVendorByIdInTransaction(client, scope, vendorId)
+    );
+  }
+
+  async createLabVendor(scope: RepositoryScope, input: CreateLabVendorInput): Promise<LabVendorRecord> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<LabVendorRow>(
+        `
+          insert into lab_vendors (
+            tenant_id,
+            clinic_id,
+            display_name,
+            phone,
+            email,
+            address,
+            tax_registration_number,
+            payment_terms_days,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6::jsonb, $7, $8, $9)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.displayName,
+          input.phone ?? null,
+          input.email ?? null,
+          JSON.stringify(input.address ?? {}),
+          input.taxRegistrationNumber ?? null,
+          input.paymentTermsDays ?? null,
+          scope.actorUserId
+        ]
+      );
+      return mapLabVendorRow(result.rows[0]);
+    });
+  }
+
+  async listLabCases(scope: RepositoryScope, filter: LabCaseSearchFilter = {}): Promise<LabCaseDetail[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<LabCaseRow>(
+        `
+          select *
+          from lab_cases
+          where tenant_id = $1
+            and clinic_id = $2
+            and ($3::text is null or status = $3)
+            and ($4::timestamptz is null or due_at <= $4)
+            and ($5::uuid is null or vendor_id = $5)
+            and ($6::uuid is null or patient_id = $6)
+          order by due_at asc
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          filter.status ?? null,
+          filter.dueBefore ?? null,
+          filter.vendorId ?? null,
+          filter.patientId ?? null
+        ]
+      );
+      const details: LabCaseDetail[] = [];
+      for (const row of result.rows) {
+        const detail = await this.#findLabCaseDetailInTransaction(client, scope, row.id);
+        if (detail) details.push(detail);
+      }
+      return details;
+    });
+  }
+
+  async findLabCaseById(scope: RepositoryScope, labCaseId: UUID): Promise<LabCaseDetail | null> {
+    return this.#withRls(scope, async (client) =>
+      this.#findLabCaseDetailInTransaction(client, scope, labCaseId)
+    );
+  }
+
+  async createLabCase(scope: RepositoryScope, input: CreateLabCaseInput): Promise<LabCaseDetail | null> {
+    return this.#withRls(scope, async (client) => {
+      const vendor = await this.#findLabVendorByIdInTransaction(client, scope, input.vendorId);
+      const patient = await this.#findPatientByIdInTransaction(client, scope, input.patientId);
+      if (!vendor || !patient) return null;
+      if (
+        input.encounterId &&
+        !(await this.#findEncounterByIdInTransaction(client, scope, input.encounterId))
+      ) {
+        return null;
+      }
+
+      const slipNumber = await this.#nextLabSlipNumber(client, scope);
+      const result = await client.query<LabCaseRow>(
+        `
+          insert into lab_cases (
+            tenant_id,
+            clinic_id,
+            vendor_id,
+            patient_id,
+            encounter_id,
+            treatment_plan_id,
+            treatment_plan_estimate_item_id,
+            procedure_performed_id,
+            title,
+            priority,
+            due_at,
+            clinical_notes,
+            internal_notes,
+            slip_number,
+            slip_generated_by_user_id,
+            slip_metadata,
+            expected_cost_minor,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $18)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.vendorId,
+          input.patientId,
+          input.encounterId ?? null,
+          input.treatmentPlanId ?? null,
+          input.treatmentPlanEstimateItemId ?? null,
+          input.procedurePerformedId ?? null,
+          input.title,
+          input.priority ?? "routine",
+          input.dueAt,
+          input.clinicalNotes ?? null,
+          input.internalNotes ?? null,
+          slipNumber,
+          scope.actorUserId,
+          JSON.stringify(input.slipMetadata ?? {}),
+          input.expectedCostMinor ?? null,
+          scope.actorUserId
+        ]
+      );
+      const labCase = mapLabCaseRow(result.rows[0]);
+
+      for (const item of input.items) {
+        await client.query(
+          `
+            insert into lab_case_items (
+              tenant_id,
+              clinic_id,
+              lab_case_id,
+              item_type,
+              tooth_number,
+              material,
+              shade,
+              quantity,
+              notes
+            )
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            labCase.id,
+            item.itemType,
+            item.toothNumber ? normalizeDentalToothNumber(item.toothNumber) : null,
+            item.material ?? null,
+            item.shade ?? null,
+            item.quantity ?? 1,
+            item.notes ?? null
+          ]
+        );
+      }
+
+      await this.#appendLabCaseStatusHistory(client, scope, labCase, null, "draft", "Lab case created", {
+        slipNumber
+      });
+      await this.#appendTimeline(client, scope, {
+        patientId: labCase.patientId,
+        itemType: "lab_case_created",
+        sourceTable: "lab_cases",
+        sourceId: labCase.id,
+        title: "Lab case created",
+        summary: labCase.title,
+        metadata: { vendorId: labCase.vendorId, slipNumber }
+      });
+
+      return this.#findLabCaseDetailInTransaction(client, scope, labCase.id);
+    });
+  }
+
+  async updateLabCaseStatus(
+    scope: RepositoryScope,
+    labCaseId: UUID,
+    input: UpdateLabCaseStatusInput
+  ): Promise<LabCaseDetail | null> {
+    return this.#withRls(scope, async (client) => {
+      const existingRow = await this.#findLabCaseRowForUpdate(client, scope, labCaseId);
+      if (!existingRow) return null;
+      const current = mapLabCaseRow(existingRow);
+      assertLabCaseTransition(current.status, input.status);
+
+      const result = await client.query<LabCaseRow>(
+        `
+          update lab_cases
+          set
+            status = $4,
+            sent_at = case when $4 = 'sent_to_lab' then coalesce(sent_at, now()) else sent_at end,
+            received_at = case when $4 in ('received_by_lab', 'returned') then coalesce(received_at, now()) else received_at end,
+            completed_at = case when $4 = 'completed' then coalesce(completed_at, now()) else completed_at end,
+            cancelled_at = case when $4 = 'cancelled' then coalesce(cancelled_at, now()) else cancelled_at end,
+            cancellation_reason = case when $4 = 'cancelled' then coalesce($5, 'cancelled') else cancellation_reason end,
+            updated_by_user_id = $6
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          labCaseId,
+          input.status,
+          input.reason ?? null,
+          scope.actorUserId
+        ]
+      );
+      const labCase = mapLabCaseRow(result.rows[0]);
+      await this.#appendLabCaseStatusHistory(
+        client,
+        scope,
+        labCase,
+        current.status,
+        input.status,
+        input.reason ?? null,
+        input.evidence ?? {}
+      );
+
+      const timelineType =
+        input.status === "sent_to_lab"
+          ? "lab_case_sent"
+          : input.status === "returned"
+            ? "lab_case_returned"
+            : input.status === "completed"
+              ? "lab_case_completed"
+              : null;
+      if (timelineType) {
+        await this.#appendTimeline(client, scope, {
+          patientId: labCase.patientId,
+          itemType: timelineType,
+          sourceTable: "lab_cases",
+          sourceId: labCase.id,
+          title: `Lab case ${input.status.replace(/_/g, " ")}`,
+          summary: input.reason ?? labCase.title,
+          metadata: { fromStatus: current.status, toStatus: input.status }
+        });
+      }
+
+      return this.#findLabCaseDetailInTransaction(client, scope, labCase.id);
+    });
+  }
+
+  async createLabReconciliation(
+    scope: RepositoryScope,
+    input: CreateLabReconciliationInput
+  ): Promise<LabReconciliationDetail | null> {
+    return this.#withRls(scope, async (client) => {
+      if (!(await this.#findLabVendorByIdInTransaction(client, scope, input.vendorId))) return null;
+
+      const preparedEntries: Array<{
+        labCase: LabCaseRecord;
+        status: LabReconciliationEntryRecord["status"];
+        expectedAmountMinor: number;
+        invoiceAmountMinor: number | null;
+        varianceAmountMinor: number;
+        notes: string | null;
+      }> = [];
+      for (const entry of input.entries) {
+        const detail = await this.#findLabCaseDetailInTransaction(client, scope, entry.labCaseId);
+        if (!detail || detail.labCase.vendorId !== input.vendorId) return null;
+        const expectedAmountMinor = detail.labCase.expectedCostMinor ?? 0;
+        const invoiceAmountMinor = entry.invoiceAmountMinor ?? null;
+        const varianceAmountMinor = (invoiceAmountMinor ?? expectedAmountMinor) - expectedAmountMinor;
+        preparedEntries.push({
+          labCase: detail.labCase,
+          status:
+            entry.status ??
+            (invoiceAmountMinor === null
+              ? "missing_invoice"
+              : varianceAmountMinor === 0
+                ? "matched"
+                : "amount_variance"),
+          expectedAmountMinor,
+          invoiceAmountMinor,
+          varianceAmountMinor,
+          notes: entry.notes ?? null
+        });
+      }
+
+      const expectedAmountMinor = preparedEntries.reduce((sum, entry) => sum + entry.expectedAmountMinor, 0);
+      const invoiceAmountMinor = input.invoiceAmountMinor ?? null;
+      const varianceAmountMinor = (invoiceAmountMinor ?? expectedAmountMinor) - expectedAmountMinor;
+      const reconciliationResult = await client.query<LabReconciliationRow>(
+        `
+          insert into lab_reconciliations (
+            tenant_id,
+            clinic_id,
+            vendor_id,
+            period_start,
+            period_end,
+            status,
+            invoice_reference,
+            invoice_amount_minor,
+            expected_amount_minor,
+            variance_amount_minor,
+            evidence,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.vendorId,
+          input.periodStart,
+          input.periodEnd,
+          input.status ?? (varianceAmountMinor === 0 ? "matched" : "variance_review"),
+          input.invoiceReference ?? null,
+          invoiceAmountMinor,
+          expectedAmountMinor,
+          varianceAmountMinor,
+          JSON.stringify(input.evidence ?? {}),
+          scope.actorUserId
+        ]
+      );
+      const reconciliation = mapLabReconciliationRow(reconciliationResult.rows[0]);
+      const entries: LabReconciliationEntryRecord[] = [];
+      for (const entry of preparedEntries) {
+        const entryResult = await client.query<LabReconciliationEntryRow>(
+          `
+            insert into lab_reconciliation_entries (
+              tenant_id,
+              clinic_id,
+              reconciliation_id,
+              lab_case_id,
+              patient_id,
+              status,
+              expected_amount_minor,
+              invoice_amount_minor,
+              variance_amount_minor,
+              notes
+            )
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+            returning *
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            reconciliation.id,
+            entry.labCase.id,
+            entry.labCase.patientId,
+            entry.status,
+            entry.expectedAmountMinor,
+            entry.invoiceAmountMinor,
+            entry.varianceAmountMinor,
+            entry.notes
+          ]
+        );
+        entries.push(mapLabReconciliationEntryRow(entryResult.rows[0]));
+      }
+      return { reconciliation, entries };
+    });
+  }
+
+  async listInventoryCategories(scope: RepositoryScope): Promise<InventoryCategoryRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<InventoryCategoryRow>(
+        `
+          select *
+          from inventory_categories
+          where tenant_id = $1 and clinic_id = $2
+          order by display_name
+        `,
+        [scope.tenantId, scope.clinicId]
+      );
+      return result.rows.map(mapInventoryCategoryRow);
+    });
+  }
+
+  async createInventoryCategory(
+    scope: RepositoryScope,
+    input: CreateInventoryCategoryInput
+  ): Promise<InventoryCategoryRecord> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<InventoryCategoryRow>(
+        `
+          insert into inventory_categories (
+            tenant_id,
+            clinic_id,
+            code,
+            display_name,
+            kind,
+            active,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.code,
+          input.displayName,
+          input.kind,
+          input.active ?? true,
+          scope.actorUserId
+        ]
+      );
+      return mapInventoryCategoryRow(result.rows[0]);
+    });
+  }
+
+  async listInventoryItems(scope: RepositoryScope): Promise<InventoryItemRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<InventoryItemRow>(
+        `
+          select *
+          from inventory_items
+          where tenant_id = $1 and clinic_id = $2
+          order by display_name
+        `,
+        [scope.tenantId, scope.clinicId]
+      );
+      return result.rows.map(mapInventoryItemRow);
+    });
+  }
+
+  async findInventoryItemById(scope: RepositoryScope, itemId: UUID): Promise<InventoryItemRecord | null> {
+    return this.#withRls(scope, async (client) =>
+      this.#findInventoryItemByIdInTransaction(client, scope, itemId)
+    );
+  }
+
+  async createInventoryItem(
+    scope: RepositoryScope,
+    input: CreateInventoryItemInput
+  ): Promise<InventoryItemRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const category = await client.query(
+        `
+          select id
+          from inventory_categories
+          where tenant_id = $1 and clinic_id = $2 and id = $3 and active = true
+        `,
+        [scope.tenantId, scope.clinicId, input.categoryId]
+      );
+      if (!category.rows[0]) return null;
+
+      const openingQuantity = input.openingQuantity ?? 0;
+      assertFiniteQuantity(openingQuantity, "openingQuantity");
+      const result = await client.query<InventoryItemRow>(
+        `
+          insert into inventory_items (
+            tenant_id,
+            clinic_id,
+            category_id,
+            sku,
+            display_name,
+            unit_of_measure,
+            storage_location,
+            track_quantity,
+            minimum_quantity,
+            reorder_quantity,
+            current_quantity,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.categoryId,
+          input.sku,
+          input.displayName,
+          input.unitOfMeasure,
+          input.storageLocation,
+          input.trackQuantity ?? true,
+          input.minimumQuantity ?? 0,
+          input.reorderQuantity ?? 0,
+          openingQuantity,
+          scope.actorUserId
+        ]
+      );
+      const item = mapInventoryItemRow(result.rows[0]);
+      if (openingQuantity > 0) {
+        await this.#insertStockLedgerEntryInTransaction(client, scope, item, {
+          movementType: "opening_balance",
+          quantityDelta: openingQuantity,
+          sourceTable: "inventory_items",
+          sourceId: item.id,
+          reason: "Opening quantity recorded",
+          evidence: { source: "manual_opening_balance" }
+        });
+      }
+      return item;
+    });
+  }
+
+  async createStockLedgerEntry(
+    scope: RepositoryScope,
+    input: CreateStockLedgerEntryInput
+  ): Promise<StockLedgerEntryRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const item = await this.#findInventoryItemByIdInTransaction(client, scope, input.itemId, true);
+      if (!item) return null;
+      return this.#insertStockLedgerEntryInTransaction(client, scope, item, input);
+    });
+  }
+
+  async listInventoryCheckTemplates(scope: RepositoryScope): Promise<
+    Array<InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }>
+  > {
+    return this.#withRls(scope, async (client) => {
+      const templates = (
+        await client.query<InventoryCheckTemplateRow>(
+          `
+            select *
+            from inventory_check_templates
+            where tenant_id = $1 and clinic_id = $2 and active = true
+            order by display_name
+          `,
+          [scope.tenantId, scope.clinicId]
+        )
+      ).rows.map(mapInventoryCheckTemplateRow);
+      const result: Array<InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }> = [];
+      for (const template of templates) {
+        result.push({
+          ...template,
+          lines: await this.#listInventoryCheckTemplateLines(client, scope, template.id)
+        });
+      }
+      return result;
+    });
+  }
+
+  async createInventoryCheckTemplate(
+    scope: RepositoryScope,
+    input: CreateInventoryCheckTemplateInput
+  ): Promise<(InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }) | null> {
+    return this.#withRls(scope, async (client) => {
+      for (const line of input.lines) {
+        if (!(await this.#findInventoryItemByIdInTransaction(client, scope, line.itemId))) return null;
+      }
+      const templateResult = await client.query<InventoryCheckTemplateRow>(
+        `
+          insert into inventory_check_templates (
+            tenant_id,
+            clinic_id,
+            code,
+            display_name,
+            cadence,
+            active,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.code,
+          input.displayName,
+          input.cadence,
+          input.active ?? true,
+          scope.actorUserId
+        ]
+      );
+      const template = mapInventoryCheckTemplateRow(templateResult.rows[0]);
+      for (const line of input.lines) {
+        await client.query(
+          `
+            insert into inventory_check_template_lines (
+              tenant_id,
+              clinic_id,
+              template_id,
+              item_id,
+              sequence,
+              drawer_location,
+              expected_quantity,
+              required,
+              instructions
+            )
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            template.id,
+            line.itemId,
+            line.sequence,
+            line.drawerLocation,
+            line.expectedQuantity ?? null,
+            line.required ?? true,
+            line.instructions ?? null
+          ]
+        );
+      }
+      return {
+        ...template,
+        lines: await this.#listInventoryCheckTemplateLines(client, scope, template.id)
+      };
+    });
+  }
+
+  async createInventoryCheckRun(
+    scope: RepositoryScope,
+    input: CreateInventoryCheckRunInput
+  ): Promise<InventoryCheckRunDetail | null> {
+    return this.#withRls(scope, async (client) => {
+      const templateResult = await client.query<InventoryCheckTemplateRow>(
+        `
+          select *
+          from inventory_check_templates
+          where tenant_id = $1 and clinic_id = $2 and id = $3 and active = true
+        `,
+        [scope.tenantId, scope.clinicId, input.templateId]
+      );
+      if (!templateResult.rows[0]) return null;
+      const template = mapInventoryCheckTemplateRow(templateResult.rows[0]);
+      const lines = await this.#listInventoryCheckTemplateLines(client, scope, template.id);
+      const runResult = await client.query<InventoryCheckRunRow>(
+        `
+          insert into inventory_check_runs (
+            tenant_id,
+            clinic_id,
+            template_id,
+            status,
+            started_by_user_id,
+            notes
+          )
+          values ($1, $2, $3, 'in_progress', $4, $5)
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, template.id, scope.actorUserId, input.notes ?? null]
+      );
+      const run = mapInventoryCheckRunRow(runResult.rows[0]);
+      for (const line of lines) {
+        const item = await this.#findInventoryItemByIdInTransaction(client, scope, line.itemId);
+        if (!item) return null;
+        await client.query(
+          `
+            insert into inventory_check_run_lines (
+              tenant_id,
+              clinic_id,
+              check_run_id,
+              template_line_id,
+              item_id,
+              sequence,
+              drawer_location,
+              expected_quantity
+            )
+            values ($1, $2, $3, $4, $5, $6, $7, $8)
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            run.id,
+            line.id,
+            line.itemId,
+            line.sequence,
+            line.drawerLocation,
+            line.expectedQuantity ?? item.currentQuantity
+          ]
+        );
+      }
+      return this.#findInventoryCheckRunDetailInTransaction(client, scope, run.id);
+    });
+  }
+
+  async updateInventoryCheckRun(
+    scope: RepositoryScope,
+    checkRunId: UUID,
+    input: UpdateInventoryCheckRunInput
+  ): Promise<InventoryCheckRunDetail | null> {
+    return this.#withRls(scope, async (client) => {
+      const runResult = await client.query<InventoryCheckRunRow>(
+        `
+          select *
+          from inventory_check_runs
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          for update
+        `,
+        [scope.tenantId, scope.clinicId, checkRunId]
+      );
+      if (!runResult.rows[0]) return null;
+      const run = mapInventoryCheckRunRow(runResult.rows[0]);
+      if (run.status === "completed" || run.status === "cancelled") return null;
+
+      for (const lineInput of input.lines ?? []) {
+        const lineResult = await client.query<InventoryCheckRunLineRow>(
+          `
+            select *
+            from inventory_check_run_lines
+            where tenant_id = $1 and clinic_id = $2 and check_run_id = $3 and id = $4
+            for update
+          `,
+          [scope.tenantId, scope.clinicId, checkRunId, lineInput.lineId]
+        );
+        if (!lineResult.rows[0]) return null;
+        const line = mapInventoryCheckRunLineRow(lineResult.rows[0]);
+        const item = await this.#findInventoryItemByIdInTransaction(client, scope, line.itemId, true);
+        if (!item) return null;
+        const varianceQuantity = calculateInventoryVariance({
+          expectedQuantity: line.expectedQuantity,
+          countedQuantity: lineInput.countedQuantity
+        });
+        const exceptionType = classifyInventoryException({
+          expectedQuantity: line.expectedQuantity,
+          countedQuantity: lineInput.countedQuantity,
+          minimumQuantity: item.minimumQuantity
+        });
+        await client.query(
+          `
+            update inventory_check_run_lines
+            set
+              counted_quantity = $5,
+              variance_quantity = $6,
+              exception_type = $7,
+              exception_notes = $8,
+              counted_by_user_id = $9,
+              counted_at = now()
+            where tenant_id = $1 and clinic_id = $2 and check_run_id = $3 and id = $4
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            checkRunId,
+            line.id,
+            lineInput.countedQuantity,
+            varianceQuantity,
+            exceptionType,
+            lineInput.exceptionNotes ?? null,
+            scope.actorUserId
+          ]
+        );
+        if (varianceQuantity !== 0) {
+          await this.#insertStockLedgerEntryInTransaction(client, scope, item, {
+            movementType: "check_variance",
+            quantityDelta: varianceQuantity,
+            sourceTable: "inventory_check_run_lines",
+            sourceId: line.id,
+            reason: "Inventory check count variance",
+            evidence: {
+              checkRunId,
+              expectedQuantity: line.expectedQuantity,
+              countedQuantity: lineInput.countedQuantity
+            }
+          });
+        }
+        if (exceptionType === "low_stock" || exceptionType === "missing_item") {
+          await this.#ensureProcurementSuggestion(client, scope, item, line.id, checkRunId, exceptionType);
+        }
+      }
+
+      if (input.status === "completed") {
+        const uncounted = await client.query(
+          `
+            select id
+            from inventory_check_run_lines
+            where tenant_id = $1 and clinic_id = $2 and check_run_id = $3 and counted_quantity is null
+            limit 1
+          `,
+          [scope.tenantId, scope.clinicId, checkRunId]
+        );
+        if (uncounted.rows[0]) return null;
+      }
+
+      await client.query(
+        `
+          update inventory_check_runs
+          set
+            status = $4,
+            notes = coalesce($5, notes),
+            completed_by_user_id = case when $4 = 'completed' then $6 else completed_by_user_id end,
+            completed_at = case when $4 = 'completed' then coalesce(completed_at, now()) else completed_at end
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          checkRunId,
+          input.status,
+          input.notes ?? null,
+          scope.actorUserId
+        ]
+      );
+      return this.#findInventoryCheckRunDetailInTransaction(client, scope, checkRunId);
+    });
+  }
+
+  async listInventoryExceptions(
+    scope: RepositoryScope,
+    filter: InventoryExceptionFilter = {}
+  ): Promise<InventoryExceptionRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const lineRows = await client.query<InventoryCheckRunLineRow>(
+        `
+          select *
+          from inventory_check_run_lines
+          where tenant_id = $1
+            and clinic_id = $2
+            and exception_type is not null
+            and ($3::uuid is null or item_id = $3)
+            and ($4::uuid is null or check_run_id = $4)
+          order by counted_at desc nulls last
+        `,
+        [scope.tenantId, scope.clinicId, filter.itemId ?? null, filter.checkRunId ?? null]
+      );
+      const exceptions: InventoryExceptionRecord[] = [];
+      for (const row of lineRows.rows) {
+        const line = mapInventoryCheckRunLineRow(row);
+        const item = await this.#findInventoryItemByIdInTransaction(client, scope, line.itemId);
+        if (!item || !line.exceptionType) continue;
+        const suggestion = await this.#findProcurementSuggestionForLine(client, scope, line.id);
+        exceptions.push(toInventoryException(item, line, suggestion));
+      }
+
+      const lowStockItems = await client.query<InventoryItemRow>(
+        `
+          select *
+          from inventory_items
+          where tenant_id = $1
+            and clinic_id = $2
+            and status = 'active'
+            and track_quantity = true
+            and current_quantity < minimum_quantity
+            and ($3::uuid is null or id = $3)
+          order by display_name
+        `,
+        [scope.tenantId, scope.clinicId, filter.itemId ?? null]
+      );
+      for (const row of lowStockItems.rows) {
+        const item = mapInventoryItemRow(row);
+        if (exceptions.some((exception) => exception.item.id === item.id)) continue;
+        const suggestion = await this.#findOpenProcurementSuggestionForItem(client, scope, item.id);
+        exceptions.push(toInventoryException(item, null, suggestion));
+      }
+      return exceptions;
+    });
+  }
+
+  async listIncidents(scope: RepositoryScope, filter: IncidentSearchFilter = {}): Promise<IncidentRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<IncidentRow>(
+        `
+          select *
+          from incidents
+          where tenant_id = $1
+            and clinic_id = $2
+            and ($3::text is null or status = $3)
+            and ($4::text is null or severity = $4)
+            and ($5::text is null or category = $5)
+          order by occurred_at desc
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          filter.status ?? null,
+          filter.severity ?? null,
+          filter.category ?? null
+        ]
+      );
+      return result.rows.map(mapIncidentRow);
+    });
+  }
+
+  async createIncident(scope: RepositoryScope, input: CreateIncidentInput): Promise<IncidentRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      if (input.patientId && !(await this.#findPatientByIdInTransaction(client, scope, input.patientId))) return null;
+      if (input.appointmentId && !(await this.#findAppointmentByIdInTransaction(client, scope, input.appointmentId))) return null;
+      if (input.labCaseId && !(await this.#findLabCaseDetailInTransaction(client, scope, input.labCaseId))) return null;
+      if (input.inventoryItemId && !(await this.#findInventoryItemByIdInTransaction(client, scope, input.inventoryItemId))) return null;
+
+      const result = await client.query<IncidentRow>(
+        `
+          insert into incidents (
+            tenant_id,
+            clinic_id,
+            patient_id,
+            appointment_id,
+            lab_case_id,
+            inventory_item_id,
+            category,
+            severity,
+            occurred_at,
+            location,
+            summary,
+            description,
+            impact,
+            learning,
+            immediate_action,
+            evidence,
+            reported_by_user_id,
+            owner_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16::jsonb, $17, $18)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.patientId ?? null,
+          input.appointmentId ?? null,
+          input.labCaseId ?? null,
+          input.inventoryItemId ?? null,
+          input.category,
+          input.severity,
+          input.occurredAt,
+          input.location ?? null,
+          input.summary,
+          input.description,
+          input.impact ?? null,
+          input.learning ?? null,
+          input.immediateAction ?? null,
+          JSON.stringify(input.evidence ?? {}),
+          scope.actorUserId,
+          input.ownerUserId ?? null
+        ]
+      );
+      const incident = mapIncidentRow(result.rows[0]);
+      if (incident.patientId) {
+        await this.#appendTimeline(client, scope, {
+          patientId: incident.patientId,
+          itemType: "incident_created",
+          sourceTable: "incidents",
+          sourceId: incident.id,
+          title: "Incident recorded",
+          summary: incident.summary,
+          metadata: { category: incident.category, severity: incident.severity }
+        });
+      }
+      return incident;
+    });
+  }
+
+  async listCorrectiveActions(scope: RepositoryScope): Promise<CorrectiveActionRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<CorrectiveActionRow>(
+        `
+          select *
+          from corrective_actions
+          where tenant_id = $1 and clinic_id = $2
+          order by due_at asc
+        `,
+        [scope.tenantId, scope.clinicId]
+      );
+      return result.rows.map(mapCorrectiveActionRow);
+    });
+  }
+
+  async createCorrectiveAction(
+    scope: RepositoryScope,
+    input: CreateCorrectiveActionInput
+  ): Promise<CorrectiveActionRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const incident = input.incidentId
+        ? await this.#findIncidentByIdInTransaction(client, scope, input.incidentId)
+        : null;
+      if (input.incidentId && !incident) return null;
+
+      const result = await client.query<CorrectiveActionRow>(
+        `
+          insert into corrective_actions (
+            tenant_id,
+            clinic_id,
+            incident_id,
+            action_type,
+            title,
+            description,
+            owner_user_id,
+            due_at,
+            verification_evidence,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, $10)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.incidentId ?? null,
+          input.actionType,
+          input.title,
+          input.description,
+          input.ownerUserId,
+          input.dueAt,
+          JSON.stringify(input.verificationEvidence ?? {}),
+          scope.actorUserId
+        ]
+      );
+      const action = mapCorrectiveActionRow(result.rows[0]);
+      if (incident) {
+        await client.query(
+          `
+            update incidents
+            set status = 'capa_assigned'
+            where tenant_id = $1 and clinic_id = $2 and id = $3
+          `,
+          [scope.tenantId, scope.clinicId, incident.id]
+        );
+        if (incident.patientId) {
+          await this.#appendTimeline(client, scope, {
+            patientId: incident.patientId,
+            itemType: "corrective_action_created",
+            sourceTable: "corrective_actions",
+            sourceId: action.id,
+            title: "Corrective action assigned",
+            summary: action.title,
+            metadata: { incidentId: incident.id, dueAt: action.dueAt }
+          });
+        }
+      }
+      return action;
+    });
+  }
+
+  async updateCorrectiveAction(
+    scope: RepositoryScope,
+    correctiveActionId: UUID,
+    input: UpdateCorrectiveActionInput
+  ): Promise<CorrectiveActionRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const currentResult = await client.query<CorrectiveActionRow>(
+        `
+          select *
+          from corrective_actions
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          for update
+        `,
+        [scope.tenantId, scope.clinicId, correctiveActionId]
+      );
+      if (!currentResult.rows[0]) return null;
+      const current = mapCorrectiveActionRow(currentResult.rows[0]);
+      if (current.status === "completed" || current.status === "cancelled") return null;
+
+      const result = await client.query<CorrectiveActionRow>(
+        `
+          update corrective_actions
+          set
+            status = $4,
+            completed_at = case when $4 = 'completed' then now() else completed_at end,
+            completed_by_user_id = case when $4 = 'completed' then $5 else completed_by_user_id end,
+            completion_evidence = case when $4 = 'completed' then $6::jsonb else completion_evidence end,
+            verification_evidence = coalesce($7::jsonb, verification_evidence),
+            updated_by_user_id = $5
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          correctiveActionId,
+          input.status,
+          scope.actorUserId,
+          JSON.stringify(input.completionEvidence ?? {}),
+          input.verificationEvidence === undefined ? null : JSON.stringify(input.verificationEvidence)
+        ]
+      );
+      const action = mapCorrectiveActionRow(result.rows[0]);
+      if (action.status === "completed" && action.incidentId) {
+        const incident = await this.#findIncidentByIdInTransaction(client, scope, action.incidentId);
+        const openSibling = await client.query(
+          `
+            select id
+            from corrective_actions
+            where tenant_id = $1
+              and clinic_id = $2
+              and incident_id = $3
+              and id <> $4
+              and status in ('open', 'in_progress')
+            limit 1
+          `,
+          [scope.tenantId, scope.clinicId, action.incidentId, action.id]
+        );
+        if (!openSibling.rows[0]) {
+          await client.query(
+            `
+              update incidents
+              set status = 'resolved', resolved_at = coalesce(resolved_at, now())
+              where tenant_id = $1 and clinic_id = $2 and id = $3
+            `,
+            [scope.tenantId, scope.clinicId, action.incidentId]
+          );
+        }
+        if (incident?.patientId) {
+          await this.#appendTimeline(client, scope, {
+            patientId: incident.patientId,
+            itemType: "corrective_action_completed",
+            sourceTable: "corrective_actions",
+            sourceId: action.id,
+            title: "Corrective action completed",
+            summary: action.title,
+            metadata: { incidentId: action.incidentId, completedAt: action.completedAt }
+          });
+        }
+      }
+      return action;
+    });
+  }
+
   async #withRls<T>(
     scope: RepositoryScope,
     callback: (client: SqlQueryClient) => Promise<T>
@@ -4061,6 +5221,384 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     return mapDentalFindingHistoryRow(result.rows[0]);
   }
 
+  async #findLabVendorByIdInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    vendorId: UUID
+  ): Promise<LabVendorRecord | null> {
+    const result = await client.query<LabVendorRow>(
+      `
+        select *
+        from lab_vendors
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, vendorId]
+    );
+    return result.rows[0] ? mapLabVendorRow(result.rows[0]) : null;
+  }
+
+  async #findLabCaseDetailInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    labCaseId: UUID
+  ): Promise<LabCaseDetail | null> {
+    const labCaseResult = await client.query<LabCaseRow>(
+      `
+        select *
+        from lab_cases
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, labCaseId]
+    );
+    if (!labCaseResult.rows[0]) return null;
+    const labCase = mapLabCaseRow(labCaseResult.rows[0]);
+    const vendor = await this.#findLabVendorByIdInTransaction(client, scope, labCase.vendorId);
+    if (!vendor) return null;
+    const items = (
+      await client.query<LabCaseItemRow>(
+        `
+          select *
+          from lab_case_items
+          where tenant_id = $1 and clinic_id = $2 and lab_case_id = $3
+          order by created_at asc
+        `,
+        [scope.tenantId, scope.clinicId, labCaseId]
+      )
+    ).rows.map(mapLabCaseItemRow);
+    const statusHistory = (
+      await client.query<LabCaseStatusHistoryRow>(
+        `
+          select *
+          from lab_case_status_history
+          where tenant_id = $1 and clinic_id = $2 and lab_case_id = $3
+          order by changed_at asc
+        `,
+        [scope.tenantId, scope.clinicId, labCaseId]
+      )
+    ).rows.map(mapLabCaseStatusHistoryRow);
+    return { labCase, vendor, items, statusHistory };
+  }
+
+  async #findLabCaseRowForUpdate(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    labCaseId: UUID
+  ): Promise<LabCaseRow | null> {
+    const result = await client.query<LabCaseRow>(
+      `
+        select *
+        from lab_cases
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+        for update
+      `,
+      [scope.tenantId, scope.clinicId, labCaseId]
+    );
+    return result.rows[0] ?? null;
+  }
+
+  async #nextLabSlipNumber(client: SqlQueryClient, scope: RepositoryScope): Promise<string> {
+    const result = await client.query<{ next_count: number }>(
+      `
+        select count(*)::integer + 1 as next_count
+        from lab_cases
+        where tenant_id = $1 and clinic_id = $2
+      `,
+      [scope.tenantId, scope.clinicId]
+    );
+    return `LAB-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(result.rows[0]?.next_count ?? 1).padStart(4, "0")}`;
+  }
+
+  async #appendLabCaseStatusHistory(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    labCase: LabCaseRecord,
+    fromStatus: LabCaseStatusHistoryRecord["fromStatus"],
+    toStatus: LabCaseStatusHistoryRecord["toStatus"],
+    reason: string | null,
+    evidence: Record<string, unknown>
+  ): Promise<void> {
+    await client.query(
+      `
+        insert into lab_case_status_history (
+          tenant_id,
+          clinic_id,
+          lab_case_id,
+          patient_id,
+          from_status,
+          to_status,
+          reason,
+          evidence,
+          changed_by_user_id
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        labCase.id,
+        labCase.patientId,
+        fromStatus,
+        toStatus,
+        reason,
+        JSON.stringify(evidence),
+        scope.actorUserId
+      ]
+    );
+  }
+
+  async #findInventoryItemByIdInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    itemId: UUID,
+    forUpdate = false
+  ): Promise<InventoryItemRecord | null> {
+    const result = await client.query<InventoryItemRow>(
+      `
+        select *
+        from inventory_items
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+        ${forUpdate ? "for update" : ""}
+      `,
+      [scope.tenantId, scope.clinicId, itemId]
+    );
+    return result.rows[0] ? mapInventoryItemRow(result.rows[0]) : null;
+  }
+
+  async #insertStockLedgerEntryInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    item: InventoryItemRecord,
+    input: Pick<
+      CreateStockLedgerEntryInput,
+      "movementType" | "quantityDelta" | "unitCostMinor" | "currency" | "sourceTable" | "sourceId" | "reason" | "evidence"
+    >
+  ): Promise<StockLedgerEntryRecord> {
+    const quantityAfter = item.currentQuantity + input.quantityDelta;
+    assertFiniteQuantity(quantityAfter, "quantityAfter");
+    await client.query(
+      `
+        update inventory_items
+        set current_quantity = $4, updated_by_user_id = $5
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, item.id, quantityAfter, scope.actorUserId]
+    );
+    const result = await client.query<StockLedgerEntryRow>(
+      `
+        insert into stock_ledger_entries (
+          tenant_id,
+          clinic_id,
+          item_id,
+          movement_type,
+          quantity_delta,
+          quantity_after,
+          unit_cost_minor,
+          currency,
+          source_table,
+          source_id,
+          reason,
+          evidence,
+          recorded_by_user_id
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12::jsonb, $13)
+        returning *
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        item.id,
+        input.movementType,
+        input.quantityDelta,
+        quantityAfter,
+        input.unitCostMinor ?? null,
+        input.currency ?? null,
+        input.sourceTable ?? null,
+        input.sourceId ?? null,
+        input.reason,
+        JSON.stringify(input.evidence ?? {}),
+        scope.actorUserId
+      ]
+    );
+    return mapStockLedgerEntryRow(result.rows[0]);
+  }
+
+  async #listInventoryCheckTemplateLines(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    templateId: UUID
+  ): Promise<InventoryCheckTemplateLineRecord[]> {
+    return (
+      await client.query<InventoryCheckTemplateLineRow>(
+        `
+          select *
+          from inventory_check_template_lines
+          where tenant_id = $1 and clinic_id = $2 and template_id = $3
+          order by sequence
+        `,
+        [scope.tenantId, scope.clinicId, templateId]
+      )
+    ).rows.map(mapInventoryCheckTemplateLineRow);
+  }
+
+  async #findInventoryCheckRunDetailInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    checkRunId: UUID
+  ): Promise<InventoryCheckRunDetail | null> {
+    const runResult = await client.query<InventoryCheckRunRow>(
+      `
+        select *
+        from inventory_check_runs
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, checkRunId]
+    );
+    if (!runResult.rows[0]) return null;
+    const run = mapInventoryCheckRunRow(runResult.rows[0]);
+    const templateResult = await client.query<InventoryCheckTemplateRow>(
+      `
+        select *
+        from inventory_check_templates
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, run.templateId]
+    );
+    if (!templateResult.rows[0]) return null;
+    const lines = (
+      await client.query<InventoryCheckRunLineRow>(
+        `
+          select *
+          from inventory_check_run_lines
+          where tenant_id = $1 and clinic_id = $2 and check_run_id = $3
+          order by sequence
+        `,
+        [scope.tenantId, scope.clinicId, run.id]
+      )
+    ).rows.map(mapInventoryCheckRunLineRow);
+    const procurementSuggestions = (
+      await client.query<ProcurementSuggestionRow>(
+        `
+          select *
+          from procurement_suggestions
+          where tenant_id = $1 and clinic_id = $2 and source_check_run_id = $3
+          order by created_at
+        `,
+        [scope.tenantId, scope.clinicId, run.id]
+      )
+    ).rows.map(mapProcurementSuggestionRow);
+    return {
+      run,
+      template: mapInventoryCheckTemplateRow(templateResult.rows[0]),
+      lines,
+      procurementSuggestions
+    };
+  }
+
+  async #ensureProcurementSuggestion(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    item: InventoryItemRecord,
+    sourceCheckRunLineId: UUID,
+    sourceCheckRunId: UUID,
+    exceptionType: string
+  ): Promise<ProcurementSuggestionRecord> {
+    const existing = await client.query<ProcurementSuggestionRow>(
+      `
+        select *
+        from procurement_suggestions
+        where tenant_id = $1
+          and clinic_id = $2
+          and item_id = $3
+          and source_check_run_line_id = $4
+          and status = 'suggested'
+        limit 1
+      `,
+      [scope.tenantId, scope.clinicId, item.id, sourceCheckRunLineId]
+    );
+    if (existing.rows[0]) return mapProcurementSuggestionRow(existing.rows[0]);
+
+    const result = await client.query<ProcurementSuggestionRow>(
+      `
+        insert into procurement_suggestions (
+          tenant_id,
+          clinic_id,
+          item_id,
+          source_check_run_id,
+          source_check_run_line_id,
+          suggested_quantity,
+          reason,
+          evidence,
+          created_by_user_id
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+        returning *
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        item.id,
+        sourceCheckRunId,
+        sourceCheckRunLineId,
+        Math.max(item.reorderQuantity, item.minimumQuantity - item.currentQuantity),
+        `${item.displayName} is below minimum stock after inventory check.`,
+        JSON.stringify({ exceptionType, taskCreation: "suggested_not_created" }),
+        scope.actorUserId
+      ]
+    );
+    return mapProcurementSuggestionRow(result.rows[0]);
+  }
+
+  async #findProcurementSuggestionForLine(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    lineId: UUID
+  ): Promise<ProcurementSuggestionRecord | null> {
+    const result = await client.query<ProcurementSuggestionRow>(
+      `
+        select *
+        from procurement_suggestions
+        where tenant_id = $1 and clinic_id = $2 and source_check_run_line_id = $3 and status = 'suggested'
+        limit 1
+      `,
+      [scope.tenantId, scope.clinicId, lineId]
+    );
+    return result.rows[0] ? mapProcurementSuggestionRow(result.rows[0]) : null;
+  }
+
+  async #findOpenProcurementSuggestionForItem(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    itemId: UUID
+  ): Promise<ProcurementSuggestionRecord | null> {
+    const result = await client.query<ProcurementSuggestionRow>(
+      `
+        select *
+        from procurement_suggestions
+        where tenant_id = $1 and clinic_id = $2 and item_id = $3 and status = 'suggested'
+        order by created_at desc
+        limit 1
+      `,
+      [scope.tenantId, scope.clinicId, itemId]
+    );
+    return result.rows[0] ? mapProcurementSuggestionRow(result.rows[0]) : null;
+  }
+
+  async #findIncidentByIdInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    incidentId: UUID
+  ): Promise<IncidentRecord | null> {
+    const result = await client.query<IncidentRow>(
+      `
+        select *
+        from incidents
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, incidentId]
+    );
+    return result.rows[0] ? mapIncidentRow(result.rows[0]) : null;
+  }
+
   async #appendEncounterStatusHistory(
     client: SqlQueryClient,
     scope: RepositoryScope,
@@ -4777,6 +6315,290 @@ interface ReceiptRow {
   void_reason: string | null;
 }
 
+interface LabVendorRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  display_name: string;
+  phone: string | null;
+  email: string | null;
+  address: Record<string, unknown>;
+  tax_registration_number: string | null;
+  payment_terms_days: number | null;
+  status: LabVendorRecord["status"];
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface LabCaseRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  vendor_id: UUID;
+  patient_id: UUID;
+  encounter_id: UUID | null;
+  treatment_plan_id: UUID | null;
+  treatment_plan_estimate_item_id: UUID | null;
+  procedure_performed_id: UUID | null;
+  title: string;
+  status: LabCaseRecord["status"];
+  priority: LabCaseRecord["priority"];
+  due_at: Date | string;
+  clinical_notes: string | null;
+  internal_notes: string | null;
+  slip_number: string;
+  slip_version: number;
+  slip_generated_at: Date | string;
+  slip_generated_by_user_id: UUID;
+  slip_metadata: Record<string, unknown>;
+  expected_cost_minor: number | string | null;
+  currency: LabCaseRecord["currency"];
+  sent_at: Date | string | null;
+  received_at: Date | string | null;
+  completed_at: Date | string | null;
+  cancelled_at: Date | string | null;
+  cancellation_reason: string | null;
+  created_by_user_id: UUID;
+  updated_by_user_id: UUID | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface LabCaseItemRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  lab_case_id: UUID;
+  item_type: string;
+  tooth_number: LabCaseItemRecord["toothNumber"];
+  material: string | null;
+  shade: string | null;
+  quantity: number;
+  notes: string | null;
+  created_at: Date | string;
+}
+
+interface LabCaseStatusHistoryRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  lab_case_id: UUID;
+  patient_id: UUID;
+  from_status: LabCaseStatusHistoryRecord["fromStatus"];
+  to_status: LabCaseStatusHistoryRecord["toStatus"];
+  reason: string | null;
+  evidence: Record<string, unknown>;
+  changed_by_user_id: UUID;
+  changed_at: Date | string;
+}
+
+interface LabReconciliationRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  vendor_id: UUID;
+  period_start: Date | string;
+  period_end: Date | string;
+  status: LabReconciliationRecord["status"];
+  invoice_reference: string | null;
+  invoice_amount_minor: number | string | null;
+  expected_amount_minor: number | string;
+  variance_amount_minor: number | string;
+  currency: LabReconciliationRecord["currency"];
+  evidence: Record<string, unknown>;
+  created_by_user_id: UUID;
+  approved_by_user_id: UUID | null;
+  approved_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface LabReconciliationEntryRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  reconciliation_id: UUID;
+  lab_case_id: UUID;
+  patient_id: UUID;
+  status: LabReconciliationEntryRecord["status"];
+  expected_amount_minor: number | string;
+  invoice_amount_minor: number | string | null;
+  variance_amount_minor: number | string;
+  notes: string | null;
+  created_at: Date | string;
+}
+
+interface InventoryCategoryRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  code: string;
+  display_name: string;
+  kind: InventoryCategoryRecord["kind"];
+  active: boolean;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface InventoryItemRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  category_id: UUID;
+  sku: string;
+  display_name: string;
+  unit_of_measure: string;
+  storage_location: string;
+  track_quantity: boolean;
+  minimum_quantity: number | string;
+  reorder_quantity: number | string;
+  current_quantity: number | string;
+  status: InventoryItemRecord["status"];
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface StockLedgerEntryRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  item_id: UUID;
+  movement_type: StockLedgerEntryRecord["movementType"];
+  quantity_delta: number | string;
+  quantity_after: number | string;
+  unit_cost_minor: number | string | null;
+  currency: StockLedgerEntryRecord["currency"];
+  source_table: string | null;
+  source_id: UUID | null;
+  reason: string;
+  evidence: Record<string, unknown>;
+  recorded_by_user_id: UUID;
+  recorded_at: Date | string;
+}
+
+interface InventoryCheckTemplateRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  code: string;
+  display_name: string;
+  cadence: InventoryCheckTemplateRecord["cadence"];
+  active: boolean;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface InventoryCheckTemplateLineRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  template_id: UUID;
+  item_id: UUID;
+  sequence: number;
+  drawer_location: string;
+  expected_quantity: number | string | null;
+  required: boolean;
+  instructions: string | null;
+}
+
+interface InventoryCheckRunRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  template_id: UUID;
+  status: InventoryCheckRunRecord["status"];
+  started_by_user_id: UUID;
+  completed_by_user_id: UUID | null;
+  started_at: Date | string;
+  completed_at: Date | string | null;
+  notes: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface InventoryCheckRunLineRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  check_run_id: UUID;
+  template_line_id: UUID;
+  item_id: UUID;
+  sequence: number;
+  drawer_location: string;
+  expected_quantity: number | string;
+  counted_quantity: number | string | null;
+  variance_quantity: number | string | null;
+  exception_type: InventoryCheckRunLineRecord["exceptionType"];
+  exception_notes: string | null;
+  counted_by_user_id: UUID | null;
+  counted_at: Date | string | null;
+}
+
+interface ProcurementSuggestionRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  item_id: UUID;
+  source_check_run_id: UUID | null;
+  source_check_run_line_id: UUID | null;
+  status: ProcurementSuggestionRecord["status"];
+  suggested_quantity: number | string;
+  reason: string;
+  task_id: UUID | null;
+  evidence: Record<string, unknown>;
+  created_by_user_id: UUID;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface IncidentRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  patient_id: UUID | null;
+  appointment_id: UUID | null;
+  lab_case_id: UUID | null;
+  inventory_item_id: UUID | null;
+  category: IncidentRecord["category"];
+  severity: IncidentRecord["severity"];
+  status: IncidentRecord["status"];
+  occurred_at: Date | string;
+  location: string | null;
+  summary: string;
+  description: string;
+  impact: string | null;
+  learning: string | null;
+  immediate_action: string | null;
+  evidence: Record<string, unknown>;
+  reported_by_user_id: UUID;
+  owner_user_id: UUID | null;
+  resolved_at: Date | string | null;
+  closed_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface CorrectiveActionRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  incident_id: UUID | null;
+  action_type: CorrectiveActionRecord["actionType"];
+  title: string;
+  description: string;
+  status: CorrectiveActionRecord["status"];
+  owner_user_id: UUID;
+  due_at: Date | string;
+  completed_at: Date | string | null;
+  completed_by_user_id: UUID | null;
+  completion_evidence: Record<string, unknown>;
+  verification_evidence: Record<string, unknown>;
+  created_by_user_id: UUID;
+  updated_by_user_id: UUID | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
 function mapPatientRow(row: PatientRow): PatientRecord {
   return {
     id: row.id,
@@ -5450,6 +7272,344 @@ function mapReceiptRow(row: ReceiptRow): ReceiptRecord {
     voidedByUserId: row.voided_by_user_id,
     voidedAt: row.voided_at ? toIso(row.voided_at) : null,
     voidReason: row.void_reason
+  };
+}
+
+function mapLabVendorRow(row: LabVendorRow): LabVendorRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    displayName: row.display_name,
+    phone: row.phone,
+    email: row.email,
+    address: row.address ?? {},
+    taxRegistrationNumber: row.tax_registration_number,
+    paymentTermsDays: row.payment_terms_days,
+    status: row.status,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapLabCaseRow(row: LabCaseRow): LabCaseRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    vendorId: row.vendor_id,
+    patientId: row.patient_id,
+    encounterId: row.encounter_id,
+    treatmentPlanId: row.treatment_plan_id,
+    treatmentPlanEstimateItemId: row.treatment_plan_estimate_item_id,
+    procedurePerformedId: row.procedure_performed_id,
+    title: row.title,
+    status: row.status,
+    priority: row.priority,
+    dueAt: toIso(row.due_at),
+    clinicalNotes: row.clinical_notes,
+    internalNotes: row.internal_notes,
+    slipNumber: row.slip_number,
+    slipVersion: row.slip_version,
+    slipGeneratedAt: toIso(row.slip_generated_at),
+    slipGeneratedByUserId: row.slip_generated_by_user_id,
+    slipMetadata: row.slip_metadata ?? {},
+    expectedCostMinor: row.expected_cost_minor === null ? null : Number(row.expected_cost_minor),
+    currency: row.currency,
+    sentAt: row.sent_at ? toIso(row.sent_at) : null,
+    receivedAt: row.received_at ? toIso(row.received_at) : null,
+    completedAt: row.completed_at ? toIso(row.completed_at) : null,
+    cancelledAt: row.cancelled_at ? toIso(row.cancelled_at) : null,
+    cancellationReason: row.cancellation_reason,
+    createdByUserId: row.created_by_user_id,
+    updatedByUserId: row.updated_by_user_id,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapLabCaseItemRow(row: LabCaseItemRow): LabCaseItemRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    labCaseId: row.lab_case_id,
+    itemType: row.item_type,
+    toothNumber: row.tooth_number,
+    material: row.material,
+    shade: row.shade,
+    quantity: row.quantity,
+    notes: row.notes,
+    createdAt: toIso(row.created_at)
+  };
+}
+
+function mapLabCaseStatusHistoryRow(row: LabCaseStatusHistoryRow): LabCaseStatusHistoryRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    labCaseId: row.lab_case_id,
+    patientId: row.patient_id,
+    fromStatus: row.from_status,
+    toStatus: row.to_status,
+    reason: row.reason,
+    evidence: row.evidence ?? {},
+    changedByUserId: row.changed_by_user_id,
+    changedAt: toIso(row.changed_at)
+  };
+}
+
+function mapLabReconciliationRow(row: LabReconciliationRow): LabReconciliationRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    vendorId: row.vendor_id,
+    periodStart: toIso(row.period_start).slice(0, 10),
+    periodEnd: toIso(row.period_end).slice(0, 10),
+    status: row.status,
+    invoiceReference: row.invoice_reference,
+    invoiceAmountMinor: row.invoice_amount_minor === null ? null : Number(row.invoice_amount_minor),
+    expectedAmountMinor: Number(row.expected_amount_minor),
+    varianceAmountMinor: Number(row.variance_amount_minor),
+    currency: row.currency,
+    evidence: row.evidence ?? {},
+    createdByUserId: row.created_by_user_id,
+    approvedByUserId: row.approved_by_user_id,
+    approvedAt: row.approved_at ? toIso(row.approved_at) : null,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapLabReconciliationEntryRow(row: LabReconciliationEntryRow): LabReconciliationEntryRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    reconciliationId: row.reconciliation_id,
+    labCaseId: row.lab_case_id,
+    patientId: row.patient_id,
+    status: row.status,
+    expectedAmountMinor: Number(row.expected_amount_minor),
+    invoiceAmountMinor: row.invoice_amount_minor === null ? null : Number(row.invoice_amount_minor),
+    varianceAmountMinor: Number(row.variance_amount_minor),
+    notes: row.notes,
+    createdAt: toIso(row.created_at)
+  };
+}
+
+function mapInventoryCategoryRow(row: InventoryCategoryRow): InventoryCategoryRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    code: row.code,
+    displayName: row.display_name,
+    kind: row.kind,
+    active: row.active,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapInventoryItemRow(row: InventoryItemRow): InventoryItemRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    categoryId: row.category_id,
+    sku: row.sku,
+    displayName: row.display_name,
+    unitOfMeasure: row.unit_of_measure,
+    storageLocation: row.storage_location,
+    trackQuantity: row.track_quantity,
+    minimumQuantity: Number(row.minimum_quantity),
+    reorderQuantity: Number(row.reorder_quantity),
+    currentQuantity: Number(row.current_quantity),
+    status: row.status,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapStockLedgerEntryRow(row: StockLedgerEntryRow): StockLedgerEntryRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    itemId: row.item_id,
+    movementType: row.movement_type,
+    quantityDelta: Number(row.quantity_delta),
+    quantityAfter: Number(row.quantity_after),
+    unitCostMinor: row.unit_cost_minor === null ? null : Number(row.unit_cost_minor),
+    currency: row.currency,
+    sourceTable: row.source_table,
+    sourceId: row.source_id,
+    reason: row.reason,
+    evidence: row.evidence ?? {},
+    recordedByUserId: row.recorded_by_user_id,
+    recordedAt: toIso(row.recorded_at)
+  };
+}
+
+function mapInventoryCheckTemplateRow(row: InventoryCheckTemplateRow): InventoryCheckTemplateRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    code: row.code,
+    displayName: row.display_name,
+    cadence: row.cadence,
+    active: row.active,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapInventoryCheckTemplateLineRow(
+  row: InventoryCheckTemplateLineRow
+): InventoryCheckTemplateLineRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    templateId: row.template_id,
+    itemId: row.item_id,
+    sequence: row.sequence,
+    drawerLocation: row.drawer_location,
+    expectedQuantity: row.expected_quantity === null ? null : Number(row.expected_quantity),
+    required: row.required,
+    instructions: row.instructions
+  };
+}
+
+function mapInventoryCheckRunRow(row: InventoryCheckRunRow): InventoryCheckRunRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    templateId: row.template_id,
+    status: row.status,
+    startedByUserId: row.started_by_user_id,
+    completedByUserId: row.completed_by_user_id,
+    startedAt: toIso(row.started_at),
+    completedAt: row.completed_at ? toIso(row.completed_at) : null,
+    notes: row.notes,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapInventoryCheckRunLineRow(row: InventoryCheckRunLineRow): InventoryCheckRunLineRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    checkRunId: row.check_run_id,
+    templateLineId: row.template_line_id,
+    itemId: row.item_id,
+    sequence: row.sequence,
+    drawerLocation: row.drawer_location,
+    expectedQuantity: Number(row.expected_quantity),
+    countedQuantity: row.counted_quantity === null ? null : Number(row.counted_quantity),
+    varianceQuantity: row.variance_quantity === null ? null : Number(row.variance_quantity),
+    exceptionType: row.exception_type,
+    exceptionNotes: row.exception_notes,
+    countedByUserId: row.counted_by_user_id,
+    countedAt: row.counted_at ? toIso(row.counted_at) : null
+  };
+}
+
+function mapProcurementSuggestionRow(row: ProcurementSuggestionRow): ProcurementSuggestionRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    itemId: row.item_id,
+    sourceCheckRunId: row.source_check_run_id,
+    sourceCheckRunLineId: row.source_check_run_line_id,
+    status: row.status,
+    suggestedQuantity: Number(row.suggested_quantity),
+    reason: row.reason,
+    taskId: row.task_id,
+    evidence: row.evidence ?? {},
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapIncidentRow(row: IncidentRow): IncidentRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    patientId: row.patient_id,
+    appointmentId: row.appointment_id,
+    labCaseId: row.lab_case_id,
+    inventoryItemId: row.inventory_item_id,
+    category: row.category,
+    severity: row.severity,
+    status: row.status,
+    occurredAt: toIso(row.occurred_at),
+    location: row.location,
+    summary: row.summary,
+    description: row.description,
+    impact: row.impact,
+    learning: row.learning,
+    immediateAction: row.immediate_action,
+    evidence: row.evidence ?? {},
+    reportedByUserId: row.reported_by_user_id,
+    ownerUserId: row.owner_user_id,
+    resolvedAt: row.resolved_at ? toIso(row.resolved_at) : null,
+    closedAt: row.closed_at ? toIso(row.closed_at) : null,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapCorrectiveActionRow(row: CorrectiveActionRow): CorrectiveActionRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    incidentId: row.incident_id,
+    actionType: row.action_type,
+    title: row.title,
+    description: row.description,
+    status: row.status,
+    ownerUserId: row.owner_user_id,
+    dueAt: toIso(row.due_at),
+    completedAt: row.completed_at ? toIso(row.completed_at) : null,
+    completedByUserId: row.completed_by_user_id,
+    completionEvidence: row.completion_evidence ?? {},
+    verificationEvidence: row.verification_evidence ?? {},
+    createdByUserId: row.created_by_user_id,
+    updatedByUserId: row.updated_by_user_id,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function toInventoryException(
+  item: InventoryItemRecord,
+  line: InventoryCheckRunLineRecord | null,
+  procurementSuggestion: ProcurementSuggestionRecord | null
+): InventoryExceptionRecord {
+  return {
+    item,
+    checkRunLine: line,
+    procurementSuggestion,
+    exceptionType: line?.exceptionType ?? "low_stock",
+    quantityAvailable: line?.countedQuantity ?? item.currentQuantity,
+    thresholdQuantity: item.minimumQuantity,
+    suggestedTask: {
+      taskType: "procurement",
+      title: `Review procurement for ${item.displayName}`,
+      status: "suggested_not_created"
+    }
   };
 }
 

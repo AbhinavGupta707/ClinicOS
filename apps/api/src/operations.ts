@@ -9,20 +9,33 @@ import type {
   ClinicOperationsRepository,
   CreateAppointmentInput,
   CreateConsentInput,
+  CreateCorrectiveActionInput,
   CreateDentalChartSnapshotInput,
   CreateEncounterInput,
+  CreateInventoryCategoryInput,
+  CreateInventoryCheckRunInput,
+  CreateInventoryCheckTemplateInput,
+  CreateInventoryItemInput,
+  CreateIncidentInput,
   CreateInvoiceInput,
   CreateIntakeFormSubmissionInput,
   CreateIntakeFormTemplateInput,
+  CreateLabCaseInput,
+  CreateLabReconciliationInput,
+  CreateLabVendorInput,
   CreateLeadInput,
   CreatePatientInput,
   CreatePatientInstructionInput,
   CreateProcedurePerformedInput,
   CreatePrescriptionInput,
   CreateReceiptInput,
+  CreateStockLedgerEntryInput,
   CreateTreatmentPlanInput,
   RepositoryScope,
+  UpdateCorrectiveActionInput,
   UpdateDentalFindingRepositoryInput,
+  UpdateInventoryCheckRunInput,
+  UpdateLabCaseStatusInput,
   UpdateTreatmentPlanInput
 } from "@clinic-os/db";
 import {
@@ -38,6 +51,7 @@ import {
   buildPatientDuplicateSuggestions,
   calculateBillingLineTotals,
   calculateEndAt,
+  correctiveActionEffectiveStatus,
   hasClinicalNoteContent,
   isAppointmentStatus,
   isBillingCurrency,
@@ -50,6 +64,16 @@ import {
   isEncounterStatus,
   isIntakeFormType,
   isIntakeSubmissionSource,
+  isCorrectiveActionStatus,
+  isCorrectiveActionType,
+  isIncidentCategory,
+  isIncidentSeverity,
+  isIncidentStatus,
+  isInventoryCategoryKind,
+  isInventoryCheckRunStatus,
+  isLabCaseStatus,
+  isLabReconciliationEntryStatus,
+  isLabReconciliationStatus,
   isPatientInstructionChannel,
   isMediaScanStatus,
   isMediaType,
@@ -74,6 +98,7 @@ import {
   type LeadIntent,
   type LeadSource,
   type LeadStatus,
+  type LabCaseStatus,
   type MediaScanStatus,
   type MediaType,
   type ManualPaymentMethod,
@@ -952,6 +977,591 @@ export async function getMorningDashboard(
   authorize(context, { permission: "schedule.read" });
   const data = await dependencies.repository.loadDashboardData(scopeFrom(context), date);
   return ok({ dashboard: buildMorningDashboard({ date, ...data }) });
+}
+
+export async function listLabVendors(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "lab.manage" });
+  const labVendors = await dependencies.repository.listLabVendors(scopeFrom(context));
+  return ok({ labVendors });
+}
+
+export async function createLabVendor(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "lab.manage" });
+  const vendor = await dependencies.repository.createLabVendor(
+    scopeFrom(context),
+    parseCreateLabVendor(body)
+  );
+
+  await audit(context, dependencies, "lab_vendor.created", {
+    resourceType: "lab_vendor",
+    resourceId: vendor.id,
+    metadata: { displayName: vendor.displayName }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "lab_vendor.created",
+    aggregateType: "lab_vendor",
+    aggregateId: vendor.id,
+    payload: { vendorId: vendor.id, displayName: vendor.displayName }
+  });
+
+  return created({ labVendor: vendor });
+}
+
+export async function listLabCases(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { status?: string | null; dueBefore?: string | null; vendorId?: string | null }
+) {
+  authorize(context, { permission: "lab.manage" });
+  const labCases = await dependencies.repository.listLabCases(scopeFrom(context), {
+    status: filter.status ? parseLabCaseStatus(filter.status) : null,
+    dueBefore: filter.dueBefore ?? null,
+    vendorId: filter.vendorId ? uuidField(filter.vendorId, "vendorId") : null
+  });
+  return ok({ labCases });
+}
+
+export async function createLabCase(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "lab.manage" });
+  const input = parseCreateLabCase(body);
+  const result = await dependencies.repository.createLabCase(scopeFrom(context), input);
+  if (!result) throw notFound("Lab vendor, patient, or clinical linkage not found.", {
+    vendor_id: input.vendorId,
+    patient_id: input.patientId
+  });
+
+  await audit(context, dependencies, "lab_case.created", {
+    patientId: result.labCase.patientId,
+    resourceType: "lab_case",
+    resourceId: result.labCase.id,
+    metadata: { vendorId: result.labCase.vendorId, dueAt: result.labCase.dueAt }
+  });
+  await audit(context, dependencies, "lab_slip.generated", {
+    patientId: result.labCase.patientId,
+    resourceType: "lab_case",
+    resourceId: result.labCase.id,
+    metadata: {
+      slipNumber: result.labCase.slipNumber,
+      slipVersion: result.labCase.slipVersion
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "lab_case.created",
+    aggregateType: "lab_case",
+    aggregateId: result.labCase.id,
+    patientId: result.labCase.patientId,
+    payload: {
+      labCaseId: result.labCase.id,
+      vendorId: result.labCase.vendorId,
+      dueAt: result.labCase.dueAt,
+      slipNumber: result.labCase.slipNumber
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "lab_slip.generated",
+    aggregateType: "lab_slip",
+    aggregateId: result.labCase.id,
+    patientId: result.labCase.patientId,
+    payload: {
+      labCaseId: result.labCase.id,
+      slipNumber: result.labCase.slipNumber,
+      slipVersion: result.labCase.slipVersion
+    }
+  });
+
+  return created({ labCase: result });
+}
+
+export async function updateLabCase(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  labCaseId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "lab.manage" });
+  const input = parseUpdateLabCaseStatus(body);
+  const before = await dependencies.repository.findLabCaseById(scopeFrom(context), labCaseId);
+  if (!before) throw notFound("Lab case not found.", { lab_case_id: labCaseId });
+
+  let result;
+  try {
+    result = await dependencies.repository.updateLabCaseStatus(scopeFrom(context), labCaseId, input);
+  } catch (error) {
+    throw conflict(error instanceof Error ? error.message : "Invalid lab case transition.", {
+      lab_case_id: labCaseId,
+      to_status: input.status
+    });
+  }
+  if (!result) throw notFound("Lab case not found.", { lab_case_id: labCaseId });
+
+  const action = labCaseAuditAction(input.status);
+  const eventType = labCaseEventType(input.status);
+  await audit(context, dependencies, action, {
+    patientId: result.labCase.patientId,
+    resourceType: "lab_case",
+    resourceId: result.labCase.id,
+    metadata: { fromStatus: before.labCase.status, toStatus: result.labCase.status }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType,
+    aggregateType: "lab_case",
+    aggregateId: result.labCase.id,
+    patientId: result.labCase.patientId,
+    payload: {
+      labCaseId: result.labCase.id,
+      fromStatus: before.labCase.status,
+      toStatus: result.labCase.status
+    }
+  });
+
+  return ok({ labCase: result });
+}
+
+export async function createLabReconciliation(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "lab.manage" });
+  const input = parseCreateLabReconciliation(body);
+  const result = await dependencies.repository.createLabReconciliation(scopeFrom(context), input);
+  if (!result) throw notFound("Lab vendor or lab case not found for reconciliation.", {
+    vendor_id: input.vendorId
+  });
+
+  await audit(context, dependencies, "lab_reconciliation.created", {
+    resourceType: "lab_reconciliation",
+    resourceId: result.reconciliation.id,
+    metadata: {
+      vendorId: result.reconciliation.vendorId,
+      periodStart: result.reconciliation.periodStart,
+      periodEnd: result.reconciliation.periodEnd,
+      entryCount: result.entries.length,
+      varianceAmountMinor: result.reconciliation.varianceAmountMinor
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "lab_reconciliation.created",
+    aggregateType: "lab_reconciliation",
+    aggregateId: result.reconciliation.id,
+    payload: {
+      reconciliationId: result.reconciliation.id,
+      vendorId: result.reconciliation.vendorId,
+      periodStart: result.reconciliation.periodStart,
+      periodEnd: result.reconciliation.periodEnd,
+      entryCount: result.entries.length,
+      varianceAmountMinor: result.reconciliation.varianceAmountMinor
+    }
+  });
+
+  return created({ labReconciliation: result });
+}
+
+export async function listInventoryCategories(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const categories = await dependencies.repository.listInventoryCategories(scopeFrom(context));
+  return ok({ categories });
+}
+
+export async function createInventoryCategory(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const category = await dependencies.repository.createInventoryCategory(
+    scopeFrom(context),
+    parseCreateInventoryCategory(body)
+  );
+
+  await audit(context, dependencies, "inventory_category.created", {
+    resourceType: "inventory_category",
+    resourceId: category.id,
+    metadata: { kind: category.kind }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "inventory_category.created",
+    aggregateType: "inventory_category",
+    aggregateId: category.id,
+    payload: { categoryId: category.id, kind: category.kind }
+  });
+
+  return created({ category });
+}
+
+export async function listInventoryItems(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const items = await dependencies.repository.listInventoryItems(scopeFrom(context));
+  return ok({ items });
+}
+
+export async function createInventoryItem(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const input = parseCreateInventoryItem(body);
+  const item = await dependencies.repository.createInventoryItem(scopeFrom(context), input);
+  if (!item) throw notFound("Inventory category not found.", { category_id: input.categoryId });
+
+  await audit(context, dependencies, "inventory_item.created", {
+    resourceType: "inventory_item",
+    resourceId: item.id,
+    metadata: { sku: item.sku, openingQuantity: input.openingQuantity ?? 0 }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "inventory_item.created",
+    aggregateType: "inventory_item",
+    aggregateId: item.id,
+    payload: { itemId: item.id, sku: item.sku, openingQuantity: input.openingQuantity ?? 0 }
+  });
+
+  return created({ item });
+}
+
+export async function createStockLedgerEntry(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const input = parseCreateStockLedgerEntry(body);
+  const entry = await dependencies.repository.createStockLedgerEntry(scopeFrom(context), input);
+  if (!entry) throw notFound("Inventory item not found.", { item_id: input.itemId });
+
+  await audit(context, dependencies, "inventory_stock.adjusted", {
+    resourceType: "stock_ledger_entry",
+    resourceId: entry.id,
+    metadata: {
+      itemId: entry.itemId,
+      movementType: entry.movementType,
+      quantityDelta: entry.quantityDelta,
+      quantityAfter: entry.quantityAfter
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "inventory_stock.adjusted",
+    aggregateType: "stock_ledger_entry",
+    aggregateId: entry.id,
+    payload: {
+      itemId: entry.itemId,
+      movementType: entry.movementType,
+      quantityDelta: entry.quantityDelta,
+      quantityAfter: entry.quantityAfter
+    }
+  });
+
+  return created({ stockLedgerEntry: entry });
+}
+
+export async function listInventoryCheckTemplates(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const templates = await dependencies.repository.listInventoryCheckTemplates(scopeFrom(context));
+  return ok({ templates });
+}
+
+export async function createInventoryCheckTemplate(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const input = parseCreateInventoryCheckTemplate(body);
+  const template = await dependencies.repository.createInventoryCheckTemplate(scopeFrom(context), input);
+  if (!template) throw notFound("Inventory item not found for check template.", {});
+  return created({ template });
+}
+
+export async function createInventoryCheckRun(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const input = parseCreateInventoryCheckRun(body);
+  const run = await dependencies.repository.createInventoryCheckRun(scopeFrom(context), input);
+  if (!run) throw notFound("Inventory check template not found.", { template_id: input.templateId });
+
+  await audit(context, dependencies, "inventory_check.created", {
+    resourceType: "inventory_check_run",
+    resourceId: run.run.id,
+    metadata: { templateId: run.run.templateId, lineCount: run.lines.length }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "inventory_check.created",
+    aggregateType: "inventory_check_run",
+    aggregateId: run.run.id,
+    payload: { checkRunId: run.run.id, templateId: run.run.templateId, lineCount: run.lines.length }
+  });
+
+  return created({ checkRun: run });
+}
+
+export async function updateInventoryCheckRun(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  checkRunId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const input = parseUpdateInventoryCheckRun(body);
+  const run = await dependencies.repository.updateInventoryCheckRun(
+    scopeFrom(context),
+    checkRunId,
+    input
+  );
+  if (!run) throw conflict("Inventory check run cannot be updated for this state or payload.", {
+    check_run_id: checkRunId
+  });
+
+  if (run.run.status === "completed") {
+    const exceptionLines = run.lines.filter((line) => line.exceptionType);
+    await audit(context, dependencies, "inventory_check.completed", {
+      resourceType: "inventory_check_run",
+      resourceId: run.run.id,
+      metadata: {
+        exceptionCount: exceptionLines.length,
+        procurementSuggestionCount: run.procurementSuggestions.length
+      }
+    });
+    await appendOutbox(context, dependencies, {
+      eventType: "inventory_check.completed",
+      aggregateType: "inventory_check_run",
+      aggregateId: run.run.id,
+      payload: {
+        checkRunId: run.run.id,
+        exceptionCount: exceptionLines.length
+      }
+    });
+    for (const line of exceptionLines) {
+      if (line.exceptionType !== "low_stock" && line.exceptionType !== "missing_item") continue;
+      await audit(context, dependencies, "inventory.low_stock_detected", {
+        resourceType: "inventory_item",
+        resourceId: line.itemId,
+        metadata: {
+          checkRunId: run.run.id,
+          checkRunLineId: line.id,
+          exceptionType: line.exceptionType,
+          expectedQuantity: line.expectedQuantity,
+          countedQuantity: line.countedQuantity
+        }
+      });
+      await appendOutbox(context, dependencies, {
+        eventType: "inventory.low_stock_detected",
+        aggregateType: "inventory_item",
+        aggregateId: line.itemId,
+        payload: {
+          checkRunId: run.run.id,
+          checkRunLineId: line.id,
+          exceptionType: line.exceptionType,
+          expectedQuantity: line.expectedQuantity,
+          countedQuantity: line.countedQuantity
+        }
+      });
+    }
+    for (const suggestion of run.procurementSuggestions) {
+      await audit(context, dependencies, "inventory.procurement_suggested", {
+        resourceType: "procurement_suggestion",
+        resourceId: suggestion.id,
+        metadata: {
+          itemId: suggestion.itemId,
+          suggestedQuantity: suggestion.suggestedQuantity,
+          taskCreation: "suggested_not_created"
+        }
+      });
+      await appendOutbox(context, dependencies, {
+        eventType: "inventory.procurement_suggested",
+        aggregateType: "procurement_suggestion",
+        aggregateId: suggestion.id,
+        payload: {
+          suggestionId: suggestion.id,
+          itemId: suggestion.itemId,
+          suggestedQuantity: suggestion.suggestedQuantity,
+          taskCreation: "suggested_not_created"
+        }
+      });
+    }
+  }
+
+  return ok({ checkRun: run });
+}
+
+export async function listInventoryExceptions(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { itemId?: string | null; checkRunId?: string | null }
+) {
+  authorize(context, { permission: "inventory.manage" });
+  const exceptions = await dependencies.repository.listInventoryExceptions(scopeFrom(context), {
+    itemId: filter.itemId ? uuidField(filter.itemId, "itemId") : null,
+    checkRunId: filter.checkRunId ? uuidField(filter.checkRunId, "checkRunId") : null
+  });
+  return ok({ exceptions });
+}
+
+export async function listIncidents(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { status?: string | null; severity?: string | null; category?: string | null }
+) {
+  authorize(context, { permission: "incident.manage" });
+  const incidents = await dependencies.repository.listIncidents(scopeFrom(context), {
+    status: filter.status ? parseIncidentStatus(filter.status) : null,
+    severity: filter.severity ? parseIncidentSeverity(filter.severity) : null,
+    category: filter.category ? parseIncidentCategory(filter.category) : null
+  });
+  return ok({ incidents });
+}
+
+export async function createIncident(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "incident.manage" });
+  const input = parseCreateIncident(body);
+  const incident = await dependencies.repository.createIncident(scopeFrom(context), input);
+  if (!incident) throw notFound("Incident linkage not found.", {});
+
+  await audit(context, dependencies, "incident.created", {
+    patientId: incident.patientId,
+    resourceType: "incident",
+    resourceId: incident.id,
+    metadata: {
+      category: incident.category,
+      severity: incident.severity,
+      labCaseId: incident.labCaseId,
+      inventoryItemId: incident.inventoryItemId
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "incident.created",
+    aggregateType: "incident",
+    aggregateId: incident.id,
+    patientId: incident.patientId,
+    payload: {
+      incidentId: incident.id,
+      category: incident.category,
+      severity: incident.severity,
+      status: incident.status
+    }
+  });
+
+  return created({ incident });
+}
+
+export async function listCorrectiveActions(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "corrective_action.manage" });
+  const correctiveActions = (await dependencies.repository.listCorrectiveActions(scopeFrom(context))).map(
+    publicCorrectiveAction
+  );
+  return ok({ correctiveActions });
+}
+
+export async function createCorrectiveAction(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "corrective_action.manage" });
+  const input = parseCreateCorrectiveAction(body);
+  const correctiveAction = await dependencies.repository.createCorrectiveAction(scopeFrom(context), input);
+  if (!correctiveAction) throw notFound("Incident not found.", { incident_id: input.incidentId ?? null });
+
+  await audit(context, dependencies, "corrective_action.created", {
+    resourceType: "corrective_action",
+    resourceId: correctiveAction.id,
+    metadata: {
+      incidentId: correctiveAction.incidentId,
+      actionType: correctiveAction.actionType,
+      dueAt: correctiveAction.dueAt
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "corrective_action.created",
+    aggregateType: "corrective_action",
+    aggregateId: correctiveAction.id,
+    payload: {
+      correctiveActionId: correctiveAction.id,
+      incidentId: correctiveAction.incidentId,
+      dueAt: correctiveAction.dueAt
+    }
+  });
+
+  return created({ correctiveAction: publicCorrectiveAction(correctiveAction) });
+}
+
+export async function updateCorrectiveAction(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  correctiveActionId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "corrective_action.manage" });
+  const input = parseUpdateCorrectiveAction(body);
+  const correctiveAction = await dependencies.repository.updateCorrectiveAction(
+    scopeFrom(context),
+    correctiveActionId,
+    input
+  );
+  if (!correctiveAction) throw notFound("Corrective action not found or already closed.", {
+    corrective_action_id: correctiveActionId
+  });
+
+  const action =
+    correctiveAction.status === "completed"
+      ? "corrective_action.completed"
+      : "corrective_action.status_changed";
+  await audit(context, dependencies, action, {
+    resourceType: "corrective_action",
+    resourceId: correctiveAction.id,
+    metadata: {
+      incidentId: correctiveAction.incidentId,
+      status: correctiveAction.status,
+      effectiveStatus: correctiveActionEffectiveStatus(correctiveAction)
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: action,
+    aggregateType: "corrective_action",
+    aggregateId: correctiveAction.id,
+    payload: {
+      correctiveActionId: correctiveAction.id,
+      incidentId: correctiveAction.incidentId,
+      status: correctiveAction.status,
+      effectiveStatus: correctiveActionEffectiveStatus(correctiveAction)
+    }
+  });
+
+  return ok({ correctiveAction: publicCorrectiveAction(correctiveAction) });
 }
 
 export async function listPricebookProcedures(
@@ -2939,6 +3549,49 @@ function authorizeDoctorSignature(
   }
 }
 
+function labCaseAuditAction(status: LabCaseStatus): KnownAuditAction {
+  switch (status) {
+    case "sent_to_lab":
+      return "lab_case.sent";
+    case "received_by_lab":
+      return "lab_case.received";
+    case "returned":
+      return "lab_case.returned";
+    case "completed":
+      return "lab_case.completed";
+    case "cancelled":
+      return "lab_case.cancelled";
+    default:
+      return "lab_case.status_changed";
+  }
+}
+
+function labCaseEventType(status: LabCaseStatus): DomainEventType {
+  switch (status) {
+    case "sent_to_lab":
+      return "lab_case.sent";
+    case "received_by_lab":
+      return "lab_case.received";
+    case "returned":
+      return "lab_case.returned";
+    case "completed":
+      return "lab_case.completed";
+    case "cancelled":
+      return "lab_case.cancelled";
+    default:
+      return "lab_case.status_changed";
+  }
+}
+
+function publicCorrectiveAction<TAction extends { status: string; dueAt: string }>(action: TAction) {
+  const effectiveStatus = correctiveActionEffectiveStatus(action as Parameters<typeof correctiveActionEffectiveStatus>[0]);
+  return {
+    ...action,
+    effectiveStatus,
+    overdue: effectiveStatus === "overdue"
+  };
+}
+
 type PublicTimelineItemType =
   | "patient"
   | "attribution"
@@ -2956,6 +3609,8 @@ type PublicTimelineItemType =
   | "invoice"
   | "payment"
   | "receipt"
+  | "lab"
+  | "quality"
   | "task"
   | "consent";
 
@@ -3041,6 +3696,15 @@ function publicTimelineItemType(
       return "payment";
     case "receipt_generated":
       return "invoice";
+    case "lab_case_created":
+    case "lab_case_sent":
+    case "lab_case_returned":
+    case "lab_case_completed":
+      return "lab";
+    case "incident_created":
+    case "corrective_action_created":
+    case "corrective_action_completed":
+      return "quality";
   }
 }
 
@@ -3124,6 +3788,20 @@ function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): Dom
       return "payment.reconciliation_required";
     case "receipt_generated":
       return "receipt.generated";
+    case "lab_case_created":
+      return "lab_case.created";
+    case "lab_case_sent":
+      return "lab_case.sent";
+    case "lab_case_returned":
+      return "lab_case.returned";
+    case "lab_case_completed":
+      return "lab_case.completed";
+    case "incident_created":
+      return "incident.created";
+    case "corrective_action_created":
+      return "corrective_action.created";
+    case "corrective_action_completed":
+      return "corrective_action.completed";
   }
 }
 
@@ -3778,6 +4456,265 @@ function parsePaymentCustomer(
   };
 }
 
+function parseCreateLabVendor(body: unknown): CreateLabVendorInput {
+  const input = objectBody(body);
+  return {
+    displayName: requiredString(input.displayName ?? input.name, "displayName"),
+    phone: optionalNullableString(input.phone, "phone"),
+    email: optionalNullableString(input.email, "email"),
+    address: recordField(input.address, "address"),
+    taxRegistrationNumber: optionalNullableString(input.taxRegistrationNumber, "taxRegistrationNumber"),
+    paymentTermsDays:
+      input.paymentTermsDays === undefined
+        ? undefined
+        : integerField(input.paymentTermsDays, "paymentTermsDays", { min: 0, max: 365 })
+  };
+}
+
+function parseCreateLabCase(body: unknown): CreateLabCaseInput {
+  const input = objectBody(body);
+  const items = arrayField(input.items, "items").map((value, index) => {
+    const item = objectField(value, `items[${index}]`);
+    return {
+      itemType: requiredString(item.itemType ?? item.type, `items[${index}].itemType`),
+      toothNumber: optionalNullableString(item.toothNumber, `items[${index}].toothNumber`),
+      material: optionalNullableString(item.material, `items[${index}].material`),
+      shade: optionalNullableString(item.shade, `items[${index}].shade`),
+      quantity:
+        item.quantity === undefined
+          ? 1
+          : integerField(item.quantity, `items[${index}].quantity`, { min: 1, max: 99 }),
+      notes: optionalNullableString(item.notes, `items[${index}].notes`)
+    };
+  });
+  if (items.length === 0) throw validation("Lab case requires at least one item.", { field: "items" });
+  return {
+    vendorId: uuidField(input.vendorId, "vendorId"),
+    patientId: uuidField(input.patientId, "patientId"),
+    encounterId: optionalUuid(input.encounterId, "encounterId"),
+    treatmentPlanId: optionalUuid(input.treatmentPlanId, "treatmentPlanId"),
+    treatmentPlanEstimateItemId: optionalUuid(input.treatmentPlanEstimateItemId, "treatmentPlanEstimateItemId"),
+    procedurePerformedId: optionalUuid(input.procedurePerformedId, "procedurePerformedId"),
+    title: requiredString(input.title, "title"),
+    priority: parseLabPriority(input.priority ?? "routine"),
+    dueAt: requiredString(input.dueAt, "dueAt"),
+    clinicalNotes: optionalNullableString(input.clinicalNotes, "clinicalNotes"),
+    internalNotes: optionalNullableString(input.internalNotes, "internalNotes"),
+    expectedCostMinor:
+      input.expectedCostMinor === undefined || input.expectedCostMinor === null
+        ? null
+        : integerField(input.expectedCostMinor, "expectedCostMinor", { min: 0 }),
+    slipMetadata: recordField(input.slipMetadata, "slipMetadata"),
+    items
+  };
+}
+
+function parseUpdateLabCaseStatus(body: unknown): UpdateLabCaseStatusInput {
+  const input = objectBody(body);
+  return {
+    status: parseLabCaseStatus(requiredString(input.status, "status")),
+    reason: optionalNullableString(input.reason, "reason"),
+    evidence: recordField(input.evidence, "evidence")
+  };
+}
+
+function parseCreateLabReconciliation(body: unknown): CreateLabReconciliationInput {
+  const input = objectBody(body);
+  const entries = arrayField(input.entries, "entries").map((value, index) => {
+    const entry = objectField(value, `entries[${index}]`);
+    return {
+      labCaseId: uuidField(entry.labCaseId, `entries[${index}].labCaseId`),
+      status:
+        entry.status === undefined
+          ? undefined
+          : parseLabReconciliationEntryStatus(requiredString(entry.status, `entries[${index}].status`)),
+      invoiceAmountMinor:
+        entry.invoiceAmountMinor === undefined || entry.invoiceAmountMinor === null
+          ? null
+          : integerField(entry.invoiceAmountMinor, `entries[${index}].invoiceAmountMinor`, { min: 0 }),
+      notes: optionalNullableString(entry.notes, `entries[${index}].notes`)
+    };
+  });
+  if (entries.length === 0) {
+    throw validation("Lab reconciliation requires at least one entry.", { field: "entries" });
+  }
+  return {
+    vendorId: uuidField(input.vendorId, "vendorId"),
+    periodStart: requiredString(input.periodStart, "periodStart"),
+    periodEnd: requiredString(input.periodEnd, "periodEnd"),
+    status:
+      input.status === undefined
+        ? undefined
+        : parseLabReconciliationStatus(requiredString(input.status, "status")),
+    invoiceReference: optionalNullableString(input.invoiceReference, "invoiceReference"),
+    invoiceAmountMinor:
+      input.invoiceAmountMinor === undefined || input.invoiceAmountMinor === null
+        ? null
+        : integerField(input.invoiceAmountMinor, "invoiceAmountMinor", { min: 0 }),
+    evidence: recordField(input.evidence, "evidence"),
+    entries
+  };
+}
+
+function parseCreateInventoryCategory(body: unknown): CreateInventoryCategoryInput {
+  const input = objectBody(body);
+  return {
+    code: requiredString(input.code, "code"),
+    displayName: requiredString(input.displayName, "displayName"),
+    kind: parseInventoryCategoryKind(requiredString(input.kind, "kind")),
+    active: input.active === undefined ? undefined : booleanField(input.active, "active")
+  };
+}
+
+function parseCreateInventoryItem(body: unknown): CreateInventoryItemInput {
+  const input = objectBody(body);
+  return {
+    categoryId: uuidField(input.categoryId, "categoryId"),
+    sku: requiredString(input.sku, "sku"),
+    displayName: requiredString(input.displayName, "displayName"),
+    unitOfMeasure: requiredString(input.unitOfMeasure, "unitOfMeasure"),
+    storageLocation: requiredString(input.storageLocation, "storageLocation"),
+    trackQuantity: input.trackQuantity === undefined ? undefined : booleanField(input.trackQuantity, "trackQuantity"),
+    minimumQuantity:
+      input.minimumQuantity === undefined
+        ? undefined
+        : nonNegativeNumberField(input.minimumQuantity, "minimumQuantity"),
+    reorderQuantity:
+      input.reorderQuantity === undefined
+        ? undefined
+        : nonNegativeNumberField(input.reorderQuantity, "reorderQuantity"),
+    openingQuantity:
+      input.openingQuantity === undefined
+        ? undefined
+        : nonNegativeNumberField(input.openingQuantity, "openingQuantity")
+  };
+}
+
+function parseCreateStockLedgerEntry(body: unknown): CreateStockLedgerEntryInput {
+  const input = objectBody(body);
+  return {
+    itemId: uuidField(input.itemId, "itemId"),
+    movementType: parseStockLedgerMovementType(requiredString(input.movementType, "movementType")),
+    quantityDelta: numberField(input.quantityDelta, "quantityDelta"),
+    unitCostMinor:
+      input.unitCostMinor === undefined || input.unitCostMinor === null
+        ? null
+        : integerField(input.unitCostMinor, "unitCostMinor", { min: 0 }),
+    currency:
+      input.currency === undefined || input.currency === null
+        ? null
+        : parseBillingCurrency(requiredString(input.currency, "currency")),
+    sourceTable: optionalNullableString(input.sourceTable, "sourceTable"),
+    sourceId: optionalUuid(input.sourceId, "sourceId"),
+    reason: requiredString(input.reason, "reason"),
+    evidence: recordField(input.evidence, "evidence")
+  };
+}
+
+function parseCreateInventoryCheckTemplate(body: unknown): CreateInventoryCheckTemplateInput {
+  const input = objectBody(body);
+  const lines = arrayField(input.lines, "lines").map((value, index) => {
+    const line = objectField(value, `lines[${index}]`);
+    return {
+      itemId: uuidField(line.itemId, `lines[${index}].itemId`),
+      sequence: integerField(line.sequence ?? index + 1, `lines[${index}].sequence`, { min: 1 }),
+      drawerLocation: requiredString(line.drawerLocation, `lines[${index}].drawerLocation`),
+      expectedQuantity:
+        line.expectedQuantity === undefined || line.expectedQuantity === null
+          ? null
+          : nonNegativeNumberField(line.expectedQuantity, `lines[${index}].expectedQuantity`),
+      required: line.required === undefined ? true : booleanField(line.required, `lines[${index}].required`),
+      instructions: optionalNullableString(line.instructions, `lines[${index}].instructions`)
+    };
+  });
+  if (lines.length === 0) {
+    throw validation("Inventory check template requires at least one line.", { field: "lines" });
+  }
+  return {
+    code: requiredString(input.code, "code"),
+    displayName: requiredString(input.displayName, "displayName"),
+    cadence: parseInventoryCadence(requiredString(input.cadence ?? "monthly", "cadence")),
+    active: input.active === undefined ? undefined : booleanField(input.active, "active"),
+    lines
+  };
+}
+
+function parseCreateInventoryCheckRun(body: unknown): CreateInventoryCheckRunInput {
+  const input = objectBody(body);
+  return {
+    templateId: uuidField(input.templateId, "templateId"),
+    notes: optionalNullableString(input.notes, "notes")
+  };
+}
+
+function parseUpdateInventoryCheckRun(body: unknown): UpdateInventoryCheckRunInput {
+  const input = objectBody(body);
+  return {
+    status: parseInventoryCheckRunStatus(requiredString(input.status, "status")),
+    notes: optionalNullableString(input.notes, "notes"),
+    lines:
+      input.lines === undefined
+        ? undefined
+        : arrayField(input.lines, "lines").map((value, index) => {
+            const line = objectField(value, `lines[${index}]`);
+            return {
+              lineId: uuidField(line.lineId ?? line.id, `lines[${index}].lineId`),
+              countedQuantity: nonNegativeNumberField(
+                line.countedQuantity,
+                `lines[${index}].countedQuantity`
+              ),
+              exceptionNotes: optionalNullableString(line.exceptionNotes, `lines[${index}].exceptionNotes`)
+            };
+          })
+  };
+}
+
+function parseCreateIncident(body: unknown): CreateIncidentInput {
+  const input = objectBody(body);
+  return {
+    patientId: optionalUuid(input.patientId, "patientId"),
+    appointmentId: optionalUuid(input.appointmentId, "appointmentId"),
+    labCaseId: optionalUuid(input.labCaseId, "labCaseId"),
+    inventoryItemId: optionalUuid(input.inventoryItemId, "inventoryItemId"),
+    category: parseIncidentCategory(requiredString(input.category, "category")),
+    severity: parseIncidentSeverity(requiredString(input.severity, "severity")),
+    occurredAt: requiredString(input.occurredAt, "occurredAt"),
+    location: optionalNullableString(input.location, "location"),
+    summary: requiredString(input.summary, "summary"),
+    description: requiredString(input.description, "description"),
+    impact: optionalNullableString(input.impact, "impact"),
+    learning: optionalNullableString(input.learning, "learning"),
+    immediateAction: optionalNullableString(input.immediateAction, "immediateAction"),
+    evidence: recordField(input.evidence, "evidence"),
+    ownerUserId: optionalUuid(input.ownerUserId, "ownerUserId")
+  };
+}
+
+function parseCreateCorrectiveAction(body: unknown): CreateCorrectiveActionInput {
+  const input = objectBody(body);
+  return {
+    incidentId: optionalUuid(input.incidentId, "incidentId"),
+    actionType: parseCorrectiveActionType(requiredString(input.actionType ?? "corrective", "actionType")),
+    title: requiredString(input.title, "title"),
+    description: requiredString(input.description, "description"),
+    ownerUserId: uuidField(input.ownerUserId, "ownerUserId"),
+    dueAt: requiredString(input.dueAt, "dueAt"),
+    verificationEvidence: recordField(input.verificationEvidence, "verificationEvidence")
+  };
+}
+
+function parseUpdateCorrectiveAction(body: unknown): UpdateCorrectiveActionInput {
+  const input = objectBody(body);
+  return {
+    status: parseCorrectiveActionStatus(requiredString(input.status, "status")),
+    completionEvidence: recordField(input.completionEvidence, "completionEvidence"),
+    verificationEvidence:
+      input.verificationEvidence === undefined
+        ? undefined
+        : recordField(input.verificationEvidence, "verificationEvidence")
+  };
+}
+
 function parseClinicalNoteContent(value: unknown): ClinicalNoteContent {
   const input = objectField(value, "content");
   return {
@@ -4010,11 +4947,122 @@ function parseMediaScanStatus(value: string): MediaScanStatus {
   return value;
 }
 
+function parseLabPriority(value: unknown): "routine" | "urgent" {
+  const parsed = requiredString(value, "priority");
+  if (parsed !== "routine" && parsed !== "urgent") {
+    throw validation("Invalid lab case priority.", { field: "priority", value: parsed });
+  }
+  return parsed;
+}
+
+function parseLabCaseStatus(value: string): LabCaseStatus {
+  if (!isLabCaseStatus(value)) {
+    throw validation("Invalid lab case status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseLabReconciliationStatus(value: string): NonNullable<CreateLabReconciliationInput["status"]> {
+  if (!isLabReconciliationStatus(value)) {
+    throw validation("Invalid lab reconciliation status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseLabReconciliationEntryStatus(
+  value: string
+): NonNullable<CreateLabReconciliationInput["entries"][number]["status"]> {
+  if (!isLabReconciliationEntryStatus(value)) {
+    throw validation("Invalid lab reconciliation entry status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseInventoryCategoryKind(value: string): CreateInventoryCategoryInput["kind"] {
+  if (!isInventoryCategoryKind(value)) {
+    throw validation("Invalid inventory category kind.", { field: "kind", value });
+  }
+  return value;
+}
+
+function parseInventoryCadence(value: string): CreateInventoryCheckTemplateInput["cadence"] {
+  if (["daily", "weekly", "monthly", "ad_hoc"].includes(value)) {
+    return value as CreateInventoryCheckTemplateInput["cadence"];
+  }
+  throw validation("Invalid inventory check cadence.", { field: "cadence", value });
+}
+
+function parseInventoryCheckRunStatus(value: string): UpdateInventoryCheckRunInput["status"] {
+  if (!isInventoryCheckRunStatus(value)) {
+    throw validation("Invalid inventory check run status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseStockLedgerMovementType(value: string): CreateStockLedgerEntryInput["movementType"] {
+  if (
+    [
+      "opening_balance",
+      "manual_adjustment",
+      "consumption",
+      "check_variance",
+      "procurement_received",
+      "write_off"
+    ].includes(value)
+  ) {
+    return value as CreateStockLedgerEntryInput["movementType"];
+  }
+  throw validation("Invalid stock ledger movement type.", { field: "movementType", value });
+}
+
+function parseIncidentCategory(value: string): CreateIncidentInput["category"] {
+  if (!isIncidentCategory(value)) {
+    throw validation("Invalid incident category.", { field: "category", value });
+  }
+  return value;
+}
+
+function parseIncidentSeverity(value: string): CreateIncidentInput["severity"] {
+  if (!isIncidentSeverity(value)) {
+    throw validation("Invalid incident severity.", { field: "severity", value });
+  }
+  return value;
+}
+
+function parseIncidentStatus(value: string): NonNullable<Parameters<ClinicOperationsRepository["listIncidents"]>[1]>["status"] {
+  if (!isIncidentStatus(value)) {
+    throw validation("Invalid incident status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseCorrectiveActionType(value: string): CreateCorrectiveActionInput["actionType"] {
+  if (!isCorrectiveActionType(value)) {
+    throw validation("Invalid corrective action type.", { field: "actionType", value });
+  }
+  return value;
+}
+
+function parseCorrectiveActionStatus(value: string): UpdateCorrectiveActionInput["status"] {
+  if (!isCorrectiveActionStatus(value)) {
+    throw validation("Invalid corrective action status.", { field: "status", value });
+  }
+  return value;
+}
+
 function parsePaymentRequestType(value: string): PaymentProviderRequestKind {
   if (value === "payment_link") return "payment_link";
   if (value === "invoice_qr" || value === "dynamic_qr" || value === "qr" || value === "qr_code")
     return "invoice_qr";
   throw validation("Invalid payment request type.", { field: "requestType", value });
+}
+
+function parseBillingCurrency(value: string): "INR" {
+  const normalized = value.toUpperCase();
+  if (!isBillingCurrency(normalized)) {
+    throw validation("Invalid billing currency.", { field: "currency", value });
+  }
+  return normalized;
 }
 
 function parseManualPaymentMethod(value: string): ManualPaymentMethod {
@@ -4551,6 +5599,14 @@ function numberField(value: unknown, field: string): number {
   return value;
 }
 
+function nonNegativeNumberField(value: unknown, field: string): number {
+  const number = numberField(value, field);
+  if (number < 0) {
+    throw validation(`${field} must be a non-negative number.`, { field });
+  }
+  return number;
+}
+
 function optionalUnitNumber(value: unknown, field: string): number | null | undefined {
   if (value === undefined) return undefined;
   if (value === null) return null;
@@ -4592,6 +5648,11 @@ function recordField(value: unknown, field: string): Record<string, unknown> {
     throw validation(`${field} must be a JSON object.`, { field });
   }
   return value as Record<string, unknown>;
+}
+
+function arrayField(value: unknown, field: string): unknown[] {
+  if (!Array.isArray(value)) throw validation(`${field} must be an array.`, { field });
+  return value;
 }
 
 function stringArrayField(value: unknown, field: string): string[] {

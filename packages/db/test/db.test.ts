@@ -20,6 +20,10 @@ const checkpoint5Migration = readFileSync(
   resolve(import.meta.dirname, "../migrations/0005_treatment_checkout_billing.sql"),
   "utf8"
 );
+const checkpoint6Migration = readFileSync(
+  resolve(import.meta.dirname, "../migrations/0007_lab_inventory_events.sql"),
+  "utf8"
+);
 const checkpoint1Seed = readFileSync(
   resolve(import.meta.dirname, "../seeds/checkpoint1_identity_auth.sql"),
   "utf8"
@@ -258,4 +262,103 @@ test("checkpoint 5 grants accountants billing access without clinical chart perm
   assert.match(checkpoint5Migration, /\('accountant', 'billing\.export'\)/i);
   assert.doesNotMatch(checkpoint1Seed, /\('accountant', 'dental\.chart\.write'\)/i);
   assert.doesNotMatch(checkpoint1Seed, /\('accountant', 'clinical\.note\.write'\)/i);
+});
+
+test("checkpoint 6 migration includes lab inventory incident and CAPA operational tables", () => {
+  for (const table of [
+    "lab_vendors",
+    "lab_cases",
+    "lab_case_items",
+    "lab_case_status_history",
+    "lab_reconciliations",
+    "lab_reconciliation_entries",
+    "inventory_categories",
+    "inventory_items",
+    "stock_ledger_entries",
+    "inventory_check_templates",
+    "inventory_check_template_lines",
+    "inventory_check_runs",
+    "inventory_check_run_lines",
+    "procurement_suggestions",
+    "incidents",
+    "corrective_actions"
+  ]) {
+    assert.match(checkpoint6Migration, new RegExp(`create table if not exists ${table}`, "i"));
+  }
+
+  for (const itemType of [
+    "lab_case_created",
+    "lab_case_sent",
+    "lab_case_returned",
+    "lab_case_completed",
+    "incident_created",
+    "corrective_action_created",
+    "corrective_action_completed"
+  ]) {
+    assert.match(checkpoint6Migration, new RegExp(`'${itemType}'`, "i"));
+  }
+});
+
+test("checkpoint 6 migration enforces RLS and tenant-clinic scope on operations tables", () => {
+  for (const table of [
+    "lab_vendors",
+    "lab_cases",
+    "lab_case_items",
+    "lab_case_status_history",
+    "lab_reconciliations",
+    "lab_reconciliation_entries",
+    "inventory_categories",
+    "inventory_items",
+    "stock_ledger_entries",
+    "inventory_check_templates",
+    "inventory_check_template_lines",
+    "inventory_check_runs",
+    "inventory_check_run_lines",
+    "procurement_suggestions",
+    "incidents",
+    "corrective_actions"
+  ]) {
+    assert.match(checkpoint6Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
+    assert.match(checkpoint6Migration, new RegExp(`alter table ${table} force row level security`, "i"));
+    assert.match(checkpoint6Migration, new RegExp(`${table}_tenant_clinic_isolation`, "i"));
+  }
+
+  assert.match(checkpoint6Migration, /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i);
+  assert.match(checkpoint6Migration, /foreign key \(tenant_id, patient_id\) references patients\(tenant_id, id\)/i);
+});
+
+test("checkpoint 6 migration keeps procurement as evidenced suggestions, not purchase execution", () => {
+  assert.match(checkpoint6Migration, /create table if not exists procurement_suggestions/i);
+  assert.match(checkpoint6Migration, /suggested_quantity numeric\(12, 2\) not null/i);
+  assert.match(checkpoint6Migration, /task_id uuid/i);
+  assert.match(checkpoint6Migration, /suggestion evidence only/i);
+  assert.match(checkpoint6Migration, /does not execute purchase orders or vendor procurement/i);
+  assert.doesNotMatch(checkpoint6Migration, /create table if not exists purchase_orders/i);
+});
+
+test("checkpoint 6 migration makes status and stock evidence append-only", () => {
+  assert.match(checkpoint6Migration, /prevent_cp6_evidence_mutation/i);
+  assert.match(checkpoint6Migration, /lab_case_status_history_immutable/i);
+  assert.match(checkpoint6Migration, /stock_ledger_entries_immutable/i);
+  assert.match(checkpoint6Migration, /before update or delete on lab_case_status_history/i);
+  assert.match(checkpoint6Migration, /before update or delete on stock_ledger_entries/i);
+});
+
+test("checkpoint 6 grants operational roles without broadening accountant access", () => {
+  for (const permission of [
+    "incident.manage",
+    "corrective_action.manage",
+    "lab.manage",
+    "inventory.manage"
+  ]) {
+    assert.match(checkpoint6Migration, new RegExp(`\\('${permission}'`, "i"));
+  }
+
+  assert.match(checkpoint6Migration, /\('receptionist', 'inventory\.manage'\)/i);
+  assert.match(checkpoint6Migration, /\('assistant', 'incident\.manage'\)/i);
+  assert.match(checkpoint6Migration, /\('doctor', 'corrective_action\.manage'\)/i);
+  assert.doesNotMatch(checkpoint6Migration, /\('accountant', 'lab\.manage'\)/i);
+  assert.doesNotMatch(checkpoint6Migration, /\('accountant', 'inventory\.manage'\)/i);
+  assert.doesNotMatch(checkpoint6Migration, /\('accountant', 'incident\.manage'\)/i);
+  assert.doesNotMatch(checkpoint6Migration, /\('accountant', 'corrective_action\.manage'\)/i);
 });
