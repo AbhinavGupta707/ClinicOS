@@ -19,6 +19,7 @@ test.describe("Checkpoint 4 dental media workflow smoke", () => {
     await expect(page.getByTestId("cp4-fixture-alert")).toBeVisible();
 
     await page.getByTestId("cp4-tooth-36").click();
+    await expect(page.getByTestId("cp4-selected-tooth")).toContainText("36");
     await page
       .getByTestId("cp4-finding-note")
       .fill("Synthetic CP4 caries finding for root browser smoke.");
@@ -30,15 +31,29 @@ test.describe("Checkpoint 4 dental media workflow smoke", () => {
       .getByTestId("cp4-media-reference")
       .fill("Synthetic intraoral photo reference for root browser smoke");
     await page.getByTestId("cp4-attach-media").click();
+    await expect(page.getByTestId("cp4-media-gallery")).toContainText(
+      "Synthetic intraoral photo reference for root browser smoke"
+    );
+
     await page.getByTestId("cp4-open-signed-view").click();
     await expect(page.getByTestId("cp4-signed-media-view")).toContainText("Signed access expires");
 
     await page.getByTestId("cp4-open-comparison").click();
     await expect(page.getByTestId("cp4-comparison-view")).toBeVisible();
 
+    const workspaceText = await page.getByTestId("cp4-dental-media-workspace").innerText();
+    expect(workspaceText).not.toContain("objectKey");
+    expect(workspaceText).not.toContain("rawStoragePath");
+    expect(workspaceText).not.toContain("storagePath");
+
     await page.getByRole("tab", { name: /history/i }).click();
     await expect(page.getByTestId("cp4-chart-history")).toContainText("Finding added");
     await expect(page.getByTestId("cp4-timeline")).toContainText("Media viewed");
+
+    await page.screenshot({
+      fullPage: true,
+      path: "/private/tmp/clinicos-cp4-web-doctor-desktop.png"
+    });
   });
 
   test("mobile dental media workflow shell has no horizontal overflow", async ({ page }) => {
@@ -47,11 +62,18 @@ test.describe("Checkpoint 4 dental media workflow smoke", () => {
 
     await expect(page.getByTestId("cp4-dental-media-workspace")).toBeVisible();
     await expect(page.getByTestId("cp4-odontogram")).toBeVisible();
+    await expect(page.getByTestId("cp4-media-gallery")).toBeVisible();
+    await expect(page.getByTestId("cp4-add-finding")).toBeVisible();
 
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth
     );
     expect(overflow).toBeLessThanOrEqual(1);
+
+    await page.screenshot({
+      fullPage: true,
+      path: "/private/tmp/clinicos-cp4-web-mobile-390.png"
+    });
   });
 });
 
