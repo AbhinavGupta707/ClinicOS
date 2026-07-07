@@ -55,6 +55,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Infrastructure/Ops: `019f3cec-d3a3-7a71-ba13-ab7ceaf09f69`, `/Users/abhinavgupta/.codex/worktrees/7e8c/ClinicOS`.
   - Performance/QA: `019f3ced-1911-78e1-9301-ce5df9e8e934`, `/Users/abhinavgupta/.codex/worktrees/1091/ClinicOS`.
 - Checkpoint 9 is verified on `codex/integration/checkpoint-9` at `ea13a97` and promoted to `main` via `131300b`. Security/Privacy, FHIR/ABDM, Infrastructure/Ops, and Performance/QA lanes were merged in dependency order. Full gates passed: `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`. Post-promotion checks passed: `git diff --check` and `npm run check`. CP9 browser smoke passed for owner compliance desktop/mobile and platform-support unavailable shells.
+- Checkpoint 10 launch packet is `docs/orchestration/CHECKPOINT_10_RELEASE_CANDIDATE_PILOT_READINESS.md`. Planned visible project-scoped lanes: Pilot Configuration, UX Polish, End-To-End QA, and Operations/Docs.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture
