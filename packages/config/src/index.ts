@@ -42,7 +42,14 @@ export type LlmProvider = (typeof llmProviders)[number];
 export const transcriptionProviders = ["simulator", "unconfigured", "openai", "deepgram"] as const;
 export type TranscriptionProvider = (typeof transcriptionProviders)[number];
 
+export const alertingProviders = ["unconfigured", "email", "slack", "sentry"] as const;
+export type AlertingProvider = (typeof alertingProviders)[number];
+
+export const backupRestoreDrillModes = ["dry_run", "local_execute"] as const;
+export type BackupRestoreDrillMode = (typeof backupRestoreDrillModes)[number];
+
 const productionLikeSet = new Set<string>(productionLikeEnvironments);
+const pilotProdCloudSet = new Set<string>(["pilot-prod", "prod"]);
 
 const emptyStringToUndefined = (value: unknown) => {
   if (typeof value === "string" && value.trim() === "") return undefined;
@@ -63,6 +70,17 @@ const booleanFromEnv = z.preprocess((value) => {
   if (["false", "0", "no", "n"].includes(normalized)) return false;
   return value;
 }, z.boolean());
+
+const nonNegativeIntegerFromEnv = (defaultValue: number) =>
+  z.preprocess((value) => {
+    if (value === undefined || value === "") return defaultValue;
+    if (typeof value === "number") return value;
+    if (typeof value !== "string") return value;
+
+    const normalized = value.trim();
+    if (!/^\d+$/.test(normalized)) return value;
+    return Number(normalized);
+  }, z.number().int().nonnegative());
 
 const runtimeEnvSchema = z
   .object({
@@ -123,6 +141,39 @@ const runtimeEnvSchema = z
     DEEPGRAM_API_KEY: optionalString,
     AI_DATA_RESIDENCY_NOTES: optionalString,
 
+    AWS_PROFILE: optionalString,
+    AWS_REGION: requiredString.default("ap-south-1"),
+    AWS_DR_REGION: requiredString.default("ap-south-2"),
+    AWS_ACCOUNT_ID: z.preprocess(
+      emptyStringToUndefined,
+      z
+        .string()
+        .trim()
+        .regex(/^\d{12}$/, "AWS_ACCOUNT_ID must be a 12 digit AWS account id.")
+        .optional()
+    ),
+    AWS_TERRAFORM_STATE_BUCKET: optionalString,
+    AWS_TERRAFORM_LOCK_TABLE: optionalString,
+    AWS_KMS_KEY_ALIAS: optionalString,
+
+    ALERTING_PROVIDER: z.enum(alertingProviders).default("unconfigured"),
+    ALERTING_CONTACT_EMAIL: z.preprocess(
+      emptyStringToUndefined,
+      z.string().trim().email().optional()
+    ),
+    ALERTING_SLACK_WEBHOOK_URL: optionalUrl,
+    SENTRY_DSN: optionalUrl,
+
+    BACKUP_RESTORE_DRILL_MODE: z.enum(backupRestoreDrillModes).default("dry_run"),
+    BACKUP_RESTORE_TARGET_DATABASE_URL: optionalUrl.refine(
+      (url) =>
+        url === undefined || url.startsWith("postgresql://") || url.startsWith("postgres://"),
+      "BACKUP_RESTORE_TARGET_DATABASE_URL must use postgres:// or postgresql://"
+    ),
+    BACKUP_RESTORE_ALLOW_DESTRUCTIVE: booleanFromEnv.default(false),
+    BACKUP_RESTORE_RPO_MINUTES: nonNegativeIntegerFromEnv(60),
+    BACKUP_RESTORE_RTO_MINUTES: nonNegativeIntegerFromEnv(240),
+
     PILOT_SYNTHETIC_DATA_ONLY: booleanFromEnv.default(true),
     PILOT_PATIENT_EXPORT_PATH: optionalString,
     PILOT_APPOINTMENT_EXPORT_PATH: optionalString,
@@ -132,6 +183,7 @@ const runtimeEnvSchema = z
   })
   .superRefine((env, context) => {
     const productionLike = isProductionLikeEnvironment(env.CLINIC_OS_ENV);
+    const pilotProdCloud = requiresPilotProdCloudPosture(env.CLINIC_OS_ENV);
 
     if (productionLike) {
       const simulatorFields = [
@@ -150,6 +202,117 @@ const runtimeEnvSchema = z
             message: `${field}=simulator is allowed only for local/dev test surfaces, not ${env.CLINIC_OS_ENV}. Use an official provider or unconfigured unavailable state.`
           });
         }
+      }
+    }
+
+    if (env.AWS_REGION === env.AWS_DR_REGION) {
+      context.addIssue({
+        code: "custom",
+        path: ["AWS_DR_REGION"],
+        message: "AWS_DR_REGION must be distinct from AWS_REGION for DR posture."
+      });
+    }
+
+    if (pilotProdCloud) {
+      if (env.AWS_REGION !== "ap-south-1") {
+        context.addIssue({
+          code: "custom",
+          path: ["AWS_REGION"],
+          message: "Pilot-prod/prod primary AWS region must be ap-south-1."
+        });
+      }
+
+      if (env.AWS_DR_REGION !== "ap-south-2") {
+        context.addIssue({
+          code: "custom",
+          path: ["AWS_DR_REGION"],
+          message: "Pilot-prod/prod DR AWS region must be ap-south-2."
+        });
+      }
+
+      requireFields(
+        context,
+        env,
+        true,
+        [
+          "AWS_ACCOUNT_ID",
+          "AWS_TERRAFORM_STATE_BUCKET",
+          "AWS_TERRAFORM_LOCK_TABLE",
+          "AWS_KMS_KEY_ALIAS"
+        ],
+        "Pilot-prod/prod cloud posture requires AWS account, Terraform backend, and KMS alias fields."
+      );
+
+      if (env.ALERTING_PROVIDER === "unconfigured") {
+        context.addIssue({
+          code: "custom",
+          path: ["ALERTING_PROVIDER"],
+          message:
+            "Pilot-prod/prod requires an alerting provider or an explicit deferred go-live decision."
+        });
+      }
+    }
+
+    requireFields(
+      context,
+      env,
+      env.ALERTING_PROVIDER === "email",
+      ["ALERTING_CONTACT_EMAIL"],
+      "Email alerting is selected but ALERTING_CONTACT_EMAIL is missing."
+    );
+
+    requireFields(
+      context,
+      env,
+      env.ALERTING_PROVIDER === "slack",
+      ["ALERTING_SLACK_WEBHOOK_URL"],
+      "Slack alerting is selected but ALERTING_SLACK_WEBHOOK_URL is missing."
+    );
+
+    requireFields(
+      context,
+      env,
+      env.ALERTING_PROVIDER === "sentry",
+      ["SENTRY_DSN"],
+      "Sentry alerting is selected but SENTRY_DSN is missing."
+    );
+
+    if (productionLike && env.BACKUP_RESTORE_DRILL_MODE === "local_execute") {
+      context.addIssue({
+        code: "custom",
+        path: ["BACKUP_RESTORE_DRILL_MODE"],
+        message:
+          "Restore drills may execute locally only in local/dev; production-like runs must use dry_run plus approved runbook steps."
+      });
+    }
+
+    if (
+      env.BACKUP_RESTORE_ALLOW_DESTRUCTIVE &&
+      (productionLike || env.BACKUP_RESTORE_DRILL_MODE !== "local_execute")
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["BACKUP_RESTORE_ALLOW_DESTRUCTIVE"],
+        message:
+          "Destructive restore drill operations require BACKUP_RESTORE_DRILL_MODE=local_execute in local/dev only."
+      });
+    }
+
+    if (env.BACKUP_RESTORE_DRILL_MODE === "local_execute") {
+      requireFields(
+        context,
+        env,
+        true,
+        ["BACKUP_RESTORE_TARGET_DATABASE_URL"],
+        "Local restore execution requires BACKUP_RESTORE_TARGET_DATABASE_URL."
+      );
+
+      if (!env.PILOT_SYNTHETIC_DATA_ONLY) {
+        context.addIssue({
+          code: "custom",
+          path: ["PILOT_SYNTHETIC_DATA_ONLY"],
+          message: "Local restore execution requires PILOT_SYNTHETIC_DATA_ONLY=true."
+        });
       }
     }
 
@@ -295,6 +458,30 @@ export type ClinicOsConfig = {
       dataResidencyNotes?: string | undefined;
     };
   };
+  operations: {
+    cloud: {
+      profile?: string | undefined;
+      primaryRegion: string;
+      drRegion: string;
+      accountId?: string | undefined;
+      terraformStateBucket?: string | undefined;
+      terraformLockTable?: string | undefined;
+      kmsKeyAlias?: string | undefined;
+    };
+    alerting: {
+      provider: AlertingProvider;
+      contactEmail?: string | undefined;
+      slackWebhookUrl?: string | undefined;
+      sentryDsn?: string | undefined;
+    };
+    backupRestore: {
+      drillMode: BackupRestoreDrillMode;
+      targetDatabaseUrl?: string | undefined;
+      allowDestructive: boolean;
+      rpoMinutes: number;
+      rtoMinutes: number;
+    };
+  };
   pilotInputs: {
     syntheticDataOnly: boolean;
     patientExportPath?: string | undefined;
@@ -311,6 +498,10 @@ export function isProductionLikeEnvironment(
   environment: ClinicOsEnvironment
 ): environment is ProductionLikeEnvironment {
   return productionLikeSet.has(environment);
+}
+
+export function requiresPilotProdCloudPosture(environment: ClinicOsEnvironment): boolean {
+  return pilotProdCloudSet.has(environment);
 }
 
 export function parseClinicOsEnv(input: EnvInput = process.env): ClinicOsConfig {
@@ -382,6 +573,30 @@ function toConfig(env: RuntimeEnv): ClinicOsConfig {
         transcriptionModel: env.TRANSCRIPTION_MODEL,
         deepgramApiKey: env.DEEPGRAM_API_KEY,
         dataResidencyNotes: env.AI_DATA_RESIDENCY_NOTES
+      }
+    },
+    operations: {
+      cloud: {
+        profile: env.AWS_PROFILE,
+        primaryRegion: env.AWS_REGION,
+        drRegion: env.AWS_DR_REGION,
+        accountId: env.AWS_ACCOUNT_ID,
+        terraformStateBucket: env.AWS_TERRAFORM_STATE_BUCKET,
+        terraformLockTable: env.AWS_TERRAFORM_LOCK_TABLE,
+        kmsKeyAlias: env.AWS_KMS_KEY_ALIAS
+      },
+      alerting: {
+        provider: env.ALERTING_PROVIDER,
+        contactEmail: env.ALERTING_CONTACT_EMAIL,
+        slackWebhookUrl: env.ALERTING_SLACK_WEBHOOK_URL,
+        sentryDsn: env.SENTRY_DSN
+      },
+      backupRestore: {
+        drillMode: env.BACKUP_RESTORE_DRILL_MODE,
+        targetDatabaseUrl: env.BACKUP_RESTORE_TARGET_DATABASE_URL,
+        allowDestructive: env.BACKUP_RESTORE_ALLOW_DESTRUCTIVE,
+        rpoMinutes: env.BACKUP_RESTORE_RPO_MINUTES,
+        rtoMinutes: env.BACKUP_RESTORE_RTO_MINUTES
       }
     },
     pilotInputs: {
