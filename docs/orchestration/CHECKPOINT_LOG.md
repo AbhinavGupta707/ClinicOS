@@ -30,7 +30,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 1 - Production platform foundation     | Complete  |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
 | 2 - Lead/patient/appointment/day-start | Complete  |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
 | 3 - Intake/consent/encounter/notes     | Complete  |       `6fe2cbc` |     `eb68abd` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-3`. Master integration aligned live CP3 routes, consent enforcement, prep summary, QA fixtures, web selectors, browser smoke, and security/audit coverage.                                         |
-| 4 - Dental charting/media/imaging      | Active    |       `c7b222c` |       pending | CP4 visible project-scoped worktree lanes launched and active for media backend, dental domain, dental/media UX, and imaging/QA.                                                                                                                                                 |
+| 4 - Dental charting/media/imaging      | Verified  |       `c7b222c` |     `2fd04a5` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                                           |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -149,3 +149,26 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Dental Domain: pending `local:cc0a9c3a-6ecb-46b9-88bf-b49bfaff9dad`, thread `019f3a34-d36e-7680-b3cd-1ad47240f656`, worktree `/Users/abhinavgupta/.codex/worktrees/d4aa/ClinicOS`.
   - Dental/Media UX: pending `local:1e9a0c2e-a7e4-46eb-825b-04e504f9d8b3`, thread `019f3a35-0fd0-73e3-a35b-5c33f236a270`, worktree `/Users/abhinavgupta/.codex/worktrees/16fc/ClinicOS`.
   - Imaging/QA: pending `local:823af464-3b7b-4088-ae6c-881114572251`, thread `019f3a35-4418-7e93-91f6-7beffa65ac55`, worktree `/Users/abhinavgupta/.codex/worktrees/9cf9/ClinicOS`.
+
+## Checkpoint 4 Closeout - 2026-07-07
+
+- Detailed evidence: `docs/orchestration/CHECKPOINT_04_DENTAL_CHART_MEDIA.md`.
+- Integration branch: `codex/integration/checkpoint-4`.
+- Verified code commit: `2fd04a5`.
+- Merge order:
+  - Media Backend merged first.
+  - Dental/Media UX merged second.
+  - Imaging/QA merged third.
+  - Dental Domain recovered commit `aa4bf5e` merged fourth with master conflict resolution.
+  - Master integration patches added live dental API routes, CP4 dental tests, audit classifications, media schema folding, and browser smoke alignment.
+- Full checks passed: `npm run typecheck`, `npm run lint`, `npm run test`, `npm run check`, `npm run build`.
+- CP4 checks passed: `node scripts/validate-cp4-fixtures.mjs`, `node scripts/cp4-contract-smoke.mjs --dry-run`, `node --test tests/acceptance/*.test.mjs`.
+- Security checks passed: `npm run security:secrets`, `npm run security:audit` high-severity gate, and `git diff --cached --check`. Existing moderate upstream advisories remain in Next/PostCSS, Temporal/protobufjs, and Expo/xcode/uuid dependency paths.
+- Live API smoke passed on `127.0.0.1:4100` for health, encounter create, dental finding create/update/history/chart snapshot/chart read, object-key privacy, accountant denial, and wrong-tenant denial.
+- Browser smoke passed for desktop, 390px mobile, and accountant role denial. Evidence screenshots:
+  - `/private/tmp/clinicos-cp4-web-doctor-desktop.png`
+  - `/private/tmp/clinicos-cp4-web-mobile-390.png`
+- Accepted gaps:
+  - External imaging-link route family remains a deferred whole workflow; CP4 durable media routes cover upload, completion, listing, and mediated signed access.
+  - Bulk multi-tooth chart patching is deferred; CP4 supports complete one-finding-per-row create/update/history/snapshot behavior.
+  - Temporary UI was checked for safety and responsive invariants rather than final visual polish.

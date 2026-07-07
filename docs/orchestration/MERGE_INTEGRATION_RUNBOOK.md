@@ -134,7 +134,20 @@ Reopen or relaunch a lane when:
 - The lane used mock/placeholder product behavior.
 - Verification failed in a way that the lane owner can isolate better than the master.
 
-### 7. Main Merge Criteria
+### 7. Contract Drift Checks
+
+Before final checkpoint gates, compare deterministic fixture smoke scripts with live API routes and web data loaders. A fixture dry-run can still pass while describing an older route family or payload shape.
+
+For every user-facing workflow, record which evidence proves each layer:
+
+- deterministic fixture validation
+- live local API route behavior
+- browser or app behavior
+- role-denial and tenant-denial behavior
+
+If fixture and live route shapes have drifted, resolve the canonical contract before claiming completion. If the older route family represents a separate product workflow, defer that whole workflow explicitly instead of adding a partial compatibility endpoint.
+
+### 8. Main Merge Criteria
 
 Before merging the integration branch to `main`, all must be true:
 
@@ -147,7 +160,7 @@ Before merging the integration branch to `main`, all must be true:
 - Docs and memory are updated.
 - Remaining gaps are external or explicitly deferred whole workflows, not weakened implemented behavior.
 
-### 8. CP2 Launch Checklist
+### 9. CP2+ Launch Checklist
 
 Before launching Checkpoint 2 lanes:
 
