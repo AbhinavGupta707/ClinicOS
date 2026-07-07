@@ -29,7 +29,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 0 - Git and orchestration preflight    | Complete  | repository root |   `main` HEAD | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured and pushed.                                                                                                                                                 |
 | 1 - Production platform foundation     | Complete  |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
 | 2 - Lead/patient/appointment/day-start | Complete  |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
-| 3 - Intake/consent/encounter/notes     | Active    |       `6fe2cbc` |       pending | CP3 visible project-scoped worktree lanes launched and active for clinical backend, security/compliance, doctor/assistant UX, and QA fixtures.                                                                                                                                  |
+| 3 - Intake/consent/encounter/notes     | Complete  |       `6fe2cbc` |     `eb68abd` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-3`. Master integration aligned live CP3 routes, consent enforcement, prep summary, QA fixtures, web selectors, browser smoke, and security/audit coverage.                                         |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -110,3 +110,30 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Security/Compliance: pending `local:8d887afa-acf7-410d-aa45-870a9962847b`, thread `019f39f6-c6ef-7691-af95-ef4be605d978`, worktree `/Users/abhinavgupta/.codex/worktrees/4436/ClinicOS`.
   - Doctor/Assistant UX: pending `local:9c49eb47-37a9-4d2c-8ea0-0a029a53fb13`, thread `019f39f7-0632-7800-9d41-f55b44f38dd0`, worktree `/Users/abhinavgupta/.codex/worktrees/75ee/ClinicOS`.
   - QA/Fixtures: pending `local:bc55a12e-149c-4828-a5e2-707857009fb9`, thread `019f39f7-54bd-72e1-a812-dd0fda503d06`, worktree `/Users/abhinavgupta/.codex/worktrees/08d3/ClinicOS`.
+
+## Checkpoint 3 Closeout - 2026-07-07
+
+- Detailed evidence: `docs/orchestration/CHECKPOINT_03_INTAKE_CONSENT_ENCOUNTER.md`.
+- Integration branch: `codex/integration/checkpoint-3`.
+- Verified code commit: `eb68abd`.
+- Merge order:
+  - Clinical Backend: `393e738` merged `f1e6fa2`.
+  - Security/Compliance: `c8146ee` merged `4adc0d7`.
+  - Doctor/Assistant UX: `62dd85d` merged `f4af47e`.
+  - QA/Fixtures: `4c2453a` merged `60414f9`.
+  - Master integration fixes: `eb68abd`.
+- Full checks passed: `npm run typecheck`, `npm run lint`, `npm run test`, `npm run build`.
+- CP3 checks passed: `node scripts/validate-cp3-fixtures.mjs`, `node --test tests/acceptance/*.test.mjs`, `node scripts/cp3-contract-smoke.mjs --dry-run`.
+- Security checks passed: `npm run security:secrets`, `npm run security:audit` high-severity gate, and `git diff --check`. Moderate advisories remain in upstream Next/PostCSS, Temporal/protobufjs, and Expo/xcode/uuid paths.
+- Live local API smoke passed through `npm --workspace @clinic-os/api test` outside the sandbox with zero skips. It covered CP3 local HTTP intake, consent create/revoke, encounter start, note draft/sign/amend, prescription draft/sign, doctor-only signing, signed-note immutability, audit events, outbox events, and CP2 API boot smokes.
+- Browser smoke passed:
+  - `CLINICOS_CP3_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000 npx playwright test apps/web/tests/checkpoint-3-clinical-workflow.spec.ts`.
+  - `CLINICOS_CP3_ROLE_DENIAL_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3001 npx playwright test apps/web/tests/checkpoint-3-clinical-workflow.spec.ts --grep "clinical role denial"`.
+  - Mirrored root spec: `tests/e2e/checkpoint-3-clinical-flow.spec.ts` workflow/mobile and role-denial greps both passed.
+- Browser evidence:
+  - Desktop doctor workflow: `/private/tmp/clinicos-cp3-web-doctor-desktop.png`.
+  - Mobile 390px workflow: `/private/tmp/clinicos-cp3-web-mobile-390.png`.
+- Accepted gaps:
+  - Audit read API probe remains deferred; backend/security tests verify audit append/classification and PHI redaction.
+  - AI/audio capture route remains deferred to a later checkpoint; CP3 verifies the consent-enforcement state later audio/AI workflows must consume.
+  - `scripts/cp3-contract-smoke.mjs` live mode is for a deterministic CP3 fixture-loaded environment. The local fixture API intentionally generates runtime IDs, so local runtime evidence comes from API tests.

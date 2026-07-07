@@ -6,11 +6,12 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after verified Checkpoint 2 promotion and CP3 launch docs.
+- Branch: `main` after verified Checkpoint 3 promotion. Checkpoint 4 should start from the latest clean `main`.
 - Checkpoint 1 code is complete through `be619cd`.
-- Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`. After promotion, Checkpoint 3 should start from the latest clean `main`.
+- Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
-- Checkpoint 3 is active from worker launch commit `6fe2cbc` with four visible project-scoped worktree lanes:
+- Checkpoint 3 integration is verified on `codex/integration/checkpoint-3`; verified code commit is `eb68abd` and closeout evidence is in `docs/orchestration/CHECKPOINT_03_INTAKE_CONSENT_ENCOUNTER.md` plus `docs/orchestration/CHECKPOINT_LOG.md`.
+- Checkpoint 3 used four visible project-scoped worktree lanes:
   - Clinical Backend: `019f39f6-8c8d-7ed3-89d7-a0569652c1bb`, `/Users/abhinavgupta/.codex/worktrees/81eb/ClinicOS`.
   - Security/Compliance: `019f39f6-c6ef-7691-af95-ef4be605d978`, `/Users/abhinavgupta/.codex/worktrees/4436/ClinicOS`.
   - Doctor/Assistant UX: `019f39f7-0632-7800-9d41-f55b44f38dd0`, `/Users/abhinavgupta/.codex/worktrees/75ee/ClinicOS`.
@@ -76,6 +77,14 @@ Follow `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
 - Timeline APIs should expose public categories and dotted event types, while storage projections may use internal enum names. Keep audit/outbox event evidence separate from patient timeline projection evidence.
 - For browser E2E, keep route registration, canonical fixture keys, and `data-testid` selectors aligned with the QA fixture. Diagnose missing UI by registration/route first, then runtime.
 - Client-side role visibility should match backend permissions. Hiding controls is not a substitute for API authorization, but browser smoke should not show patient-create controls for accountant profiles.
+
+## CP3 Integration Lessons
+
+- Canonical API routes must be normalized before merging web/QA lanes. CP3 settled on patient-scoped `form-responses`, patient-scoped consent revoke, encounter-scoped `PATCH` note drafts, encounter-scoped note sign/amend, encounter-scoped prescription draft, and prescription-scoped sign.
+- Keep deterministic fixture contracts separate from local runtime-ID smoke. CP3 fixture IDs intentionally differ from the local API fixture, while the local API test proves runtime-generated IDs are carried through the workflow.
+- For web workflows, keep the app-owned Playwright spec and root mirrored E2E spec aligned with actual `data-testid` selectors. Stale selector proposals are a merge-time smell, not an accepted gap.
+- Browser role-denial smoke should use a separate fixture server/profile when the local dev identity fixture is selected by build-time environment variables.
+- AI/audio capture remains deferred after CP3. Do not add fake capture routes; consume the consent-enforcement state in the later checkpoint that owns AI/audio.
 
 ## Shared-File Mistakes To Avoid
 
