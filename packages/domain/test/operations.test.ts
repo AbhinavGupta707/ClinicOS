@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import {
   CP6_EVENT_TYPES,
   assertLabCaseTransition,
+  buildCp10PilotReadinessPlan,
   calculateInventoryVariance,
   classifyInventoryException,
   correctiveActionEffectiveStatus,
@@ -85,4 +87,31 @@ test("CP6 domain event taxonomy covers operational owner analytics events", () =
   assert.equal(envelope.eventType, "lab_case.completed");
   assert.equal(envelope.aggregate.type, "lab_case");
   assert.equal(envelope.patientId, patientId);
+});
+
+test("CP10 pilot readiness fixture separates local configuration from live go-live gates", () => {
+  const fixture = JSON.parse(
+    readFileSync(
+      new URL("../../../fixtures/synthetic/cp10/pilot_readiness_configuration.json", import.meta.url),
+      "utf8"
+    )
+  );
+  const readiness = buildCp10PilotReadinessPlan(fixture.input);
+  const requiredBlockedItems = new Set(fixture.expected.requiredBlockedItems);
+
+  assert.equal(readiness.schemaVersion, "cp10.pilot_readiness.v1");
+  assert.equal(readiness.localConfigurationStatus, fixture.expected.localConfigurationStatus);
+  assert.equal(readiness.pilotGoLiveStatus, fixture.expected.pilotGoLiveStatus);
+  assert.equal(readiness.safety.noRealPhi, true);
+  assert.equal(readiness.safety.noLiveProviderActivation, true);
+  assert.ok(readiness.summary.ready >= fixture.expected.minimumReadyItems);
+
+  for (const itemId of requiredBlockedItems) {
+    assert.equal(readiness.items.find((item) => item.id === itemId)?.status, "blocked");
+  }
+
+  const serialized = JSON.stringify(readiness);
+  assert.equal(serialized.includes("Provider success confirmed"), false);
+  assert.equal(serialized.includes("KEY_SECRET"), false);
+  assert.equal(serialized.includes("ACCESS_TOKEN"), false);
 });

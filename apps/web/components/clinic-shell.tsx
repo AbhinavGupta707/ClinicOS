@@ -16,6 +16,10 @@ import {
   isCp7WorkflowSurface
 } from "@/components/integration-ops-workflow";
 import { isCp6WorkflowSurface, OperationsWorkflow } from "@/components/operations-workflow";
+import {
+  isCp10PilotReadinessSurface,
+  PilotReadinessWorkflow
+} from "@/components/pilot-readiness-workflow";
 import { SurfaceView } from "@/components/surface-view";
 import { loadMe, type MeState } from "@/lib/me";
 import { canAccessSurface, getSurface, getVisibleSurfaces } from "@/lib/navigation";
@@ -197,6 +201,8 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
             <IntegrationOpsWorkflow activeSurfaceId={activeSurface.id} profile={profile} />
           ) : isCp8WorkflowSurface(activeSurface.id) ? (
             <AiReviewWorkflow activeSurfaceId={activeSurface.id} profile={profile} />
+          ) : isCp10PilotReadinessSurface(activeSurface.id) ? (
+            <PilotReadinessWorkflow />
           ) : (
             <SurfaceView profile={profile} surface={activeSurface} />
           )}
