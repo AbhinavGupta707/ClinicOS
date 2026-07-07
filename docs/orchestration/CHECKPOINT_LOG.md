@@ -35,6 +35,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 6 - Continuity/operations/owner dashboard | Complete  |       `6f9fe1c` |     `08ddab9` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`, verified, documented, promoted to `main`, and post-promotion format gate repaired.                                                                 |
 | 7 - Live integrations/migration hardening | Complete |       `e7139c4` |     `92fb2b9` | CP7 visible project-scoped lanes merged into `codex/integration/checkpoint-7`, master integration reconciled live provider health/dead-letter/migration contracts, and verified branch was promoted to `main`.                         |
 | 8 - Mobile capture and AI scribe/action proposals | Complete |       `983cca5` |     `8ac2dae` | CP8 visible project-scoped lanes merged into `codex/integration/checkpoint-8` and promoted to `main`. Master integration reconciled AI safety route contracts, consent blocking semantics, review-role browser gates, and fixture/live evidence boundaries. |
+| 9 - Interoperability/security/ops hardening | Launching |       `0dc9f91` |       pending | CP9 launch packet defines Security/Privacy, FHIR/ABDM, Infrastructure/Ops, and Performance/QA lanes with ABDM feature-gated, Terraform apply deferred, and synthetic-only export/restore/load evidence unless explicitly approved. |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -388,3 +389,15 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Clinical application of AI outputs remains deferred as whole workflows. CP8 records review-only decisions and retains evaluation/audit evidence; it does not sign notes, mutate chart findings, prescribe, bill, or message patients from AI output.
   - Expo/mobile app distribution and physical-device camera/audio smoke remain deferred; local Expo shell/export and mobile tests verify the capture contract and consent disabled behavior.
   - `npm run security:audit` was not rerun because prior escalation was policy-rejected: npm audit discloses dependency inventory to the external registry audit service. The tracked-file secret scan passed.
+
+## Checkpoint 9 Launch - 2026-07-07
+
+- Launch packet: `docs/orchestration/CHECKPOINT_09_INTEROPERABILITY_SECURITY_OPS.md`.
+- Base commit before launch packet: `0dc9f91`.
+- Credential/input preflight: `.secrets/orchestration.env` is present; AWS local profile/region/DR/backend variable names are present; ABDM variable names are present but empty; pilot export path variables and synthetic-only flag are present. Do not print secret values.
+- Integration branch rule: CP9 lane commits merge first into `codex/integration/checkpoint-9`; promote to `main` only after code checks, FHIR/export/privacy/security checks, restore/performance/tenant-isolation evidence, browser/user evidence for implemented UI, docs, and accepted-gap review pass.
+- Visible project-scoped lanes planned:
+  - Security/Privacy.
+  - FHIR/ABDM.
+  - Infrastructure/Ops.
+  - Performance/QA.
