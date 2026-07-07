@@ -45,6 +45,7 @@ test.describe("Checkpoint 5 checkout workflow smoke", () => {
     await expect(page.getByTestId("cp5-instructions")).toContainText("print ready");
     await page.getByTestId("cp5-request-instruction-send").click();
     await expect(page.getByTestId("cp5-instructions")).toContainText("provider unavailable");
+    await expect(page.getByTestId("cp5-instructions")).not.toContainText(/delivered|read/i);
     await expect(page.getByTestId("cp5-timeline")).toContainText("receipt.generated");
 
     await page.screenshot({
@@ -53,7 +54,9 @@ test.describe("Checkpoint 5 checkout workflow smoke", () => {
     });
   });
 
-  test("mobile checkout workflow shell has no horizontal overflow", async ({ page }) => {
+  test("mobile checkout workflow shell has reachable controls and no horizontal overflow", async ({
+    page
+  }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto(cp5Route);
 
