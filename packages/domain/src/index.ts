@@ -13,4 +13,5 @@ export * from "./operations.ts";
 export * from "./patient.ts";
 export * from "./payments.ts";
 export * from "./permissions.ts";
+export * from "./source-attribution.ts";
 export * from "./tenancy.ts";
