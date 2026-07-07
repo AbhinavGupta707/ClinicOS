@@ -80,6 +80,32 @@ route, and currently checks the CP3 API boundary at:
 - `POST /v1/encounters/{encounterId}/prescriptions`
 - `POST /v1/prescriptions/{prescriptionId}/sign`
 
+Checkpoint 4 adds a local-only dental chart and media fixture for doctor/assistant browser smoke
+before the CP4 dental/media backend lanes are merged:
+
+```sh
+NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_USE_CP4_WORKFLOW_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_ENV=local \
+NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=doctor \
+npm run dev --workspace apps/web
+```
+
+The CP4 fixture uses explicitly synthetic, non-PHI dental findings, chart snapshots, and media
+metadata behind `apps/web/lib/cp4-workflow.ts`. It does not expose object storage keys. In live
+mode the workflow is available through `/surface/dental-media`, `/surface/dental`, and
+`/surface/odontogram`, and currently assumes the CP4 API boundary at:
+
+- `GET /v1/clinical-workflows/cp4?date=`
+- `POST /v1/patients/{patientId}/dental-findings`
+- `PATCH /v1/dental-findings/{findingId}`
+- `POST /v1/dental-chart-snapshots`
+- `GET /v1/patients/{patientId}/media`
+- `POST /v1/media/upload-urls`
+- `POST /v1/media/complete-upload`
+- `POST /v1/media/{mediaId}/links`
+- `POST /v1/media/{mediaId}/signed-access`
+
 ## `/me` contract expectation
 
 Until `packages/api-contracts` owns generated types, the web shell keeps a local mirror in `apps/web/lib/me.ts`. The expected shape is:

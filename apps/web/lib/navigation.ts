@@ -163,7 +163,7 @@ export const SURFACES: SurfaceRegistration[] = [
     roles: ["owner", "doctor", "assistant"]
   },
   {
-    availability: "registered_unavailable",
+    availability: "active",
     checkpoint: 4,
     description: "Odontogram, tooth findings, media review, and comparison workspace.",
     href: "/surface/dental-media",
@@ -171,8 +171,13 @@ export const SURFACES: SurfaceRegistration[] = [
     id: "dental-media",
     label: "Dental and media",
     requiredApis: [
-      "GET /v1/patients/{patientId}/dental-chart",
-      "GET /v1/patients/{patientId}/media"
+      "GET /v1/clinical-workflows/cp4?date=",
+      "POST /v1/patients/{patientId}/dental-findings",
+      "PATCH /v1/dental-findings/{findingId}",
+      "POST /v1/media/upload-urls",
+      "POST /v1/media/complete-upload",
+      "POST /v1/media/{mediaId}/links",
+      "POST /v1/media/{mediaId}/signed-access"
     ],
     roles: ["owner", "doctor", "assistant"]
   },
@@ -280,6 +285,8 @@ export const SURFACES: SurfaceRegistration[] = [
 const SURFACE_BY_ID = new Map(SURFACES.map((surface) => [surface.id, surface]));
 const SURFACE_ALIASES = new Map<string, string>([
   ["clinical", "encounter"],
+  ["dental", "dental-media"],
+  ["odontogram", "dental-media"],
   ["day-start", "today"]
 ]);
 
