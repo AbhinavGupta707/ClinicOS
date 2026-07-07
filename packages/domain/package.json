@@ -8,8 +8,8 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "node --check src/index.ts && node --check src/appointment.ts && node --check src/audit.ts && node --check src/clinical.ts && node --check src/dashboard.ts && node --check src/dental.ts && node --check src/events.ts && node --check src/ids.ts && node --check src/lead.ts && node --check src/media.ts && node --check src/patient.ts && node --check src/permissions.ts && node --check src/tenancy.ts",
-    "lint": "node --check src/index.ts && node --check src/appointment.ts && node --check src/audit.ts && node --check src/clinical.ts && node --check src/dashboard.ts && node --check src/dental.ts && node --check src/events.ts && node --check src/ids.ts && node --check src/lead.ts && node --check src/media.ts && node --check src/patient.ts && node --check src/permissions.ts && node --check src/tenancy.ts && node --check test/*.test.ts",
+    "typecheck": "node --check src/index.ts && node --check src/appointment.ts && node --check src/audit.ts && node --check src/clinical.ts && node --check src/dashboard.ts && node --check src/dental.ts && node --check src/events.ts && node --check src/ids.ts && node --check src/lead.ts && node --check src/media.ts && node --check src/patient.ts && node --check src/payments.ts && node --check src/permissions.ts && node --check src/tenancy.ts",
+    "lint": "node --check src/index.ts && node --check src/appointment.ts && node --check src/audit.ts && node --check src/clinical.ts && node --check src/dashboard.ts && node --check src/dental.ts && node --check src/events.ts && node --check src/ids.ts && node --check src/lead.ts && node --check src/media.ts && node --check src/patient.ts && node --check src/payments.ts && node --check src/permissions.ts && node --check src/tenancy.ts && node --check test/*.test.ts",
     "test": "node --test test/*.test.ts"
   }
 }

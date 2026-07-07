@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { KeycloakAccessTokenClaims } from "@clinic-os/auth";
 import {
   CHECKPOINT1_SEED_IDS,
@@ -39,9 +39,11 @@ import {
   assertDentalFindingUpdateReason,
   assertClinicalNoteCanBeAmended,
   assertClinicalNoteCanBeSigned,
+  assertManualPaymentEvidence,
   assertEncounterTransition,
   assertPrescriptionCanBeSigned,
   assertValidDentalFinding,
+  applyPaymentToInvoice,
   buildDentalChartSnapshotState,
   buildConsentEnforcementState,
   detectAppointmentConflicts,
@@ -66,6 +68,7 @@ import {
   type IntakeFormSubmissionRecord,
   type IntakeFormTemplateRecord,
   type LeadRecord,
+  type ManualPaymentMethod,
   mediaAssetStatusForScan,
   type MediaAssetRecord,
   type MediaUploadReservationRecord,
@@ -79,6 +82,58 @@ import {
   type UUID
 } from "@clinic-os/domain";
 import type { AuditEventRecord } from "@clinic-os/security";
+
+export const CP5_PAYMENT_FIXTURE_IDS = {
+  invoiceId: "40000000-0000-4000-8000-000000000001" as UUID
+} as const;
+
+type LocalPaymentState =
+  | "payment_requested"
+  | "qr_created"
+  | "link_created"
+  | "partially_paid"
+  | "paid"
+  | "failed"
+  | "reconciliation_required"
+  | "manually_recorded";
+
+interface LocalPaymentInvoiceRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  patientId: UUID;
+  invoiceNumber: string;
+  paymentState: LocalPaymentState;
+  totalAmountPaise: number;
+  amountPaidPaise: number;
+  amountDuePaise: number;
+  currency: string;
+  updatedAt: string;
+}
+
+interface LocalPaymentTransactionRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  patientId: UUID;
+  invoiceId: UUID;
+  source: "provider_webhook" | "manual";
+  status: "succeeded" | "failed" | "ignored_duplicate" | "reconciliation_required";
+  providerKey: string | null;
+  providerPaymentId: string | null;
+  providerEventId: string | null;
+  idempotencyKey: string;
+  amountPaise: number;
+  appliedAmountPaise: number;
+  currency: string;
+  method: string | null;
+  recordedByUserId: UUID | null;
+  auditReason: string | null;
+  reference: string | null;
+  receivedAt: string;
+  createdAt: string;
+  metadata: Record<string, unknown>;
+}
 
 const tenant = {
   id: CHECKPOINT1_SEED_IDS.tenantId,
@@ -266,6 +321,25 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly dentalFindings: DentalFindingRecord[] = [];
   readonly dentalFindingHistory: DentalFindingHistoryRecord[] = [];
   readonly dentalChartSnapshots: DentalChartSnapshotRecord[] = [];
+  readonly paymentInvoices: LocalPaymentInvoiceRecord[] = [
+    {
+      id: CP5_PAYMENT_FIXTURE_IDS.invoiceId,
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      patientId: CHECKPOINT1_SEED_IDS.patients.rheaSynthetic,
+      invoiceNumber: "INV-CP5-0001",
+      paymentState: "payment_requested",
+      totalAmountPaise: 12_000,
+      amountPaidPaise: 0,
+      amountDuePaise: 12_000,
+      currency: "INR",
+      updatedAt: "2026-07-07T08:00:00.000Z"
+    }
+  ];
+  readonly paymentRequests: Array<Record<string, unknown>> = [];
+  readonly paymentTransactions: LocalPaymentTransactionRecord[] = [];
+  readonly paymentReconciliationItems: Array<Record<string, unknown>> = [];
+  readonly paymentWebhookReceipts: Array<Record<string, unknown>> = [];
 
   async listPatients(
     scope: RepositoryScope,
@@ -1498,6 +1572,509 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return snapshot;
   }
 
+  async findPaymentInvoiceById(
+    scope: RepositoryScope,
+    invoiceId: UUID
+  ): Promise<LocalPaymentInvoiceRecord | null> {
+    return (
+      this.paymentInvoices.find(
+        (invoice) => matchesScope(invoice, scope) && invoice.id === invoiceId
+      ) ?? null
+    );
+  }
+
+  async createPaymentRequestFromProvider(
+    scope: RepositoryScope,
+    input: {
+      invoice: LocalPaymentInvoiceRecord;
+      providerResult: {
+        providerKey: string;
+        requestKind: "invoice_qr" | "payment_link";
+        providerRequestId: string;
+        amountPaise: number;
+        currency: string;
+        status: "created" | "failed";
+        paymentUrl?: string | null;
+        qrImageUrl?: string | null;
+        qrString?: string | null;
+        expiresAt?: string | null;
+        metadata: Record<string, unknown>;
+      };
+      createdByUserId: UUID;
+    }
+  ) {
+    const now = new Date().toISOString();
+    input.invoice.paymentState =
+      input.providerResult.requestKind === "invoice_qr" ? "qr_created" : "link_created";
+    input.invoice.updatedAt = now;
+    const paymentRequest = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: input.invoice.patientId,
+      invoiceId: input.invoice.id,
+      requestType: input.providerResult.requestKind,
+      status: input.providerResult.status,
+      providerKey: input.providerResult.providerKey,
+      providerRequestId: input.providerResult.providerRequestId,
+      amountPaise: input.providerResult.amountPaise,
+      currency: input.providerResult.currency,
+      paymentUrl: input.providerResult.paymentUrl ?? null,
+      qrImageUrl: input.providerResult.qrImageUrl ?? null,
+      qrString: input.providerResult.qrString ?? null,
+      expiresAt: input.providerResult.expiresAt ?? null,
+      metadata: input.providerResult.metadata,
+      createdByUserId: input.createdByUserId,
+      createdAt: now
+    };
+
+    this.paymentRequests.push(paymentRequest);
+    this.timelineItems.push(
+      timeline(
+        scope,
+        input.invoice.patientId,
+        "payment_requested",
+        "payment_requests",
+        paymentRequest.id,
+        input.providerResult.requestKind === "invoice_qr"
+          ? "Payment QR created"
+          : "Payment link created",
+        {
+          invoiceId: input.invoice.id,
+          paymentRequestId: paymentRequest.id,
+          providerKey: input.providerResult.providerKey,
+          amountPaise: input.providerResult.amountPaise
+        }
+      )
+    );
+
+    return { invoice: input.invoice, paymentRequest };
+  }
+
+  async recordManualPayment(
+    scope: RepositoryScope,
+    input: {
+      invoice: LocalPaymentInvoiceRecord;
+      amountPaise: number;
+      currency: string;
+      method: ManualPaymentMethod;
+      reason: string;
+      reference: string;
+      receivedAt: string;
+      idempotencyKey: string;
+      evidence: Record<string, unknown>;
+    }
+  ) {
+    assertManualPaymentEvidence({
+      amountPaise: input.amountPaise,
+      currency: input.currency,
+      method: input.method,
+      reason: input.reason,
+      reference: input.reference,
+      receivedAt: input.receivedAt,
+      evidence: input.evidence
+    });
+
+    const existing = this.paymentTransactions.find(
+      (transaction) =>
+        matchesScope(transaction, scope) && transaction.idempotencyKey === input.idempotencyKey
+    );
+    if (existing) {
+      return {
+        invoice: input.invoice,
+        transaction: existing,
+        reconciliationItem: null,
+        replayed: true
+      };
+    }
+
+    const application = applyPaymentToInvoice({
+      invoiceTotalAmountPaise: input.invoice.totalAmountPaise,
+      invoiceAmountPaidPaise: input.invoice.amountPaidPaise,
+      transactionAmountPaise: input.amountPaise
+    });
+    const now = new Date().toISOString();
+    input.invoice.amountPaidPaise = application.nextAmountPaidPaise;
+    input.invoice.amountDuePaise = application.nextAmountDuePaise;
+    input.invoice.paymentState = application.nextPaymentState;
+    input.invoice.updatedAt = now;
+
+    const transaction: LocalPaymentTransactionRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: input.invoice.patientId,
+      invoiceId: input.invoice.id,
+      source: "manual",
+      status: "succeeded",
+      providerKey: null,
+      providerPaymentId: null,
+      providerEventId: null,
+      idempotencyKey: input.idempotencyKey,
+      amountPaise: input.amountPaise,
+      appliedAmountPaise: application.appliedAmountPaise,
+      currency: input.currency,
+      method: input.method,
+      recordedByUserId: scope.actorUserId,
+      auditReason: input.reason,
+      reference: input.reference,
+      receivedAt: input.receivedAt,
+      createdAt: now,
+      metadata: { evidence: input.evidence }
+    };
+    this.paymentTransactions.push(transaction);
+    this.timelineItems.push(
+      timeline(
+        scope,
+        input.invoice.patientId,
+        "payment_manually_recorded",
+        "payment_transactions",
+        transaction.id,
+        "Manual payment recorded",
+        {
+          invoiceId: input.invoice.id,
+          paymentTransactionId: transaction.id,
+          amountPaise: transaction.amountPaise,
+          appliedAmountPaise: transaction.appliedAmountPaise,
+          method: transaction.method
+        }
+      )
+    );
+
+    return {
+      invoice: input.invoice,
+      transaction,
+      reconciliationItem: null,
+      replayed: false
+    };
+  }
+
+  async recordPaymentWebhookReceipt(input: {
+    providerKey: string;
+    providerEventId: string | null;
+    receivedAt: string;
+    headers: Record<string, string | undefined>;
+    rawBody: string;
+  }) {
+    const receipt = {
+      id: uuid(),
+      providerKey: input.providerKey,
+      providerEventId: input.providerEventId,
+      receivedAt: input.receivedAt,
+      status: "received",
+      headers: input.headers,
+      rawBody: input.rawBody,
+      rawBodySha256: createHash("sha256").update(input.rawBody).digest("hex")
+    };
+    this.paymentWebhookReceipts.push(receipt);
+    return receipt;
+  }
+
+  async markPaymentWebhookReceiptRejected(
+    receiptId: UUID,
+    input: { reason: string; providerEventId?: string | null }
+  ): Promise<void> {
+    const receipt = this.paymentWebhookReceipts.find((candidate) => candidate.id === receiptId);
+    if (!receipt) return;
+    receipt.status = "rejected";
+    receipt.providerEventId = input.providerEventId ?? receipt.providerEventId;
+    receipt.rejectionReason = input.reason;
+  }
+
+  async applyPaymentProviderWebhook(
+    event: {
+      providerKey: string;
+      providerEventId: string;
+      idempotencyKey: string;
+      eventKind: string;
+      tenantId?: string | null;
+      clinicId?: string | null;
+      patientId?: string | null;
+      invoiceId?: string | null;
+      providerPaymentId?: string | null;
+      amountPaise?: number | null;
+      currency?: string | null;
+      method?: string | null;
+      occurredAt: string;
+      payload: Record<string, unknown>;
+    },
+    input: { receiptId: UUID }
+  ) {
+    const receipt = this.paymentWebhookReceipts.find((candidate) => candidate.id === input.receiptId);
+    if (receipt) {
+      receipt.status = "verified";
+      receipt.providerEventId = event.providerEventId;
+    }
+
+    const existingEventTransaction = this.paymentTransactions.find(
+      (transaction) =>
+        transaction.providerKey === event.providerKey &&
+        transaction.providerEventId === event.providerEventId
+    );
+    if (existingEventTransaction) {
+      if (receipt) receipt.status = "processed";
+      return {
+        status: "duplicate",
+        invoice: this.paymentInvoices.find((invoice) => invoice.id === existingEventTransaction.invoiceId) ?? null,
+        transaction: existingEventTransaction,
+        reconciliationItem: null,
+        replayed: true
+      };
+    }
+
+    const invoice = event.invoiceId
+      ? this.paymentInvoices.find(
+          (candidate) =>
+            candidate.id === event.invoiceId &&
+            candidate.tenantId === event.tenantId &&
+            candidate.clinicId === event.clinicId
+        ) ?? null
+      : null;
+
+    if (!invoice) {
+      const reconciliationItem = this.createPaymentReconciliationItem({
+        event,
+        invoice: null,
+        reason: "missing_invoice_reference",
+        amountPaise: event.amountPaise ?? 0,
+        currency: event.currency ?? null
+      });
+      if (receipt) receipt.status = "processed";
+      return {
+        status: "reconciliation_required",
+        invoice: null,
+        transaction: null,
+        reconciliationItem,
+        replayed: false
+      };
+    }
+
+    if (event.eventKind === "payment_failed") {
+      const transaction = this.createProviderPaymentTransaction(invoice, event, {
+        status: "failed",
+        appliedAmountPaise: 0,
+        amountPaise: event.amountPaise ?? 0
+      });
+      invoice.paymentState = "failed";
+      invoice.updatedAt = new Date().toISOString();
+      if (receipt) receipt.status = "processed";
+      return {
+        status: "processed",
+        invoice,
+        transaction,
+        reconciliationItem: null,
+        replayed: false
+      };
+    }
+
+    if (event.eventKind !== "payment_succeeded") {
+      if (receipt) receipt.status = "processed";
+      return {
+        status: "ignored",
+        invoice,
+        transaction: null,
+        reconciliationItem: null,
+        replayed: false
+      };
+    }
+
+    if (event.currency !== invoice.currency || !event.amountPaise || event.amountPaise <= 0) {
+      const reconciliationItem = this.createPaymentReconciliationItem({
+        event,
+        invoice,
+        reason: event.currency !== invoice.currency ? "currency_mismatch" : "manual_review_required",
+        amountPaise: event.amountPaise ?? 0,
+        currency: event.currency ?? null
+      });
+      invoice.paymentState = "reconciliation_required";
+      invoice.updatedAt = new Date().toISOString();
+      if (receipt) receipt.status = "processed";
+      return {
+        status: "reconciliation_required",
+        invoice,
+        transaction: null,
+        reconciliationItem,
+        replayed: false
+      };
+    }
+
+    const duplicateProviderPayment = event.providerPaymentId
+      ? this.paymentTransactions.find(
+          (transaction) =>
+            transaction.providerKey === event.providerKey &&
+            transaction.providerPaymentId === event.providerPaymentId
+        )
+      : null;
+    if (duplicateProviderPayment) {
+      const transaction = this.createProviderPaymentTransaction(invoice, event, {
+        status: "ignored_duplicate",
+        appliedAmountPaise: 0,
+        amountPaise: event.amountPaise
+      });
+      const reconciliationItem = this.createPaymentReconciliationItem({
+        event,
+        invoice,
+        reason: "duplicate_provider_transaction",
+        amountPaise: event.amountPaise,
+        currency: event.currency
+      });
+      if (receipt) receipt.status = "processed";
+      return {
+        status: "duplicate",
+        invoice,
+        transaction,
+        reconciliationItem,
+        replayed: false
+      };
+    }
+
+    const application = applyPaymentToInvoice({
+      invoiceTotalAmountPaise: invoice.totalAmountPaise,
+      invoiceAmountPaidPaise: invoice.amountPaidPaise,
+      transactionAmountPaise: event.amountPaise
+    });
+    const transaction = this.createProviderPaymentTransaction(invoice, event, {
+      status: application.requiresReconciliation ? "reconciliation_required" : "succeeded",
+      appliedAmountPaise: application.appliedAmountPaise,
+      amountPaise: event.amountPaise
+    });
+    invoice.amountPaidPaise = application.nextAmountPaidPaise;
+    invoice.amountDuePaise = application.nextAmountDuePaise;
+    invoice.paymentState = application.requiresReconciliation
+      ? "reconciliation_required"
+      : application.nextPaymentState;
+    invoice.updatedAt = new Date().toISOString();
+
+    const reconciliationItem = application.requiresReconciliation
+      ? this.createPaymentReconciliationItem({
+          event,
+          invoice,
+          reason: "overpayment",
+          amountPaise: application.overpaymentAmountPaise,
+          currency: event.currency
+        })
+      : null;
+
+    this.timelineItems.push(
+      timeline(
+        {
+          tenantId: invoice.tenantId,
+          clinicId: invoice.clinicId,
+          actorUserId: CHECKPOINT1_SEED_IDS.users.assistant
+        },
+        invoice.patientId,
+        reconciliationItem ? "payment_reconciliation_required" : "payment_succeeded",
+        "payment_transactions",
+        transaction.id,
+        reconciliationItem ? "Payment requires reconciliation" : "Payment received",
+        {
+          invoiceId: invoice.id,
+          paymentTransactionId: transaction.id,
+          providerKey: event.providerKey,
+          amountPaise: transaction.amountPaise,
+          appliedAmountPaise: transaction.appliedAmountPaise,
+          reconciliationItemId: reconciliationItem?.id ?? null
+        }
+      )
+    );
+
+    if (receipt) receipt.status = "processed";
+    return {
+      status: reconciliationItem ? "reconciliation_required" : "processed",
+      invoice,
+      transaction,
+      reconciliationItem,
+      replayed: false
+    };
+  }
+
+  createProviderPaymentTransaction(
+    invoice: LocalPaymentInvoiceRecord,
+    event: {
+      providerKey: string;
+      providerEventId: string;
+      idempotencyKey: string;
+      providerPaymentId?: string | null;
+      amountPaise?: number | null;
+      currency?: string | null;
+      method?: string | null;
+      occurredAt: string;
+      payload: Record<string, unknown>;
+    },
+    input: {
+      status: LocalPaymentTransactionRecord["status"];
+      amountPaise: number;
+      appliedAmountPaise: number;
+    }
+  ): LocalPaymentTransactionRecord {
+    const transaction: LocalPaymentTransactionRecord = {
+      id: uuid(),
+      tenantId: invoice.tenantId,
+      clinicId: invoice.clinicId,
+      patientId: invoice.patientId,
+      invoiceId: invoice.id,
+      source: "provider_webhook",
+      status: input.status,
+      providerKey: event.providerKey,
+      providerPaymentId: event.providerPaymentId ?? null,
+      providerEventId: event.providerEventId,
+      idempotencyKey: event.idempotencyKey,
+      amountPaise: input.amountPaise,
+      appliedAmountPaise: input.appliedAmountPaise,
+      currency: event.currency ?? invoice.currency,
+      method: event.method ?? null,
+      recordedByUserId: null,
+      auditReason: null,
+      reference: event.providerPaymentId ?? event.providerEventId,
+      receivedAt: event.occurredAt,
+      createdAt: new Date().toISOString(),
+      metadata: { providerPayload: event.payload }
+    };
+    this.paymentTransactions.push(transaction);
+    return transaction;
+  }
+
+  createPaymentReconciliationItem(input: {
+    event: {
+      providerKey: string;
+      providerEventId: string;
+      providerPaymentId?: string | null;
+      tenantId?: string | null;
+      clinicId?: string | null;
+      patientId?: string | null;
+      payload: Record<string, unknown>;
+    };
+    invoice: LocalPaymentInvoiceRecord | null;
+    reason:
+      | "overpayment"
+      | "duplicate_provider_transaction"
+      | "missing_invoice_reference"
+      | "currency_mismatch"
+      | "provider_failure"
+      | "manual_review_required";
+    amountPaise: number;
+    currency: string | null;
+  }) {
+    const item = {
+      id: uuid(),
+      tenantId: input.invoice?.tenantId ?? uuidOrNull(input.event.tenantId),
+      clinicId: input.invoice?.clinicId ?? uuidOrNull(input.event.clinicId),
+      patientId: input.invoice?.patientId ?? uuidOrNull(input.event.patientId),
+      invoiceId: input.invoice?.id ?? null,
+      providerKey: input.event.providerKey,
+      providerPaymentId: input.event.providerPaymentId ?? null,
+      providerEventId: input.event.providerEventId,
+      reason: input.reason,
+      amountPaise: input.amountPaise,
+      currency: input.currency,
+      status: "open",
+      createdAt: new Date().toISOString(),
+      metadata: { providerPayload: input.event.payload }
+    };
+    this.paymentReconciliationItems.push(item);
+    return item;
+  }
+
   nextClinicalNoteVersion(scope: RepositoryScope, encounterId: UUID): number {
     return (
       Math.max(
@@ -1610,6 +2187,13 @@ export function createLocalFixtureClaims(input: {
 
 function uuid(): UUID {
   return randomUUID() as UUID;
+}
+
+function uuidOrNull(value: string | null | undefined): UUID | null {
+  if (!value || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(value)) {
+    return null;
+  }
+  return value as UUID;
 }
 
 function matchesScope(record: { tenantId: UUID; clinicId: UUID }, scope: RepositoryScope): boolean {

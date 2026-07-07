@@ -180,8 +180,8 @@ const runtimeEnvSchema = z
       context,
       env,
       env.PAYMENT_PROVIDER === "razorpay",
-      ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET", "RAZORPAY_WEBHOOK_URL"],
-      "Razorpay is selected but required API/webhook credentials are missing."
+      ["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET"],
+      "Razorpay is selected but required API/webhook signing credentials are missing."
     );
 
     requireFields(

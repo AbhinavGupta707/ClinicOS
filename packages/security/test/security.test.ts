@@ -67,6 +67,26 @@ test("CP4 dental audit classifications cover chart reads findings and snapshots"
   );
 });
 
+test("CP5 payment audit classifications cover provider, manual, and reconciliation events", () => {
+  for (const action of [
+    "payment.provider.unavailable",
+    "payment.requested",
+    "payment.succeeded",
+    "payment.failed",
+    "payment.manually_recorded",
+    "payment.reconciliation_required"
+  ] as const) {
+    const classification = classifyAuditAction(action);
+    assert.equal(classification.requiresPatientId, false, `${action} should not require PHI context`);
+    assert.equal(classification.phiInvolved, false, `${action} should not include PHI by default`);
+  }
+
+  assert.equal(classifyAuditAction("payment.provider.unavailable").category, "integration");
+  assert.equal(classifyAuditAction("payment.succeeded").riskLevel, "high");
+  assert.equal(classifyAuditAction("payment.manually_recorded").riskLevel, "high");
+  assert.equal(classifyAuditAction("payment.reconciliation_required").category, "billing");
+});
+
 test("CP3 audit classifications cover intake consent encounter note prescription and timeline actions", () => {
   for (const action of [
     "patient.timeline.viewed",

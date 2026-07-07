@@ -278,6 +278,42 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: false,
     requiresPatientId: false
   },
+  "payment.provider.unavailable": {
+    category: "integration",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "payment.requested": {
+    category: "billing",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "payment.succeeded": {
+    category: "billing",
+    riskLevel: "high",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "payment.failed": {
+    category: "billing",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "payment.manually_recorded": {
+    category: "billing",
+    riskLevel: "high",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "payment.reconciliation_required": {
+    category: "billing",
+    riskLevel: "high",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
   "integration.credential.changed": {
     category: "integration",
     riskLevel: "critical",

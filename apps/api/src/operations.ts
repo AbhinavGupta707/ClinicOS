@@ -23,9 +23,11 @@ import {
   assertAppointmentTransition,
   assertEncounterTransition,
   assertMediaMimeType,
+  assertManualPaymentEvidence,
   assertPrescriptionMedicationList,
   assertLeadTransition,
   assertPatientCreateMinimum,
+  applyPaymentToInvoice,
   buildMorningDashboard,
   buildPatientDuplicateSuggestions,
   calculateEndAt,
@@ -42,6 +44,7 @@ import {
   isIntakeSubmissionSource,
   isMediaScanStatus,
   isMediaType,
+  isManualPaymentMethod,
   isValidLeadStatus,
   mediaAssetCanBeViewed,
   isUuid,
@@ -62,12 +65,21 @@ import {
   type LeadStatus,
   type MediaScanStatus,
   type MediaType,
+  type ManualPaymentMethod,
   type PatientTimelineItem as DomainPatientTimelineItem,
   type PatientSource,
   type PrescriptionMedication,
   type QueueStatus,
   type UUID
 } from "@clinic-os/domain";
+import {
+  PaymentProviderError,
+  type PaymentProvider,
+  type PaymentProviderRequestKind,
+  type PaymentProviderRequestResult,
+  type PaymentProviderWebhookEvent,
+  type RawPaymentWebhook
+} from "@clinic-os/integrations";
 import {
   createAuditEvent,
   type AuditEventRecord,
@@ -91,11 +103,170 @@ export interface OperationsDependencies {
     appendAuditEvent(event: AuditEventRecord): Promise<void>;
   };
   mediaStorage?: MediaStorageProvider;
+  paymentProvider?: PaymentProvider;
+  paymentRepository?: PaymentOperationsRepository;
 }
 
 export interface ApiSuccess<T> {
   status: number;
   body: T;
+}
+
+export type ApiPaymentState =
+  | "payment_requested"
+  | "qr_created"
+  | "link_created"
+  | "partially_paid"
+  | "paid"
+  | "failed"
+  | "reconciliation_required"
+  | "manually_recorded";
+
+export interface PaymentRouteInvoiceRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  patientId: UUID;
+  invoiceNumber: string;
+  paymentState: ApiPaymentState;
+  totalAmountPaise: number;
+  amountPaidPaise: number;
+  amountDuePaise: number;
+  currency: string;
+  updatedAt: string;
+}
+
+export interface PaymentRouteRequestRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  patientId: UUID;
+  invoiceId: UUID;
+  requestType: PaymentProviderRequestKind;
+  status: "created" | "sent" | "failed" | "cancelled" | "expired";
+  providerKey: string;
+  providerRequestId: string;
+  amountPaise: number;
+  currency: string;
+  paymentUrl: string | null;
+  qrImageUrl: string | null;
+  qrString: string | null;
+  expiresAt: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface PaymentRouteTransactionRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  patientId: UUID;
+  invoiceId: UUID;
+  source: "provider_webhook" | "manual";
+  status: "succeeded" | "failed" | "ignored_duplicate" | "reconciliation_required";
+  providerKey: string | null;
+  providerPaymentId: string | null;
+  providerEventId: string | null;
+  idempotencyKey: string;
+  amountPaise: number;
+  appliedAmountPaise: number;
+  currency: string;
+  method: string | null;
+  recordedByUserId: UUID | null;
+  auditReason: string | null;
+  reference: string | null;
+  receivedAt: string;
+  createdAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface PaymentRouteReconciliationItemRecord {
+  id: UUID;
+  tenantId: UUID | null;
+  clinicId: UUID | null;
+  patientId: UUID | null;
+  invoiceId: UUID | null;
+  providerKey: string | null;
+  providerPaymentId: string | null;
+  providerEventId: string | null;
+  reason:
+    | "overpayment"
+    | "duplicate_provider_transaction"
+    | "missing_invoice_reference"
+    | "currency_mismatch"
+    | "provider_failure"
+    | "manual_review_required";
+  amountPaise: number;
+  currency: string | null;
+  status: "open" | "resolved";
+  createdAt: string;
+  metadata: Record<string, unknown>;
+}
+
+export interface PaymentWebhookReceiptRecord {
+  id: UUID;
+  providerKey: string;
+  providerEventId: string | null;
+  receivedAt: string;
+  status: "received" | "verified" | "rejected" | "processed";
+  rawBodySha256: string;
+}
+
+export interface PaymentProviderWebhookApplicationResult {
+  status: "processed" | "duplicate" | "ignored" | "reconciliation_required";
+  invoice: PaymentRouteInvoiceRecord | null;
+  transaction: PaymentRouteTransactionRecord | null;
+  reconciliationItem: PaymentRouteReconciliationItemRecord | null;
+  replayed: boolean;
+}
+
+export interface PaymentOperationsRepository {
+  findPaymentInvoiceById(
+    scope: RepositoryScope,
+    invoiceId: UUID
+  ): Promise<PaymentRouteInvoiceRecord | null>;
+  createPaymentRequestFromProvider(
+    scope: RepositoryScope,
+    input: {
+      invoice: PaymentRouteInvoiceRecord;
+      providerResult: PaymentProviderRequestResult;
+      createdByUserId: UUID;
+    }
+  ): Promise<{ invoice: PaymentRouteInvoiceRecord; paymentRequest: PaymentRouteRequestRecord }>;
+  recordManualPayment(
+    scope: RepositoryScope,
+    input: {
+      invoice: PaymentRouteInvoiceRecord;
+      amountPaise: number;
+      currency: string;
+      method: ManualPaymentMethod;
+      reason: string;
+      reference: string;
+      receivedAt: string;
+      idempotencyKey: string;
+      evidence: Record<string, unknown>;
+    }
+  ): Promise<{
+    invoice: PaymentRouteInvoiceRecord;
+    transaction: PaymentRouteTransactionRecord;
+    reconciliationItem: PaymentRouteReconciliationItemRecord | null;
+    replayed: boolean;
+  }>;
+  recordPaymentWebhookReceipt(input: {
+    providerKey: string;
+    providerEventId: string | null;
+    receivedAt: string;
+    headers: Record<string, string | undefined>;
+    rawBody: string;
+  }): Promise<PaymentWebhookReceiptRecord>;
+  markPaymentWebhookReceiptRejected(
+    receiptId: UUID,
+    input: { reason: string; providerEventId?: string | null }
+  ): Promise<void>;
+  applyPaymentProviderWebhook(
+    event: PaymentProviderWebhookEvent,
+    input: { receiptId: UUID }
+  ): Promise<PaymentProviderWebhookApplicationResult>;
 }
 
 const LEAD_INTENTS = new Set<LeadIntent>([
@@ -1735,6 +1906,290 @@ export async function createSignedMediaAccess(
   });
 }
 
+export async function createInvoicePaymentRequest(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  invoiceId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "billing.write" });
+  const paymentRepository = paymentRepositoryFrom(dependencies);
+  const provider = paymentProviderFrom(dependencies);
+  const scope = scopeFrom(context);
+  const invoice = await paymentRepository.findPaymentInvoiceById(scope, invoiceId);
+  if (!invoice) throw notFound("Invoice not found.", { invoice_id: invoiceId });
+  if (invoice.amountDuePaise <= 0) {
+    throw conflict("Invoice has no amount due for a new payment request.", {
+      invoice_id: invoiceId,
+      payment_state: invoice.paymentState
+    });
+  }
+
+  const input = parsePaymentRequest(body, invoice);
+  const health = await provider.healthCheck();
+  if (!health.capabilities.includes(input.requestType === "invoice_qr" ? "CREATE_PAYMENT_QR" : "CREATE_PAYMENT_LINKS")) {
+    await audit(context, dependencies, "payment.provider.unavailable", {
+      patientId: invoice.patientId,
+      resourceType: "invoice",
+      resourceId: invoice.id,
+      metadata: { providerKey: provider.providerKey, providerHealth: health }
+    });
+    throw new ApiError(503, "CONFIGURATION_ERROR", "Payment provider is unavailable for this request type.", {
+      provider_health: health,
+      request_type: input.requestType
+    });
+  }
+
+  const providerInput = {
+    tenantId: scope.tenantId,
+    clinicId: scope.clinicId,
+    patientId: invoice.patientId,
+    invoiceId: invoice.id,
+    amountPaise: input.amountPaise,
+    currency: invoice.currency,
+    description: input.description,
+    expiresAt: input.expiresAt,
+    idempotencyKey: context.idempotencyKey,
+    customer: input.customer,
+    metadata: input.metadata
+  };
+  let providerResult: PaymentProviderRequestResult;
+  try {
+    providerResult =
+      input.requestType === "invoice_qr"
+        ? await provider.createInvoiceQr(providerInput)
+        : await provider.createPaymentLink(providerInput);
+  } catch (error) {
+    if (error instanceof PaymentProviderError) {
+      await audit(context, dependencies, "payment.provider.unavailable", {
+        patientId: invoice.patientId,
+        resourceType: "invoice",
+        resourceId: invoice.id,
+        metadata: { providerKey: error.providerKey, providerStatus: error.status, ...error.details }
+      });
+      throw new ApiError(503, "CONFIGURATION_ERROR", error.message, error.details);
+    }
+    throw error;
+  }
+
+  const result = await paymentRepository.createPaymentRequestFromProvider(scope, {
+    invoice,
+    providerResult,
+    createdByUserId: scope.actorUserId
+  });
+
+  await audit(context, dependencies, "payment.requested", {
+    patientId: invoice.patientId,
+    resourceType: "payment_request",
+    resourceId: result.paymentRequest.id,
+    metadata: {
+      invoiceId,
+      providerKey: providerResult.providerKey,
+      requestType: result.paymentRequest.requestType,
+      amountPaise: result.paymentRequest.amountPaise,
+      providerHealth: providerResult.providerHealth
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "payment.requested",
+    aggregateType: "payment_request",
+    aggregateId: result.paymentRequest.id,
+    patientId: invoice.patientId,
+    payload: {
+      invoiceId,
+      paymentRequestId: result.paymentRequest.id,
+      providerKey: providerResult.providerKey,
+      requestType: result.paymentRequest.requestType,
+      amountPaise: result.paymentRequest.amountPaise
+    }
+  });
+
+  return created({
+    invoice: result.invoice,
+    paymentRequest: result.paymentRequest,
+    provider: {
+      key: provider.providerKey,
+      health: providerResult.providerHealth
+    }
+  });
+}
+
+export async function recordInvoiceManualPayment(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  invoiceId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "billing.write" });
+  const paymentRepository = paymentRepositoryFrom(dependencies);
+  const scope = scopeFrom(context);
+  const invoice = await paymentRepository.findPaymentInvoiceById(scope, invoiceId);
+  if (!invoice) throw notFound("Invoice not found.", { invoice_id: invoiceId });
+
+  const input = parseManualPayment(body);
+  if (input.currency !== invoice.currency) {
+    throw validation("Manual payment currency must match the invoice currency.", {
+      invoice_id: invoiceId,
+      invoice_currency: invoice.currency,
+      payment_currency: input.currency
+    });
+  }
+  if (input.amountPaise > invoice.amountDuePaise) {
+    throw conflict("Manual payment amount exceeds the invoice amount due.", {
+      invoice_id: invoiceId,
+      amount_due_paise: invoice.amountDuePaise,
+      received_amount_paise: input.amountPaise
+    });
+  }
+
+  const result = await paymentRepository.recordManualPayment(scope, {
+    invoice,
+    ...input,
+    receivedAt: input.receivedAt ?? new Date().toISOString(),
+    idempotencyKey: context.idempotencyKey ?? `manual:${invoiceId}:${input.reference}`,
+    evidence: input.evidence
+  });
+
+  await audit(context, dependencies, "payment.manually_recorded", {
+    patientId: invoice.patientId,
+    resourceType: "payment_transaction",
+    resourceId: result.transaction.id,
+    metadata: {
+      invoiceId,
+      amountPaise: input.amountPaise,
+      method: input.method,
+      reference: input.reference,
+      reason: input.reason,
+      replayed: result.replayed
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "payment.manually_recorded",
+    aggregateType: "payment_transaction",
+    aggregateId: result.transaction.id,
+    patientId: invoice.patientId,
+    payload: {
+      invoiceId,
+      paymentTransactionId: result.transaction.id,
+      amountPaise: result.transaction.amountPaise,
+      appliedAmountPaise: result.transaction.appliedAmountPaise,
+      paymentState: result.invoice.paymentState,
+      replayed: result.replayed
+    }
+  });
+
+  return created({
+    invoice: result.invoice,
+    transaction: result.transaction,
+    reconciliationItem: result.reconciliationItem,
+    replayed: result.replayed
+  });
+}
+
+export async function processPaymentWebhook(
+  dependencies: OperationsDependencies,
+  input: {
+    requestId: string;
+    providerKey: string;
+    rawBody: string;
+    headers: Record<string, string | undefined>;
+    receivedAt: string;
+    ipAddress?: string | null;
+    userAgent?: string | null;
+  }
+) {
+  const paymentRepository = paymentRepositoryFrom(dependencies);
+  const provider = paymentProviderFrom(dependencies);
+  const receipt = await paymentRepository.recordPaymentWebhookReceipt({
+    providerKey: input.providerKey,
+    providerEventId:
+      input.headers["x-razorpay-event-id"] ?? input.headers["x-clinic-os-simulator-event-id"] ?? null,
+    receivedAt: input.receivedAt,
+    headers: input.headers,
+    rawBody: input.rawBody
+  });
+  const raw: RawPaymentWebhook = {
+    providerKey: input.providerKey,
+    headers: input.headers,
+    rawBody: input.rawBody,
+    receivedAt: input.receivedAt
+  };
+  const verification = await provider.verifyWebhook(raw);
+
+  if (verification.status !== "verified") {
+    await paymentRepository.markPaymentWebhookReceiptRejected(receipt.id, {
+      reason: verification.message,
+      providerEventId: verification.providerEventId ?? null
+    });
+    throw new ApiError(
+      verification.status === "invalid_signature" ? 403 : 400,
+      verification.status === "invalid_signature" ? "PERMISSION_DENIED" : "VALIDATION_ERROR",
+      verification.message,
+      { verification_status: verification.status, provider_event_id: verification.providerEventId ?? null }
+    );
+  }
+
+  let event: PaymentProviderWebhookEvent;
+  try {
+    event = await provider.parseWebhook(raw);
+  } catch (error) {
+    await paymentRepository.markPaymentWebhookReceiptRejected(receipt.id, {
+      reason: error instanceof Error ? error.message : "Webhook payload could not be parsed.",
+      providerEventId: verification.providerEventId ?? null
+    });
+    throw error;
+  }
+
+  const result = await paymentRepository.applyPaymentProviderWebhook(event, {
+    receiptId: receipt.id
+  });
+
+  if (dependencies.auditSink && result.invoice) {
+    await dependencies.auditSink.appendAuditEvent(
+      createAuditEvent({
+        tenantId: result.invoice.tenantId,
+        clinicId: result.invoice.clinicId,
+        actor: { type: "integration", id: event.providerKey },
+        action:
+          result.status === "reconciliation_required"
+            ? "payment.reconciliation_required"
+            : event.eventKind === "payment_failed"
+              ? "payment.failed"
+              : "payment.succeeded",
+        patientId: result.invoice.patientId,
+        resourceType: "payment_webhook",
+        resourceId: receipt.id,
+        metadata: {
+          providerKey: event.providerKey,
+          providerEventId: event.providerEventId,
+          providerPaymentId: event.providerPaymentId ?? null,
+          invoiceId: result.invoice.id,
+          replayed: result.replayed,
+          status: result.status,
+          reconciliationItemId: result.reconciliationItem?.id ?? null
+        },
+        ipAddress: input.ipAddress ?? null,
+        userAgent: input.userAgent ?? null,
+        correlationId: input.requestId
+      })
+    );
+  }
+
+  return ok({
+    status: result.status,
+    replayed: result.replayed,
+    invoice: result.invoice,
+    transaction: result.transaction,
+    reconciliationItem: result.reconciliationItem,
+    providerEvent: {
+      providerKey: event.providerKey,
+      providerEventId: event.providerEventId,
+      eventName: event.eventName,
+      eventKind: event.eventKind
+    }
+  });
+}
+
 async function bookAppointment(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
@@ -2010,6 +2465,15 @@ function publicTimelineItemType(
       return "prescription";
     case "media_uploaded":
       return "media";
+    case "invoice_created":
+      return "invoice";
+    case "payment_requested":
+    case "payment_succeeded":
+    case "payment_manually_recorded":
+    case "payment_reconciliation_required":
+      return "payment";
+    case "receipt_generated":
+      return "invoice";
   }
 }
 
@@ -2065,6 +2529,18 @@ function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): Dom
       return "prescription.signed";
     case "media_uploaded":
       return "media.upload_completed";
+    case "invoice_created":
+      return "invoice.created";
+    case "payment_requested":
+      return "payment.requested";
+    case "payment_succeeded":
+      return "payment.succeeded";
+    case "payment_manually_recorded":
+      return "payment.manually_recorded";
+    case "payment_reconciliation_required":
+      return "payment.reconciliation_required";
+    case "receipt_generated":
+      return "receipt.generated";
   }
 }
 
@@ -2426,6 +2902,88 @@ function parseSignedMediaAccessRequest(body: unknown): { expiresInSeconds?: numb
   };
 }
 
+function parsePaymentRequest(
+  body: unknown,
+  invoice: PaymentRouteInvoiceRecord
+): {
+  requestType: PaymentProviderRequestKind;
+  amountPaise: number;
+  expiresAt: string | null;
+  description: string | null;
+  customer: { name?: string | null; email?: string | null; contact?: string | null } | null;
+  metadata: Record<string, unknown>;
+} {
+  const input = objectBody(body);
+  const requestType = parsePaymentRequestType(
+    requiredString(input.requestType ?? input.type ?? "payment_link", "requestType")
+  );
+  const amountPaise =
+    input.amountPaise === undefined
+      ? invoice.amountDuePaise
+      : integerField(input.amountPaise, "amountPaise", { min: 1 });
+
+  if (amountPaise > invoice.amountDuePaise) {
+    throw conflict("Payment request amount exceeds the invoice amount due.", {
+      invoice_id: invoice.id,
+      amount_due_paise: invoice.amountDuePaise,
+      requested_amount_paise: amountPaise
+    });
+  }
+
+  return {
+    requestType,
+    amountPaise,
+    expiresAt: optionalNullableString(input.expiresAt, "expiresAt") ?? null,
+    description: optionalNullableString(input.description, "description") ?? null,
+    customer: parsePaymentCustomer(input.customer),
+    metadata: recordField(input.metadata, "metadata")
+  };
+}
+
+function parseManualPayment(body: unknown): {
+  amountPaise: number;
+  currency: string;
+  method: ManualPaymentMethod;
+  reason: string;
+  reference: string;
+  receivedAt: string | null;
+  evidence: Record<string, unknown>;
+} {
+  const input = objectBody(body);
+  const method = parseManualPaymentMethod(requiredString(input.method, "method"));
+  const parsed = {
+    amountPaise: integerField(input.amountPaise, "amountPaise", { min: 1 }),
+    currency: requiredString(input.currency ?? "INR", "currency").toUpperCase(),
+    method,
+    reason: requiredString(input.reason, "reason"),
+    reference: requiredString(input.reference, "reference"),
+    receivedAt: optionalNullableString(input.receivedAt, "receivedAt") ?? null,
+    evidence: recordField(input.evidence, "evidence")
+  };
+
+  try {
+    assertManualPaymentEvidence(parsed);
+  } catch (error) {
+    throw validation(error instanceof Error ? error.message : "Manual payment evidence is invalid.", {
+      field: "manualPayment"
+    });
+  }
+
+  return parsed;
+}
+
+function parsePaymentCustomer(
+  value: unknown
+): { name?: string | null; email?: string | null; contact?: string | null } | null {
+  if (value === undefined || value === null) return null;
+  const input = objectField(value, "customer");
+  return {
+    name: optionalNullableString(input.name, "customer.name"),
+    email: optionalNullableString(input.email, "customer.email"),
+    contact: optionalNullableString(input.contact, "customer.contact")
+  };
+}
+
 function parseClinicalNoteContent(value: unknown): ClinicalNoteContent {
   const input = objectField(value, "content");
   return {
@@ -2636,6 +3194,19 @@ function parseMediaScanStatus(value: string): MediaScanStatus {
   return value;
 }
 
+function parsePaymentRequestType(value: string): PaymentProviderRequestKind {
+  if (value === "payment_link") return "payment_link";
+  if (value === "invoice_qr" || value === "qr" || value === "qr_code") return "invoice_qr";
+  throw validation("Invalid payment request type.", { field: "requestType", value });
+}
+
+function parseManualPaymentMethod(value: string): ManualPaymentMethod {
+  if (!isManualPaymentMethod(value)) {
+    throw validation("Invalid manual payment method.", { field: "method", value });
+  }
+  return value;
+}
+
 function mediaStorageFrom(dependencies: OperationsDependencies): MediaStorageProvider {
   if (!dependencies.mediaStorage) {
     throw new ApiError(
@@ -2645,6 +3216,28 @@ function mediaStorageFrom(dependencies: OperationsDependencies): MediaStoragePro
     );
   }
   return dependencies.mediaStorage;
+}
+
+function paymentProviderFrom(dependencies: OperationsDependencies): PaymentProvider {
+  if (!dependencies.paymentProvider) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Payment provider is not configured for this ClinicOS runtime."
+    );
+  }
+  return dependencies.paymentProvider;
+}
+
+function paymentRepositoryFrom(dependencies: OperationsDependencies): PaymentOperationsRepository {
+  if (!dependencies.paymentRepository) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Payment repository adapter is not configured yet. Merge the CP5 Billing Domain storage adapter before enabling durable payment routes."
+    );
+  }
+  return dependencies.paymentRepository;
 }
 
 function assertMediaUploadOpen(input: {
