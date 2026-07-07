@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `codex/integration/checkpoint-4` with Checkpoint 4 verified at code commit `2fd04a5`; promote to `main` after this closeout documentation commit.
+- Branch: `main` after verified Checkpoint 4 promotion via merge commit `248496a`.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -16,7 +16,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Security/Compliance: `019f39f6-c6ef-7691-af95-ef4be605d978`, `/Users/abhinavgupta/.codex/worktrees/4436/ClinicOS`.
   - Doctor/Assistant UX: `019f39f7-0632-7800-9d41-f55b44f38dd0`, `/Users/abhinavgupta/.codex/worktrees/75ee/ClinicOS`.
   - QA/Fixtures: `019f39f7-54bd-72e1-a812-dd0fda503d06`, `/Users/abhinavgupta/.codex/worktrees/08d3/ClinicOS`.
-- Checkpoint 4 integration is verified on `codex/integration/checkpoint-4`; detailed evidence is in `docs/orchestration/CHECKPOINT_04_DENTAL_CHART_MEDIA.md`.
+- Checkpoint 4 integration is verified on `codex/integration/checkpoint-4`, promoted to `main` via `248496a`, and detailed evidence is in `docs/orchestration/CHECKPOINT_04_DENTAL_CHART_MEDIA.md`.
 - Checkpoint 4 used four visible project-scoped lanes:
   - Media Backend: `019f3a34-a5d9-78c1-a12c-25ce24bc9426`, `/Users/abhinavgupta/.codex/worktrees/7725/ClinicOS`.
   - Dental Domain: `019f3a34-d36e-7680-b3cd-1ad47240f656`, `/Users/abhinavgupta/.codex/worktrees/d4aa/ClinicOS`.

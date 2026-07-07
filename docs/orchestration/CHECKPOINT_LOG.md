@@ -30,7 +30,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 1 - Production platform foundation     | Complete  |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
 | 2 - Lead/patient/appointment/day-start | Complete  |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
 | 3 - Intake/consent/encounter/notes     | Complete  |       `6fe2cbc` |     `eb68abd` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-3`. Master integration aligned live CP3 routes, consent enforcement, prep summary, QA fixtures, web selectors, browser smoke, and security/audit coverage.                                         |
-| 4 - Dental charting/media/imaging      | Verified  |       `c7b222c` |     `2fd04a5` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                                           |
+| 4 - Dental charting/media/imaging      | Complete  |       `c7b222c` |     `248496a` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4` and promoted to `main`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                     |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -155,6 +155,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Detailed evidence: `docs/orchestration/CHECKPOINT_04_DENTAL_CHART_MEDIA.md`.
 - Integration branch: `codex/integration/checkpoint-4`.
 - Verified code commit: `2fd04a5`.
+- Main promotion commit: `248496a`.
 - Merge order:
   - Media Backend merged first.
   - Dental/Media UX merged second.
