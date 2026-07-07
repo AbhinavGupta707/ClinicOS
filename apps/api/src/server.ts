@@ -31,6 +31,7 @@ import {
 import { getMe } from "./me.ts";
 import {
   checkInAppointment,
+  acceptTreatmentPlan,
   amendEncounterClinicalNote,
   confirmAppointment,
   convertLeadToAppointment,
@@ -38,7 +39,10 @@ import {
   createEncounter,
   createDentalChartSnapshot,
   createEncounterDentalFinding,
+  createEncounterProcedurePerformed,
   createEncounterPrescription,
+  createInvoice,
+  createInvoiceReceipt,
   createIntakeFormTemplate,
   createLead,
   completeMediaUpload,
@@ -46,12 +50,15 @@ import {
   createPatientDentalFinding,
   createPatient,
   createPatientConsent,
+  createPatientTreatmentPlan,
   getMorningDashboard,
   getEncounter,
+  getInvoice,
   getPatientDentalChart,
   getPatient,
   getPatientPrepSummary,
   getPatientTimeline,
+  listPricebookProcedures,
   listDentalFindingHistory,
   listAppointmentTypes,
   listAppointments,
@@ -76,6 +83,7 @@ import {
   updateDentalFinding,
   updateAppointment,
   updateLeadStatus,
+  updateTreatmentPlan,
   updatePatient,
   updateQueueEntry,
   type OperationsRequestContext
@@ -497,6 +505,65 @@ async function routeOperationsRequest(input: {
     );
   }
 
+  if (input.request.method === "GET" && pathname === "/v1/pricebook/procedures") {
+    return listPricebookProcedures(operationsContext, dependencies);
+  }
+
+  const patientTreatmentPlansMatch = pathname.match(
+    /^\/v1\/patients\/([^/]+)\/treatment-plans$/
+  );
+  if (patientTreatmentPlansMatch && input.request.method === "POST") {
+    return createPatientTreatmentPlan(
+      operationsContext,
+      dependencies,
+      pathUuid(patientTreatmentPlansMatch[1], "patientId"),
+      body
+    );
+  }
+
+  const treatmentPlanMatch = pathname.match(/^\/v1\/treatment-plans\/([^/]+)$/);
+  if (treatmentPlanMatch && input.request.method === "PATCH") {
+    return updateTreatmentPlan(
+      operationsContext,
+      dependencies,
+      pathUuid(treatmentPlanMatch[1], "treatmentPlanId"),
+      body
+    );
+  }
+
+  const treatmentPlanAcceptMatch = pathname.match(/^\/v1\/treatment-plans\/([^/]+)\/accept$/);
+  if (treatmentPlanAcceptMatch && input.request.method === "POST") {
+    return acceptTreatmentPlan(
+      operationsContext,
+      dependencies,
+      pathUuid(treatmentPlanAcceptMatch[1], "treatmentPlanId"),
+      body
+    );
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/invoices") {
+    return createInvoice(operationsContext, dependencies, body);
+  }
+
+  const invoiceMatch = pathname.match(/^\/v1\/invoices\/([^/]+)$/);
+  if (invoiceMatch && input.request.method === "GET") {
+    return getInvoice(
+      operationsContext,
+      dependencies,
+      pathUuid(invoiceMatch[1], "invoiceId")
+    );
+  }
+
+  const invoiceReceiptMatch = pathname.match(/^\/v1\/invoices\/([^/]+)\/receipts$/);
+  if (invoiceReceiptMatch && input.request.method === "POST") {
+    return createInvoiceReceipt(
+      operationsContext,
+      dependencies,
+      pathUuid(invoiceReceiptMatch[1], "invoiceId"),
+      body
+    );
+  }
+
   if (input.request.method === "POST" && pathname === "/v1/media/upload-urls") {
     return requestMediaUploadUrl(operationsContext, dependencies, body);
   }
@@ -663,6 +730,16 @@ async function routeOperationsRequest(input: {
       operationsContext,
       dependencies,
       pathUuid(encounterDentalFindingMatch[1], "encounterId"),
+      body
+    );
+  }
+
+  const encounterProcedureMatch = pathname.match(/^\/v1\/encounters\/([^/]+)\/procedures$/);
+  if (encounterProcedureMatch && input.request.method === "POST") {
+    return createEncounterProcedurePerformed(
+      operationsContext,
+      dependencies,
+      pathUuid(encounterProcedureMatch[1], "encounterId"),
       body
     );
   }

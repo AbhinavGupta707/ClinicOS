@@ -16,6 +16,10 @@ const checkpoint3Migration = readFileSync(
   resolve(import.meta.dirname, "../migrations/0003_intake_consent_encounter_clinical.sql"),
   "utf8"
 );
+const checkpoint5Migration = readFileSync(
+  resolve(import.meta.dirname, "../migrations/0005_treatment_checkout_billing.sql"),
+  "utf8"
+);
 const checkpoint1Seed = readFileSync(
   resolve(import.meta.dirname, "../seeds/checkpoint1_identity_auth.sql"),
   "utf8"
@@ -158,4 +162,85 @@ test("identity seed keeps prescription draft and sign permissions separated for 
   assert.match(checkpoint1Seed, /\('doctor', 'prescription\.sign'\)/i);
   assert.doesNotMatch(checkpoint1Seed, /\('accountant', 'prescription\.write'\)/i);
   assert.doesNotMatch(checkpoint1Seed, /\('auditor', 'prescription\.write'\)/i);
+});
+
+test("checkpoint 5 migration includes billing catalog plan invoice payment and receipt tables", () => {
+  for (const table of [
+    "pricebook_procedures",
+    "treatment_plans",
+    "treatment_plan_phases",
+    "treatment_plan_estimate_items",
+    "procedure_performed_records",
+    "invoices",
+    "invoice_items",
+    "payment_requests",
+    "payment_transactions",
+    "receipts"
+  ]) {
+    assert.match(checkpoint5Migration, new RegExp(`create table if not exists ${table}`, "i"));
+  }
+
+  for (const itemType of [
+    "treatment_plan_created",
+    "treatment_plan_accepted",
+    "procedure_completed",
+    "invoice_created",
+    "payment_recorded",
+    "receipt_generated"
+  ]) {
+    assert.match(checkpoint5Migration, new RegExp(`'${itemType}'`, "i"));
+  }
+});
+
+test("checkpoint 5 migration enforces RLS and tenant-clinic scope on billing tables", () => {
+  for (const table of [
+    "pricebook_procedures",
+    "treatment_plans",
+    "treatment_plan_phases",
+    "treatment_plan_estimate_items",
+    "procedure_performed_records",
+    "invoices",
+    "invoice_items",
+    "payment_requests",
+    "payment_transactions",
+    "receipts"
+  ]) {
+    assert.match(checkpoint5Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
+    assert.match(checkpoint5Migration, new RegExp(`alter table ${table} force row level security`, "i"));
+    assert.match(checkpoint5Migration, new RegExp(`${table}_tenant_clinic_isolation`, "i"));
+  }
+
+  assert.match(checkpoint5Migration, /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i);
+});
+
+test("checkpoint 5 migration derives invoices from completed procedure evidence", () => {
+  assert.match(checkpoint5Migration, /create table if not exists procedure_performed_records/i);
+  assert.match(checkpoint5Migration, /procedure_performed_records_completed_item_unique_idx/i);
+  assert.match(checkpoint5Migration, /status = 'completed'/i);
+  assert.match(checkpoint5Migration, /create table if not exists invoice_items/i);
+  assert.match(checkpoint5Migration, /unique \(tenant_id, procedure_performed_id\)/i);
+  assert.match(checkpoint5Migration, /foreign key \(tenant_id, procedure_performed_id\) references procedure_performed_records/i);
+  assert.match(checkpoint5Migration, /invoice lines derived from performed procedure records/i);
+});
+
+test("checkpoint 5 migration requires verified payment evidence before receipts", () => {
+  assert.match(checkpoint5Migration, /payment_transactions_verified_success_check/i);
+  assert.match(
+    checkpoint5Migration,
+    /status = 'succeeded' and verification_status = 'verified'/i
+  );
+  assert.match(
+    checkpoint5Migration,
+    /status = 'manually_recorded' and verification_status = 'not_required_manual'/i
+  );
+  assert.match(checkpoint5Migration, /payment_transactions_idempotency_unique_idx/i);
+  assert.match(checkpoint5Migration, /foreign key \(tenant_id, receipt_id\) references receipts/i);
+});
+
+test("checkpoint 5 grants accountants billing access without clinical chart permissions", () => {
+  assert.match(checkpoint5Migration, /\('accountant', 'billing\.read'\)/i);
+  assert.match(checkpoint5Migration, /\('accountant', 'billing\.write'\)/i);
+  assert.match(checkpoint5Migration, /\('accountant', 'billing\.export'\)/i);
+  assert.doesNotMatch(checkpoint1Seed, /\('accountant', 'dental\.chart\.write'\)/i);
+  assert.doesNotMatch(checkpoint1Seed, /\('accountant', 'clinical\.note\.write'\)/i);
 });

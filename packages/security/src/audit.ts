@@ -272,6 +272,66 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "pricebook.procedure_catalog.viewed": {
+    category: "billing",
+    riskLevel: "low",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "treatment_plan.created": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "treatment_plan.updated": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "treatment_plan.accepted": {
+    category: "clinical",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "procedure.completed": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "invoice.created": {
+    category: "billing",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "invoice.viewed": {
+    category: "billing",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "payment.requested": {
+    category: "billing",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "payment.recorded": {
+    category: "billing",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "receipt.generated": {
+    category: "billing",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
   "billing.payment.changed": {
     category: "billing",
     riskLevel: "medium",
