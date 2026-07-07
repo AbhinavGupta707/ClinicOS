@@ -20,21 +20,21 @@ ClinicOS has production-grade compliance, interoperability, and operations-harde
 
 ## Lane Ownership
 
-| Lane | Ownership | Forbidden/shared policy | Required verification |
-| --- | --- | --- | --- |
-| Security/Privacy | CP9 migration ownership for audit review, data export, retention/deletion, break-glass request/review, privacy events, permissions, API operations/routes, security redaction tests, minimal audit/export web surface if needed | Own the only CP9 migration unless master explicitly reconciles another lane proposal. May edit `packages/domain/**`, `packages/db/**`, `packages/security/**`, `apps/api/**`, and narrow `apps/web/**` for audit/export/break-glass surfaces. Do not weaken existing role permissions, PHI redaction, audit immutability, or consent enforcement. | `npm --workspace @clinic-os/domain test`, `npm --workspace @clinic-os/security test`, `npm --workspace @clinic-os/db test`, `npm --workspace @clinic-os/api test`, relevant web tests if edited, retention/export/break-glass unit tests |
-| FHIR/ABDM | FHIR R4 projection package, patient/encounter/document bundles, synthetic FHIR fixtures, ABDM readiness model, ABHA/care-context/consent fields behind feature flags, API/export contract tests | May add `packages/fhir/**`, FHIR fixtures, API/domain projection helpers, docs. Do not make ABDM required for clinic workflows. Do not edit CP9 migration directly unless coordinated; propose required fields in handoff for Security/Privacy/master reconciliation. No live ABDM calls. | FHIR projection tests, sample bundle validation against local structural rules/fixtures, ABDM no-credentials feature-gate tests, `npm run build:shared` if package metadata changes |
-| Infrastructure/Ops | Terraform pilot-prod profile hardening, backup/restore drill artifacts, alerting/provider-health monitoring runbooks, DR notes, restore smoke script using synthetic data | May edit `infra/**`, `.env.example`, `packages/config/**`, `packages/observability/**`, scripts/docs for backup/restore and alert drills. Do not apply Terraform or print secrets. Do not create live cloud resources. | `npm run check`, config/env tests, Terraform formatting/validation where tooling is available, restore-drill script dry-run with synthetic data, runbook checks |
-| Performance/QA | Load smoke, clinic-hours concurrency checks, tenant isolation regression suite, CP9 fixture validation, E2E regression harness, performance threshold docs | May edit `fixtures/synthetic/cp9/**`, `scripts/*cp9*`, `tests/acceptance/**`, `tests/e2e/**`, QA docs. Coordinate route names with Security/Privacy and FHIR/ABDM. Do not lower product safety checks to meet performance thresholds. | CP9 fixture validator, CP9 contract smoke dry-run, tenant isolation regression, load smoke with explicit threshold, browser smoke for implemented CP9 web surfaces and 390px reachability if UI is added |
+| Lane               | Ownership                                                                                                                                                                                                                       | Forbidden/shared policy                                                                                                                                                                                                                                                                                                                           | Required verification                                                                                                                                                                                                                    |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Security/Privacy   | CP9 migration ownership for audit review, data export, retention/deletion, break-glass request/review, privacy events, permissions, API operations/routes, security redaction tests, minimal audit/export web surface if needed | Own the only CP9 migration unless master explicitly reconciles another lane proposal. May edit `packages/domain/**`, `packages/db/**`, `packages/security/**`, `apps/api/**`, and narrow `apps/web/**` for audit/export/break-glass surfaces. Do not weaken existing role permissions, PHI redaction, audit immutability, or consent enforcement. | `npm --workspace @clinic-os/domain test`, `npm --workspace @clinic-os/security test`, `npm --workspace @clinic-os/db test`, `npm --workspace @clinic-os/api test`, relevant web tests if edited, retention/export/break-glass unit tests |
+| FHIR/ABDM          | FHIR R4 projection package, patient/encounter/document bundles, synthetic FHIR fixtures, ABDM readiness model, ABHA/care-context/consent fields behind feature flags, API/export contract tests                                 | May add `packages/fhir/**`, FHIR fixtures, API/domain projection helpers, docs. Do not make ABDM required for clinic workflows. Do not edit CP9 migration directly unless coordinated; propose required fields in handoff for Security/Privacy/master reconciliation. No live ABDM calls.                                                         | FHIR projection tests, sample bundle validation against local structural rules/fixtures, ABDM no-credentials feature-gate tests, `npm run build:shared` if package metadata changes                                                      |
+| Infrastructure/Ops | Terraform pilot-prod profile hardening, backup/restore drill artifacts, alerting/provider-health monitoring runbooks, DR notes, restore smoke script using synthetic data                                                       | May edit `infra/**`, `.env.example`, `packages/config/**`, `packages/observability/**`, scripts/docs for backup/restore and alert drills. Do not apply Terraform or print secrets. Do not create live cloud resources.                                                                                                                            | `npm run check`, config/env tests, Terraform formatting/validation where tooling is available, restore-drill script dry-run with synthetic data, runbook checks                                                                          |
+| Performance/QA     | Load smoke, clinic-hours concurrency checks, tenant isolation regression suite, CP9 fixture validation, E2E regression harness, performance threshold docs                                                                      | May edit `fixtures/synthetic/cp9/**`, `scripts/*cp9*`, `tests/acceptance/**`, `tests/e2e/**`, QA docs. Coordinate route names with Security/Privacy and FHIR/ABDM. Do not lower product safety checks to meet performance thresholds.                                                                                                             | CP9 fixture validator, CP9 contract smoke dry-run, tenant isolation regression, load smoke with explicit threshold, browser smoke for implemented CP9 web surfaces and 390px reachability if UI is added                                 |
 
 ## Visible Worktree Lanes
 
-| Lane | Pending Worktree ID | Thread ID | Worktree |
-| --- | --- | --- | --- |
-| Security/Privacy | `local:8e4b76f0-2035-4afa-8a47-d65138239c7a` | `019f3cec-36fc-7390-a841-bf11cb1a669c` | `/Users/abhinavgupta/.codex/worktrees/6d89/ClinicOS` |
-| FHIR/ABDM | `local:980187fa-bbd5-4364-86b2-511e38068b73` | `019f3cec-83b6-7383-81f5-e14f267d2392` | `/Users/abhinavgupta/.codex/worktrees/1238/ClinicOS` |
+| Lane               | Pending Worktree ID                          | Thread ID                              | Worktree                                             |
+| ------------------ | -------------------------------------------- | -------------------------------------- | ---------------------------------------------------- |
+| Security/Privacy   | `local:8e4b76f0-2035-4afa-8a47-d65138239c7a` | `019f3cec-36fc-7390-a841-bf11cb1a669c` | `/Users/abhinavgupta/.codex/worktrees/6d89/ClinicOS` |
+| FHIR/ABDM          | `local:980187fa-bbd5-4364-86b2-511e38068b73` | `019f3cec-83b6-7383-81f5-e14f267d2392` | `/Users/abhinavgupta/.codex/worktrees/1238/ClinicOS` |
 | Infrastructure/Ops | `local:7bab86b2-b4af-4585-91bd-187a2939d141` | `019f3cec-d3a3-7a71-ba13-ab7ceaf09f69` | `/Users/abhinavgupta/.codex/worktrees/7e8c/ClinicOS` |
-| Performance/QA | `local:2aea50c5-e05d-4e0b-a16d-5f5ec6852393` | `019f3ced-1911-78e1-9301-ce5df9e8e934` | `/Users/abhinavgupta/.codex/worktrees/1091/ClinicOS` |
+| Performance/QA     | `local:2aea50c5-e05d-4e0b-a16d-5f5ec6852393` | `019f3ced-1911-78e1-9301-ce5df9e8e934` | `/Users/abhinavgupta/.codex/worktrees/1091/ClinicOS` |
 
 All four worktrees resolved at base commit `6697df4`.
 
@@ -68,3 +68,38 @@ All four worktrees resolved at base commit `6697df4`.
 ## Merge Order
 
 Security/Privacy -> FHIR/ABDM -> Infrastructure/Ops -> Performance/QA -> master integration patch.
+
+## Integration Verification
+
+- Verified integration head: `ea13a97` on `codex/integration/checkpoint-9`.
+- Merge order:
+  - Security/Privacy `5689952` -> merge `b24fccd`.
+  - FHIR/ABDM `23ccc4b` -> merge `efdcf9e`.
+  - Infrastructure/Ops `cf21cd0` -> merge `b69775f`.
+  - Performance/QA `38a9afa` -> merge `fca9509`.
+  - Master integration polish `ea13a97`.
+
+### Landed Product Scope
+
+- Security/privacy operations: audit review, patient record export, deletion requests, retention runs/actions, and break-glass request/review are implemented through domain, repository, API, migration, permission, audit/outbox, and redaction coverage.
+- Interoperability: `@clinic-os/fhir` projects ClinicOS patient/encounter/document evidence into FHIR R4-shaped bundles with local structural validation. ABDM readiness is feature-gated; absent credentials produce `not_configured`/`unavailable`, and live exchange remains disabled.
+- Operations: CP9 adds typed cloud/alert/restore config, provider-health alert evaluation, validation-only Terraform profile, and synthetic restore-drill runbooks/scripts.
+- QA: CP9 fixtures and smoke scripts now distinguish live Security/Privacy routes from projection-only FHIR evidence and registered-unavailable web shells.
+
+### Verification Evidence
+
+- Full repository gates passed: `git diff --check`, `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`.
+- Targeted package checks passed: domain, security, db, api, fhir, config, and observability tests/builds.
+- CP9 smoke and fixture checks passed: `node scripts/validate-cp9-fixtures.mjs`, `node scripts/cp9-contract-smoke.mjs --dry-run`, `node scripts/cp9-load-smoke.mjs --dry-run`, `node --test tests/acceptance/cp9-fixture-contract.test.mjs tests/acceptance/cp9-fhir-fixture-contract.test.mjs`, `node scripts/check-cp9-terraform-profile.mjs`, and `node scripts/cp9-restore-drill.mjs --dry-run --evidence-out /tmp/clinicos-cp9-restore-drill-integration.json`.
+- Browser smoke passed for the registered-unavailable CP9 shells:
+  - Owner compliance desktop and 390px mobile no-overflow.
+  - Platform-support unavailable shell.
+  - Evidence screenshots: `/private/tmp/clinicos-cp9-compliance-unavailable-desktop.png` and `/private/tmp/clinicos-cp9-compliance-unavailable-mobile-390.png`.
+
+### Accepted Gaps
+
+- `npm run security:audit` was not rerun because npm audit sends dependency inventory to the external registry audit service and prior escalation was policy-rejected.
+- ABDM live exchange and ABHA/care-context activation are deferred pending credentials, approvals, and compliance activation.
+- Terraform apply, cloud resource creation, live restore/failover drills, and production backup mutation are deferred pending explicit approval and an execution window.
+- FHIR is a package-level projection/validation foundation in CP9; no live FHIR API route is claimed.
+- CP9 web compliance/platform-support surfaces remain honest registered-unavailable shells until product workflow UI is activated over the merged APIs.
