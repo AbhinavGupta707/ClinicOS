@@ -35,6 +35,7 @@ import {
   acceptTreatmentPlan,
   amendEncounterClinicalNote,
   confirmAppointment,
+  commitMigrationBatch,
   convertLeadToAppointment,
   createAppointment,
   createCorrectiveAction,
@@ -57,6 +58,7 @@ import {
   createLabReconciliation,
   createLabVendor,
   createLead,
+  createMigrationBatch,
   completeMediaUpload,
   createSignedMediaAccess,
   createInvoicePaymentRequest,
@@ -73,6 +75,7 @@ import {
   getOwnerDashboard,
   getEncounter,
   getInvoice,
+  getMigrationBatch,
   getPatientDentalChart,
   getPatient,
   getPatientPrepSummary,
@@ -92,6 +95,7 @@ import {
   listLabCases,
   listLabVendors,
   listLeads,
+  listMigrationBatchRows,
   listPatientMediaAssets,
   listPatientConsents,
   listPatients,
@@ -106,7 +110,9 @@ import {
   receiveMediaUploadContent,
   recordInvoiceManualPayment,
   requestMediaUploadUrl,
+  resolveMigrationBatchRow,
   processPaymentWebhook,
+  rollbackMigrationBatch,
   saveEncounterClinicalNoteDraft,
   signEncounterClinicalNote,
   signPrescription,
@@ -406,6 +412,65 @@ async function routeOperationsRequest(input: {
 
   if (input.request.method === "POST" && pathname === "/v1/patients") {
     return createPatient(operationsContext, dependencies, body);
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/migration-batches") {
+    return createMigrationBatch(operationsContext, dependencies, body);
+  }
+
+  const migrationBatchRowsMatch = pathname.match(/^\/v1\/migration-batches\/([^/]+)\/rows$/);
+  if (migrationBatchRowsMatch && input.request.method === "GET") {
+    return listMigrationBatchRows(
+      operationsContext,
+      dependencies,
+      pathUuid(migrationBatchRowsMatch[1], "batchId"),
+      {
+        matchStatus: url.searchParams.get("matchStatus"),
+        status: url.searchParams.get("status")
+      }
+    );
+  }
+
+  const migrationBatchRowResolveMatch = pathname.match(
+    /^\/v1\/migration-batches\/([^/]+)\/rows\/([^/]+)\/resolve$/
+  );
+  if (migrationBatchRowResolveMatch && input.request.method === "POST") {
+    return resolveMigrationBatchRow(
+      operationsContext,
+      dependencies,
+      pathUuid(migrationBatchRowResolveMatch[1], "batchId"),
+      pathUuid(migrationBatchRowResolveMatch[2], "rowId"),
+      body
+    );
+  }
+
+  const migrationBatchCommitMatch = pathname.match(/^\/v1\/migration-batches\/([^/]+)\/commit$/);
+  if (migrationBatchCommitMatch && input.request.method === "POST") {
+    return commitMigrationBatch(
+      operationsContext,
+      dependencies,
+      pathUuid(migrationBatchCommitMatch[1], "batchId"),
+      body
+    );
+  }
+
+  const migrationBatchRollbackMatch = pathname.match(/^\/v1\/migration-batches\/([^/]+)\/rollback$/);
+  if (migrationBatchRollbackMatch && input.request.method === "POST") {
+    return rollbackMigrationBatch(
+      operationsContext,
+      dependencies,
+      pathUuid(migrationBatchRollbackMatch[1], "batchId"),
+      body
+    );
+  }
+
+  const migrationBatchMatch = pathname.match(/^\/v1\/migration-batches\/([^/]+)$/);
+  if (migrationBatchMatch && input.request.method === "GET") {
+    return getMigrationBatch(
+      operationsContext,
+      dependencies,
+      pathUuid(migrationBatchMatch[1], "batchId")
+    );
   }
 
   const patientMatch = pathname.match(/^\/v1\/patients\/([^/]+)$/);

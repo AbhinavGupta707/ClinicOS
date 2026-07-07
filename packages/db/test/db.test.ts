@@ -28,6 +28,10 @@ const checkpoint6OperationsMigration = readFileSync(
   resolve(import.meta.dirname, "../migrations/0007_lab_inventory_events.sql"),
   "utf8"
 );
+const checkpoint7Migration = readFileSync(
+  resolve(import.meta.dirname, "../migrations/0008_live_integrations_migration_hardening.sql"),
+  "utf8"
+);
 const checkpoint1Seed = readFileSync(
   resolve(import.meta.dirname, "../seeds/checkpoint1_identity_auth.sql"),
   "utf8"
@@ -428,4 +432,84 @@ test("checkpoint 6 grants operational roles without broadening accountant access
   assert.doesNotMatch(checkpoint6OperationsMigration, /\('accountant', 'inventory\.manage'\)/i);
   assert.doesNotMatch(checkpoint6OperationsMigration, /\('accountant', 'incident\.manage'\)/i);
   assert.doesNotMatch(checkpoint6OperationsMigration, /\('accountant', 'corrective_action\.manage'\)/i);
+});
+
+test("checkpoint 7 migration includes migration review and imported record tables", () => {
+  for (const table of [
+    "migration_batches",
+    "migration_rows",
+    "migration_conflicts",
+    "migration_commits",
+    "imported_record_links"
+  ]) {
+    assert.match(checkpoint7Migration, new RegExp(`create table if not exists ${table}`, "i"));
+  }
+
+  for (const state of [
+    "needs_review",
+    "ready_to_commit",
+    "partially_committed",
+    "rolled_back",
+    "imported_unverified"
+  ]) {
+    assert.match(checkpoint7Migration, new RegExp(`'${state}'`, "i"));
+  }
+});
+
+test("checkpoint 7 migration separates bad rows, duplicate conflicts, idempotent commits, and no-overwrite links", () => {
+  assert.match(checkpoint7Migration, /validation_errors jsonb not null default '\[\]'::jsonb/i);
+  assert.match(checkpoint7Migration, /conflict_type in \('duplicate_patient'/i);
+  assert.match(checkpoint7Migration, /migration_commits_idempotency_unique_idx/i);
+  assert.match(checkpoint7Migration, /imported_record_links_external_unique_idx/i);
+  assert.match(checkpoint7Migration, /Verified ClinicOS records are never silently overwritten/i);
+  assert.match(checkpoint7Migration, /imported_unverified until reviewed/i);
+});
+
+test("checkpoint 7 migration includes provider event dead-letter persistence primitives", () => {
+  for (const table of [
+    "external_systems",
+    "external_accounts",
+    "external_provider_capabilities",
+    "external_entity_links",
+    "raw_webhook_events",
+    "normalized_integration_events",
+    "integration_health_checks",
+    "integration_attempts",
+    "integration_dead_letters"
+  ]) {
+    assert.match(checkpoint7Migration, new RegExp(`create table if not exists ${table}`, "i"));
+  }
+
+  assert.match(checkpoint7Migration, /raw_webhook_events_idempotency_unique_idx/i);
+  assert.match(checkpoint7Migration, /raw payloads may contain PHI or provider secrets/i);
+  assert.match(checkpoint7Migration, /must not be exposed in public API responses/i);
+});
+
+test("checkpoint 7 migration enforces RLS and tenant-clinic scope on migration and integration tables", () => {
+  for (const table of [
+    "migration_batches",
+    "migration_rows",
+    "migration_conflicts",
+    "migration_commits",
+    "imported_record_links",
+    "raw_webhook_events",
+    "normalized_integration_events",
+    "integration_dead_letters"
+  ]) {
+    assert.match(checkpoint7Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
+    assert.match(checkpoint7Migration, new RegExp(`alter table ${table} force row level security`, "i"));
+  }
+
+  assert.match(checkpoint7Migration, /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i);
+  assert.match(checkpoint7Migration, /migration_batches_tenant_clinic_isolation/i);
+  assert.match(checkpoint7Migration, /raw_webhook_events_tenant_clinic_isolation/i);
+});
+
+test("checkpoint 7 grants migration management without accountant import access", () => {
+  assert.match(checkpoint7Migration, /\('migration\.manage', 'Manage migrations'/i);
+  assert.match(checkpoint7Migration, /\('owner_admin', 'migration\.manage'\)/i);
+  assert.match(checkpoint7Migration, /\('assistant', 'migration\.manage'\)/i);
+  assert.match(checkpoint7Migration, /\('receptionist', 'migration\.manage'\)/i);
+  assert.doesNotMatch(checkpoint7Migration, /\('accountant', 'migration\.manage'\)/i);
+  assert.doesNotMatch(checkpoint7Migration, /\('auditor', 'migration\.manage'\)/i);
 });

@@ -5,6 +5,7 @@ export const PERMISSIONS = [
   "role.manage",
   "security.manage",
   "integration.manage",
+  "migration.manage",
   "audit.read",
   "patient.read",
   "patient.write",
@@ -66,6 +67,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "role.manage",
     "security.manage",
     "integration.manage",
+    "migration.manage",
     "audit.read",
     "patient.read",
     "patient.write",
@@ -91,6 +93,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "billing.export",
     "message.read",
     "message.write",
+    "migration.manage",
     "task.manage",
     "recall.manage",
     "sop.manage",
@@ -123,6 +126,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "billing.read",
     "message.read",
     "message.write",
+    "migration.manage",
     "task.manage",
     "recall.manage",
     "sop.manage",
@@ -151,6 +155,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "billing.read",
     "message.read",
     "message.write",
+    "migration.manage",
     "task.manage",
     "recall.manage",
     "sop.manage",
@@ -170,6 +175,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "patient_instruction.write",
     "message.read",
     "message.write",
+    "migration.manage",
     "task.manage",
     "recall.manage",
     "sop.manage",
@@ -232,6 +238,7 @@ export function isClinicalPermission(permission: PermissionKey): boolean {
     permission === "task.manage" ||
     permission === "recall.manage" ||
     permission.startsWith("lab.") ||
+    permission === "migration.manage" ||
     permission === "media.read" ||
     permission === "media.write" ||
     permission === "patient.phi.read"

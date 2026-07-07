@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import {
   assertAuthorized,
   roleSlugsForScope,
@@ -24,6 +24,7 @@ import type {
   CreateLabReconciliationInput,
   CreateLabVendorInput,
   CreateLeadInput,
+  CreateMigrationBatchInput,
   CreatePatientInput,
   CreatePatientInstructionInput,
   CreateProcedurePerformedInput,
@@ -39,6 +40,7 @@ import type {
   GenerateDueSopRunsInput,
   RecordRecallActionInput,
   RepositoryScope,
+  ResolveMigrationRowInput,
   SopRunSearchFilter,
   TaskSearchFilter,
   UpdateCorrectiveActionInput,
@@ -87,6 +89,10 @@ import {
   isLabReconciliationEntryStatus,
   isLabReconciliationStatus,
   isPatientInstructionChannel,
+  coercePatientImportRows,
+  duplicateCandidatesForPatientImport,
+  isMigrationImportType,
+  isMigrationResolutionAction,
   isRecallActionType,
   isRecallRuleAnchor,
   isRecallStatus,
@@ -106,6 +112,9 @@ import {
   isUuid,
   toPublicMediaAsset,
   toPublicMediaUploadReservation,
+  parsePatientMigrationCsv,
+  summarizeMigrationBatchState,
+  validatePatientImportRow,
   type AppointmentRecord,
   type AppointmentStatus,
   type ClinicalNoteContent,
@@ -124,6 +133,8 @@ import {
   type MediaScanStatus,
   type MediaType,
   type ManualPaymentMethod,
+  type MigrationBatchDetail,
+  type MigrationRowRecord,
   type PaymentProviderKey as BillingPaymentProviderKey,
   type PaymentRequestRecord,
   type PaymentRequestType,
@@ -544,6 +555,226 @@ export async function updatePatient(
   });
 
   return ok({ patient });
+}
+
+export async function createMigrationBatch(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "migration.manage" });
+  const scope = scopeFrom(context);
+  const input = await parseCreateMigrationBatchInput(scope, dependencies, body);
+  const detail = await dependencies.repository.createMigrationBatch(scope, input);
+
+  await audit(context, dependencies, "migration.batch.created", {
+    resourceType: "migration_batch",
+    resourceId: detail.batch.id,
+    metadata: {
+      importType: detail.batch.importType,
+      rowCount: detail.batch.rowCount,
+      invalidRowCount: detail.batch.invalidRowCount,
+      conflictRowCount: detail.batch.conflictRowCount
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "migration.batch.created",
+    aggregateType: "migration_batch",
+    aggregateId: detail.batch.id,
+    payload: {
+      batchId: detail.batch.id,
+      importType: detail.batch.importType,
+      state: detail.batch.state,
+      rowCount: detail.batch.rowCount,
+      invalidRowCount: detail.batch.invalidRowCount,
+      conflictRowCount: detail.batch.conflictRowCount
+    }
+  });
+
+  return created(toMigrationBatchResponse(detail));
+}
+
+export async function getMigrationBatch(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  batchId: UUID
+) {
+  authorize(context, { permission: "migration.manage" });
+  const detail = await dependencies.repository.findMigrationBatchById(scopeFrom(context), batchId);
+  if (!detail) throw notFound("Migration batch not found.", { batch_id: batchId });
+  return ok(toMigrationBatchResponse(detail));
+}
+
+export async function listMigrationBatchRows(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  batchId: UUID,
+  filter: { matchStatus?: string | null; status?: string | null }
+) {
+  authorize(context, { permission: "migration.manage" });
+  const rows = await dependencies.repository.listMigrationRows(scopeFrom(context), batchId, {
+    matchStatus: parseOptionalMigrationMatchStatus(filter.matchStatus),
+    status: parseOptionalMigrationRowStatus(filter.status)
+  });
+  if (rows.length === 0) {
+    const batch = await dependencies.repository.findMigrationBatchById(scopeFrom(context), batchId);
+    if (!batch) throw notFound("Migration batch not found.", { batch_id: batchId });
+  }
+  return ok({ rows: rows.map(toPublicMigrationRow) });
+}
+
+export async function resolveMigrationBatchRow(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  batchId: UUID,
+  rowId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "migration.manage" });
+  const input = parseResolveMigrationRowInput(body);
+  const row = await dependencies.repository.resolveMigrationRow(scopeFrom(context), batchId, rowId, input);
+  if (!row) throw notFound("Migration row not found or resolution target is unavailable.", {
+    batch_id: batchId,
+    row_id: rowId
+  });
+
+  await audit(context, dependencies, "migration.row.resolved", {
+    resourceType: "migration_row",
+    resourceId: row.id,
+    metadata: {
+      batchId,
+      action: input.action,
+      targetRecordType: input.targetRecordType ?? null,
+      targetRecordId: input.targetRecordId ?? null
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "migration.row.resolved",
+    aggregateType: "migration_row",
+    aggregateId: row.id,
+    payload: {
+      batchId,
+      rowId: row.id,
+      action: input.action,
+      matchStatus: row.matchStatus,
+      status: row.status
+    }
+  });
+
+  return ok({ row: toPublicMigrationRow(row) });
+}
+
+export async function commitMigrationBatch(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  batchId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "migration.manage" });
+  const detail = await dependencies.repository.findMigrationBatchById(scopeFrom(context), batchId);
+  if (!detail) throw notFound("Migration batch not found.", { batch_id: batchId });
+  if (!["committed", "partially_committed"].includes(detail.batch.state)) {
+    const unresolvedRows = detail.rows.filter(
+      (row) => row.status === "needs_review" || row.matchStatus === "duplicate_candidate" || row.matchStatus === "conflict"
+    );
+    if (unresolvedRows.length > 0) {
+      throw validation("Migration batch has unresolved duplicate or conflict rows.", {
+        batch_id: batchId,
+        unresolved_row_ids: unresolvedRows.map((row) => row.id)
+      });
+    }
+    if (!detail.rows.some((row) => row.status === "ready_to_commit")) {
+      throw validation("Migration batch has no ready rows to commit.", { batch_id: batchId });
+    }
+  }
+
+  const commitInput = parseMigrationActionInput(body, context);
+  const result = await dependencies.repository.commitMigrationBatch(scopeFrom(context), batchId, commitInput);
+  if (!result) throw notFound("Migration batch not found.", { batch_id: batchId });
+
+  await audit(context, dependencies, "migration.batch.committed", {
+    resourceType: "migration_batch",
+    resourceId: batchId,
+    metadata: {
+      status: result.commit.status,
+      committedRows: result.batch.committedRowCount,
+      importedRecordLinks: result.importedRecordLinks.length
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "migration.batch.committed",
+    aggregateType: "migration_batch",
+    aggregateId: batchId,
+    payload: {
+      batchId,
+      state: result.batch.state,
+      committedRows: result.batch.committedRowCount,
+      failedRows: result.batch.failedRowCount
+    }
+  });
+  for (const link of result.importedRecordLinks.filter((candidate) => candidate.targetRecordType === "patient")) {
+    await appendOutbox(context, dependencies, {
+      eventType: "patient.imported",
+      aggregateType: "imported_record_link",
+      aggregateId: link.id,
+      patientId: link.targetRecordId,
+      payload: {
+        batchId,
+        rowId: link.rowId,
+        patientId: link.targetRecordId,
+        linkType: link.linkType,
+        verificationStatus: link.verificationStatus
+      }
+    });
+  }
+
+  return accepted({
+    batch: result.batch,
+    commit: result.commit,
+    rows: result.rows.map(toPublicMigrationRow),
+    importedRecordLinks: result.importedRecordLinks
+  });
+}
+
+export async function rollbackMigrationBatch(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  batchId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "migration.manage" });
+  const actionInput = parseMigrationActionInput(body, context);
+  const result = await dependencies.repository.rollbackMigrationBatch(scopeFrom(context), batchId, actionInput);
+  if (!result) throw notFound("Migration batch not found.", { batch_id: batchId });
+
+  await audit(context, dependencies, "migration.batch.rolled_back", {
+    resourceType: "migration_batch",
+    resourceId: batchId,
+    metadata: {
+      status: result.rollback.status,
+      rolledBackRows: result.batch.rolledBackRowCount,
+      blockedLinks: result.blockedLinks.length
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "migration.batch.rolled_back",
+    aggregateType: "migration_batch",
+    aggregateId: batchId,
+    payload: {
+      batchId,
+      state: result.batch.state,
+      rolledBackRows: result.batch.rolledBackRowCount,
+      blockedLinks: result.blockedLinks.length
+    }
+  });
+
+  return accepted({
+    batch: result.batch,
+    rollback: result.rollback,
+    rows: result.rows.map(toPublicMigrationRow),
+    importedRecordLinks: result.importedRecordLinks,
+    blockedLinks: result.blockedLinks
+  });
 }
 
 export async function getPatientTimeline(
@@ -4227,6 +4458,171 @@ function parseCreatePatient(body: unknown): CreatePatientInput & { leadId?: UUID
     sourceDetail: recordField(input.sourceDetail, "sourceDetail"),
     leadId: optionalUuid(input.leadId, "leadId")
   };
+}
+
+async function parseCreateMigrationBatchInput(
+  scope: RepositoryScope,
+  dependencies: OperationsDependencies,
+  body: unknown
+): Promise<CreateMigrationBatchInput> {
+  const input = objectBody(body);
+  const importTypeValue = requiredString(input.importType, "importType");
+  if (!isMigrationImportType(importTypeValue)) {
+    throw validation("importType is not supported.", { importType: importTypeValue });
+  }
+  if (importTypeValue !== "patients") {
+    throw validation("CP7 currently supports the patient import workflow for committed imports.", {
+      importType: importTypeValue
+    });
+  }
+
+  const sourceSystem = optionalString(input.sourceSystem, "sourceSystem") ?? "manual_csv";
+  const sourceFileName = optionalNullableString(input.sourceFileName, "sourceFileName") ?? null;
+  const csv = optionalNullableString(input.csv, "csv") ?? null;
+  const rowsValue = input.rows;
+  const rowDrafts = csv
+    ? parsePatientMigrationCsv(csv)
+    : coercePatientImportRows(arrayField(rowsValue, "rows").map((value, index) => objectField(value, `rows[${index}]`)));
+
+  if (rowDrafts.length === 0) {
+    throw validation("Migration batch must include at least one row.", {});
+  }
+
+  const migrationRows: CreateMigrationBatchInput["rows"] = [];
+  for (const draft of rowDrafts) {
+    const validationResult = validatePatientImportRow(draft);
+    const conflicts = [];
+    let status: MigrationRowRecord["status"] = "invalid";
+    let matchStatus: MigrationRowRecord["matchStatus"] = "none";
+
+    if (validationResult.normalizedRecord) {
+      const existingPatients = await dependencies.repository.findPatientDuplicateCandidates(scope, {
+        fullName: validationResult.normalizedRecord.fullName,
+        phone: validationResult.normalizedRecord.phone
+      });
+      const duplicateCandidates = duplicateCandidatesForPatientImport(
+        validationResult.normalizedRecord,
+        existingPatients
+      );
+      for (const candidate of duplicateCandidates) {
+        conflicts.push({
+          conflictType: "duplicate_patient" as const,
+          severity: "blocking" as const,
+          targetRecordType: "patient",
+          targetRecordId: candidate.patient.id,
+          summary: `Potential duplicate patient: ${candidate.patient.fullName}`,
+          evidence: { candidate }
+        });
+      }
+
+      status = duplicateCandidates.length > 0 ? "needs_review" : "ready_to_commit";
+      matchStatus = duplicateCandidates.length > 0 ? "duplicate_candidate" : "none";
+    }
+
+    migrationRows.push({
+      rowNumber: validationResult.rowNumber,
+      importType: importTypeValue,
+      externalRecordId: validationResult.externalReference,
+      rawPayload: validationResult.rawPayload,
+      rawPayloadDigest: sha256Json(validationResult.rawPayload),
+      normalizedRecord: validationResult.normalizedRecord,
+      validationErrors: validationResult.validationErrors,
+      status,
+      matchStatus,
+      conflicts
+    });
+  }
+
+  const readyRows = migrationRows.filter((row) => row.status === "ready_to_commit").length;
+  const invalidRows = migrationRows.filter((row) => row.status === "invalid").length;
+  const conflictRows = migrationRows.filter((row) => row.matchStatus === "duplicate_candidate").length;
+
+  return {
+    importType: importTypeValue,
+    sourceSystem,
+    sourceFileName,
+    sourceChecksum: optionalSha256Digest(input.sourceChecksum, "sourceChecksum") ?? sha256Json(csv ?? rowsValue),
+    state: summarizeMigrationBatchState({
+      totalRows: migrationRows.length,
+      invalidRows,
+      conflictRows,
+      readyRows
+    }),
+    rows: migrationRows
+  };
+}
+
+function parseResolveMigrationRowInput(body: unknown): ResolveMigrationRowInput {
+  const input = objectBody(body);
+  const action = requiredString(input.action, "action");
+  if (!isMigrationResolutionAction(action)) {
+    throw validation("action is not a supported migration row resolution.", { action });
+  }
+
+  const targetRecordId = optionalUuid(input.targetRecordId ?? input.targetPatientId, "targetRecordId");
+  if (action === "link_existing" && !targetRecordId) {
+    throw validation("targetRecordId is required when linking an imported row to an existing record.", {
+      action
+    });
+  }
+
+  return {
+    action,
+    targetRecordType:
+      action === "link_existing"
+        ? optionalString(input.targetRecordType, "targetRecordType") ?? "patient"
+        : null,
+    targetRecordId,
+    note: optionalNullableString(input.note, "note") ?? null
+  };
+}
+
+function parseMigrationActionInput(
+  body: unknown,
+  context: OperationsRequestContext
+): { idempotencyKey?: string | null } {
+  const input = objectBody(body);
+  return {
+    idempotencyKey:
+      optionalNullableString(input.idempotencyKey, "idempotencyKey") ??
+      context.idempotencyKey ??
+      null
+  };
+}
+
+function parseOptionalMigrationMatchStatus(value: string | null | undefined): MigrationRowRecord["matchStatus"] | null {
+  if (!value) return null;
+  if (!["none", "duplicate_candidate", "conflict", "resolved", "skipped"].includes(value)) {
+    throw validation("matchStatus is not supported.", { matchStatus: value });
+  }
+  return value as MigrationRowRecord["matchStatus"];
+}
+
+function parseOptionalMigrationRowStatus(value: string | null | undefined): MigrationRowRecord["status"] | null {
+  if (!value) return null;
+  if (!["invalid", "needs_review", "ready_to_commit", "committed", "skipped", "rolled_back", "failed"].includes(value)) {
+    throw validation("status is not supported.", { status: value });
+  }
+  return value as MigrationRowRecord["status"];
+}
+
+function toMigrationBatchResponse(detail: MigrationBatchDetail) {
+  return {
+    batch: detail.batch,
+    rows: detail.rows.map(toPublicMigrationRow),
+    conflicts: detail.conflicts
+  };
+}
+
+function toPublicMigrationRow(row: MigrationRowRecord): MigrationRowRecord {
+  return {
+    ...row,
+    rawPayloadRef: { ...row.rawPayloadRef }
+  };
+}
+
+function sha256Json(value: unknown): string {
+  return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
 }
 
 function parseCreateLead(body: unknown): CreateLeadInput {
