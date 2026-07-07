@@ -56,6 +56,23 @@ test("clinical permission classifier covers PHI-sensitive permissions", () => {
   assert.equal(isClinicalPermission("prescription.write"), true);
   assert.equal(isClinicalPermission("task.manage"), true);
   assert.equal(isClinicalPermission("recall.manage"), true);
+  assert.equal(isClinicalPermission("lab.manage"), true);
   assert.equal(isClinicalPermission("billing.export"), false);
   assert.ok(DEFAULT_ROLE_PERMISSION_GRANTS.owner_admin.length > DEFAULT_ROLE_PERMISSION_GRANTS.assistant.length);
+});
+
+test("CP6 operations keep accountant analytics separate from operational mutation", () => {
+  for (const permission of [
+    "lab.manage",
+    "inventory.manage",
+    "incident.manage",
+    "corrective_action.manage"
+  ] as const) {
+    assert.equal(roleGrantsPermission("accountant", permission), false);
+  }
+
+  assert.equal(roleGrantsPermission("assistant", "lab.manage"), true);
+  assert.equal(roleGrantsPermission("receptionist", "inventory.manage"), true);
+  assert.equal(roleGrantsPermission("receptionist", "incident.manage"), true);
+  assert.equal(roleGrantsPermission("receptionist", "corrective_action.manage"), true);
 });

@@ -35,6 +35,8 @@ export const PERMISSIONS = [
   "sop.manage",
   "lab.manage",
   "inventory.manage",
+  "incident.manage",
+  "corrective_action.manage",
   "analytics.read",
   "break_glass.request",
   "break_glass.approve"
@@ -94,6 +96,8 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "sop.manage",
     "lab.manage",
     "inventory.manage",
+    "incident.manage",
+    "corrective_action.manage",
     "analytics.read",
     "break_glass.request",
     "break_glass.approve"
@@ -123,6 +127,8 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "recall.manage",
     "sop.manage",
     "lab.manage",
+    "incident.manage",
+    "corrective_action.manage",
     "break_glass.request"
   ],
   assistant: [
@@ -149,7 +155,9 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "recall.manage",
     "sop.manage",
     "lab.manage",
-    "inventory.manage"
+    "inventory.manage",
+    "incident.manage",
+    "corrective_action.manage"
   ],
   receptionist: [
     "patient.read",
@@ -164,7 +172,10 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "message.write",
     "task.manage",
     "recall.manage",
-    "sop.manage"
+    "sop.manage",
+    "inventory.manage",
+    "incident.manage",
+    "corrective_action.manage"
   ],
   accountant: ["billing.read", "billing.write", "billing.export", "analytics.read"],
   auditor: ["audit.read", "analytics.read"],
@@ -220,6 +231,7 @@ export function isClinicalPermission(permission: PermissionKey): boolean {
     permission.startsWith("patient_instruction.") ||
     permission === "task.manage" ||
     permission === "recall.manage" ||
+    permission.startsWith("lab.") ||
     permission === "media.read" ||
     permission === "media.write" ||
     permission === "patient.phi.read"

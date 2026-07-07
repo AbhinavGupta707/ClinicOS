@@ -145,6 +145,55 @@ test("CP6 continuity audit classifications separate patient-linked recalls from 
   );
 });
 
+test("CP6 audit classifications separate lab PHI, inventory operations, and CAPA quality evidence", () => {
+  assert.equal(classifyAuditAction("lab_vendor.created").phiInvolved, false);
+  for (const action of [
+    "lab_slip.generated",
+    "lab_case.created",
+    "lab_case.sent",
+    "lab_case.received",
+    "lab_case.returned",
+    "lab_case.completed",
+    "lab_case.cancelled",
+    "lab_case.status_changed"
+  ] as const) {
+    const classification = classifyAuditAction(action);
+    assert.equal(classification.phiInvolved, true, `${action} should involve lab PHI`);
+    assert.equal(classification.requiresPatientId, true, `${action} should require patientId`);
+    assert.equal(classification.category, "clinical");
+  }
+
+  for (const action of [
+    "inventory_category.created",
+    "inventory_item.created",
+    "inventory_stock.adjusted",
+    "inventory_check.created",
+    "inventory_check.completed",
+    "inventory.low_stock_detected",
+    "inventory.procurement_suggested"
+  ] as const) {
+    const classification = classifyAuditAction(action);
+    assert.equal(classification.phiInvolved, false, `${action} should not expose PHI`);
+    assert.equal(classification.requiresPatientId, false, `${action} should not require patientId`);
+    assert.equal(classification.category, "operations");
+  }
+
+  assert.equal(classifyAuditAction("incident.created").category, "quality");
+  assert.equal(classifyAuditAction("incident.created").phiInvolved, true);
+  assert.equal(classifyAuditAction("corrective_action.completed").category, "quality");
+  assert.equal(classifyAuditAction("corrective_action.completed").riskLevel, "high");
+  assert.throws(
+    () =>
+      createAuditEvent({
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000101",
+        actor: { type: "user", id: "10000000-0000-4000-8000-000000001003" },
+        action: "lab_case.created"
+      }),
+    /requires patientId/
+  );
+});
+
 test("CP3 audit classifications cover intake consent encounter note prescription and timeline actions", () => {
   for (const action of [
     "patient.timeline.viewed",

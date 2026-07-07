@@ -422,7 +422,19 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "lab_vendor.created": {
+    category: "operations",
+    riskLevel: "low",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
   "recall.sent": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "lab_slip.generated": {
     category: "clinical",
     riskLevel: "high",
     phiInvolved: true,
@@ -458,8 +470,74 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: false,
     requiresPatientId: false
   },
+  "lab_case.created": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "lab_case.sent": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "lab_case.received": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "lab_case.returned": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "lab_case.completed": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "lab_case.cancelled": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "lab_case.status_changed": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "lab_reconciliation.created": {
+    category: "operations",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "inventory_category.created": {
+    category: "operations",
+    riskLevel: "low",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
   "sop_run.updated": {
     category: "administration",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "inventory_item.created": {
+    category: "operations",
+    riskLevel: "low",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "inventory_stock.adjusted": {
+    category: "operations",
     riskLevel: "medium",
     phiInvolved: false,
     requiresPatientId: false
@@ -468,6 +546,54 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     category: "administration",
     riskLevel: "medium",
     phiInvolved: false,
+    requiresPatientId: false
+  },
+  "inventory_check.created": {
+    category: "operations",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "inventory_check.completed": {
+    category: "operations",
+    riskLevel: "high",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "inventory.low_stock_detected": {
+    category: "operations",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "inventory.procurement_suggested": {
+    category: "operations",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "incident.created": {
+    category: "quality",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "corrective_action.created": {
+    category: "quality",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "corrective_action.status_changed": {
+    category: "quality",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "corrective_action.completed": {
+    category: "quality",
+    riskLevel: "high",
+    phiInvolved: true,
     requiresPatientId: false
   }
 } as const;

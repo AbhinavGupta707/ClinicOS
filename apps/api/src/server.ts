@@ -37,6 +37,7 @@ import {
   confirmAppointment,
   convertLeadToAppointment,
   createAppointment,
+  createCorrectiveAction,
   createEncounter,
   createTask,
   createRecallRule,
@@ -44,9 +45,17 @@ import {
   createEncounterDentalFinding,
   createEncounterProcedurePerformed,
   createEncounterPrescription,
+  createIncident,
+  createInventoryCategory,
+  createInventoryCheckRun,
+  createInventoryCheckTemplate,
+  createInventoryItem,
   createInvoice,
   createInvoiceReceipt,
   createIntakeFormTemplate,
+  createLabCase,
+  createLabReconciliation,
+  createLabVendor,
   createLead,
   completeMediaUpload,
   createSignedMediaAccess,
@@ -68,11 +77,19 @@ import {
   getPatientPrepSummary,
   getPatientTimeline,
   listPricebookProcedures,
+  listCorrectiveActions,
   listDentalFindingHistory,
   listAppointmentTypes,
   listAppointments,
   listChairs,
   listIntakeFormTemplates,
+  listIncidents,
+  listInventoryCategories,
+  listInventoryCheckTemplates,
+  listInventoryExceptions,
+  listInventoryItems,
+  listLabCases,
+  listLabVendors,
   listLeads,
   listPatientMediaAssets,
   listPatientConsents,
@@ -92,11 +109,15 @@ import {
   saveEncounterClinicalNoteDraft,
   signEncounterClinicalNote,
   signPrescription,
+  createStockLedgerEntry,
   startEncounter,
   submitPatientIntakeForm,
   recordRecallAction,
+  updateCorrectiveAction,
   updateDentalFinding,
   updateAppointment,
+  updateInventoryCheckRun,
+  updateLabCase,
   updateLeadStatus,
   updateSopRun,
   updateTask,
@@ -780,6 +801,110 @@ async function routeOperationsRequest(input: {
       operationsContext,
       dependencies,
       pathUuid(sopRunMatch[1], "sopRunId"),
+      body
+    );
+  }
+
+  if (pathname === "/v1/lab-vendors") {
+    if (input.request.method === "GET") return listLabVendors(operationsContext, dependencies);
+    if (input.request.method === "POST")
+      return createLabVendor(operationsContext, dependencies, body);
+  }
+
+  if (pathname === "/v1/lab-cases") {
+    if (input.request.method === "GET")
+      return listLabCases(operationsContext, dependencies, {
+        status: url.searchParams.get("status"),
+        dueBefore: url.searchParams.get("dueBefore"),
+        vendorId: url.searchParams.get("vendorId")
+      });
+    if (input.request.method === "POST")
+      return createLabCase(operationsContext, dependencies, body);
+  }
+
+  const labCaseMatch = pathname.match(/^\/v1\/lab-cases\/([^/]+)$/);
+  if (labCaseMatch && input.request.method === "PATCH") {
+    return updateLabCase(
+      operationsContext,
+      dependencies,
+      pathUuid(labCaseMatch[1], "labCaseId"),
+      body
+    );
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/lab-reconciliations") {
+    return createLabReconciliation(operationsContext, dependencies, body);
+  }
+
+  if (pathname === "/v1/inventory/categories") {
+    if (input.request.method === "GET")
+      return listInventoryCategories(operationsContext, dependencies);
+    if (input.request.method === "POST")
+      return createInventoryCategory(operationsContext, dependencies, body);
+  }
+
+  if (pathname === "/v1/inventory/items") {
+    if (input.request.method === "GET")
+      return listInventoryItems(operationsContext, dependencies);
+    if (input.request.method === "POST")
+      return createInventoryItem(operationsContext, dependencies, body);
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/inventory/stock-ledger") {
+    return createStockLedgerEntry(operationsContext, dependencies, body);
+  }
+
+  if (pathname === "/v1/inventory/check-templates") {
+    if (input.request.method === "GET")
+      return listInventoryCheckTemplates(operationsContext, dependencies);
+    if (input.request.method === "POST")
+      return createInventoryCheckTemplate(operationsContext, dependencies, body);
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/inventory/check-runs") {
+    return createInventoryCheckRun(operationsContext, dependencies, body);
+  }
+
+  const inventoryCheckRunMatch = pathname.match(/^\/v1\/inventory\/check-runs\/([^/]+)$/);
+  if (inventoryCheckRunMatch && input.request.method === "PATCH") {
+    return updateInventoryCheckRun(
+      operationsContext,
+      dependencies,
+      pathUuid(inventoryCheckRunMatch[1], "checkRunId"),
+      body
+    );
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/inventory/exceptions") {
+    return listInventoryExceptions(operationsContext, dependencies, {
+      itemId: url.searchParams.get("itemId"),
+      checkRunId: url.searchParams.get("checkRunId")
+    });
+  }
+
+  if (pathname === "/v1/incidents") {
+    if (input.request.method === "GET")
+      return listIncidents(operationsContext, dependencies, {
+        status: url.searchParams.get("status"),
+        severity: url.searchParams.get("severity"),
+        category: url.searchParams.get("category")
+      });
+    if (input.request.method === "POST") return createIncident(operationsContext, dependencies, body);
+  }
+
+  if (pathname === "/v1/corrective-actions") {
+    if (input.request.method === "GET")
+      return listCorrectiveActions(operationsContext, dependencies);
+    if (input.request.method === "POST")
+      return createCorrectiveAction(operationsContext, dependencies, body);
+  }
+
+  const correctiveActionMatch = pathname.match(/^\/v1\/corrective-actions\/([^/]+)$/);
+  if (correctiveActionMatch && input.request.method === "PATCH") {
+    return updateCorrectiveAction(
+      operationsContext,
+      dependencies,
+      pathUuid(correctiveActionMatch[1], "correctiveActionId"),
       body
     );
   }

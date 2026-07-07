@@ -30,14 +30,27 @@ import {
   type CreateTreatmentPlanInput,
   type CreateTaskInput,
   type CompleteMediaUploadInput,
+  type CreateCorrectiveActionInput,
   type DashboardDataSet,
   type DentalFindingMutationResult,
   type GenerateDueContinuityInput,
   type GenerateDueContinuityResult,
   type GenerateDueSopRunsInput,
   type GenerateDueSopRunsResult,
+  type CreateInventoryCategoryInput,
+  type CreateInventoryCheckRunInput,
+  type CreateInventoryCheckTemplateInput,
+  type CreateInventoryItemInput,
+  type CreateIncidentInput,
+  type CreateLabCaseInput,
+  type CreateLabReconciliationInput,
+  type CreateLabVendorInput,
+  type CreateStockLedgerEntryInput,
   type IdentityAccessSnapshot,
   type IdentityRepository,
+  type IncidentSearchFilter,
+  type InventoryExceptionFilter,
+  type LabCaseSearchFilter,
   type LeadSearchFilter,
   type OutboxEventInput,
   type PatientSearchFilter,
@@ -50,7 +63,10 @@ import {
   type SignClinicalNoteResult,
   type SopRunSearchFilter,
   type TaskSearchFilter,
+  type UpdateCorrectiveActionInput,
   type UpdateDentalFindingRepositoryInput,
+  type UpdateInventoryCheckRunInput,
+  type UpdateLabCaseStatusInput,
   type UpdateSopRunInput,
   type UpdateTaskInput,
   type UpdateTreatmentPlanInput,
@@ -64,6 +80,8 @@ import {
   assertSopRunCompletion,
   assertTaskCompletionEvidence,
   assertTaskTransition,
+  assertFiniteQuantity,
+  assertLabCaseTransition,
   assertDentalFindingUpdateReason,
   assertClinicalNoteCanBeAmended,
   assertClinicalNoteCanBeSigned,
@@ -79,6 +97,8 @@ import {
   buildSopRunGenerationKey,
   calculateBillingLineTotals,
   calculateInvoicePaymentStatus,
+  calculateInventoryVariance,
+  classifyInventoryException,
   buildConsentEnforcementState,
   detectAppointmentConflicts,
   isSettledPaymentTransaction,
@@ -95,6 +115,8 @@ import {
   type ChairOrRoomRecord,
   type ClinicalNoteVersionRecord,
   type ConsentRecord,
+  correctiveActionEffectiveStatus,
+  type CorrectiveActionRecord,
   type DentalChartRecord,
   type DentalChartSnapshotRecord,
   type DentalFindingHistoryRecord,
@@ -105,6 +127,23 @@ import {
   type InvoiceRecord,
   type IntakeFormSubmissionRecord,
   type IntakeFormTemplateRecord,
+  type IncidentRecord,
+  type InventoryCategoryRecord,
+  type InventoryCheckRunDetail,
+  type InventoryCheckRunLineRecord,
+  type InventoryCheckRunRecord,
+  type InventoryCheckTemplateLineRecord,
+  type InventoryCheckTemplateRecord,
+  type InventoryExceptionRecord,
+  type InventoryItemRecord,
+  type LabCaseDetail,
+  type LabCaseItemRecord,
+  type LabCaseRecord,
+  type LabCaseStatusHistoryRecord,
+  type LabReconciliationDetail,
+  type LabReconciliationEntryRecord,
+  type LabReconciliationRecord,
+  type LabVendorRecord,
   type LeadRecord,
   mediaAssetStatusForScan,
   type MediaAssetRecord,
@@ -116,6 +155,7 @@ import {
   type PatientTimelineItem,
   type PricebookProcedureRecord,
   type PrescriptionRecord,
+  type ProcurementSuggestionRecord,
   type ProcedurePerformedRecord,
   type ProviderScheduleRecord,
   type QueueEntryRecord,
@@ -133,6 +173,7 @@ import {
   type SopTemplateDetail,
   type SopTemplateItemRecord,
   type SopTemplateRecord,
+  type StockLedgerEntryRecord,
   type TaskRecord,
   type TreatmentPlanDetail,
   type TreatmentPlanEstimateItemRecord,
@@ -157,6 +198,14 @@ const clinic = {
   displayName: "Synthetic Dental Clinic",
   status: "active" as const,
   timezone: "Asia/Kolkata"
+};
+
+const LOCAL_CP6_IDS = {
+  labVendor: "10000000-0000-4000-8000-000000090001" as UUID,
+  inventoryCategory: "10000000-0000-4000-8000-000000091001" as UUID,
+  inventoryItemComposite: "10000000-0000-4000-8000-000000092001" as UUID,
+  inventoryTemplate: "10000000-0000-4000-8000-000000093001" as UUID,
+  inventoryTemplateLine: "10000000-0000-4000-8000-000000094001" as UUID
 };
 
 export class LocalFixtureIdentityRepository implements IdentityRepository {
@@ -278,6 +327,92 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly sopSchedules: SopScheduleRecord[] = [];
   readonly sopRuns: SopRunRecord[] = [];
   readonly sopRunItems: SopRunItemRecord[] = [];
+  readonly labVendors: LabVendorRecord[] = [
+    {
+      id: LOCAL_CP6_IDS.labVendor,
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      displayName: "Synthetic Crown Lab",
+      phone: "+911140000001",
+      email: "lab@example.test",
+      address: { locality: "Synthetic Dental Market" },
+      taxRegistrationNumber: null,
+      paymentTermsDays: 30,
+      status: "active",
+      createdAt: "2026-07-07T08:00:00.000Z",
+      updatedAt: "2026-07-07T08:00:00.000Z"
+    }
+  ];
+  readonly labCases: LabCaseRecord[] = [];
+  readonly labCaseItems: LabCaseItemRecord[] = [];
+  readonly labCaseStatusHistory: LabCaseStatusHistoryRecord[] = [];
+  readonly labReconciliations: LabReconciliationRecord[] = [];
+  readonly labReconciliationEntries: LabReconciliationEntryRecord[] = [];
+  readonly inventoryCategories: InventoryCategoryRecord[] = [
+    {
+      id: LOCAL_CP6_IDS.inventoryCategory,
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      code: "restorative-materials",
+      displayName: "Restorative materials",
+      kind: "material",
+      active: true,
+      createdAt: "2026-07-07T08:00:00.000Z",
+      updatedAt: "2026-07-07T08:00:00.000Z"
+    }
+  ];
+  readonly inventoryItems: InventoryItemRecord[] = [
+    {
+      id: LOCAL_CP6_IDS.inventoryItemComposite,
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      categoryId: LOCAL_CP6_IDS.inventoryCategory,
+      sku: "COMP-A2",
+      displayName: "Composite resin A2",
+      unitOfMeasure: "syringe",
+      storageLocation: "Drawer A",
+      trackQuantity: true,
+      minimumQuantity: 5,
+      reorderQuantity: 10,
+      currentQuantity: 8,
+      status: "active",
+      createdAt: "2026-07-07T08:00:00.000Z",
+      updatedAt: "2026-07-07T08:00:00.000Z"
+    }
+  ];
+  readonly stockLedgerEntries: StockLedgerEntryRecord[] = [];
+  readonly inventoryCheckTemplates: InventoryCheckTemplateRecord[] = [
+    {
+      id: LOCAL_CP6_IDS.inventoryTemplate,
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      code: "monthly-drawer-a",
+      displayName: "Monthly Drawer A inventory",
+      cadence: "monthly",
+      active: true,
+      createdAt: "2026-07-07T08:00:00.000Z",
+      updatedAt: "2026-07-07T08:00:00.000Z"
+    }
+  ];
+  readonly inventoryCheckTemplateLines: InventoryCheckTemplateLineRecord[] = [
+    {
+      id: LOCAL_CP6_IDS.inventoryTemplateLine,
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      templateId: LOCAL_CP6_IDS.inventoryTemplate,
+      itemId: LOCAL_CP6_IDS.inventoryItemComposite,
+      sequence: 1,
+      drawerLocation: "Drawer A",
+      expectedQuantity: 8,
+      required: true,
+      instructions: "Count sealed composite resin syringes."
+    }
+  ];
+  readonly inventoryCheckRuns: InventoryCheckRunRecord[] = [];
+  readonly inventoryCheckRunLines: InventoryCheckRunLineRecord[] = [];
+  readonly procurementSuggestions: ProcurementSuggestionRecord[] = [];
+  readonly incidents: IncidentRecord[] = [];
+  readonly correctiveActions: CorrectiveActionRecord[] = [];
   readonly timelineItems: PatientTimelineItem[] = [
     {
       id: uuid(),
@@ -1373,6 +1508,770 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         .filter((item) => matchesScope(item, scope) && item.sopRunId === run.id)
         .sort((left, right) => left.itemIndex - right.itemIndex)
     };
+  }
+
+  async listLabVendors(scope: RepositoryScope): Promise<LabVendorRecord[]> {
+    return this.labVendors
+      .filter((vendor) => matchesScope(vendor, scope) && vendor.status === "active")
+      .sort((left, right) => left.displayName.localeCompare(right.displayName));
+  }
+
+  async findLabVendorById(scope: RepositoryScope, vendorId: UUID): Promise<LabVendorRecord | null> {
+    return this.labVendors.find((vendor) => matchesScope(vendor, scope) && vendor.id === vendorId) ?? null;
+  }
+
+  async createLabVendor(scope: RepositoryScope, input: CreateLabVendorInput): Promise<LabVendorRecord> {
+    const now = new Date().toISOString();
+    const vendor: LabVendorRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      displayName: input.displayName,
+      phone: input.phone ?? null,
+      email: input.email ?? null,
+      address: input.address ?? {},
+      taxRegistrationNumber: input.taxRegistrationNumber ?? null,
+      paymentTermsDays: input.paymentTermsDays ?? null,
+      status: "active",
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.labVendors.push(vendor);
+    return vendor;
+  }
+
+  async listLabCases(scope: RepositoryScope, filter: LabCaseSearchFilter = {}): Promise<LabCaseDetail[]> {
+    return this.labCases
+      .filter((labCase) => matchesScope(labCase, scope))
+      .filter((labCase) => {
+        if (filter.status && labCase.status !== filter.status) return false;
+        if (filter.dueBefore && labCase.dueAt > filter.dueBefore) return false;
+        if (filter.vendorId && labCase.vendorId !== filter.vendorId) return false;
+        if (filter.patientId && labCase.patientId !== filter.patientId) return false;
+        return true;
+      })
+      .sort((left, right) => left.dueAt.localeCompare(right.dueAt))
+      .map((labCase) => this.labCaseDetail(scope, labCase.id))
+      .filter((detail): detail is LabCaseDetail => detail !== null);
+  }
+
+  async findLabCaseById(scope: RepositoryScope, labCaseId: UUID): Promise<LabCaseDetail | null> {
+    return this.labCaseDetail(scope, labCaseId);
+  }
+
+  async createLabCase(scope: RepositoryScope, input: CreateLabCaseInput): Promise<LabCaseDetail | null> {
+    const [vendor, patient] = await Promise.all([
+      this.findLabVendorById(scope, input.vendorId),
+      this.findPatientById(scope, input.patientId)
+    ]);
+    if (!vendor || !patient) return null;
+
+    if (input.encounterId && !(await this.findEncounterById(scope, input.encounterId))) return null;
+    if (
+      input.treatmentPlanId &&
+      !this.treatmentPlans.some((plan) => matchesScope(plan, scope) && plan.id === input.treatmentPlanId)
+    ) {
+      return null;
+    }
+    if (
+      input.procedurePerformedId &&
+      !this.proceduresPerformed.some(
+        (procedure) => matchesScope(procedure, scope) && procedure.id === input.procedurePerformedId
+      )
+    ) {
+      return null;
+    }
+
+    const now = new Date().toISOString();
+    const labCase: LabCaseRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      vendorId: input.vendorId,
+      patientId: input.patientId,
+      encounterId: input.encounterId ?? null,
+      treatmentPlanId: input.treatmentPlanId ?? null,
+      treatmentPlanEstimateItemId: input.treatmentPlanEstimateItemId ?? null,
+      procedurePerformedId: input.procedurePerformedId ?? null,
+      title: input.title,
+      status: "draft",
+      priority: input.priority ?? "routine",
+      dueAt: input.dueAt,
+      clinicalNotes: input.clinicalNotes ?? null,
+      internalNotes: input.internalNotes ?? null,
+      slipNumber: this.nextLabSlipNumber(scope),
+      slipVersion: 1,
+      slipGeneratedAt: now,
+      slipGeneratedByUserId: scope.actorUserId,
+      slipMetadata: input.slipMetadata ?? {},
+      expectedCostMinor: input.expectedCostMinor ?? null,
+      currency: "INR",
+      sentAt: null,
+      receivedAt: null,
+      completedAt: null,
+      cancelledAt: null,
+      cancellationReason: null,
+      createdByUserId: scope.actorUserId,
+      updatedByUserId: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.labCases.push(labCase);
+
+    for (const item of input.items) {
+      this.labCaseItems.push({
+        id: uuid(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        labCaseId: labCase.id,
+        itemType: item.itemType,
+        toothNumber: item.toothNumber ? normalizeDentalToothNumber(item.toothNumber) : null,
+        material: item.material ?? null,
+        shade: item.shade ?? null,
+        quantity: item.quantity ?? 1,
+        notes: item.notes ?? null,
+        createdAt: now
+      });
+    }
+
+    this.labCaseStatusHistory.push(
+      this.labCaseHistory(scope, labCase, null, "draft", "Lab case created", {
+        slipNumber: labCase.slipNumber
+      })
+    );
+    this.timelineItems.push(
+      timeline(scope, labCase.patientId, "lab_case_created", "lab_cases", labCase.id, "Lab case created")
+    );
+
+    return this.labCaseDetail(scope, labCase.id);
+  }
+
+  async updateLabCaseStatus(
+    scope: RepositoryScope,
+    labCaseId: UUID,
+    input: UpdateLabCaseStatusInput
+  ): Promise<LabCaseDetail | null> {
+    const labCase = this.labCases.find((candidate) => matchesScope(candidate, scope) && candidate.id === labCaseId);
+    if (!labCase) return null;
+
+    assertLabCaseTransition(labCase.status, input.status);
+    const fromStatus = labCase.status;
+    const now = new Date().toISOString();
+    labCase.status = input.status;
+    labCase.updatedAt = now;
+    labCase.updatedByUserId = scope.actorUserId;
+    if (input.status === "sent_to_lab") labCase.sentAt = labCase.sentAt ?? now;
+    if (input.status === "received_by_lab") labCase.receivedAt = labCase.receivedAt ?? now;
+    if (input.status === "returned") labCase.receivedAt = labCase.receivedAt ?? now;
+    if (input.status === "completed") labCase.completedAt = labCase.completedAt ?? now;
+    if (input.status === "cancelled") {
+      labCase.cancelledAt = labCase.cancelledAt ?? now;
+      labCase.cancellationReason = input.reason ?? "cancelled";
+    }
+
+    this.labCaseStatusHistory.push(
+      this.labCaseHistory(scope, labCase, fromStatus, input.status, input.reason ?? null, input.evidence ?? {})
+    );
+
+    const timelineType =
+      input.status === "sent_to_lab"
+        ? "lab_case_sent"
+        : input.status === "returned"
+          ? "lab_case_returned"
+          : input.status === "completed"
+            ? "lab_case_completed"
+            : null;
+    if (timelineType) {
+      this.timelineItems.push(
+        timeline(scope, labCase.patientId, timelineType, "lab_cases", labCase.id, `Lab case ${input.status.replace(/_/g, " ")}`)
+      );
+    }
+
+    return this.labCaseDetail(scope, labCase.id);
+  }
+
+  async createLabReconciliation(
+    scope: RepositoryScope,
+    input: CreateLabReconciliationInput
+  ): Promise<LabReconciliationDetail | null> {
+    const vendor = await this.findLabVendorById(scope, input.vendorId);
+    if (!vendor) return null;
+
+    const now = new Date().toISOString();
+    const entries: LabReconciliationEntryRecord[] = [];
+    for (const entryInput of input.entries) {
+      const detail = await this.findLabCaseById(scope, entryInput.labCaseId);
+      if (!detail || detail.labCase.vendorId !== input.vendorId) return null;
+      const expectedAmountMinor = detail.labCase.expectedCostMinor ?? 0;
+      const invoiceAmountMinor = entryInput.invoiceAmountMinor ?? null;
+      const varianceAmountMinor = (invoiceAmountMinor ?? expectedAmountMinor) - expectedAmountMinor;
+      entries.push({
+        id: uuid(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        reconciliationId: "00000000-0000-4000-8000-000000000000" as UUID,
+        labCaseId: detail.labCase.id,
+        patientId: detail.labCase.patientId,
+        status:
+          entryInput.status ??
+          (invoiceAmountMinor === null
+            ? "missing_invoice"
+            : varianceAmountMinor === 0
+              ? "matched"
+              : "amount_variance"),
+        expectedAmountMinor,
+        invoiceAmountMinor,
+        varianceAmountMinor,
+        notes: entryInput.notes ?? null,
+        createdAt: now
+      });
+    }
+
+    const expectedAmountMinor = entries.reduce((sum, entry) => sum + entry.expectedAmountMinor, 0);
+    const invoiceAmountMinor = input.invoiceAmountMinor ?? null;
+    const varianceAmountMinor = (invoiceAmountMinor ?? expectedAmountMinor) - expectedAmountMinor;
+    const reconciliation: LabReconciliationRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      vendorId: input.vendorId,
+      periodStart: input.periodStart,
+      periodEnd: input.periodEnd,
+      status: input.status ?? (varianceAmountMinor === 0 ? "matched" : "variance_review"),
+      invoiceReference: input.invoiceReference ?? null,
+      invoiceAmountMinor,
+      expectedAmountMinor,
+      varianceAmountMinor,
+      currency: "INR",
+      evidence: input.evidence ?? {},
+      createdByUserId: scope.actorUserId,
+      approvedByUserId: null,
+      approvedAt: null,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    for (const entry of entries) entry.reconciliationId = reconciliation.id;
+    this.labReconciliations.push(reconciliation);
+    this.labReconciliationEntries.push(...entries);
+
+    return { reconciliation, entries };
+  }
+
+  async listInventoryCategories(scope: RepositoryScope): Promise<InventoryCategoryRecord[]> {
+    return this.inventoryCategories
+      .filter((category) => matchesScope(category, scope))
+      .sort((left, right) => left.displayName.localeCompare(right.displayName));
+  }
+
+  async createInventoryCategory(
+    scope: RepositoryScope,
+    input: CreateInventoryCategoryInput
+  ): Promise<InventoryCategoryRecord> {
+    const now = new Date().toISOString();
+    const category: InventoryCategoryRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      code: input.code,
+      displayName: input.displayName,
+      kind: input.kind,
+      active: input.active ?? true,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.inventoryCategories.push(category);
+    return category;
+  }
+
+  async listInventoryItems(scope: RepositoryScope): Promise<InventoryItemRecord[]> {
+    return this.inventoryItems
+      .filter((item) => matchesScope(item, scope))
+      .sort((left, right) => left.displayName.localeCompare(right.displayName));
+  }
+
+  async findInventoryItemById(scope: RepositoryScope, itemId: UUID): Promise<InventoryItemRecord | null> {
+    return this.inventoryItems.find((item) => matchesScope(item, scope) && item.id === itemId) ?? null;
+  }
+
+  async createInventoryItem(
+    scope: RepositoryScope,
+    input: CreateInventoryItemInput
+  ): Promise<InventoryItemRecord | null> {
+    const category = this.inventoryCategories.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === input.categoryId && candidate.active
+    );
+    if (!category) return null;
+
+    const openingQuantity = input.openingQuantity ?? 0;
+    assertFiniteQuantity(openingQuantity, "openingQuantity");
+    const now = new Date().toISOString();
+    const item: InventoryItemRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      categoryId: input.categoryId,
+      sku: input.sku,
+      displayName: input.displayName,
+      unitOfMeasure: input.unitOfMeasure,
+      storageLocation: input.storageLocation,
+      trackQuantity: input.trackQuantity ?? true,
+      minimumQuantity: input.minimumQuantity ?? 0,
+      reorderQuantity: input.reorderQuantity ?? 0,
+      currentQuantity: openingQuantity,
+      status: "active",
+      createdAt: now,
+      updatedAt: now
+    };
+    this.inventoryItems.push(item);
+    if (openingQuantity > 0) {
+      this.stockLedgerEntries.push({
+        id: uuid(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        itemId: item.id,
+        movementType: "opening_balance",
+        quantityDelta: openingQuantity,
+        quantityAfter: openingQuantity,
+        unitCostMinor: null,
+        currency: null,
+        sourceTable: "inventory_items",
+        sourceId: item.id,
+        reason: "Opening quantity recorded",
+        evidence: { source: "manual_opening_balance" },
+        recordedByUserId: scope.actorUserId,
+        recordedAt: now
+      });
+    }
+    return item;
+  }
+
+  async createStockLedgerEntry(
+    scope: RepositoryScope,
+    input: CreateStockLedgerEntryInput
+  ): Promise<StockLedgerEntryRecord | null> {
+    const item = await this.findInventoryItemById(scope, input.itemId);
+    if (!item) return null;
+    const quantityAfter = item.currentQuantity + input.quantityDelta;
+    assertFiniteQuantity(quantityAfter, "quantityAfter");
+    const entry: StockLedgerEntryRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      itemId: item.id,
+      movementType: input.movementType,
+      quantityDelta: input.quantityDelta,
+      quantityAfter,
+      unitCostMinor: input.unitCostMinor ?? null,
+      currency: input.currency ?? null,
+      sourceTable: input.sourceTable ?? null,
+      sourceId: input.sourceId ?? null,
+      reason: input.reason,
+      evidence: input.evidence ?? {},
+      recordedByUserId: scope.actorUserId,
+      recordedAt: new Date().toISOString()
+    };
+    item.currentQuantity = quantityAfter;
+    item.updatedAt = entry.recordedAt;
+    this.stockLedgerEntries.push(entry);
+    return entry;
+  }
+
+  async listInventoryCheckTemplates(scope: RepositoryScope): Promise<
+    Array<InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }>
+  > {
+    return this.inventoryCheckTemplates
+      .filter((template) => matchesScope(template, scope) && template.active)
+      .sort((left, right) => left.displayName.localeCompare(right.displayName))
+      .map((template) => ({
+        ...template,
+        lines: this.inventoryCheckTemplateLines
+          .filter((line) => matchesScope(line, scope) && line.templateId === template.id)
+          .sort((left, right) => left.sequence - right.sequence)
+      }));
+  }
+
+  async createInventoryCheckTemplate(
+    scope: RepositoryScope,
+    input: CreateInventoryCheckTemplateInput
+  ): Promise<(InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }) | null> {
+    for (const line of input.lines) {
+      if (!(await this.findInventoryItemById(scope, line.itemId))) return null;
+    }
+    const now = new Date().toISOString();
+    const template: InventoryCheckTemplateRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      code: input.code,
+      displayName: input.displayName,
+      cadence: input.cadence,
+      active: input.active ?? true,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.inventoryCheckTemplates.push(template);
+    for (const line of input.lines) {
+      this.inventoryCheckTemplateLines.push({
+        id: uuid(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        templateId: template.id,
+        itemId: line.itemId,
+        sequence: line.sequence,
+        drawerLocation: line.drawerLocation,
+        expectedQuantity: line.expectedQuantity ?? null,
+        required: line.required ?? true,
+        instructions: line.instructions ?? null
+      });
+    }
+    const [created] = (await this.listInventoryCheckTemplates(scope)).filter(
+      (candidate) => candidate.id === template.id
+    );
+    return created ?? null;
+  }
+
+  async createInventoryCheckRun(
+    scope: RepositoryScope,
+    input: CreateInventoryCheckRunInput
+  ): Promise<InventoryCheckRunDetail | null> {
+    const template = (await this.listInventoryCheckTemplates(scope)).find(
+      (candidate) => candidate.id === input.templateId
+    );
+    if (!template) return null;
+
+    const now = new Date().toISOString();
+    const run: InventoryCheckRunRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      templateId: template.id,
+      status: "in_progress",
+      startedByUserId: scope.actorUserId,
+      completedByUserId: null,
+      startedAt: now,
+      completedAt: null,
+      notes: input.notes ?? null,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.inventoryCheckRuns.push(run);
+
+    for (const templateLine of template.lines) {
+      const item = await this.findInventoryItemById(scope, templateLine.itemId);
+      if (!item) return null;
+      this.inventoryCheckRunLines.push({
+        id: uuid(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        checkRunId: run.id,
+        templateLineId: templateLine.id,
+        itemId: templateLine.itemId,
+        sequence: templateLine.sequence,
+        drawerLocation: templateLine.drawerLocation,
+        expectedQuantity: templateLine.expectedQuantity ?? item.currentQuantity,
+        countedQuantity: null,
+        varianceQuantity: null,
+        exceptionType: null,
+        exceptionNotes: null,
+        countedByUserId: null,
+        countedAt: null
+      });
+    }
+
+    return this.inventoryCheckRunDetail(scope, run.id);
+  }
+
+  async updateInventoryCheckRun(
+    scope: RepositoryScope,
+    checkRunId: UUID,
+    input: UpdateInventoryCheckRunInput
+  ): Promise<InventoryCheckRunDetail | null> {
+    const run = this.inventoryCheckRuns.find((candidate) => matchesScope(candidate, scope) && candidate.id === checkRunId);
+    if (!run) return null;
+    if (run.status === "completed" || run.status === "cancelled") return null;
+
+    const now = new Date().toISOString();
+    for (const lineInput of input.lines ?? []) {
+      const line = this.inventoryCheckRunLines.find(
+        (candidate) => matchesScope(candidate, scope) && candidate.id === lineInput.lineId && candidate.checkRunId === run.id
+      );
+      if (!line) return null;
+      const item = await this.findInventoryItemById(scope, line.itemId);
+      if (!item) return null;
+      const varianceQuantity = calculateInventoryVariance({
+        expectedQuantity: line.expectedQuantity,
+        countedQuantity: lineInput.countedQuantity
+      });
+      line.countedQuantity = lineInput.countedQuantity;
+      line.varianceQuantity = varianceQuantity;
+      line.exceptionType = classifyInventoryException({
+        expectedQuantity: line.expectedQuantity,
+        countedQuantity: lineInput.countedQuantity,
+        minimumQuantity: item.minimumQuantity
+      });
+      line.exceptionNotes = lineInput.exceptionNotes ?? null;
+      line.countedByUserId = scope.actorUserId;
+      line.countedAt = now;
+
+      if (varianceQuantity !== 0) {
+        await this.createStockLedgerEntry(scope, {
+          itemId: item.id,
+          movementType: "check_variance",
+          quantityDelta: varianceQuantity,
+          sourceTable: "inventory_check_run_lines",
+          sourceId: line.id,
+          reason: "Inventory check count variance",
+          evidence: {
+            checkRunId: run.id,
+            expectedQuantity: line.expectedQuantity,
+            countedQuantity: line.countedQuantity
+          }
+        });
+      }
+
+      if (line.exceptionType === "low_stock" || line.exceptionType === "missing_item") {
+        this.ensureProcurementSuggestion(scope, item, line, run.id);
+      }
+    }
+
+    run.status = input.status;
+    run.notes = input.notes ?? run.notes;
+    run.updatedAt = now;
+    if (input.status === "completed") {
+      const uncountedRequiredLine = this.inventoryCheckRunLines.find(
+        (line) => matchesScope(line, scope) && line.checkRunId === run.id && line.countedQuantity === null
+      );
+      if (uncountedRequiredLine) return null;
+      run.completedByUserId = scope.actorUserId;
+      run.completedAt = now;
+    }
+    return this.inventoryCheckRunDetail(scope, run.id);
+  }
+
+  async listInventoryExceptions(
+    scope: RepositoryScope,
+    filter: InventoryExceptionFilter = {}
+  ): Promise<InventoryExceptionRecord[]> {
+    const exceptions: InventoryExceptionRecord[] = [];
+    for (const line of this.inventoryCheckRunLines) {
+      if (!matchesScope(line, scope) || !line.exceptionType) continue;
+      if (filter.itemId && line.itemId !== filter.itemId) continue;
+      if (filter.checkRunId && line.checkRunId !== filter.checkRunId) continue;
+      const item = await this.findInventoryItemById(scope, line.itemId);
+      if (!item) continue;
+      const suggestion =
+        this.procurementSuggestions.find(
+          (candidate) =>
+            matchesScope(candidate, scope) &&
+            candidate.sourceCheckRunLineId === line.id &&
+            candidate.status === "suggested"
+        ) ?? null;
+      exceptions.push({
+        item,
+        checkRunLine: line,
+        procurementSuggestion: suggestion,
+        exceptionType: line.exceptionType,
+        quantityAvailable: line.countedQuantity ?? item.currentQuantity,
+        thresholdQuantity: item.minimumQuantity,
+        suggestedTask: {
+          taskType: "procurement",
+          title: `Review procurement for ${item.displayName}`,
+          status: "suggested_not_created"
+        }
+      });
+    }
+
+    for (const item of this.inventoryItems) {
+      if (!matchesScope(item, scope) || item.currentQuantity >= item.minimumQuantity) continue;
+      if (filter.itemId && item.id !== filter.itemId) continue;
+      if (exceptions.some((exception) => exception.item.id === item.id)) continue;
+      const suggestion =
+        this.procurementSuggestions.find(
+          (candidate) => matchesScope(candidate, scope) && candidate.itemId === item.id && candidate.status === "suggested"
+        ) ?? null;
+      exceptions.push({
+        item,
+        checkRunLine: null,
+        procurementSuggestion: suggestion,
+        exceptionType: "low_stock",
+        quantityAvailable: item.currentQuantity,
+        thresholdQuantity: item.minimumQuantity,
+        suggestedTask: {
+          taskType: "procurement",
+          title: `Review procurement for ${item.displayName}`,
+          status: "suggested_not_created"
+        }
+      });
+    }
+    return exceptions;
+  }
+
+  async listIncidents(scope: RepositoryScope, filter: IncidentSearchFilter = {}): Promise<IncidentRecord[]> {
+    return this.incidents
+      .filter((incident) => matchesScope(incident, scope))
+      .filter((incident) => {
+        if (filter.status && incident.status !== filter.status) return false;
+        if (filter.severity && incident.severity !== filter.severity) return false;
+        if (filter.category && incident.category !== filter.category) return false;
+        return true;
+      })
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+  }
+
+  async createIncident(scope: RepositoryScope, input: CreateIncidentInput): Promise<IncidentRecord | null> {
+    if (input.patientId && !(await this.findPatientById(scope, input.patientId))) return null;
+    if (input.appointmentId && !(await this.findAppointmentById(scope, input.appointmentId))) return null;
+    if (input.labCaseId && !(await this.findLabCaseById(scope, input.labCaseId))) return null;
+    if (input.inventoryItemId && !(await this.findInventoryItemById(scope, input.inventoryItemId))) return null;
+
+    const now = new Date().toISOString();
+    const incident: IncidentRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: input.patientId ?? null,
+      appointmentId: input.appointmentId ?? null,
+      labCaseId: input.labCaseId ?? null,
+      inventoryItemId: input.inventoryItemId ?? null,
+      category: input.category,
+      severity: input.severity,
+      status: "open",
+      occurredAt: input.occurredAt,
+      location: input.location ?? null,
+      summary: input.summary,
+      description: input.description,
+      impact: input.impact ?? null,
+      learning: input.learning ?? null,
+      immediateAction: input.immediateAction ?? null,
+      evidence: input.evidence ?? {},
+      reportedByUserId: scope.actorUserId,
+      ownerUserId: input.ownerUserId ?? null,
+      resolvedAt: null,
+      closedAt: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.incidents.push(incident);
+    if (incident.patientId) {
+      this.timelineItems.push(
+        timeline(scope, incident.patientId, "incident_created", "incidents", incident.id, "Incident recorded")
+      );
+    }
+    return incident;
+  }
+
+  async listCorrectiveActions(scope: RepositoryScope): Promise<CorrectiveActionRecord[]> {
+    return this.correctiveActions
+      .filter((action) => matchesScope(action, scope))
+      .sort((left, right) => left.dueAt.localeCompare(right.dueAt));
+  }
+
+  async createCorrectiveAction(
+    scope: RepositoryScope,
+    input: CreateCorrectiveActionInput
+  ): Promise<CorrectiveActionRecord | null> {
+    const incident = input.incidentId
+      ? this.incidents.find((candidate) => matchesScope(candidate, scope) && candidate.id === input.incidentId)
+      : null;
+    if (input.incidentId && !incident) return null;
+
+    const now = new Date().toISOString();
+    const action: CorrectiveActionRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      incidentId: input.incidentId ?? null,
+      actionType: input.actionType,
+      title: input.title,
+      description: input.description,
+      status: "open",
+      ownerUserId: input.ownerUserId,
+      dueAt: input.dueAt,
+      completedAt: null,
+      completedByUserId: null,
+      completionEvidence: {},
+      verificationEvidence: input.verificationEvidence ?? {},
+      createdByUserId: scope.actorUserId,
+      updatedByUserId: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.correctiveActions.push(action);
+    if (incident) {
+      incident.status = "capa_assigned";
+      incident.updatedAt = now;
+      if (incident.patientId) {
+        this.timelineItems.push(
+          timeline(
+            scope,
+            incident.patientId,
+            "corrective_action_created",
+            "corrective_actions",
+            action.id,
+            "Corrective action assigned"
+          )
+        );
+      }
+    }
+    return action;
+  }
+
+  async updateCorrectiveAction(
+    scope: RepositoryScope,
+    correctiveActionId: UUID,
+    input: UpdateCorrectiveActionInput
+  ): Promise<CorrectiveActionRecord | null> {
+    const action = this.correctiveActions.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === correctiveActionId
+    );
+    if (!action || action.status === "completed" || action.status === "cancelled") return null;
+
+    const now = new Date().toISOString();
+    action.status = input.status;
+    action.updatedAt = now;
+    action.updatedByUserId = scope.actorUserId;
+    action.verificationEvidence = input.verificationEvidence ?? action.verificationEvidence;
+    if (input.status === "completed") {
+      action.completedAt = now;
+      action.completedByUserId = scope.actorUserId;
+      action.completionEvidence = input.completionEvidence ?? {};
+    }
+
+    if (action.incidentId) {
+      const incident = this.incidents.find(
+        (candidate) => matchesScope(candidate, scope) && candidate.id === action.incidentId
+      );
+      if (incident && input.status === "completed") {
+        const openSibling = this.correctiveActions.some(
+          (candidate) =>
+            matchesScope(candidate, scope) &&
+            candidate.incidentId === incident.id &&
+            candidate.id !== action.id &&
+            ["open", "in_progress", "overdue"].includes(correctiveActionEffectiveStatus(candidate))
+        );
+        if (!openSibling) {
+          incident.status = "resolved";
+          incident.resolvedAt = now;
+          incident.updatedAt = now;
+        }
+        if (incident.patientId) {
+          this.timelineItems.push(
+            timeline(
+              scope,
+              incident.patientId,
+              "corrective_action_completed",
+              "corrective_actions",
+              action.id,
+              "Corrective action completed"
+            )
+          );
+        }
+      }
+    }
+
+    return action;
   }
 
   async createAttributionTouch(
@@ -2933,6 +3832,118 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     plan.taxMinor = items.reduce((total, item) => total + item.taxMinor, 0);
     plan.totalMinor = items.reduce((total, item) => total + item.totalMinor, 0);
     plan.updatedAt = new Date().toISOString();
+  }
+
+  labCaseDetail(scope: RepositoryScope, labCaseId: UUID): LabCaseDetail | null {
+    const labCase = this.labCases.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === labCaseId
+    );
+    if (!labCase) return null;
+    const vendor = this.labVendors.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === labCase.vendorId
+    );
+    if (!vendor) return null;
+    return {
+      labCase,
+      vendor,
+      items: this.labCaseItems
+        .filter((item) => matchesScope(item, scope) && item.labCaseId === labCaseId)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+      statusHistory: this.labCaseStatusHistory
+        .filter((history) => matchesScope(history, scope) && history.labCaseId === labCaseId)
+        .sort((left, right) => left.changedAt.localeCompare(right.changedAt))
+    };
+  }
+
+  labCaseHistory(
+    scope: RepositoryScope,
+    labCase: LabCaseRecord,
+    fromStatus: LabCaseStatusHistoryRecord["fromStatus"],
+    toStatus: LabCaseStatusHistoryRecord["toStatus"],
+    reason: string | null,
+    evidence: Record<string, unknown>
+  ): LabCaseStatusHistoryRecord {
+    return {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      labCaseId: labCase.id,
+      patientId: labCase.patientId,
+      fromStatus,
+      toStatus,
+      reason,
+      evidence,
+      changedByUserId: scope.actorUserId,
+      changedAt: new Date().toISOString()
+    };
+  }
+
+  nextLabSlipNumber(scope: RepositoryScope): string {
+    const next = this.labCases.filter((labCase) => matchesScope(labCase, scope)).length + 1;
+    return `LAB-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(next).padStart(4, "0")}`;
+  }
+
+  inventoryCheckRunDetail(scope: RepositoryScope, checkRunId: UUID): InventoryCheckRunDetail | null {
+    const run = this.inventoryCheckRuns.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === checkRunId
+    );
+    if (!run) return null;
+    const template = this.inventoryCheckTemplates.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === run.templateId
+    );
+    if (!template) return null;
+    return {
+      run,
+      template,
+      lines: this.inventoryCheckRunLines
+        .filter((line) => matchesScope(line, scope) && line.checkRunId === checkRunId)
+        .sort((left, right) => left.sequence - right.sequence),
+      procurementSuggestions: this.procurementSuggestions
+        .filter((suggestion) => matchesScope(suggestion, scope) && suggestion.sourceCheckRunId === checkRunId)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    };
+  }
+
+  ensureProcurementSuggestion(
+    scope: RepositoryScope,
+    item: InventoryItemRecord,
+    line: InventoryCheckRunLineRecord,
+    checkRunId: UUID
+  ): ProcurementSuggestionRecord {
+    const existing = this.procurementSuggestions.find(
+      (suggestion) =>
+        matchesScope(suggestion, scope) &&
+        suggestion.itemId === item.id &&
+        suggestion.sourceCheckRunLineId === line.id &&
+        suggestion.status === "suggested"
+    );
+    if (existing) return existing;
+
+    const now = new Date().toISOString();
+    const suggestedQuantity = Math.max(item.reorderQuantity, item.minimumQuantity - (line.countedQuantity ?? 0));
+    const suggestion: ProcurementSuggestionRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      itemId: item.id,
+      sourceCheckRunId: checkRunId,
+      sourceCheckRunLineId: line.id,
+      status: "suggested",
+      suggestedQuantity,
+      reason: `${item.displayName} is below minimum stock after inventory check.`,
+      taskId: null,
+      evidence: {
+        expectedQuantity: line.expectedQuantity,
+        countedQuantity: line.countedQuantity,
+        exceptionType: line.exceptionType,
+        taskCreation: "suggested_not_created"
+      },
+      createdByUserId: scope.actorUserId,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.procurementSuggestions.push(suggestion);
+    return suggestion;
   }
 
   treatmentPlanDetail(scope: RepositoryScope, treatmentPlanId: UUID): TreatmentPlanDetail {
