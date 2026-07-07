@@ -49,6 +49,7 @@ import type {
   MediaScanStatus,
   MediaStorageProviderKey,
   MediaUploadReservationRecord,
+  OwnerDashboardProjectionData,
   PaymentRequestRecord,
   PaymentTransactionRecord,
   PatientGender,
@@ -156,6 +157,7 @@ import type {
   CreateSopTemplateInput,
   CreateStockLedgerEntryInput,
   CreateTaskInput,
+  DateRangeFilter,
   DashboardDataSet,
   GenerateDueContinuityInput,
   GenerateDueContinuityResult,
@@ -2242,6 +2244,269 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         tasks,
         queue,
         returningPatientIds: new Set(returningRows.rows.map((row) => row.patient_id))
+      };
+    });
+  }
+
+  async loadOwnerDashboardProjectionData(
+    scope: RepositoryScope,
+    range: DateRangeFilter
+  ): Promise<OwnerDashboardProjectionData> {
+    return this.#withRls(scope, async (client) => {
+      const patientRows = await client.query<{
+        id: UUID;
+        source: OwnerDashboardProjectionData["patients"][number]["source"];
+        created_at: Date | string;
+      }>(
+        `
+          select id, source, created_at
+          from patients
+          where tenant_id = $1 and clinic_id = $2 and created_at <= $3
+        `,
+        [scope.tenantId, scope.clinicId, range.endAt]
+      );
+      const leadRows = await client.query<LeadRow>(
+        `
+          select *
+          from leads
+          where tenant_id = $1 and clinic_id = $2 and first_seen_at <= $3
+        `,
+        [scope.tenantId, scope.clinicId, range.endAt]
+      );
+      const appointmentRows = await client.query<AppointmentRow>(
+        `
+          select *
+          from appointments
+          where tenant_id = $1 and clinic_id = $2 and start_at <= $3
+        `,
+        [scope.tenantId, scope.clinicId, range.endAt]
+      );
+      const encounterRows = await client.query<EncounterRow>(
+        `
+          select *
+          from encounters
+          where tenant_id = $1 and clinic_id = $2 and created_at <= $3
+        `,
+        [scope.tenantId, scope.clinicId, range.endAt]
+      );
+      const attributionRows = await client.query<AttributionTouchRow>(
+        `
+          select *
+          from attribution_touches
+          where tenant_id = $1 and clinic_id = $2 and occurred_at <= $3
+        `,
+        [scope.tenantId, scope.clinicId, range.endAt]
+      );
+      const treatmentPlanRows = await client.query<TreatmentPlanRow>(
+        `
+          select *
+          from treatment_plans
+          where tenant_id = $1
+            and clinic_id = $2
+            and (
+              created_at between $3 and $4
+              or presented_at between $3 and $4
+              or accepted_at between $3 and $4
+            )
+        `,
+        [scope.tenantId, scope.clinicId, range.startAt, range.endAt]
+      );
+      const procedureRows = await client.query<ProcedurePerformedRow>(
+        `
+          select *
+          from procedure_performed_records
+          where tenant_id = $1 and clinic_id = $2 and performed_at <= $3
+        `,
+        [scope.tenantId, scope.clinicId, range.endAt]
+      );
+      const invoiceRows = await client.query<InvoiceRow>(
+        `
+          select *
+          from invoices
+          where tenant_id = $1 and clinic_id = $2 and issued_at <= $3
+        `,
+        [scope.tenantId, scope.clinicId, range.endAt]
+      );
+      const paymentRows = await client.query<PaymentTransactionRow>(
+        `
+          select *
+          from payment_transactions
+          where tenant_id = $1 and clinic_id = $2 and received_at between $3 and $4
+        `,
+        [scope.tenantId, scope.clinicId, range.startAt, range.endAt]
+      );
+      const taskRows = await client.query<TaskRow>(
+        `
+          select *
+          from tasks
+          where tenant_id = $1
+            and clinic_id = $2
+            and (
+              created_at between $3 and $4
+              or updated_at between $3 and $4
+              or due_at <= $4
+            )
+        `,
+        [scope.tenantId, scope.clinicId, range.startAt, range.endAt]
+      );
+
+      const leads = leadRows.rows.map(mapLeadRow);
+      const appointments = appointmentRows.rows.map(mapAppointmentRow);
+      const encounters = encounterRows.rows.map(mapEncounterRow);
+      const attributionTouches = attributionRows.rows.map(mapAttributionTouchRow);
+      const treatmentPlans = treatmentPlanRows.rows.map(mapTreatmentPlanRow);
+      const procedures = procedureRows.rows.map(mapProcedurePerformedRow);
+      const invoices = invoiceRows.rows.map(mapInvoiceRow);
+      const payments = paymentRows.rows.map(mapPaymentTransactionRow);
+      const tasks = taskRows.rows.map(mapTaskRow);
+
+      return {
+        patients: patientRows.rows.map((patient) => ({
+          id: patient.id,
+          source: patient.source,
+          createdAt: toIso(patient.created_at)
+        })),
+        leads: leads.map((lead) => ({
+          id: lead.id,
+          patientId: lead.patientId,
+          source: lead.source,
+          status: lead.status,
+          firstSeenAt: lead.firstSeenAt
+        })),
+        appointments: appointments.map((appointment) => ({
+          id: appointment.id,
+          patientId: appointment.patientId,
+          leadId: appointment.leadId,
+          status: appointment.status,
+          source: appointment.source,
+          startAt: appointment.startAt
+        })),
+        encounters: encounters.map((encounter) => ({
+          id: encounter.id,
+          patientId: encounter.patientId,
+          appointmentId: encounter.appointmentId,
+          status: encounter.status,
+          createdAt: encounter.createdAt
+        })),
+        attributionTouches: attributionTouches.map((touch) => ({
+          id: touch.id,
+          patientId: touch.patientId,
+          leadId: touch.leadId,
+          appointmentId: touch.appointmentId,
+          invoiceId: touch.invoiceId,
+          source: touch.source,
+          touchType: touch.touchType,
+          occurredAt: touch.occurredAt
+        })),
+        treatmentPlans: treatmentPlans.map((plan) => ({
+          id: plan.id,
+          patientId: plan.patientId,
+          status: plan.status,
+          totalMinor: plan.totalMinor,
+          presentedAt: plan.presentedAt,
+          acceptedAt: plan.acceptedAt,
+          createdAt: plan.createdAt
+        })),
+        procedures: procedures.map((procedure) => ({
+          id: procedure.id,
+          patientId: procedure.patientId,
+          encounterId: procedure.encounterId,
+          treatmentPlanId: procedure.treatmentPlanId,
+          invoiceId: procedure.invoiceId,
+          status: procedure.status,
+          totalMinor: procedure.totalMinor,
+          performedAt: procedure.performedAt
+        })),
+        invoices: invoices.map((invoice) => ({
+          id: invoice.id,
+          patientId: invoice.patientId,
+          treatmentPlanId: invoice.treatmentPlanId,
+          status: invoice.status,
+          paymentStatus: invoice.paymentStatus,
+          currency: invoice.currency,
+          totalMinor: invoice.totalMinor,
+          paidMinor: invoice.paidMinor,
+          balanceMinor: invoice.balanceMinor,
+          issuedAt: invoice.issuedAt,
+          dueAt: invoice.dueAt
+        })),
+        payments: payments.map((payment) => ({
+          id: payment.id,
+          invoiceId: payment.invoiceId,
+          status: payment.status,
+          amountMinor: payment.amountMinor,
+          receivedAt: payment.receivedAt
+        })),
+        recalls: tasks
+          .filter((task) => task.taskType === "recall" && task.dueAt)
+          .map((task) => ({
+            id: task.id,
+            patientId: task.patientId,
+            source: null,
+            status: task.status === "done" ? "completed" : "due",
+            dueAt: task.dueAt ?? task.createdAt,
+            completedAt: task.status === "done" ? task.updatedAt : null,
+            bookedAppointmentId: null
+          })),
+        tasks: tasks.map((task) => ({
+          id: task.id,
+          patientId: task.patientId,
+          taskType: task.taskType,
+          status: task.status,
+          dueAt: task.dueAt,
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt
+        })),
+        sopRuns: [],
+        labCases: [],
+        inventoryExceptions: [],
+        incidents: [],
+        correctiveActions: [],
+        dataSources: [
+          {
+            key: "owner-dashboard-core-domain-tables",
+            label: "Owner dashboard core domain tables",
+            status: "ready",
+            recordCount:
+              patientRows.rows.length +
+              leads.length +
+              appointments.length +
+              treatmentPlans.length +
+              procedures.length +
+              invoices.length +
+              payments.length +
+              tasks.length,
+            provenance: [
+              "patients",
+              "leads",
+              "appointments",
+              "encounters",
+              "attribution_touches",
+              "treatment_plans",
+              "procedure_performed_records",
+              "invoices",
+              "payment_transactions",
+              "tasks"
+            ],
+            notes:
+              "Live projection uses existing CP2-CP5 durable tables and the CP2 tasks table."
+          },
+          {
+            key: "cp6-continuity-operations-tables",
+            label: "CP6 lab, inventory, SOP, incident, and CAPA tables",
+            status: "schema_dependency",
+            recordCount: 0,
+            provenance: [
+              "sop_runs",
+              "lab_cases",
+              "inventory_exceptions",
+              "incidents",
+              "corrective_actions"
+            ],
+            notes:
+              "Waiting on Workflow/Task Backend and Lab/Inventory/Event CP6 migrations before live rows can contribute."
+          }
+        ]
       };
     });
   }

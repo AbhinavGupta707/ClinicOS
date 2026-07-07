@@ -70,6 +70,7 @@ import {
   generateDueContinuityTasks,
   generateDueSopRuns,
   getMorningDashboard,
+  getOwnerDashboard,
   getEncounter,
   getInvoice,
   getPatientDentalChart,
@@ -739,6 +740,13 @@ async function routeOperationsRequest(input: {
     );
   }
 
+  if (input.request.method === "GET" && pathname === "/v1/owner-dashboard") {
+    return getOwnerDashboard(operationsContext, dependencies, {
+      from: url.searchParams.get("from"),
+      to: url.searchParams.get("to")
+    });
+  }
+
   if (input.request.method === "GET" && pathname === "/v1/tasks") {
     return listTasks(operationsContext, dependencies, url.searchParams);
   }
@@ -908,7 +916,6 @@ async function routeOperationsRequest(input: {
       body
     );
   }
-
   if (input.request.method === "POST" && pathname === "/v1/encounters") {
     return createEncounter(operationsContext, dependencies, body);
   }

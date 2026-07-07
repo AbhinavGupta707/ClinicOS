@@ -58,6 +58,7 @@ import {
   assertLeadTransition,
   assertPatientCreateMinimum,
   applyPaymentToInvoice,
+  buildOwnerDashboardProjection,
   buildMorningDashboard,
   buildPatientDuplicateSuggestions,
   calculateBillingLineTotals,
@@ -1887,6 +1888,38 @@ export async function updateCorrectiveAction(
   });
 
   return ok({ correctiveAction: publicCorrectiveAction(correctiveAction) });
+}
+
+export async function getOwnerDashboard(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { from?: string | null; to?: string | null }
+) {
+  authorize(context, { permission: "analytics.read" });
+  const range = parseOwnerDashboardRange(filter);
+  const data = await dependencies.repository.loadOwnerDashboardProjectionData(
+    scopeFrom(context),
+    range
+  );
+  const dashboard = buildOwnerDashboardProjection({
+    from: range.startAt,
+    to: range.endAt,
+    generatedAt: new Date().toISOString(),
+    data
+  });
+
+  await audit(context, dependencies, "owner_dashboard.viewed", {
+    resourceType: "owner_dashboard",
+    resourceId: context.clinicId,
+    metadata: {
+      from: range.startAt,
+      to: range.endAt,
+      sourceKeys: dashboard.dataSources.map((source) => source.key),
+      revenueSources: dashboard.revenue.bySource.map((source) => source.source)
+    }
+  });
+
+  return ok({ dashboard });
 }
 
 export async function listPricebookProcedures(
@@ -6340,6 +6373,44 @@ function requiredString(value: unknown, field: string): string {
 function optionalString(value: unknown, field: string): string | undefined {
   if (value === undefined) return undefined;
   return requiredString(value, field);
+}
+
+function parseOwnerDashboardRange(filter: {
+  from?: string | null;
+  to?: string | null;
+}): { startAt: string; endAt: string } {
+  const today = new Date().toISOString().slice(0, 10);
+  const startAt = parseDateBoundary(filter.from ?? today, "from", "start");
+  const endAt = parseDateBoundary(filter.to ?? today, "to", "end");
+
+  if (Date.parse(startAt) > Date.parse(endAt)) {
+    throw validation("Owner dashboard from date must be on or before to date.", {
+      from: filter.from,
+      to: filter.to
+    });
+  }
+
+  return { startAt, endAt };
+}
+
+function parseDateBoundary(
+  value: string,
+  field: "from" | "to",
+  boundary: "start" | "end"
+): string {
+  const trimmed = value.trim();
+  if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
+    return boundary === "start"
+      ? `${trimmed}T00:00:00.000Z`
+      : `${trimmed}T23:59:59.999Z`;
+  }
+
+  const timestamp = Date.parse(trimmed);
+  if (Number.isNaN(timestamp)) {
+    throw validation(`${field} must be an ISO date or timestamp.`, { field });
+  }
+
+  return new Date(timestamp).toISOString();
 }
 
 function optionalNullableString(value: unknown, field: string): string | null | undefined {

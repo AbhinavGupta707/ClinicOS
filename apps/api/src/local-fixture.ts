@@ -52,6 +52,7 @@ import {
   type InventoryExceptionFilter,
   type LabCaseSearchFilter,
   type LeadSearchFilter,
+  type OwnerDashboardProjectionData,
   type OutboxEventInput,
   type PatientSearchFilter,
   type RecallSearchFilter,
@@ -206,6 +207,368 @@ const LOCAL_CP6_IDS = {
   inventoryItemComposite: "10000000-0000-4000-8000-000000092001" as UUID,
   inventoryTemplate: "10000000-0000-4000-8000-000000093001" as UUID,
   inventoryTemplateLine: "10000000-0000-4000-8000-000000094001" as UUID
+};
+
+const CP6_OWNER_DASHBOARD_FIXTURE: OwnerDashboardProjectionData = {
+  patients: [
+    { id: cp6Id("2001"), source: "google", createdAt: "2026-07-01T08:00:00.000Z" },
+    { id: cp6Id("2002"), source: "practo", createdAt: "2026-07-02T08:00:00.000Z" },
+    { id: cp6Id("2003"), source: "referral", createdAt: "2026-07-03T08:00:00.000Z" }
+  ],
+  leads: [
+    {
+      id: cp6Id("3001"),
+      patientId: cp6Id("2001"),
+      source: "google",
+      status: "booked",
+      firstSeenAt: "2026-07-01T08:05:00.000Z"
+    },
+    {
+      id: cp6Id("3002"),
+      patientId: cp6Id("2002"),
+      source: "practo",
+      status: "booked",
+      firstSeenAt: "2026-07-02T08:05:00.000Z"
+    }
+  ],
+  appointments: [
+    {
+      id: cp6Id("4001"),
+      patientId: cp6Id("2001"),
+      leadId: cp6Id("3001"),
+      status: "completed",
+      source: "google",
+      startAt: "2026-07-03T09:00:00.000Z"
+    },
+    {
+      id: cp6Id("4002"),
+      patientId: cp6Id("2002"),
+      leadId: cp6Id("3002"),
+      status: "no_show",
+      source: "practo",
+      startAt: "2026-07-03T10:00:00.000Z"
+    },
+    {
+      id: cp6Id("4003"),
+      patientId: cp6Id("2003"),
+      leadId: null,
+      status: "confirmed",
+      source: "referral",
+      startAt: "2026-07-06T10:00:00.000Z"
+    }
+  ],
+  encounters: [
+    {
+      id: cp6Id("5001"),
+      patientId: cp6Id("2001"),
+      appointmentId: cp6Id("4001"),
+      status: "closed",
+      createdAt: "2026-07-03T09:10:00.000Z"
+    },
+    {
+      id: cp6Id("5002"),
+      patientId: cp6Id("2002"),
+      appointmentId: cp6Id("4002"),
+      status: "cancelled",
+      createdAt: "2026-07-03T10:10:00.000Z"
+    }
+  ],
+  attributionTouches: [
+    {
+      id: cp6Id("6001"),
+      patientId: cp6Id("2001"),
+      leadId: cp6Id("3001"),
+      appointmentId: cp6Id("4001"),
+      invoiceId: cp6Id("9001"),
+      source: "google",
+      touchType: "revenue_touch",
+      occurredAt: "2026-07-03T10:30:00.000Z"
+    }
+  ],
+  treatmentPlans: [
+    {
+      id: cp6Id("7001"),
+      patientId: cp6Id("2001"),
+      status: "accepted",
+      totalMinor: 900000,
+      presentedAt: "2026-07-03T09:25:00.000Z",
+      acceptedAt: "2026-07-03T09:35:00.000Z",
+      createdAt: "2026-07-03T09:20:00.000Z"
+    },
+    {
+      id: cp6Id("7002"),
+      patientId: cp6Id("2002"),
+      status: "presented",
+      totalMinor: 600000,
+      presentedAt: "2026-07-04T09:25:00.000Z",
+      acceptedAt: null,
+      createdAt: "2026-07-04T09:20:00.000Z"
+    }
+  ],
+  procedures: [
+    {
+      id: cp6Id("8001"),
+      patientId: cp6Id("2001"),
+      encounterId: cp6Id("5001"),
+      treatmentPlanId: cp6Id("7001"),
+      invoiceId: cp6Id("9001"),
+      status: "completed",
+      totalMinor: 900000,
+      performedAt: "2026-07-03T09:50:00.000Z"
+    },
+    {
+      id: cp6Id("8002"),
+      patientId: cp6Id("2002"),
+      encounterId: cp6Id("5002"),
+      treatmentPlanId: cp6Id("7002"),
+      invoiceId: cp6Id("9002"),
+      status: "completed",
+      totalMinor: 600000,
+      performedAt: "2026-07-04T10:00:00.000Z"
+    },
+    {
+      id: cp6Id("8003"),
+      patientId: cp6Id("2003"),
+      encounterId: cp6Id("5001"),
+      treatmentPlanId: cp6Id("7001"),
+      invoiceId: null,
+      status: "completed",
+      totalMinor: 250000,
+      performedAt: "2026-07-05T10:00:00.000Z"
+    }
+  ],
+  invoices: [
+    {
+      id: cp6Id("9001"),
+      patientId: cp6Id("2001"),
+      treatmentPlanId: cp6Id("7001"),
+      status: "issued",
+      paymentStatus: "paid",
+      currency: "INR",
+      totalMinor: 900000,
+      paidMinor: 900000,
+      balanceMinor: 0,
+      issuedAt: "2026-07-03T10:15:00.000Z",
+      dueAt: "2026-07-03T18:00:00.000Z"
+    },
+    {
+      id: cp6Id("9002"),
+      patientId: cp6Id("2002"),
+      treatmentPlanId: cp6Id("7002"),
+      status: "issued",
+      paymentStatus: "unpaid",
+      currency: "INR",
+      totalMinor: 600000,
+      paidMinor: 0,
+      balanceMinor: 600000,
+      issuedAt: "2026-07-04T10:15:00.000Z",
+      dueAt: "2026-07-05T18:00:00.000Z"
+    }
+  ],
+  payments: [
+    {
+      id: cp6Id("a001"),
+      invoiceId: cp6Id("9001"),
+      status: "manually_recorded",
+      amountMinor: 900000,
+      receivedAt: "2026-07-03T10:30:00.000Z"
+    }
+  ],
+  recalls: [
+    {
+      id: cp6Id("b001"),
+      patientId: cp6Id("2001"),
+      source: "google",
+      status: "completed",
+      dueAt: "2026-07-02T09:00:00.000Z",
+      completedAt: "2026-07-02T11:00:00.000Z",
+      bookedAppointmentId: cp6Id("4001")
+    },
+    {
+      id: cp6Id("b002"),
+      patientId: cp6Id("2002"),
+      source: "practo",
+      status: "contacted",
+      dueAt: "2026-07-04T09:00:00.000Z",
+      completedAt: null,
+      bookedAppointmentId: null
+    },
+    {
+      id: cp6Id("b003"),
+      patientId: cp6Id("2003"),
+      source: "referral",
+      status: "due",
+      dueAt: "2026-07-06T09:00:00.000Z",
+      completedAt: null,
+      bookedAppointmentId: null
+    }
+  ],
+  tasks: [
+    {
+      id: cp6Id("c001"),
+      patientId: cp6Id("2001"),
+      taskType: "post_op_follow_up",
+      status: "done",
+      dueAt: "2026-07-02T12:00:00.000Z",
+      createdAt: "2026-07-01T12:00:00.000Z",
+      updatedAt: "2026-07-02T13:00:00.000Z"
+    },
+    {
+      id: cp6Id("c002"),
+      patientId: cp6Id("2002"),
+      taskType: "payment_due",
+      status: "open",
+      dueAt: "2026-07-05T12:00:00.000Z",
+      createdAt: "2026-07-04T12:00:00.000Z",
+      updatedAt: "2026-07-04T12:00:00.000Z"
+    },
+    {
+      id: cp6Id("c003"),
+      patientId: null,
+      taskType: "procurement",
+      status: "in_progress",
+      dueAt: "2026-07-06T12:00:00.000Z",
+      createdAt: "2026-07-05T12:00:00.000Z",
+      updatedAt: "2026-07-05T12:00:00.000Z"
+    },
+    {
+      id: cp6Id("c004"),
+      patientId: null,
+      taskType: "capa",
+      status: "open",
+      dueAt: "2026-07-09T12:00:00.000Z",
+      createdAt: "2026-07-05T12:00:00.000Z",
+      updatedAt: "2026-07-05T12:00:00.000Z"
+    }
+  ],
+  sopRuns: [
+    {
+      id: cp6Id("d001"),
+      templateKey: "switch-check",
+      status: "completed",
+      scheduledFor: "2026-07-02T08:00:00.000Z",
+      completedAt: "2026-07-02T08:15:00.000Z"
+    },
+    {
+      id: cp6Id("d002"),
+      templateKey: "inventory-check",
+      status: "scheduled",
+      scheduledFor: "2026-07-05T08:00:00.000Z",
+      completedAt: null
+    }
+  ],
+  labCases: [
+    {
+      id: cp6Id("e001"),
+      patientId: cp6Id("2001"),
+      status: "rework_required",
+      dueAt: "2026-07-05T09:00:00.000Z",
+      createdAt: "2026-07-01T09:00:00.000Z",
+      completedAt: null,
+      reconciliationStatus: "pending",
+      expectedAmountMinor: 45000,
+      invoiceAmountMinor: null
+    },
+    {
+      id: cp6Id("e002"),
+      patientId: cp6Id("2002"),
+      status: "sent_to_lab",
+      dueAt: "2026-07-08T09:00:00.000Z",
+      createdAt: "2026-07-04T09:00:00.000Z",
+      completedAt: null,
+      reconciliationStatus: "not_required",
+      expectedAmountMinor: 30000,
+      invoiceAmountMinor: null
+    },
+    {
+      id: cp6Id("e003"),
+      patientId: cp6Id("2003"),
+      status: "completed",
+      dueAt: "2026-07-04T09:00:00.000Z",
+      createdAt: "2026-07-01T09:00:00.000Z",
+      completedAt: "2026-07-05T09:00:00.000Z",
+      reconciliationStatus: "variance",
+      expectedAmountMinor: 20000,
+      invoiceAmountMinor: 22000
+    }
+  ],
+  inventoryExceptions: [
+    {
+      id: cp6Id("f001"),
+      itemKey: "composite-a2",
+      severity: "critical",
+      status: "procurement_requested",
+      detectedAt: "2026-07-02T08:00:00.000Z",
+      resolvedAt: null,
+      procurementTaskId: cp6Id("c003")
+    },
+    {
+      id: cp6Id("f002"),
+      itemKey: "gloves-m",
+      severity: "medium",
+      status: "open",
+      detectedAt: "2026-07-03T08:00:00.000Z",
+      resolvedAt: null,
+      procurementTaskId: null
+    },
+    {
+      id: cp6Id("f003"),
+      itemKey: "etchant",
+      severity: "low",
+      status: "resolved",
+      detectedAt: "2026-07-04T08:00:00.000Z",
+      resolvedAt: "2026-07-05T08:00:00.000Z",
+      procurementTaskId: null
+    }
+  ],
+  incidents: [
+    {
+      id: cp6Id("a101"),
+      category: "lab_delay",
+      severity: "high",
+      status: "open",
+      occurredAt: "2026-07-04T12:00:00.000Z"
+    },
+    {
+      id: cp6Id("a102"),
+      category: "missed_payment_collection",
+      severity: "medium",
+      status: "closed",
+      occurredAt: "2026-07-03T12:00:00.000Z"
+    }
+  ],
+  correctiveActions: [
+    {
+      id: cp6Id("a201"),
+      incidentId: cp6Id("a101"),
+      status: "assigned",
+      dueAt: "2026-07-05T18:00:00.000Z",
+      assignedAt: "2026-07-04T13:00:00.000Z",
+      completedAt: null
+    },
+    {
+      id: cp6Id("a202"),
+      incidentId: cp6Id("a102"),
+      status: "completed",
+      dueAt: "2026-07-05T18:00:00.000Z",
+      assignedAt: "2026-07-03T13:00:00.000Z",
+      completedAt: "2026-07-04T13:00:00.000Z"
+    }
+  ],
+  dataSources: [
+    {
+      key: "cp6-local-continuity-fixture",
+      label: "CP6 local continuity operations fixture",
+      status: "local_fixture",
+      recordCount: 35,
+      provenance: [
+        "apps/api/src/local-fixture.ts",
+        "fixtures/synthetic/cp6/continuity_owner_dashboard_flow.json"
+      ],
+      notes:
+        "Synthetic local/test fixture rows for CP6 owner dashboard and acceptance harness only."
+    }
+  ]
 };
 
 export class LocalFixtureIdentityRepository implements IdentityRepository {
@@ -2337,6 +2700,157 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     };
   }
 
+  async loadOwnerDashboardProjectionData(
+    scope: RepositoryScope,
+    _range: { startAt: string; endAt: string }
+  ): Promise<OwnerDashboardProjectionData> {
+    const scopedPatients = this.patients.filter((patient) => matchesScope(patient, scope));
+    const scopedLeads = this.leads.filter((lead) => matchesScope(lead, scope));
+    const scopedAppointments = this.appointments.filter((appointment) =>
+      matchesScope(appointment, scope)
+    );
+    const scopedEncounters = this.encounters.filter((encounter) => matchesScope(encounter, scope));
+    const scopedAttributionTouches = this.attributionTouches.filter((touch) =>
+      matchesScope(touch, scope)
+    );
+    const scopedTreatmentPlans = this.treatmentPlans.filter((plan) => matchesScope(plan, scope));
+    const scopedProcedures = this.proceduresPerformed.filter((procedure) =>
+      matchesScope(procedure, scope)
+    );
+    const scopedInvoices = this.invoices.filter((invoice) => matchesScope(invoice, scope));
+    const scopedPayments = this.paymentTransactions.filter((payment) =>
+      matchesScope(payment, scope)
+    );
+    const scopedTasks = this.tasks.filter((task) => matchesScope(task, scope));
+
+    return mergeOwnerDashboardProjectionData(
+      {
+        patients: scopedPatients.map((patient) => ({
+          id: patient.id,
+          source: patient.source,
+          createdAt: patient.createdAt
+        })),
+        leads: scopedLeads.map((lead) => ({
+          id: lead.id,
+          patientId: lead.patientId,
+          source: lead.source,
+          status: lead.status,
+          firstSeenAt: lead.firstSeenAt
+        })),
+        appointments: scopedAppointments.map((appointment) => ({
+          id: appointment.id,
+          patientId: appointment.patientId,
+          leadId: appointment.leadId,
+          status: appointment.status,
+          source: appointment.source,
+          startAt: appointment.startAt
+        })),
+        encounters: scopedEncounters.map((encounter) => ({
+          id: encounter.id,
+          patientId: encounter.patientId,
+          appointmentId: encounter.appointmentId,
+          status: encounter.status,
+          createdAt: encounter.createdAt
+        })),
+        attributionTouches: scopedAttributionTouches.map((touch) => ({
+          id: touch.id,
+          patientId: touch.patientId,
+          leadId: touch.leadId,
+          appointmentId: touch.appointmentId,
+          invoiceId: touch.invoiceId,
+          source: touch.source,
+          touchType: touch.touchType,
+          occurredAt: touch.occurredAt
+        })),
+        treatmentPlans: scopedTreatmentPlans.map((plan) => ({
+          id: plan.id,
+          patientId: plan.patientId,
+          status: plan.status,
+          totalMinor: plan.totalMinor,
+          presentedAt: plan.presentedAt,
+          acceptedAt: plan.acceptedAt,
+          createdAt: plan.createdAt
+        })),
+        procedures: scopedProcedures.map((procedure) => ({
+          id: procedure.id,
+          patientId: procedure.patientId,
+          encounterId: procedure.encounterId,
+          treatmentPlanId: procedure.treatmentPlanId,
+          invoiceId: procedure.invoiceId,
+          status: procedure.status,
+          totalMinor: procedure.totalMinor,
+          performedAt: procedure.performedAt
+        })),
+        invoices: scopedInvoices.map((invoice) => ({
+          id: invoice.id,
+          patientId: invoice.patientId,
+          treatmentPlanId: invoice.treatmentPlanId,
+          status: invoice.status,
+          paymentStatus: invoice.paymentStatus,
+          currency: invoice.currency,
+          totalMinor: invoice.totalMinor,
+          paidMinor: invoice.paidMinor,
+          balanceMinor: invoice.balanceMinor,
+          issuedAt: invoice.issuedAt,
+          dueAt: invoice.dueAt
+        })),
+        payments: scopedPayments.map((payment) => ({
+          id: payment.id,
+          invoiceId: payment.invoiceId,
+          status: payment.status,
+          amountMinor: payment.amountMinor,
+          receivedAt: payment.receivedAt
+        })),
+        recalls: scopedTasks
+          .filter((task) => task.taskType === "recall" && task.dueAt)
+          .map((task) => ({
+            id: task.id,
+            patientId: task.patientId,
+            source: null,
+            status: task.status === "done" ? "completed" : "due",
+            dueAt: task.dueAt ?? task.createdAt,
+            completedAt: task.status === "done" ? task.updatedAt : null,
+            bookedAppointmentId: null
+          })),
+        tasks: scopedTasks.map((task) => ({
+          id: task.id,
+          patientId: task.patientId,
+          taskType: task.taskType,
+          status: task.status,
+          dueAt: task.dueAt,
+          createdAt: task.createdAt,
+          updatedAt: task.updatedAt
+        })),
+        sopRuns: [],
+        labCases: [],
+        inventoryExceptions: [],
+        incidents: [],
+        correctiveActions: [],
+        dataSources: [
+          {
+            key: "local-runtime-domain-records",
+            label: "Local fixture repository runtime domain rows",
+            status: "local_fixture",
+            recordCount:
+              scopedPatients.length +
+              scopedLeads.length +
+              scopedAppointments.length +
+              scopedTasks.length +
+              scopedInvoices.length +
+              scopedPayments.length,
+            provenance: [
+              "apps/api/src/local-fixture.ts",
+              "packages/domain/src/dashboard.ts"
+            ],
+            notes:
+              "Explicit local/test fixture mode only; production API uses the Postgres repository."
+          }
+        ]
+      },
+      CP6_OWNER_DASHBOARD_FIXTURE
+    );
+  }
+
   async listPricebookProcedures(scope: RepositoryScope): Promise<PricebookProcedureRecord[]> {
     return this.pricebookProcedures
       .filter((procedure) => matchesScope(procedure, scope) && procedure.status === "active")
@@ -4148,6 +4662,10 @@ function uuid(): UUID {
   return randomUUID() as UUID;
 }
 
+function cp6Id(suffix: string): UUID {
+  return `60000000-0000-4000-8000-00000000${suffix}` as UUID;
+}
+
 function uuidOrNull(value: string | null | undefined): UUID | null {
   if (!value || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(value)) {
     return null;
@@ -4187,6 +4705,31 @@ function daysBetween(startDate: string, endDate: string): number {
   const start = new Date(`${startDate}T00:00:00.000Z`).getTime();
   const end = new Date(`${endDate}T00:00:00.000Z`).getTime();
   return Math.floor((end - start) / 86_400_000);
+}
+
+function mergeOwnerDashboardProjectionData(
+  left: OwnerDashboardProjectionData,
+  right: OwnerDashboardProjectionData
+): OwnerDashboardProjectionData {
+  return {
+    patients: [...left.patients, ...right.patients],
+    leads: [...left.leads, ...right.leads],
+    appointments: [...left.appointments, ...right.appointments],
+    encounters: [...left.encounters, ...right.encounters],
+    attributionTouches: [...left.attributionTouches, ...right.attributionTouches],
+    treatmentPlans: [...left.treatmentPlans, ...right.treatmentPlans],
+    procedures: [...left.procedures, ...right.procedures],
+    invoices: [...left.invoices, ...right.invoices],
+    payments: [...left.payments, ...right.payments],
+    recalls: [...left.recalls, ...right.recalls],
+    tasks: [...left.tasks, ...right.tasks],
+    sopRuns: [...left.sopRuns, ...right.sopRuns],
+    labCases: [...left.labCases, ...right.labCases],
+    inventoryExceptions: [...left.inventoryExceptions, ...right.inventoryExceptions],
+    incidents: [...left.incidents, ...right.incidents],
+    correctiveActions: [...left.correctiveActions, ...right.correctiveActions],
+    dataSources: [...left.dataSources, ...right.dataSources]
+  };
 }
 
 function timeline(
