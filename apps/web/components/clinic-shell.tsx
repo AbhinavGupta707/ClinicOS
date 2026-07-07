@@ -18,7 +18,12 @@ import {
 import { isCp6WorkflowSurface, OperationsWorkflow } from "@/components/operations-workflow";
 import { SurfaceView } from "@/components/surface-view";
 import { loadMe, type MeState } from "@/lib/me";
-import { canAccessSurface, getSurface, getVisibleSurfaces } from "@/lib/navigation";
+import {
+  canAccessSurface,
+  getSurface,
+  getSurfaceStateLabel,
+  getVisibleSurfaces
+} from "@/lib/navigation";
 import { ROLE_LABELS } from "@/lib/roles";
 
 interface ClinicShellProps {
@@ -128,7 +133,7 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
                 <Icon size={18} aria-hidden="true" />
                 <span>{surface.label}</span>
                 {surface.availability !== "active" ? (
-                  <span className="nav-status">Later</span>
+                  <span className="nav-status">{getSurfaceStateLabel(surface)}</span>
                 ) : null}
               </Link>
             );

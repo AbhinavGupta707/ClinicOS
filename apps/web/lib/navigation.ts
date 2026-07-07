@@ -502,9 +502,25 @@ export function getUnavailableReason(surface: SurfaceRegistration) {
     return "Available in this checkpoint";
   }
 
+  if (surface.id === "settings") {
+    return "Registered for pilot clinic configuration; user, template, pricebook, provider, and rollout APIs must be activated by the owning CP10 configuration slice before product data appears";
+  }
+
+  if (surface.id === "compliance") {
+    return "Registered for compliance operations; export, audit-review, retention, and privacy APIs must be active before any compliance workflow is shown";
+  }
+
+  if (surface.id === "platform-support") {
+    return "Registered for platform support; audited break-glass and tenant-diagnostic APIs must be active before support actions are exposed";
+  }
+
   if (surface.checkpoint === 1) {
     return "Registered in Checkpoint 1; backend capability is not active yet";
   }
 
   return `Registered for Checkpoint ${surface.checkpoint}; API capability is not active yet`;
+}
+
+export function getSurfaceStateLabel(surface: SurfaceRegistration) {
+  return surface.availability === "active" ? "Available" : "Registered unavailable";
 }

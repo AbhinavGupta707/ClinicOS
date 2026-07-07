@@ -362,6 +362,13 @@ textarea {
   padding: 9px 10px;
 }
 
+.nav-item > span:not(.nav-status) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .nav-item:hover,
 .nav-item--active {
   background: rgba(255, 255, 255, 0.09);
@@ -668,7 +675,7 @@ textarea {
 .activation-layout {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .activation-card {

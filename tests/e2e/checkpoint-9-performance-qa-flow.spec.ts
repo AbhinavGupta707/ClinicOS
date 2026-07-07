@@ -21,7 +21,7 @@ test.describe("Checkpoint 9 performance QA registered-surface smoke", () => {
     await expect(page.getByText("Unavailable")).toBeVisible();
     await expect(page.getByText("Required API boundary")).toBeVisible();
     await expect(page.getByText("No product data is rendered")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Awaiting API activation" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Registered unavailable" })).toBeDisabled();
     await expect(page.getByText("GET /v1/audit-events")).toBeVisible();
     await expect(page.getByText("POST /v1/patients/{patientId}/record-exports")).toBeVisible();
 
@@ -46,7 +46,7 @@ test.describe("Checkpoint 9 performance QA registered-surface smoke", () => {
       page.locator("main").getByRole("heading", { level: 1, name: "Compliance" })
     ).toBeVisible();
     await expect(page.getByText("Unavailable")).toBeVisible();
-    await expect(page.getByRole("button", { name: "Awaiting API activation" })).toBeDisabled();
+    await expect(page.getByRole("button", { name: "Registered unavailable" })).toBeDisabled();
 
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth

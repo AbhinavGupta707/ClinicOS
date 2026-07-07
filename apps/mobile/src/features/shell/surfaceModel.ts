@@ -27,9 +27,10 @@ export const mobileSurfaces: readonly MobileSurface[] = [
   {
     id: "voice-note",
     label: "Clinical voice note",
-    state: "available",
+    state: "registered_unavailable",
     checkpoint: 8,
-    apiBoundary: "GET /v1/patients/{patientId}/consents gates future AI/audio capture sessions"
+    apiBoundary:
+      "Native Expo audio adapter plus POST /v1/encounters/{encounterId}/ai-scribe/sessions after consent and retention gates pass"
   },
   {
     id: "offline-upload",

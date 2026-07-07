@@ -4,7 +4,12 @@ import { Button } from "@clinic-os/ui";
 import { AlertTriangle, LockKeyhole, PlugZap } from "lucide-react";
 
 import type { MeProfile } from "@/lib/me";
-import { canAccessSurface, getUnavailableReason, type SurfaceRegistration } from "@/lib/navigation";
+import {
+  canAccessSurface,
+  getSurfaceStateLabel,
+  getUnavailableReason,
+  type SurfaceRegistration
+} from "@/lib/navigation";
 import { ROLE_LABELS } from "@/lib/roles";
 
 interface SurfaceViewProps {
@@ -32,6 +37,10 @@ export function SurfaceView({ profile, surface }: SurfaceViewProps) {
         <p className="state-kicker">Role boundary</p>
         <h1 id="denied-title">This surface is outside the current role scope.</h1>
         <p>Required roles: {surface.roles.map((role) => ROLE_LABELS[role]).join(", ")}.</p>
+        <p className="state-detail">
+          No clinic data, PHI, workflow controls, or provider actions are rendered for the current
+          role. Use an authorized ClinicOS role before investigating feature runtime behavior.
+        </p>
       </section>
     );
   }
@@ -59,7 +68,7 @@ export function SurfaceView({ profile, surface }: SurfaceViewProps) {
         </div>
         <div className="hero-status hero-status--pending" aria-label="Surface state">
           <span className="status-dot status-dot--warn" />
-          <span>Unavailable</span>
+          <span>{getSurfaceStateLabel(surface)}</span>
         </div>
       </section>
 
@@ -71,6 +80,14 @@ export function SurfaceView({ profile, surface }: SurfaceViewProps) {
           </div>
         </div>
         <div className="activation-layout">
+          <div className="activation-card">
+            <AlertTriangle size={20} aria-hidden="true" />
+            <strong>Registered, not activated</strong>
+            <p>
+              Registration and navigation are present. Activation must happen through the owning
+              product/API slice before permissions, runtime, or provider behavior can be debugged.
+            </p>
+          </div>
           <div className="activation-card">
             <PlugZap size={20} aria-hidden="true" />
             <strong>Required API boundary</strong>
@@ -85,13 +102,13 @@ export function SurfaceView({ profile, surface }: SurfaceViewProps) {
             <strong>No product data is rendered</strong>
             <p>
               This shell does not invent clinic queues, patients, clinical records, payments, or
-              analytics before the owning API slice exists.
+              analytics before the owning API slice exists and is activated for this role.
             </p>
           </div>
         </div>
         <div className="surface-actions">
           <Button disabled variant="secondary">
-            Awaiting API activation
+            Registered unavailable
           </Button>
         </div>
       </section>

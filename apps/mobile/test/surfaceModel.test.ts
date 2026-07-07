@@ -12,10 +12,11 @@ test("mobile shell exposes Checkpoint 8 capture surfaces without stale routes", 
     getActiveCaptureSurfaces()
       .map((surface) => surface.id)
       .join(","),
-    "session,chairside-media,voice-note,offline-upload"
+    "session,chairside-media,offline-upload"
   );
-  assert.equal(getAvailableMobileSurfaces().length, 4);
-  assert.equal(getUnavailableMobileSurfaces().length, 0);
+  assert.equal(getAvailableMobileSurfaces().length, 3);
+  assert.equal(getUnavailableMobileSurfaces().length, 1);
+  assert.equal(getUnavailableMobileSurfaces()[0]?.id, "voice-note");
   assert.equal(
     mobileSurfaces.every((surface) => surface.apiBoundary.length > 0),
     true

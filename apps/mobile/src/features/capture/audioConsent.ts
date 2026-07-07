@@ -2,9 +2,20 @@ import type { ConsentEnforcementState } from "../../lib/apiClient";
 
 export interface AudioControlDecision {
   enabled: boolean;
-  reason: "ready" | "no_patient" | "consent_missing" | "consent_revoked" | "retention_not_configured";
+  reason:
+    | "ready"
+    | "no_patient"
+    | "consent_missing"
+    | "consent_revoked"
+    | "retention_not_configured"
+    | "adapter_unavailable";
   title: string;
   detail: string;
+}
+
+export interface NativeAudioCapability {
+  reason: string;
+  state: "ready" | "unavailable";
 }
 
 export function evaluateAudioControl(input: {
@@ -61,5 +72,21 @@ export function evaluateAudioControl(input: {
     reason: "ready",
     title: "Audio controls ready",
     detail: "The patient has active AI/audio consent and raw-audio retention is configured."
+  };
+}
+
+export function applyNativeAudioCapability(
+  consentDecision: AudioControlDecision,
+  nativeCapability: NativeAudioCapability
+): AudioControlDecision {
+  if (nativeCapability.state === "ready") {
+    return consentDecision;
+  }
+
+  return {
+    enabled: false,
+    reason: "adapter_unavailable",
+    title: "Native audio adapter unavailable",
+    detail: `${nativeCapability.reason} Consent gate: ${consentDecision.title}. ${consentDecision.detail}`
   };
 }
