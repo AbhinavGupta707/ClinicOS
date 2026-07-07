@@ -36,18 +36,23 @@ import {
   convertLeadToAppointment,
   createAppointment,
   createEncounter,
+  createDentalChartSnapshot,
+  createEncounterDentalFinding,
   createEncounterPrescription,
   createIntakeFormTemplate,
   createLead,
   completeMediaUpload,
   createSignedMediaAccess,
+  createPatientDentalFinding,
   createPatient,
   createPatientConsent,
   getMorningDashboard,
   getEncounter,
+  getPatientDentalChart,
   getPatient,
   getPatientPrepSummary,
   getPatientTimeline,
+  listDentalFindingHistory,
   listAppointmentTypes,
   listAppointments,
   listChairs,
@@ -68,6 +73,7 @@ import {
   signPrescription,
   startEncounter,
   submitPatientIntakeForm,
+  updateDentalFinding,
   updateAppointment,
   updateLeadStatus,
   updatePatient,
@@ -359,6 +365,37 @@ async function routeOperationsRequest(input: {
     );
   }
 
+  const patientDentalChartMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/dental-chart$/);
+  if (patientDentalChartMatch && input.request.method === "GET") {
+    return getPatientDentalChart(
+      operationsContext,
+      dependencies,
+      pathUuid(patientDentalChartMatch[1], "patientId")
+    );
+  }
+
+  const patientDentalFindingMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/dental-findings$/);
+  if (patientDentalFindingMatch && input.request.method === "POST") {
+    return createPatientDentalFinding(
+      operationsContext,
+      dependencies,
+      pathUuid(patientDentalFindingMatch[1], "patientId"),
+      body
+    );
+  }
+
+  const patientDentalSnapshotMatch = pathname.match(
+    /^\/v1\/patients\/([^/]+)\/dental-chart\/snapshots$/
+  );
+  if (patientDentalSnapshotMatch && input.request.method === "POST") {
+    return createDentalChartSnapshot(
+      operationsContext,
+      dependencies,
+      pathUuid(patientDentalSnapshotMatch[1], "patientId"),
+      body
+    );
+  }
+
   const formResponseMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/form-responses$/);
   if (formResponseMatch && input.request.method === "POST") {
     return submitPatientIntakeForm(
@@ -614,6 +651,37 @@ async function routeOperationsRequest(input: {
       operationsContext,
       dependencies,
       pathUuid(encounterPrescriptionMatch[1], "encounterId"),
+      body
+    );
+  }
+
+  const encounterDentalFindingMatch = pathname.match(
+    /^\/v1\/encounters\/([^/]+)\/dental-findings$/
+  );
+  if (encounterDentalFindingMatch && input.request.method === "POST") {
+    return createEncounterDentalFinding(
+      operationsContext,
+      dependencies,
+      pathUuid(encounterDentalFindingMatch[1], "encounterId"),
+      body
+    );
+  }
+
+  const dentalFindingHistoryMatch = pathname.match(/^\/v1\/dental-findings\/([^/]+)\/history$/);
+  if (dentalFindingHistoryMatch && input.request.method === "GET") {
+    return listDentalFindingHistory(
+      operationsContext,
+      dependencies,
+      pathUuid(dentalFindingHistoryMatch[1], "findingId")
+    );
+  }
+
+  const dentalFindingMatch = pathname.match(/^\/v1\/dental-findings\/([^/]+)$/);
+  if (dentalFindingMatch && input.request.method === "PATCH") {
+    return updateDentalFinding(
+      operationsContext,
+      dependencies,
+      pathUuid(dentalFindingMatch[1], "findingId"),
       body
     );
   }

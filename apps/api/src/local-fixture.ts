@@ -10,7 +10,9 @@ import {
   type CreateAppointmentInput,
   type CreateAttributionTouchInput,
   type CreateConsentInput,
+  type CreateDentalChartSnapshotInput,
   type CreateEncounterInput,
+  type CreateDentalFindingInput,
   type CreateIntakeFormSubmissionInput,
   type CreateIntakeFormTemplateInput,
   type CreateLeadInput,
@@ -20,6 +22,7 @@ import {
   type CreateTaskInput,
   type CompleteMediaUploadInput,
   type DashboardDataSet,
+  type DentalFindingMutationResult,
   type IdentityAccessSnapshot,
   type IdentityRepository,
   type LeadSearchFilter,
@@ -29,17 +32,24 @@ import {
   type RevokeConsentInput,
   type SaveClinicalNoteDraftInput,
   type SignClinicalNoteResult,
+  type UpdateDentalFindingRepositoryInput,
   type UpdatePatientInput
 } from "@clinic-os/db";
 import {
+  assertDentalFindingUpdateReason,
   assertClinicalNoteCanBeAmended,
   assertClinicalNoteCanBeSigned,
   assertEncounterTransition,
   assertPrescriptionCanBeSigned,
+  assertValidDentalFinding,
+  buildDentalChartSnapshotState,
   buildConsentEnforcementState,
   detectAppointmentConflicts,
   normalizeClinicalNoteContent,
+  normalizeDentalSurface,
+  normalizeDentalToothNumber,
   normalizePhone,
+  toDentalFindingSnapshotFinding,
   type AppointmentConflict,
   type AppointmentRecord,
   type AppointmentStatus,
@@ -48,6 +58,10 @@ import {
   type ChairOrRoomRecord,
   type ClinicalNoteVersionRecord,
   type ConsentRecord,
+  type DentalChartRecord,
+  type DentalChartSnapshotRecord,
+  type DentalFindingHistoryRecord,
+  type DentalFindingRecord,
   type EncounterRecord,
   type IntakeFormSubmissionRecord,
   type IntakeFormTemplateRecord,
@@ -236,6 +250,22 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly prescriptions: PrescriptionRecord[] = [];
   readonly mediaUploadReservations: MediaUploadReservationRecord[] = [];
   readonly mediaAssets: MediaAssetRecord[] = [];
+  readonly dentalCharts: DentalChartRecord[] = [
+    {
+      id: uuid(),
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      patientId: CHECKPOINT1_SEED_IDS.patients.rheaSynthetic,
+      numberingSystem: "fdi",
+      createdByUserId: CHECKPOINT1_SEED_IDS.users.assistant,
+      updatedByUserId: null,
+      createdAt: "2026-07-07T08:00:00.000Z",
+      updatedAt: "2026-07-07T08:00:00.000Z"
+    }
+  ];
+  readonly dentalFindings: DentalFindingRecord[] = [];
+  readonly dentalFindingHistory: DentalFindingHistoryRecord[] = [];
+  readonly dentalChartSnapshots: DentalChartSnapshotRecord[] = [];
 
   async listPatients(
     scope: RepositoryScope,
@@ -303,6 +333,17 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     };
 
     this.patients.push(patient);
+    this.dentalCharts.push({
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: patient.id,
+      numberingSystem: "fdi",
+      createdByUserId: scope.actorUserId,
+      updatedByUserId: null,
+      createdAt: now,
+      updatedAt: now
+    });
     this.timelineItems.push(
       timeline(scope, patient.id, "patient_created", "patients", patient.id, "Patient registered")
     );
@@ -1239,6 +1280,224 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
   }
 
+  async getDentalChart(scope: RepositoryScope, patientId: UUID) {
+    const chart = this.ensureDentalChart(scope, patientId);
+    if (!chart) return null;
+
+    return {
+      chart,
+      findings: this.dentalFindings
+        .filter((finding) => matchesScope(finding, scope) && finding.patientId === patientId)
+        .sort(
+          (left, right) =>
+            left.toothNumber.localeCompare(right.toothNumber) ||
+            (left.surface ?? "").localeCompare(right.surface ?? "") ||
+            right.createdAt.localeCompare(left.createdAt)
+        ),
+      snapshots: this.dentalChartSnapshots
+        .filter((snapshot) => matchesScope(snapshot, scope) && snapshot.patientId === patientId)
+        .sort((left, right) => right.snapshotVersion - left.snapshotVersion)
+    };
+  }
+
+  async createDentalFinding(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreateDentalFindingInput
+  ): Promise<DentalFindingMutationResult | null> {
+    const chart = this.ensureDentalChart(scope, patientId);
+    if (!chart) return null;
+    if (input.encounterId) {
+      const encounter = await this.findEncounterById(scope, input.encounterId);
+      if (!encounter || encounter.patientId !== patientId) return null;
+    }
+
+    const normalized = normalizeFixtureCreateDentalFindingInput(input);
+    const now = new Date().toISOString();
+    const finding: DentalFindingRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId,
+      encounterId: normalized.encounterId,
+      toothNumber: normalized.toothNumber,
+      numberingSystem: "fdi",
+      surface: normalized.surface,
+      findingType: normalized.findingType,
+      severity: normalized.severity,
+      status: normalized.status,
+      reviewStatus: normalized.reviewStatus,
+      source: normalized.source,
+      confidence: normalized.confidence,
+      notes: normalized.notes,
+      provenance: normalized.provenance,
+      treatmentReference: normalized.treatmentReference,
+      createdByUserId: scope.actorUserId,
+      updatedByUserId: null,
+      reviewedByUserId: normalized.reviewStatus === "reviewed" ? scope.actorUserId : null,
+      reviewedAt: normalized.reviewStatus === "reviewed" ? now : null,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.dentalFindings.push(finding);
+    const history = this.appendDentalFindingHistory(scope, finding, {
+      changeType: "created",
+      reason: null,
+      beforeState: null,
+      provenance: normalized.provenance
+    });
+    this.timelineItems.push({
+      ...timeline(
+        scope,
+        patientId,
+        "dental_finding_created",
+        "dental_findings",
+        finding.id,
+        `Dental finding added on ${finding.toothNumber}`
+      ),
+      summary: finding.surface
+        ? `${finding.findingType} on ${finding.surface}`
+        : finding.findingType,
+      metadata: {
+        findingId: finding.id,
+        encounterId: finding.encounterId,
+        toothNumber: finding.toothNumber,
+        surface: finding.surface,
+        status: finding.status,
+        reviewStatus: finding.reviewStatus
+      }
+    });
+
+    return { finding, history };
+  }
+
+  async updateDentalFinding(
+    scope: RepositoryScope,
+    findingId: UUID,
+    input: UpdateDentalFindingRepositoryInput
+  ): Promise<DentalFindingMutationResult | null> {
+    assertDentalFindingUpdateReason(input.changeReason);
+    const finding = this.dentalFindings.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === findingId
+    );
+    if (!finding) return null;
+    if (input.encounterId) {
+      const encounter = await this.findEncounterById(scope, input.encounterId);
+      if (!encounter || encounter.patientId !== finding.patientId) return null;
+    }
+
+    const beforeState = toDentalFindingSnapshotFinding(finding);
+    const next = normalizeFixtureUpdateDentalFindingInput(finding, input);
+    const now = new Date().toISOString();
+    Object.assign(finding, {
+      encounterId: next.encounterId,
+      toothNumber: next.toothNumber,
+      surface: next.surface,
+      findingType: next.findingType,
+      severity: next.severity,
+      status: next.status,
+      reviewStatus: next.reviewStatus,
+      source: next.source,
+      confidence: next.confidence,
+      notes: next.notes,
+      provenance: next.provenance,
+      treatmentReference: next.treatmentReference,
+      updatedByUserId: scope.actorUserId,
+      reviewedByUserId:
+        next.reviewStatus === "reviewed" ? finding.reviewedByUserId ?? scope.actorUserId : null,
+      reviewedAt: next.reviewStatus === "reviewed" ? finding.reviewedAt ?? now : null,
+      updatedAt: now
+    });
+    const history = this.appendDentalFindingHistory(scope, finding, {
+      changeType: "updated",
+      reason: input.changeReason.trim(),
+      beforeState,
+      provenance: input.provenance ?? {}
+    });
+    this.timelineItems.push({
+      ...timeline(
+        scope,
+        finding.patientId,
+        "dental_finding_updated",
+        "dental_findings",
+        finding.id,
+        `Dental finding updated on ${finding.toothNumber}`
+      ),
+      summary: input.changeReason.trim(),
+      metadata: {
+        findingId: finding.id,
+        encounterId: finding.encounterId,
+        toothNumber: finding.toothNumber,
+        surface: finding.surface,
+        status: finding.status,
+        reviewStatus: finding.reviewStatus
+      }
+    });
+
+    return { finding, history };
+  }
+
+  async listDentalFindingHistory(
+    scope: RepositoryScope,
+    findingId: UUID
+  ): Promise<DentalFindingHistoryRecord[]> {
+    return this.dentalFindingHistory
+      .filter((history) => matchesScope(history, scope) && history.findingId === findingId)
+      .sort((left, right) => right.changedAt.localeCompare(left.changedAt));
+  }
+
+  async createDentalChartSnapshot(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreateDentalChartSnapshotInput
+  ): Promise<DentalChartSnapshotRecord | null> {
+    const chart = this.ensureDentalChart(scope, patientId);
+    if (!chart) return null;
+    if (input.encounterId) {
+      const encounter = await this.findEncounterById(scope, input.encounterId);
+      if (!encounter || encounter.patientId !== patientId) return null;
+    }
+
+    const findings = this.dentalFindings.filter(
+      (finding) => matchesScope(finding, scope) && finding.patientId === patientId
+    );
+    const now = new Date().toISOString();
+    const snapshot: DentalChartSnapshotRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId,
+      encounterId: input.encounterId ?? null,
+      snapshotVersion: this.nextDentalSnapshotVersion(scope, patientId),
+      chartState: buildDentalChartSnapshotState(findings, now),
+      reason: input.reason ?? null,
+      provenance: input.provenance ?? {},
+      createdByUserId: scope.actorUserId,
+      createdAt: now
+    };
+    this.dentalChartSnapshots.push(snapshot);
+    this.timelineItems.push({
+      ...timeline(
+        scope,
+        patientId,
+        "dental_chart_snapshot_created",
+        "dental_chart_snapshots",
+        snapshot.id,
+        `Dental chart snapshot v${snapshot.snapshotVersion}`
+      ),
+      summary: input.reason ?? `${snapshot.chartState.findingCount} finding(s) captured`,
+      metadata: {
+        snapshotId: snapshot.id,
+        encounterId: snapshot.encounterId,
+        snapshotVersion: snapshot.snapshotVersion,
+        findingCount: snapshot.chartState.findingCount,
+        numberingSystem: chart.numberingSystem
+      }
+    });
+
+    return snapshot;
+  }
+
   nextClinicalNoteVersion(scope: RepositoryScope, encounterId: UUID): number {
     return (
       Math.max(
@@ -1248,6 +1507,74 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
           .map((note) => note.versionNumber)
       ) + 1
     );
+  }
+
+  ensureDentalChart(scope: RepositoryScope, patientId: UUID): DentalChartRecord | null {
+    const patient = this.patients.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === patientId
+    );
+    if (!patient) return null;
+
+    let chart = this.dentalCharts.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.patientId === patientId
+    );
+    if (!chart) {
+      const now = new Date().toISOString();
+      chart = {
+        id: uuid(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        patientId,
+        numberingSystem: "fdi",
+        createdByUserId: scope.actorUserId,
+        updatedByUserId: null,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.dentalCharts.push(chart);
+    }
+
+    return chart;
+  }
+
+  nextDentalSnapshotVersion(scope: RepositoryScope, patientId: UUID): number {
+    return (
+      Math.max(
+        0,
+        ...this.dentalChartSnapshots
+          .filter((snapshot) => matchesScope(snapshot, scope) && snapshot.patientId === patientId)
+          .map((snapshot) => snapshot.snapshotVersion)
+      ) + 1
+    );
+  }
+
+  appendDentalFindingHistory(
+    scope: RepositoryScope,
+    finding: DentalFindingRecord,
+    input: {
+      changeType: DentalFindingHistoryRecord["changeType"];
+      reason: string | null;
+      beforeState: DentalFindingHistoryRecord["beforeState"];
+      provenance: Record<string, unknown>;
+    }
+  ): DentalFindingHistoryRecord {
+    const history: DentalFindingHistoryRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      findingId: finding.id,
+      patientId: finding.patientId,
+      encounterId: finding.encounterId,
+      changeType: input.changeType,
+      changedByUserId: scope.actorUserId,
+      changedAt: new Date().toISOString(),
+      reason: input.reason,
+      beforeState: input.beforeState,
+      afterState: toDentalFindingSnapshotFinding(finding),
+      provenance: input.provenance
+    };
+    this.dentalFindingHistory.push(history);
+    return history;
   }
 }
 
@@ -1311,4 +1638,50 @@ function timeline(
     summary: null,
     metadata
   };
+}
+
+function normalizeFixtureCreateDentalFindingInput(input: CreateDentalFindingInput): Required<CreateDentalFindingInput> {
+  const normalized = {
+    encounterId: input.encounterId ?? null,
+    toothNumber: normalizeDentalToothNumber(input.toothNumber),
+    surface: normalizeDentalSurface(input.surface),
+    findingType: input.findingType,
+    severity: input.severity?.trim() || null,
+    status: input.status ?? "active",
+    reviewStatus: input.reviewStatus ?? "needs_review",
+    source: input.source ?? "manual",
+    confidence: input.confidence ?? null,
+    notes: input.notes?.trim() || null,
+    provenance: input.provenance ?? {},
+    treatmentReference: input.treatmentReference ?? {}
+  };
+
+  assertValidDentalFinding(normalized);
+  return normalized;
+}
+
+function normalizeFixtureUpdateDentalFindingInput(
+  existing: DentalFindingRecord,
+  input: UpdateDentalFindingRepositoryInput
+): Required<CreateDentalFindingInput> {
+  const normalized = {
+    encounterId: input.encounterId === undefined ? existing.encounterId : input.encounterId,
+    toothNumber: normalizeDentalToothNumber(input.toothNumber ?? existing.toothNumber),
+    surface:
+      input.surface === undefined
+        ? existing.surface
+        : normalizeDentalSurface(input.surface),
+    findingType: input.findingType ?? existing.findingType,
+    severity: input.severity === undefined ? existing.severity : input.severity?.trim() || null,
+    status: input.status ?? existing.status,
+    reviewStatus: input.reviewStatus ?? existing.reviewStatus,
+    source: input.source ?? existing.source,
+    confidence: input.confidence === undefined ? existing.confidence : input.confidence,
+    notes: input.notes === undefined ? existing.notes : input.notes?.trim() || null,
+    provenance: input.provenance ?? existing.provenance,
+    treatmentReference: input.treatmentReference ?? existing.treatmentReference
+  };
+
+  assertValidDentalFinding(normalized);
+  return normalized;
 }

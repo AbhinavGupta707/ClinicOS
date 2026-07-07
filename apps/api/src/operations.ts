@@ -9,13 +9,15 @@ import type {
   ClinicOperationsRepository,
   CreateAppointmentInput,
   CreateConsentInput,
+  CreateDentalChartSnapshotInput,
   CreateEncounterInput,
   CreateIntakeFormSubmissionInput,
   CreateIntakeFormTemplateInput,
   CreateLeadInput,
   CreatePatientInput,
   CreatePrescriptionInput,
-  RepositoryScope
+  RepositoryScope,
+  UpdateDentalFindingRepositoryInput
 } from "@clinic-os/db";
 import {
   assertAppointmentTransition,
@@ -31,6 +33,10 @@ import {
   isAppointmentStatus,
   isConsentCaptureMethod,
   isConsentPurpose,
+  isDentalFindingReviewStatus,
+  isDentalFindingSource,
+  isDentalFindingStatus,
+  isDentalFindingType,
   isEncounterStatus,
   isIntakeFormType,
   isIntakeSubmissionSource,
@@ -46,6 +52,7 @@ import {
   type ClinicalNoteContent,
   type ConsentCaptureMethod,
   type ConsentPurpose,
+  type CreateDentalFindingInput,
   type DomainEventType,
   type EncounterStatus,
   type IntakeFormType,
@@ -1269,6 +1276,183 @@ export async function signPrescription(
   return ok({ prescription });
 }
 
+export async function getPatientDentalChart(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.read" });
+  const scope = scopeFrom(context);
+  const patient = await dependencies.repository.findPatientById(scope, patientId);
+  if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
+
+  const view = await dependencies.repository.getDentalChart(scope, patientId);
+  if (!view) throw notFound("Dental chart not found.", { patient_id: patientId });
+
+  const history = await Promise.all(
+    view.findings.map(async (finding) => ({
+      findingId: finding.id,
+      entries: (await dependencies.repository.listDentalFindingHistory(scope, finding.id)).map(
+        publicDentalFindingHistory
+      )
+    }))
+  );
+
+  await audit(context, dependencies, "dental_chart.viewed", {
+    patientId,
+    resourceType: "dental_chart",
+    resourceId: view.chart.id,
+    metadata: {
+      findingCount: view.findings.length,
+      snapshotCount: view.snapshots.length,
+      numberingSystem: publicDentalNumberingSystem(view.chart.numberingSystem)
+    }
+  });
+
+  return ok({
+    dentalChart: publicDentalChart(view.chart),
+    findings: view.findings.map(publicDentalFinding),
+    history,
+    snapshots: view.snapshots.map(publicDentalChartSnapshot)
+  });
+}
+
+export async function createPatientDentalFinding(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  body: unknown
+) {
+  const input = parseCreateDentalFinding(body);
+  return createDentalFindingForPatient(context, dependencies, patientId, input);
+}
+
+export async function createEncounterDentalFinding(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  encounterId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.write" });
+  const scope = scopeFrom(context);
+  const encounter = await dependencies.repository.findEncounterById(scope, encounterId);
+  if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+
+  const input = parseCreateDentalFinding(body, { encounterId });
+  return createDentalFindingForPatient(context, dependencies, encounter.patientId, input, {
+    preauthorized: true
+  });
+}
+
+export async function updateDentalFinding(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  findingId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.write" });
+  const input = parseUpdateDentalFinding(body);
+  const result = await dependencies.repository.updateDentalFinding(
+    scopeFrom(context),
+    findingId,
+    input
+  );
+  if (!result) throw notFound("Dental finding not found.", { dental_finding_id: findingId });
+
+  await audit(context, dependencies, "dental_finding.updated", {
+    patientId: result.finding.patientId,
+    resourceType: "dental_finding",
+    resourceId: result.finding.id,
+    metadata: dentalFindingAuditMetadata(result.finding)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "dental.finding.updated",
+    aggregateType: "dental_finding",
+    aggregateId: result.finding.id,
+    patientId: result.finding.patientId,
+    payload: {
+      findingId: result.finding.id,
+      patientId: result.finding.patientId,
+      encounterId: result.finding.encounterId,
+      toothNumber: result.finding.toothNumber,
+      surface: result.finding.surface,
+      findingType: result.finding.findingType,
+      reviewStatus: result.finding.reviewStatus
+    }
+  });
+
+  return ok({
+    finding: publicDentalFinding(result.finding),
+    history: publicDentalFindingHistory(result.history)
+  });
+}
+
+export async function listDentalFindingHistory(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  findingId: UUID
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.read" });
+  const history = await dependencies.repository.listDentalFindingHistory(
+    scopeFrom(context),
+    findingId
+  );
+
+  return ok({ history: history.map(publicDentalFindingHistory) });
+}
+
+export async function createDentalChartSnapshot(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.snapshot" });
+  const input = parseDentalChartSnapshot(body);
+  const snapshot = await dependencies.repository.createDentalChartSnapshot(
+    scopeFrom(context),
+    patientId,
+    input
+  );
+  if (!snapshot) throw notFound("Patient or dental chart context not found.", { patient_id: patientId });
+
+  await audit(context, dependencies, "dental_chart.snapshot_created", {
+    patientId: snapshot.patientId,
+    resourceType: "dental_chart_snapshot",
+    resourceId: snapshot.id,
+    metadata: {
+      encounterId: snapshot.encounterId,
+      snapshotVersion: snapshot.snapshotVersion,
+      findingCount: snapshot.chartState.findingCount
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "dental.chart.snapshot_created",
+    aggregateType: "dental_chart_snapshot",
+    aggregateId: snapshot.id,
+    patientId: snapshot.patientId,
+    payload: {
+      snapshotId: snapshot.id,
+      patientId: snapshot.patientId,
+      encounterId: snapshot.encounterId,
+      snapshotVersion: snapshot.snapshotVersion,
+      findingCount: snapshot.chartState.findingCount
+    }
+  });
+
+  return created({ snapshot: publicDentalChartSnapshot(snapshot) });
+}
+
 export async function requestMediaUploadUrl(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
@@ -1618,6 +1802,54 @@ async function bookAppointment(
   return appointment;
 }
 
+async function createDentalFindingForPatient(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  input: CreateDentalFindingInput,
+  options: { preauthorized?: boolean } = {}
+) {
+  if (!options.preauthorized) {
+    authorize(context, { permission: "patient.read" });
+    authorize(context, { permission: "patient.phi.read" });
+    authorize(context, { permission: "dental.chart.write" });
+  }
+
+  const result = await dependencies.repository.createDentalFinding(
+    scopeFrom(context),
+    patientId,
+    input
+  );
+  if (!result) throw notFound("Patient or encounter not found.", { patient_id: patientId });
+
+  await audit(context, dependencies, "dental_finding.created", {
+    patientId: result.finding.patientId,
+    resourceType: "dental_finding",
+    resourceId: result.finding.id,
+    metadata: dentalFindingAuditMetadata(result.finding)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "dental.finding.created",
+    aggregateType: "dental_finding",
+    aggregateId: result.finding.id,
+    patientId: result.finding.patientId,
+    payload: {
+      findingId: result.finding.id,
+      patientId: result.finding.patientId,
+      encounterId: result.finding.encounterId,
+      toothNumber: result.finding.toothNumber,
+      surface: result.finding.surface,
+      findingType: result.finding.findingType,
+      reviewStatus: result.finding.reviewStatus
+    }
+  });
+
+  return created({
+    finding: publicDentalFinding(result.finding),
+    history: publicDentalFindingHistory(result.history)
+  });
+}
+
 async function transitionAppointment(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
@@ -1711,6 +1943,7 @@ type PublicTimelineItemType =
   | "queue"
   | "message"
   | "clinical_note"
+  | "dental"
   | "prescription"
   | "media"
   | "invoice"
@@ -1768,6 +2001,10 @@ function publicTimelineItemType(
     case "clinical_note_signed":
     case "clinical_note_amended":
       return "clinical_note";
+    case "dental_finding_created":
+    case "dental_finding_updated":
+    case "dental_chart_snapshot_created":
+      return "dental";
     case "prescription_draft_created":
     case "prescription_signed":
       return "prescription";
@@ -1816,6 +2053,12 @@ function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): Dom
       return "clinical_note.signed";
     case "clinical_note_amended":
       return "clinical_note.amended";
+    case "dental_finding_created":
+      return "dental.finding.created";
+    case "dental_finding_updated":
+      return "dental.finding.updated";
+    case "dental_chart_snapshot_created":
+      return "dental.chart.snapshot_created";
     case "prescription_draft_created":
       return "prescription.draft_created";
     case "prescription_signed":
@@ -2013,6 +2256,89 @@ function parseCreatePrescription(body: unknown): CreatePrescriptionInput {
   return {
     medications: parsePrescriptionMedications(input.medications),
     notes: optionalNullableString(input.notes, "notes")
+  };
+}
+
+function parseCreateDentalFinding(
+  body: unknown,
+  defaults: { encounterId?: UUID | null } = {}
+): CreateDentalFindingInput {
+  const input = objectBody(body);
+  const bodyEncounterId = optionalUuid(input.encounterId, "encounterId");
+  if (
+    defaults.encounterId &&
+    bodyEncounterId &&
+    bodyEncounterId !== defaults.encounterId
+  ) {
+    throw validation("Dental finding encounter context does not match the route.", {
+      expected_encounter_id: defaults.encounterId,
+      received_encounter_id: bodyEncounterId
+    });
+  }
+  const statusFields = parseDentalStatusFields(input.status, input.reviewStatus ?? input.reviewState);
+
+  return {
+    encounterId: defaults.encounterId ?? bodyEncounterId,
+    toothNumber: requiredString(input.toothNumber, "toothNumber"),
+    surface: parseDentalSurfaceField(input.surface ?? input.surfaces),
+    findingType: parseDentalFindingType(requiredString(input.findingType, "findingType")),
+    severity: optionalNullableString(input.severity, "severity"),
+    status: statusFields.status,
+    reviewStatus: statusFields.reviewStatus,
+    source: input.source === undefined ? undefined : parseDentalFindingSource(requiredString(input.source, "source")),
+    confidence: optionalUnitNumber(input.confidence, "confidence"),
+    notes: optionalNullableString(input.notes ?? input.note ?? input.doctorNote, "notes"),
+    provenance: recordField(input.provenance, "provenance"),
+    treatmentReference: recordField(input.treatmentReference, "treatmentReference")
+  };
+}
+
+function parseUpdateDentalFinding(body: unknown): UpdateDentalFindingRepositoryInput {
+  const input = objectBody(body);
+  const statusFields = parseDentalStatusFields(input.status, input.reviewStatus ?? input.reviewState);
+
+  return {
+    encounterId:
+      input.encounterId === undefined ? undefined : optionalUuid(input.encounterId, "encounterId"),
+    toothNumber:
+      input.toothNumber === undefined ? undefined : requiredString(input.toothNumber, "toothNumber"),
+    surface:
+      input.surface === undefined && input.surfaces === undefined
+        ? undefined
+        : parseDentalSurfaceField(input.surface ?? input.surfaces),
+    findingType:
+      input.findingType === undefined
+        ? undefined
+        : parseDentalFindingType(requiredString(input.findingType, "findingType")),
+    severity:
+      input.severity === undefined ? undefined : optionalNullableString(input.severity, "severity"),
+    status: statusFields.status,
+    reviewStatus: statusFields.reviewStatus,
+    source:
+      input.source === undefined
+        ? undefined
+        : parseDentalFindingSource(requiredString(input.source, "source")),
+    confidence:
+      input.confidence === undefined ? undefined : optionalUnitNumber(input.confidence, "confidence"),
+    notes:
+      input.notes === undefined && input.note === undefined && input.doctorNote === undefined
+        ? undefined
+        : optionalNullableString(input.notes ?? input.note ?? input.doctorNote, "notes"),
+    provenance: recordField(input.provenance, "provenance"),
+    treatmentReference: recordField(input.treatmentReference, "treatmentReference"),
+    changeReason: requiredString(
+      input.changeReason ?? input.reason ?? input.doctorNote ?? input.note,
+      "changeReason"
+    )
+  };
+}
+
+function parseDentalChartSnapshot(body: unknown): CreateDentalChartSnapshotInput {
+  const input = objectBody(body);
+  return {
+    encounterId: optionalUuid(input.encounterId, "encounterId"),
+    reason: optionalNullableString(input.reason, "reason"),
+    provenance: recordField(input.provenance, "provenance")
   };
 }
 
@@ -2228,6 +2554,81 @@ function parseMediaType(value: string): MediaType {
   return value;
 }
 
+function parseDentalFindingType(value: string): CreateDentalFindingInput["findingType"] {
+  if (!isDentalFindingType(value)) {
+    throw validation("Invalid dental finding type.", { field: "findingType", value });
+  }
+  return value;
+}
+
+function parseDentalFindingStatus(
+  value: string
+): NonNullable<UpdateDentalFindingRepositoryInput["status"]> {
+  if (!isDentalFindingStatus(value)) {
+    throw validation("Invalid dental finding status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseDentalFindingReviewStatus(
+  value: string
+): NonNullable<UpdateDentalFindingRepositoryInput["reviewStatus"]> {
+  if (!isDentalFindingReviewStatus(value)) {
+    throw validation("Invalid dental finding review status.", { field: "reviewStatus", value });
+  }
+  return value;
+}
+
+function parseDentalFindingSource(
+  value: string
+): NonNullable<UpdateDentalFindingRepositoryInput["source"]> {
+  if (!isDentalFindingSource(value)) {
+    throw validation("Invalid dental finding source.", { field: "source", value });
+  }
+  return value;
+}
+
+function parseDentalStatusFields(status: unknown, reviewStatus: unknown): {
+  status?: UpdateDentalFindingRepositoryInput["status"];
+  reviewStatus?: UpdateDentalFindingRepositoryInput["reviewStatus"];
+} {
+  const parsed: {
+    status?: UpdateDentalFindingRepositoryInput["status"];
+    reviewStatus?: UpdateDentalFindingRepositoryInput["reviewStatus"];
+  } = {};
+
+  if (status !== undefined) {
+    const value = requiredString(status, "status");
+    if (value === "reviewed") {
+      parsed.reviewStatus = "reviewed";
+    } else if (value === "resolved") {
+      parsed.status = "treated";
+    } else {
+      parsed.status = parseDentalFindingStatus(value);
+    }
+  }
+
+  if (reviewStatus !== undefined) {
+    parsed.reviewStatus = parseDentalFindingReviewStatus(requiredString(reviewStatus, "reviewStatus"));
+  }
+
+  return parsed;
+}
+
+function parseDentalSurfaceField(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  if (Array.isArray(value)) {
+    if (value.length === 0) return null;
+    if (value.length > 1) {
+      throw validation("Dental findings currently accept one surface per finding row.", {
+        field: "surfaces"
+      });
+    }
+    return optionalNullableString(value[0], "surfaces[0]") ?? null;
+  }
+  return optionalNullableString(value, "surface") ?? null;
+}
+
 function parseMediaScanStatus(value: string): MediaScanStatus {
   if (!isMediaScanStatus(value)) {
     throw validation("Invalid media scan status.", { field: "scanStatus", value });
@@ -2327,6 +2728,87 @@ function mediaAuditMetadata(input: {
   };
 }
 
+function publicDentalNumberingSystem(value: string): string {
+  return value.toUpperCase();
+}
+
+function publicDentalChart<T extends { numberingSystem: string }>(chart: T) {
+  return {
+    ...chart,
+    numberingSystem: publicDentalNumberingSystem(chart.numberingSystem),
+    notation: publicDentalNumberingSystem(chart.numberingSystem)
+  };
+}
+
+function publicDentalFinding<T extends { numberingSystem: string; surface?: string | null }>(
+  finding: T
+) {
+  return {
+    ...finding,
+    numberingSystem: publicDentalNumberingSystem(finding.numberingSystem),
+    surfaces: finding.surface ? [finding.surface] : []
+  };
+}
+
+function publicDentalFindingHistory<T extends {
+  beforeState: Record<string, unknown> | null;
+  afterState: Record<string, unknown>;
+}>(history: T) {
+  return {
+    ...history,
+    beforeState: history.beforeState ? publicDentalSnapshotFinding(history.beforeState) : null,
+    afterState: publicDentalSnapshotFinding(history.afterState)
+  };
+}
+
+function publicDentalSnapshotFinding<T extends Record<string, unknown>>(finding: T) {
+  const numberingSystem =
+    typeof finding.numberingSystem === "string"
+      ? publicDentalNumberingSystem(finding.numberingSystem)
+      : "FDI";
+  const surface = typeof finding.surface === "string" ? finding.surface : null;
+
+  return {
+    ...finding,
+    numberingSystem,
+    surfaces: surface ? [surface] : []
+  };
+}
+
+function publicDentalChartSnapshot<T extends { chartState: { numberingSystem: string } }>(
+  snapshot: T
+) {
+  return {
+    ...snapshot,
+    chartState: {
+      ...snapshot.chartState,
+      numberingSystem: publicDentalNumberingSystem(snapshot.chartState.numberingSystem)
+    }
+  };
+}
+
+function dentalFindingAuditMetadata(input: {
+  toothNumber: string;
+  surface?: string | null;
+  findingType: string;
+  severity?: string | null;
+  status: string;
+  reviewStatus: string;
+  source: string;
+  encounterId?: UUID | null;
+}) {
+  return {
+    toothNumber: input.toothNumber,
+    surfaces: input.surface ? [input.surface] : [],
+    findingType: input.findingType,
+    severity: input.severity ?? null,
+    status: input.status,
+    reviewState: input.reviewStatus,
+    source: input.source,
+    encounterId: input.encounterId ?? null
+  };
+}
+
 function appointmentAuditAction(status: AppointmentStatus): KnownAuditAction {
   if (status === "confirmed") return "appointment.confirmed";
   if (status === "checked_in") return "patient.checked_in";
@@ -2384,6 +2866,16 @@ function numberField(value: unknown, field: string): number {
     throw validation(`${field} must be a number.`, { field });
   }
   return value;
+}
+
+function optionalUnitNumber(value: unknown, field: string): number | null | undefined {
+  if (value === undefined) return undefined;
+  if (value === null) return null;
+  const number = numberField(value, field);
+  if (number < 0 || number > 1) {
+    throw validation(`${field} must be between 0 and 1.`, { field });
+  }
+  return number;
 }
 
 function integerField(

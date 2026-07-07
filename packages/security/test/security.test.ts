@@ -41,6 +41,32 @@ test("CP4 media audit classifications cover upload and signed access", () => {
   );
 });
 
+test("CP4 dental audit classifications cover chart reads findings and snapshots", () => {
+  for (const action of [
+    "dental_chart.viewed",
+    "dental_finding.created",
+    "dental_finding.updated",
+    "dental_chart.snapshot_created"
+  ] as const) {
+    const classification = classifyAuditAction(action);
+    assert.equal(classification.phiInvolved, true, `${action} should involve PHI`);
+    assert.equal(classification.requiresPatientId, true, `${action} should require patientId`);
+  }
+
+  assert.equal(classifyAuditAction("dental_chart.viewed").category, "phi_access");
+  assert.equal(classifyAuditAction("dental_chart.snapshot_created").riskLevel, "critical");
+  assert.throws(
+    () =>
+      createAuditEvent({
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000101",
+        actor: { type: "user", id: "10000000-0000-4000-8000-000000001002" },
+        action: "dental_finding.created"
+      }),
+    /requires patientId/
+  );
+});
+
 test("CP3 audit classifications cover intake consent encounter note prescription and timeline actions", () => {
   for (const action of [
     "patient.timeline.viewed",

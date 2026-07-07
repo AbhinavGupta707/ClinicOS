@@ -58,6 +58,8 @@ test.describe("Checkpoint 4 dental media workflow", () => {
     await expect(page.getByTestId("cp4-dental-media-workspace")).toBeVisible();
     await expect(page.getByTestId("cp4-odontogram")).toBeVisible();
     await expect(page.getByTestId("cp4-add-finding")).toBeVisible();
+    await page.getByRole("tab", { name: /media/i }).click();
+    await expect(page.getByTestId("cp4-media-gallery")).toBeVisible();
 
     const overflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth

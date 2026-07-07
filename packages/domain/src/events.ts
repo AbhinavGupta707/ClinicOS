@@ -34,6 +34,9 @@ export const DOMAIN_EVENT_TYPES = [
   "clinical_note.draft_created",
   "clinical_note.signed",
   "clinical_note.amended",
+  "dental.finding.created",
+  "dental.finding.updated",
+  "dental.chart.snapshot_created",
   "prescription.draft_created",
   "prescription.signed",
   "media.upload_requested",
@@ -101,6 +104,14 @@ export const CP3_EVENT_TYPES = [
   ...CP3_TIMELINE_EVENT_TYPES
 ] as const;
 
+export const CP4_DENTAL_EVENT_TYPES = [
+  "dental.finding.created",
+  "dental.finding.updated",
+  "dental.chart.snapshot_created"
+] as const;
+
+export const CP4_EVENT_TYPES = [...CP3_EVENT_TYPES, ...CP4_DENTAL_EVENT_TYPES] as const;
+
 export type Cp2LeadEventType = (typeof CP2_LEAD_EVENT_TYPES)[number];
 export type Cp2PatientEventType = (typeof CP2_PATIENT_EVENT_TYPES)[number];
 export type Cp2AppointmentEventType = (typeof CP2_APPOINTMENT_EVENT_TYPES)[number];
@@ -110,6 +121,8 @@ export type Cp3IntakeConsentEventType = (typeof CP3_INTAKE_CONSENT_EVENT_TYPES)[
 export type Cp3ClinicalEventType = (typeof CP3_CLINICAL_EVENT_TYPES)[number];
 export type Cp3TimelineEventType = (typeof CP3_TIMELINE_EVENT_TYPES)[number];
 export type Cp3EventType = (typeof CP3_EVENT_TYPES)[number];
+export type Cp4DentalEventType = (typeof CP4_DENTAL_EVENT_TYPES)[number];
+export type Cp4EventType = (typeof CP4_EVENT_TYPES)[number];
 
 export type EventSourceKind =
   | "external_system"
@@ -145,6 +158,8 @@ export interface DomainEventAggregate {
     | "consent"
     | "encounter"
     | "clinical_note"
+    | "dental_finding"
+    | "dental_chart_snapshot"
     | "prescription"
     | "media_upload"
     | "media_asset"
@@ -199,6 +214,10 @@ export function isCp2EventType(value: string): value is Cp2EventType {
 
 export function isCp3EventType(value: string): value is Cp3EventType {
   return (CP3_EVENT_TYPES as readonly string[]).includes(value);
+}
+
+export function isCp4EventType(value: string): value is Cp4EventType {
+  return (CP4_EVENT_TYPES as readonly string[]).includes(value);
 }
 
 export function createDomainEventEnvelope<
