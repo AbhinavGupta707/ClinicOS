@@ -4,6 +4,14 @@ import type {
   AppointmentRecord,
   AppointmentStatus,
   AppointmentTypeRecord,
+  AiActionProposalRecord,
+  AiDraftOutputRecord,
+  AiJobRecord,
+  AiReviewDecisionRecord,
+  AiSessionDetail,
+  AiSessionRecord,
+  AiSourceAnchorRecord,
+  AiTranscriptSegmentRecord,
   AttributionTouchRecord,
   ChairOrRoomRecord,
   ClinicalNoteVersionRecord,
@@ -111,6 +119,7 @@ import {
   assertTreatmentPlanAcceptable,
   assertTreatmentPlanMutable,
   assertValidDentalFinding,
+  assertSupportedSourceAnchors,
   buildDentalChartSnapshotState,
   buildPaymentFollowUpKey,
   buildPostOpFollowUpKey,
@@ -135,8 +144,15 @@ import type {
   AppointmentSearchFilter,
   AmendClinicalNoteInput,
   AmendClinicalNoteResult,
+  AiRetentionDeletionResult,
   ClinicOperationsRepository,
   CreateInvoiceInput,
+  CreateAiActionProposalInput,
+  CreateAiDraftOutputInput,
+  CreateAiJobInput,
+  CreateAiSessionInput,
+  CreateAiSourceAnchorInput,
+  CreateAiTranscriptSegmentInput,
   CreatePaymentRequestInput,
   CreateProcedurePerformedInput,
   CreateReceiptInput,
@@ -187,6 +203,7 @@ import type {
   MigrationRowsFilter,
   OutboxEventInput,
   PatientSearchFilter,
+  RecordAiReviewDecisionInput,
   RecordPaymentTransactionInput,
   RecallSearchFilter,
   RepositoryScope,
@@ -3859,6 +3876,516 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
+  async createAiSession(scope: RepositoryScope, input: CreateAiSessionInput): Promise<AiSessionRecord> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<AiSessionRow>(
+        `
+          insert into ai_sessions (
+            tenant_id,
+            clinic_id,
+            patient_id,
+            encounter_id,
+            provider_mode,
+            llm_provider_key,
+            transcription_provider_key,
+            consent_snapshot,
+            retention_policy,
+            language_hint,
+            raw_audio_deleted_at,
+            metadata,
+            started_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, $10, $11::timestamptz, $12::jsonb, $13)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.patientId,
+          input.encounterId,
+          input.providerMode,
+          input.llmProviderKey,
+          input.transcriptionProviderKey,
+          JSON.stringify(input.consentSnapshot),
+          JSON.stringify(input.retentionPolicy),
+          input.languageHint ?? null,
+          input.retentionPolicy.rawAudioRetention === "disabled" ? new Date().toISOString() : null,
+          JSON.stringify(input.metadata ?? {}),
+          scope.actorUserId
+        ]
+      );
+      const session = mapAiSessionRow(result.rows[0]);
+      await this.#appendTimeline(client, scope, {
+        patientId: session.patientId,
+        itemType: "ai_session_started",
+        sourceTable: "ai_sessions",
+        sourceId: session.id,
+        title: "AI scribe session started",
+        summary: session.providerMode,
+        metadata: {
+          encounterId: session.encounterId,
+          providerMode: session.providerMode,
+          rawAudioRetention: session.retentionPolicy.rawAudioRetention
+        }
+      });
+      return session;
+    });
+  }
+
+  async findAiSessionById(scope: RepositoryScope, sessionId: UUID): Promise<AiSessionRecord | null> {
+    return this.#withRls(scope, async (client) =>
+      this.#findAiSessionByIdInTransaction(client, scope, sessionId)
+    );
+  }
+
+  async findAiSessionDetail(scope: RepositoryScope, sessionId: UUID): Promise<AiSessionDetail | null> {
+    return this.#withRls(scope, async (client) => {
+      const session = await this.#findAiSessionByIdInTransaction(client, scope, sessionId);
+      if (!session) return null;
+      const transcriptSegments = (
+        await client.query<AiTranscriptSegmentRow>(
+          `
+            select *
+            from ai_transcript_segments
+            where tenant_id = $1 and clinic_id = $2 and session_id = $3
+            order by sequence
+          `,
+          [scope.tenantId, scope.clinicId, sessionId]
+        )
+      ).rows.map(mapAiTranscriptSegmentRow);
+      const sourceAnchors = await this.#listAiSourceAnchorsInTransaction(client, scope, sessionId);
+      const jobs = (
+        await client.query<AiJobRow>(
+          `
+            select *
+            from ai_jobs
+            where tenant_id = $1 and clinic_id = $2 and session_id = $3
+            order by created_at
+          `,
+          [scope.tenantId, scope.clinicId, sessionId]
+        )
+      ).rows.map(mapAiJobRow);
+      const draftOutputs = (
+        await client.query<AiDraftOutputRow>(
+          `
+            select *
+            from ai_draft_outputs
+            where tenant_id = $1 and clinic_id = $2 and session_id = $3
+            order by created_at
+          `,
+          [scope.tenantId, scope.clinicId, sessionId]
+        )
+      ).rows.map(mapAiDraftOutputRow);
+      const actionProposals = (
+        await client.query<AiActionProposalRow>(
+          `
+            select *
+            from ai_action_proposals
+            where tenant_id = $1 and clinic_id = $2 and session_id = $3
+            order by created_at
+          `,
+          [scope.tenantId, scope.clinicId, sessionId]
+        )
+      ).rows.map(mapAiActionProposalRow);
+      const reviewDecisions = (
+        await client.query<AiReviewDecisionRow>(
+          `
+            select *
+            from ai_review_decisions
+            where tenant_id = $1 and clinic_id = $2 and session_id = $3
+            order by reviewed_at
+          `,
+          [scope.tenantId, scope.clinicId, sessionId]
+        )
+      ).rows.map(mapAiReviewDecisionRow);
+      return { session, transcriptSegments, sourceAnchors, jobs, draftOutputs, actionProposals, reviewDecisions };
+    });
+  }
+
+  async listAiSessionsForEncounter(scope: RepositoryScope, encounterId: UUID): Promise<AiSessionRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<AiSessionRow>(
+        `
+          select *
+          from ai_sessions
+          where tenant_id = $1 and clinic_id = $2 and encounter_id = $3
+          order by started_at desc
+        `,
+        [scope.tenantId, scope.clinicId, encounterId]
+      );
+      return result.rows.map(mapAiSessionRow);
+    });
+  }
+
+  async createAiTranscriptSegment(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiTranscriptSegmentInput
+  ): Promise<{ segment: AiTranscriptSegmentRecord; sourceAnchor: AiSourceAnchorRecord } | null> {
+    return this.#withRls(scope, async (client) => {
+      const session = await this.#findAiSessionByIdInTransaction(client, scope, sessionId);
+      if (!session || session.status === "retention_deleted") return null;
+      const sequence = Number(
+        (
+          await client.query<{ next_sequence: string }>(
+            `
+              select (coalesce(max(sequence), 0) + 1)::text as next_sequence
+              from ai_transcript_segments
+              where tenant_id = $1 and clinic_id = $2 and session_id = $3
+            `,
+            [scope.tenantId, scope.clinicId, sessionId]
+          )
+        ).rows[0].next_sequence
+      );
+      const segmentResult = await client.query<AiTranscriptSegmentRow>(
+        `
+          insert into ai_transcript_segments (
+            id,
+            tenant_id,
+            clinic_id,
+            session_id,
+            patient_id,
+            encounter_id,
+            sequence,
+            speaker_role,
+            text,
+            starts_at_ms,
+            ends_at_ms,
+            source_hash,
+            created_by_user_id
+          )
+          values (coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
+          returning *
+        `,
+        [
+          input.id ?? null,
+          scope.tenantId,
+          scope.clinicId,
+          sessionId,
+          session.patientId,
+          session.encounterId,
+          sequence,
+          input.speakerRole ?? "unknown",
+          input.text,
+          input.startsAtMs,
+          input.endsAtMs,
+          input.sourceHash,
+          scope.actorUserId
+        ]
+      );
+      const segment = mapAiTranscriptSegmentRow(segmentResult.rows[0]);
+      const sourceAnchor = await this.#createAiSourceAnchorInTransaction(client, scope, session, {
+        anchorType: "transcript_segment",
+        sourceRecordType: "ai_transcript_segments",
+        sourceRecordId: segment.id,
+        transcriptSegmentId: segment.id,
+        startsAtMs: segment.startsAtMs,
+        endsAtMs: segment.endsAtMs,
+        textQuoteDigest: segment.sourceHash,
+        supported: true,
+        unsupportedReason: null
+      });
+      await client.query(
+        `
+          update ai_sessions
+          set status = 'processing', updated_at = now()
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+        `,
+        [scope.tenantId, scope.clinicId, sessionId]
+      );
+      return { segment, sourceAnchor };
+    });
+  }
+
+  async createAiSourceAnchor(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiSourceAnchorInput
+  ): Promise<AiSourceAnchorRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const session = await this.#findAiSessionByIdInTransaction(client, scope, sessionId);
+      if (!session) return null;
+      return this.#createAiSourceAnchorInTransaction(client, scope, session, input);
+    });
+  }
+
+  async createAiJob(scope: RepositoryScope, sessionId: UUID, input: CreateAiJobInput): Promise<AiJobRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const session = await this.#findAiSessionByIdInTransaction(client, scope, sessionId);
+      if (!session) return null;
+      const result = await client.query<AiJobRow>(
+        `
+          insert into ai_jobs (
+            tenant_id,
+            clinic_id,
+            session_id,
+            patient_id,
+            encounter_id,
+            job_type,
+            status,
+            provider_mode,
+            provider_key,
+            input_digest,
+            output_summary,
+            error_code,
+            error_message,
+            created_by_user_id,
+            completed_at
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12, $13, $14, $15::timestamptz)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          sessionId,
+          session.patientId,
+          session.encounterId,
+          input.jobType,
+          input.status,
+          input.providerMode,
+          input.providerKey,
+          input.inputDigest,
+          JSON.stringify(input.outputSummary ?? {}),
+          input.errorCode ?? null,
+          input.errorMessage ?? null,
+          scope.actorUserId,
+          input.completedAt ?? (input.status === "succeeded" || input.status === "failed" ? new Date().toISOString() : null)
+        ]
+      );
+      return mapAiJobRow(result.rows[0]);
+    });
+  }
+
+  async createAiDraftOutput(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiDraftOutputInput
+  ): Promise<AiDraftOutputRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const session = await this.#findAiSessionByIdInTransaction(client, scope, sessionId);
+      if (!session) return null;
+      assertSupportedSourceAnchors(
+        await this.#listAiSourceAnchorsInTransaction(client, scope, sessionId),
+        input.sourceAnchorIds
+      );
+      const result = await client.query<AiDraftOutputRow>(
+        `
+          insert into ai_draft_outputs (
+            tenant_id,
+            clinic_id,
+            session_id,
+            job_id,
+            patient_id,
+            encounter_id,
+            output_type,
+            content,
+            confidence,
+            warnings,
+            source_anchor_ids,
+            unsupported_source_anchor_ids,
+            schema_version,
+            provider_mode,
+            provider_request_digest,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9, $10::jsonb, $11::uuid[], $12::uuid[], $13, $14, $15, $16)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          sessionId,
+          input.jobId ?? null,
+          session.patientId,
+          session.encounterId,
+          input.outputType,
+          JSON.stringify(input.content),
+          input.confidence,
+          JSON.stringify(input.warnings ?? []),
+          input.sourceAnchorIds,
+          input.unsupportedSourceAnchorIds ?? [],
+          input.schemaVersion,
+          input.providerMode,
+          input.providerRequestDigest,
+          scope.actorUserId
+        ]
+      );
+      const output = mapAiDraftOutputRow(result.rows[0]);
+      await client.query(
+        `
+          update ai_sessions
+          set status = 'ready_for_review', updated_at = now()
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+        `,
+        [scope.tenantId, scope.clinicId, sessionId]
+      );
+      await this.#appendTimeline(client, scope, {
+        patientId: output.patientId,
+        itemType: "ai_draft_generated",
+        sourceTable: "ai_draft_outputs",
+        sourceId: output.id,
+        title: "AI draft generated",
+        summary: output.outputType,
+        metadata: {
+          encounterId: output.encounterId,
+          outputType: output.outputType,
+          reviewStatus: output.reviewStatus
+        }
+      });
+      return output;
+    });
+  }
+
+  async createAiActionProposal(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiActionProposalInput
+  ): Promise<AiActionProposalRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const session = await this.#findAiSessionByIdInTransaction(client, scope, sessionId);
+      if (!session) return null;
+      assertSupportedSourceAnchors(
+        await this.#listAiSourceAnchorsInTransaction(client, scope, sessionId),
+        input.sourceAnchorIds
+      );
+      const result = await client.query<AiActionProposalRow>(
+        `
+          insert into ai_action_proposals (
+            tenant_id,
+            clinic_id,
+            session_id,
+            output_id,
+            patient_id,
+            encounter_id,
+            proposal_type,
+            title,
+            description,
+            proposed_payload,
+            required_permission,
+            source_anchor_ids,
+            unsupported_source_anchor_ids,
+            provider_mode,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11, $12::uuid[], $13::uuid[], $14, $15)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          sessionId,
+          input.outputId ?? null,
+          session.patientId,
+          session.encounterId,
+          input.proposalType,
+          input.title,
+          input.description,
+          JSON.stringify(input.proposedPayload),
+          input.requiredPermission,
+          input.sourceAnchorIds,
+          input.unsupportedSourceAnchorIds ?? [],
+          input.providerMode,
+          scope.actorUserId
+        ]
+      );
+      return mapAiActionProposalRow(result.rows[0]);
+    });
+  }
+
+  async recordAiReviewDecision(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: RecordAiReviewDecisionInput
+  ): Promise<AiReviewDecisionRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const session = await this.#findAiSessionByIdInTransaction(client, scope, sessionId);
+      if (!session) return null;
+      const targetTable = input.targetType === "draft_output" ? "ai_draft_outputs" : "ai_action_proposals";
+      const reviewStatus =
+        input.decision === "approve"
+          ? "approved_review_only"
+          : input.decision === "reject"
+            ? "rejected"
+            : "needs_review";
+      const updateResult = await client.query<{ id: UUID }>(
+        `
+          update ${targetTable}
+          set review_status = $4, reviewed_by_user_id = $5, reviewed_at = now(), updated_at = now()
+          where tenant_id = $1 and clinic_id = $2 and session_id = $3 and id = $6
+          returning id
+        `,
+        [scope.tenantId, scope.clinicId, sessionId, reviewStatus, scope.actorUserId, input.targetId]
+      );
+      if (!updateResult.rows[0]) return null;
+      const result = await client.query<AiReviewDecisionRow>(
+        `
+          insert into ai_review_decisions (
+            tenant_id,
+            clinic_id,
+            session_id,
+            target_type,
+            target_id,
+            decision,
+            reason,
+            edited_content,
+            reviewed_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          sessionId,
+          input.targetType,
+          input.targetId,
+          input.decision,
+          input.reason,
+          input.editedContent ? JSON.stringify(input.editedContent) : null,
+          scope.actorUserId
+        ]
+      );
+      return mapAiReviewDecisionRow(result.rows[0]);
+    });
+  }
+
+  async deleteAiSessionRetainedPayloads(
+    scope: RepositoryScope,
+    sessionId: UUID
+  ): Promise<AiRetentionDeletionResult | null> {
+    return this.#withRls(scope, async (client) => {
+      const session = await this.#findAiSessionByIdInTransaction(client, scope, sessionId);
+      if (!session) return null;
+      const deleted = await client.query<{ id: UUID }>(
+        `
+          delete from ai_transcript_segments
+          where tenant_id = $1 and clinic_id = $2 and session_id = $3
+          returning id
+        `,
+        [scope.tenantId, scope.clinicId, sessionId]
+      );
+      const result = await client.query<AiSessionRow>(
+        `
+          update ai_sessions
+          set
+            status = 'retention_deleted',
+            raw_audio_deleted_at = coalesce(raw_audio_deleted_at, now()),
+            transcript_deleted_at = now(),
+            updated_at = now()
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, sessionId]
+      );
+      return {
+        session: mapAiSessionRow(result.rows[0]),
+        deletedTranscriptSegments: deleted.rows.length,
+        deletedRawAudioReferences: true
+      };
+    });
+  }
+
   async createMediaUploadReservation(
     scope: RepositoryScope,
     input: CreateMediaUploadReservationInput
@@ -6855,6 +7382,89 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     return result.rows[0] ? mapEncounterRow(result.rows[0]) : null;
   }
 
+  async #findAiSessionByIdInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    sessionId: UUID
+  ): Promise<AiSessionRecord | null> {
+    const result = await client.query<AiSessionRow>(
+      `
+        select *
+        from ai_sessions
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, sessionId]
+    );
+    return result.rows[0] ? mapAiSessionRow(result.rows[0]) : null;
+  }
+
+  async #listAiSourceAnchorsInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    sessionId: UUID
+  ): Promise<AiSourceAnchorRecord[]> {
+    const result = await client.query<AiSourceAnchorRow>(
+      `
+        select *
+        from ai_source_anchors
+        where tenant_id = $1 and clinic_id = $2 and session_id = $3
+        order by created_at
+      `,
+      [scope.tenantId, scope.clinicId, sessionId]
+    );
+    return result.rows.map(mapAiSourceAnchorRow);
+  }
+
+  async #createAiSourceAnchorInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    session: AiSessionRecord,
+    input: CreateAiSourceAnchorInput
+  ): Promise<AiSourceAnchorRecord> {
+    const supported = input.supported ?? input.anchorType === "transcript_segment";
+    const result = await client.query<AiSourceAnchorRow>(
+      `
+        insert into ai_source_anchors (
+          id,
+          tenant_id,
+          clinic_id,
+          session_id,
+          patient_id,
+          encounter_id,
+          anchor_type,
+          source_record_type,
+          source_record_id,
+          transcript_segment_id,
+          starts_at_ms,
+          ends_at_ms,
+          text_quote_digest,
+          supported,
+          unsupported_reason
+        )
+        values (coalesce($1::uuid, gen_random_uuid()), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15)
+        returning *
+      `,
+      [
+        input.id ?? null,
+        scope.tenantId,
+        scope.clinicId,
+        session.id,
+        session.patientId,
+        session.encounterId,
+        input.anchorType,
+        input.sourceRecordType,
+        input.sourceRecordId,
+        input.transcriptSegmentId ?? null,
+        input.startsAtMs ?? null,
+        input.endsAtMs ?? null,
+        input.textQuoteDigest ?? null,
+        supported,
+        input.unsupportedReason ?? (supported ? null : "unsupported_source_anchor")
+      ]
+    );
+    return mapAiSourceAnchorRow(result.rows[0]);
+  }
+
   async #findLatestClinicalNoteVersionInTransaction(
     client: SqlQueryClient,
     scope: RepositoryScope,
@@ -8540,6 +9150,146 @@ interface PatientInstructionRow {
   created_at: Date | string;
 }
 
+interface AiSessionRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  patient_id: UUID;
+  encounter_id: UUID;
+  status: AiSessionRecord["status"];
+  provider_mode: AiSessionRecord["providerMode"];
+  llm_provider_key: string;
+  transcription_provider_key: string;
+  consent_snapshot: AiSessionRecord["consentSnapshot"];
+  retention_policy: AiSessionRecord["retentionPolicy"];
+  language_hint: string | null;
+  started_by_user_id: UUID;
+  started_at: Date | string;
+  ended_at: Date | string | null;
+  raw_audio_deleted_at: Date | string | null;
+  transcript_deleted_at: Date | string | null;
+  metadata: Record<string, unknown>;
+}
+
+interface AiTranscriptSegmentRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  session_id: UUID;
+  patient_id: UUID;
+  encounter_id: UUID;
+  sequence: number;
+  speaker_role: AiTranscriptSegmentRecord["speakerRole"];
+  text: string;
+  starts_at_ms: number;
+  ends_at_ms: number;
+  source_hash: string;
+  created_by_user_id: UUID;
+  created_at: Date | string;
+}
+
+interface AiSourceAnchorRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  session_id: UUID;
+  patient_id: UUID;
+  encounter_id: UUID;
+  anchor_type: AiSourceAnchorRecord["anchorType"];
+  source_record_type: string;
+  source_record_id: UUID | string;
+  transcript_segment_id: UUID | null;
+  starts_at_ms: number | null;
+  ends_at_ms: number | null;
+  text_quote_digest: string | null;
+  supported: boolean;
+  unsupported_reason: string | null;
+  created_at: Date | string;
+}
+
+interface AiJobRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  session_id: UUID;
+  patient_id: UUID;
+  encounter_id: UUID;
+  job_type: AiJobRecord["jobType"];
+  status: AiJobRecord["status"];
+  provider_mode: AiJobRecord["providerMode"];
+  provider_key: string;
+  input_digest: string;
+  output_summary: Record<string, unknown>;
+  error_code: string | null;
+  error_message: string | null;
+  created_by_user_id: UUID;
+  created_at: Date | string;
+  completed_at: Date | string | null;
+}
+
+interface AiDraftOutputRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  session_id: UUID;
+  job_id: UUID | null;
+  patient_id: UUID;
+  encounter_id: UUID;
+  output_type: AiDraftOutputRecord["outputType"];
+  review_status: AiDraftOutputRecord["reviewStatus"];
+  content: AiDraftOutputRecord["content"];
+  confidence: number | string;
+  warnings: string[];
+  source_anchor_ids: UUID[];
+  unsupported_source_anchor_ids: UUID[];
+  schema_version: string;
+  provider_mode: AiDraftOutputRecord["providerMode"];
+  provider_request_digest: string;
+  created_by_user_id: UUID;
+  created_at: Date | string;
+  reviewed_by_user_id: UUID | null;
+  reviewed_at: Date | string | null;
+}
+
+interface AiActionProposalRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  session_id: UUID;
+  output_id: UUID | null;
+  patient_id: UUID;
+  encounter_id: UUID;
+  proposal_type: AiActionProposalRecord["proposalType"];
+  review_status: AiActionProposalRecord["reviewStatus"];
+  title: string;
+  description: string;
+  proposed_payload: Record<string, unknown>;
+  required_permission: string;
+  source_anchor_ids: UUID[];
+  unsupported_source_anchor_ids: UUID[];
+  provider_mode: AiActionProposalRecord["providerMode"];
+  created_by_user_id: UUID;
+  created_at: Date | string;
+  reviewed_by_user_id: UUID | null;
+  reviewed_at: Date | string | null;
+}
+
+interface AiReviewDecisionRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  session_id: UUID;
+  target_type: AiReviewDecisionRecord["targetType"];
+  target_id: UUID;
+  decision: AiReviewDecisionRecord["decision"];
+  reason: string;
+  edited_content: Record<string, unknown> | null;
+  applied_workflow: AiReviewDecisionRecord["appliedWorkflow"];
+  applied_record_id: null;
+  reviewed_by_user_id: UUID;
+  reviewed_at: Date | string;
+}
+
 interface MediaUploadReservationRow {
   id: UUID;
   tenant_id: UUID;
@@ -9769,6 +10519,160 @@ function mapPatientInstructionRow(row: PatientInstructionRow): PatientInstructio
     readAt: row.read_at ? toIso(row.read_at) : null,
     createdByUserId: row.created_by_user_id,
     createdAt: toIso(row.created_at)
+  };
+}
+
+function mapAiSessionRow(row: AiSessionRow): AiSessionRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    patientId: row.patient_id,
+    encounterId: row.encounter_id,
+    status: row.status,
+    providerMode: row.provider_mode,
+    llmProviderKey: row.llm_provider_key,
+    transcriptionProviderKey: row.transcription_provider_key,
+    consentSnapshot: row.consent_snapshot,
+    retentionPolicy: row.retention_policy,
+    languageHint: row.language_hint,
+    startedByUserId: row.started_by_user_id,
+    startedAt: toIso(row.started_at),
+    endedAt: row.ended_at ? toIso(row.ended_at) : null,
+    rawAudioDeletedAt: row.raw_audio_deleted_at ? toIso(row.raw_audio_deleted_at) : null,
+    transcriptDeletedAt: row.transcript_deleted_at ? toIso(row.transcript_deleted_at) : null,
+    metadata: row.metadata ?? {}
+  };
+}
+
+function mapAiTranscriptSegmentRow(row: AiTranscriptSegmentRow): AiTranscriptSegmentRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    sessionId: row.session_id,
+    patientId: row.patient_id,
+    encounterId: row.encounter_id,
+    sequence: row.sequence,
+    speakerRole: row.speaker_role,
+    text: row.text,
+    startsAtMs: row.starts_at_ms,
+    endsAtMs: row.ends_at_ms,
+    sourceHash: row.source_hash,
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at)
+  };
+}
+
+function mapAiSourceAnchorRow(row: AiSourceAnchorRow): AiSourceAnchorRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    sessionId: row.session_id,
+    patientId: row.patient_id,
+    encounterId: row.encounter_id,
+    anchorType: row.anchor_type,
+    sourceRecordType: row.source_record_type,
+    sourceRecordId: row.source_record_id,
+    transcriptSegmentId: row.transcript_segment_id,
+    startsAtMs: row.starts_at_ms,
+    endsAtMs: row.ends_at_ms,
+    textQuoteDigest: row.text_quote_digest,
+    supported: row.supported,
+    unsupportedReason: row.unsupported_reason,
+    createdAt: toIso(row.created_at)
+  };
+}
+
+function mapAiJobRow(row: AiJobRow): AiJobRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    sessionId: row.session_id,
+    patientId: row.patient_id,
+    encounterId: row.encounter_id,
+    jobType: row.job_type,
+    status: row.status,
+    providerMode: row.provider_mode,
+    providerKey: row.provider_key,
+    inputDigest: row.input_digest,
+    outputSummary: row.output_summary ?? {},
+    errorCode: row.error_code,
+    errorMessage: row.error_message,
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at),
+    completedAt: row.completed_at ? toIso(row.completed_at) : null
+  };
+}
+
+function mapAiDraftOutputRow(row: AiDraftOutputRow): AiDraftOutputRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    sessionId: row.session_id,
+    jobId: row.job_id,
+    patientId: row.patient_id,
+    encounterId: row.encounter_id,
+    outputType: row.output_type,
+    reviewStatus: row.review_status,
+    content: row.content,
+    confidence: Number(row.confidence),
+    warnings: row.warnings ?? [],
+    sourceAnchorIds: row.source_anchor_ids ?? [],
+    unsupportedSourceAnchorIds: row.unsupported_source_anchor_ids ?? [],
+    schemaVersion: row.schema_version,
+    providerMode: row.provider_mode,
+    providerRequestDigest: row.provider_request_digest,
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at),
+    reviewedByUserId: row.reviewed_by_user_id,
+    reviewedAt: row.reviewed_at ? toIso(row.reviewed_at) : null
+  };
+}
+
+function mapAiActionProposalRow(row: AiActionProposalRow): AiActionProposalRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    sessionId: row.session_id,
+    outputId: row.output_id,
+    patientId: row.patient_id,
+    encounterId: row.encounter_id,
+    proposalType: row.proposal_type,
+    reviewStatus: row.review_status,
+    title: row.title,
+    description: row.description,
+    proposedPayload: row.proposed_payload ?? {},
+    requiredPermission: row.required_permission,
+    sourceAnchorIds: row.source_anchor_ids ?? [],
+    unsupportedSourceAnchorIds: row.unsupported_source_anchor_ids ?? [],
+    providerMode: row.provider_mode,
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at),
+    reviewedByUserId: row.reviewed_by_user_id,
+    reviewedAt: row.reviewed_at ? toIso(row.reviewed_at) : null
+  };
+}
+
+function mapAiReviewDecisionRow(row: AiReviewDecisionRow): AiReviewDecisionRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    sessionId: row.session_id,
+    targetType: row.target_type,
+    targetId: row.target_id,
+    decision: row.decision,
+    reason: row.reason,
+    editedContent: row.edited_content,
+    appliedWorkflow: row.applied_workflow,
+    appliedRecordId: null,
+    reviewedByUserId: row.reviewed_by_user_id,
+    reviewedAt: toIso(row.reviewed_at)
   };
 }
 

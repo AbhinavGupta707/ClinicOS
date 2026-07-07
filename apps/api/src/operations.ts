@@ -9,6 +9,9 @@ import type { ClinicOsConfig } from "@clinic-os/config";
 import type {
   ClinicOperationsRepository,
   CreateAppointmentInput,
+  CreateAiActionProposalInput,
+  CreateAiDraftOutputInput,
+  CreateAiSourceAnchorInput,
   CreateConsentInput,
   CreateCorrectiveActionInput,
   CreateDentalChartSnapshotInput,
@@ -42,6 +45,7 @@ import type {
   RecordRecallActionInput,
   RepositoryScope,
   ResolveMigrationRowInput,
+  RecordAiReviewDecisionInput,
   SopRunSearchFilter,
   TaskSearchFilter,
   UpdateCorrectiveActionInput,
@@ -55,6 +59,8 @@ import type {
 import {
   assertAppointmentTransition,
   assertEncounterTransition,
+  defaultAiRetentionPolicy,
+  evaluateAiAudioReadiness,
   assertMediaMimeType,
   assertManualPaymentEvidence,
   assertPrescriptionMedicationList,
@@ -69,6 +75,8 @@ import {
   correctiveActionEffectiveStatus,
   hasClinicalNoteContent,
   isAppointmentStatus,
+  isAiReviewDecision,
+  isAiSourceAnchorType,
   isBillingCurrency,
   isConsentCaptureMethod,
   isConsentPurpose,
@@ -118,6 +126,8 @@ import {
   validatePatientImportRow,
   type AppointmentRecord,
   type AppointmentStatus,
+  type AiSessionDetail,
+  type AiSessionRecord,
   type ClinicalNoteContent,
   type ConsentCaptureMethod,
   type ConsentPurpose,
@@ -159,8 +169,11 @@ import {
 } from "@clinic-os/domain";
 import {
   createMessagingProvider,
+  createAiGatewayProvider,
+  AiGatewayProviderError,
   PaymentProviderError,
   createTelephonyProvider,
+  type AiGatewayProvider,
   type AdapterCapability,
   type PaymentProvider,
   type PaymentProviderRequestKind,
@@ -195,6 +208,7 @@ export interface OperationsDependencies {
   paymentProvider?: PaymentProvider;
   paymentRepository?: PaymentOperationsRepository;
   runtimeConfig?: ClinicOsConfig;
+  aiGatewayProvider?: AiGatewayProvider;
 }
 
 const SYSTEM_INTEGRATION_ACTOR_USER_ID = "00000000-0000-4000-8000-000000000000" as UUID;
@@ -2801,6 +2815,457 @@ export async function revokePatientConsent(
   return ok({ consent, enforcementState });
 }
 
+export async function createAiScribeSession(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  encounterId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "ai.scribe.write" });
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  const scope = scopeFrom(context);
+  const encounter = await dependencies.repository.findEncounterById(scope, encounterId);
+  if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+  const input = parseCreateAiScribeSessionInput(body);
+  const consents = await dependencies.repository.listPatientConsents(scope, encounter.patientId);
+  const readiness = evaluateAiAudioReadiness(consents, {
+    requireRawAudioRetention: input.requireRawAudioRetention
+  });
+
+  await audit(context, dependencies, "consent.enforcement.checked", {
+    patientId: encounter.patientId,
+    resourceType: "ai_session",
+    resourceId: encounter.id,
+    metadata: {
+      workflow: "ai_scribe",
+      allowed: readiness.allowed,
+      blockedReasons: readiness.blockedReasons.map((reason) => ({
+        purpose: reason.purpose,
+        reason: reason.reason,
+        consentId: reason.consentId
+      }))
+    }
+  });
+
+  if (!readiness.allowed) {
+    throw conflict("Active AI/audio consent is required before scribe capture or processing.", {
+      code: "AI_AUDIO_CONSENT_REQUIRED",
+      blockedReasons: readiness.blockedReasons
+    });
+  }
+
+  const provider = resolveAiGatewayProvider(dependencies);
+  const retentionPolicy = defaultAiRetentionPolicy({
+    rawAudioRetentionAllowed: input.requireRawAudioRetention,
+    providerMode: provider.providerMode
+  });
+  const session = await dependencies.repository.createAiSession(scope, {
+    patientId: encounter.patientId,
+    encounterId: encounter.id,
+    providerMode: provider.providerMode,
+    llmProviderKey: provider.providerKey,
+    transcriptionProviderKey:
+      dependencies.runtimeConfig?.providers.ai.transcriptionProvider ?? provider.providerKey,
+    consentSnapshot: {
+      evaluatedAt: readiness.evaluatedAt,
+      aiAudioCaptureAllowed: true,
+      rawAudioRetentionAllowed: input.requireRawAudioRetention,
+      decisionReasons: readiness.decisions.map((decision) => ({
+        purpose: decision.purpose,
+        allowed: decision.allowed,
+        reason: decision.reason,
+        consentId: decision.consentId
+      }))
+    },
+    retentionPolicy,
+    languageHint: input.languageHint,
+    metadata: { source: "api", captureSurface: input.captureSurface }
+  });
+
+  await audit(context, dependencies, "ai.session.started", {
+    patientId: session.patientId,
+    resourceType: "ai_session",
+    resourceId: session.id,
+    metadata: aiSessionAuditMetadata(session)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "ai.session.started",
+    aggregateType: "ai_session",
+    aggregateId: session.id,
+    patientId: session.patientId,
+    payload: aiSessionAuditMetadata(session)
+  });
+
+  return created({ session: toPublicAiSession(session) });
+}
+
+export async function getAiScribeSession(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  sessionId: UUID
+) {
+  authorize(context, { permission: "ai.scribe.read" });
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  const detail = await dependencies.repository.findAiSessionDetail(scopeFrom(context), sessionId);
+  if (!detail) throw notFound("AI scribe session not found.", { session_id: sessionId });
+  return ok({ aiScribeSession: toPublicAiSessionDetail(detail) });
+}
+
+export async function listEncounterAiScribeSessions(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  encounterId: UUID
+) {
+  authorize(context, { permission: "ai.scribe.read" });
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  const scope = scopeFrom(context);
+  const encounter = await dependencies.repository.findEncounterById(scope, encounterId);
+  if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+  const sessions = await dependencies.repository.listAiSessionsForEncounter(scope, encounterId);
+  return ok({ sessions: sessions.map(toPublicAiSession) });
+}
+
+export async function createAiScribeTranscriptSegment(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  sessionId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "ai.scribe.write" });
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  const scope = scopeFrom(context);
+  const session = await dependencies.repository.findAiSessionById(scope, sessionId);
+  if (!session) throw notFound("AI scribe session not found.", { session_id: sessionId });
+  await assertAiConsentStillActive(context, dependencies, session, {
+    requireRawAudioRetention: session.retentionPolicy.rawAudioRetention === "retain_until"
+  });
+
+  const input = parseCreateAiTranscriptSegmentInput(body);
+  const result = await dependencies.repository.createAiTranscriptSegment(scope, sessionId, {
+    ...input,
+    sourceHash: sha256Text(input.text)
+  });
+  if (!result) throw conflict("AI scribe session is not accepting transcript segments.", { session_id: sessionId });
+
+  await audit(context, dependencies, "ai.transcript.segment_created", {
+    patientId: session.patientId,
+    resourceType: "ai_transcript_segment",
+    resourceId: result.segment.id,
+    metadata: {
+      sessionId,
+      encounterId: session.encounterId,
+      sequence: result.segment.sequence,
+      sourceHash: result.segment.sourceHash
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "ai.transcript.segment_created",
+    aggregateType: "ai_transcript_segment",
+    aggregateId: result.segment.id,
+    patientId: session.patientId,
+    payload: {
+      sessionId,
+      encounterId: session.encounterId,
+      sequence: result.segment.sequence,
+      sourceAnchorId: result.sourceAnchor.id
+    }
+  });
+
+  return created({
+    segment: toPublicAiTranscriptSegment(result.segment),
+    sourceAnchor: result.sourceAnchor
+  });
+}
+
+export async function createAiScribeSourceAnchor(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  sessionId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "ai.scribe.write" });
+  const input = parseCreateAiSourceAnchorInput(body);
+  const anchor = await dependencies.repository.createAiSourceAnchor(scopeFrom(context), sessionId, input);
+  if (!anchor) throw notFound("AI scribe session not found.", { session_id: sessionId });
+  return created({ sourceAnchor: anchor });
+}
+
+export async function generateAiScribeDrafts(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  sessionId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "ai.scribe.write" });
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  const scope = scopeFrom(context);
+  const detail = await dependencies.repository.findAiSessionDetail(scope, sessionId);
+  if (!detail) throw notFound("AI scribe session not found.", { session_id: sessionId });
+  await assertAiConsentStillActive(context, dependencies, detail.session, {
+    requireRawAudioRetention: detail.session.retentionPolicy.rawAudioRetention === "retain_until"
+  });
+  if (detail.transcriptSegments.length === 0) {
+    throw validation("Transcript segments are required before draft generation.", { session_id: sessionId });
+  }
+
+  const input = parseGenerateAiDraftsInput(body);
+  const sourceAnchorIds =
+    input.sourceAnchorIds.length > 0
+      ? input.sourceAnchorIds
+      : detail.sourceAnchors
+          .filter((anchor) => anchor.anchorType === "transcript_segment")
+          .map((anchor) => anchor.id);
+  const selectedAnchors = detail.sourceAnchors.filter((anchor) => sourceAnchorIds.includes(anchor.id));
+  if (selectedAnchors.length !== sourceAnchorIds.length) {
+    throw validation("Every sourceAnchorId must belong to the AI scribe session.", { sourceAnchorIds });
+  }
+  const unsupportedAnchors = selectedAnchors.filter((anchor) => !anchor.supported);
+  if (unsupportedAnchors.length > 0) {
+    throw validation("Unsupported source anchors cannot support AI draft generation.", {
+      unsupportedSourceAnchorIds: unsupportedAnchors.map((anchor) => anchor.id)
+    });
+  }
+
+  const provider = resolveAiGatewayProvider(dependencies);
+  let providerResult;
+  try {
+    providerResult = await provider.generateDrafts({
+      tenantId: context.accessContext.tenant.id,
+      clinicId: context.clinicId,
+      patientId: detail.session.patientId,
+      encounterId: detail.session.encounterId,
+      sessionId,
+      segments: detail.transcriptSegments,
+      sourceAnchorIds,
+      correlationId: context.requestId
+    });
+  } catch (error) {
+    if (error instanceof AiGatewayProviderError) {
+      await dependencies.repository.createAiJob(scope, sessionId, {
+        jobType: "draft_generation",
+        status: "blocked",
+        providerMode: provider.providerMode,
+        providerKey: provider.providerKey,
+        inputDigest: sha256Json({ sessionId, sourceAnchorIds }),
+        outputSummary: { providerStatus: error.status },
+        errorCode: error.status,
+        errorMessage: error.message,
+        completedAt: new Date().toISOString()
+      });
+      throw new ApiError(503, "AI_PROVIDER_UNAVAILABLE", error.message, {
+        providerKey: error.providerKey,
+        status: error.status
+      });
+    }
+    throw error;
+  }
+
+  const job = await dependencies.repository.createAiJob(scope, sessionId, {
+    jobType: "draft_generation",
+    status: "succeeded",
+    providerMode: providerResult.providerMode,
+    providerKey: providerResult.providerKey,
+    inputDigest: sha256Json({ sessionId, sourceAnchorIds }),
+    outputSummary: {
+      outputTypes: ["clinical_note_draft", "dental_chart_patch_draft"],
+      actionProposalCount: providerResult.actionProposals.length
+    },
+    completedAt: new Date().toISOString()
+  });
+  if (!job) throw notFound("AI scribe session not found.", { session_id: sessionId });
+
+  const clinicalOutput = await dependencies.repository.createAiDraftOutput(scope, sessionId, {
+    jobId: job.id,
+    outputType: "clinical_note_draft",
+    content: providerResult.clinicalNoteDraft.content,
+    confidence: providerResult.clinicalNoteDraft.confidence,
+    warnings: providerResult.clinicalNoteDraft.warnings,
+    sourceAnchorIds: [...providerResult.clinicalNoteDraft.sourceAnchorIds],
+    schemaVersion: "ClinicalNoteDraft.v1",
+    providerMode: providerResult.providerMode,
+    providerRequestDigest: providerResult.providerRequestDigest
+  });
+  const chartOutput = await dependencies.repository.createAiDraftOutput(scope, sessionId, {
+    jobId: job.id,
+    outputType: "dental_chart_patch_draft",
+    content: providerResult.dentalChartPatchDraft.content,
+    confidence: providerResult.dentalChartPatchDraft.confidence,
+    warnings: providerResult.dentalChartPatchDraft.warnings,
+    sourceAnchorIds: [...providerResult.dentalChartPatchDraft.sourceAnchorIds],
+    schemaVersion: "DentalChartPatchDraft.v1",
+    providerMode: providerResult.providerMode,
+    providerRequestDigest: providerResult.providerRequestDigest
+  });
+  if (!clinicalOutput || !chartOutput) {
+    throw notFound("AI scribe session not found.", { session_id: sessionId });
+  }
+
+  const proposals = [];
+  for (const proposal of providerResult.actionProposals) {
+    const createdProposal = await dependencies.repository.createAiActionProposal(scope, sessionId, {
+      outputId: clinicalOutput.id,
+      proposalType: proposal.proposalType,
+      title: proposal.title,
+      description: proposal.description,
+      proposedPayload: proposal.proposedPayload,
+      requiredPermission: proposal.requiredPermission,
+      sourceAnchorIds: [...proposal.sourceAnchorIds],
+      providerMode: providerResult.providerMode
+    });
+    if (createdProposal) {
+      proposals.push(createdProposal);
+      await audit(context, dependencies, "ai.action_proposal.created", {
+        patientId: detail.session.patientId,
+        resourceType: "ai_action_proposal",
+        resourceId: createdProposal.id,
+        metadata: {
+          sessionId,
+          encounterId: detail.session.encounterId,
+          proposalType: createdProposal.proposalType,
+          requiredPermission: createdProposal.requiredPermission,
+          reviewStatus: createdProposal.reviewStatus
+        }
+      });
+      await appendOutbox(context, dependencies, {
+        eventType: "ai.action_proposal.created",
+        aggregateType: "ai_action_proposal",
+        aggregateId: createdProposal.id,
+        patientId: detail.session.patientId,
+        payload: {
+          sessionId,
+          encounterId: detail.session.encounterId,
+          proposalType: createdProposal.proposalType,
+          requiredPermission: createdProposal.requiredPermission,
+          reviewStatus: createdProposal.reviewStatus
+        }
+      });
+    }
+  }
+
+  await audit(context, dependencies, "ai.draft.generated", {
+    patientId: detail.session.patientId,
+    resourceType: "ai_session",
+    resourceId: sessionId,
+    metadata: {
+      sessionId,
+      jobId: job.id,
+      outputIds: [clinicalOutput.id, chartOutput.id],
+      providerMode: providerResult.providerMode
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "ai.draft.generated",
+    aggregateType: "ai_session",
+    aggregateId: sessionId,
+    patientId: detail.session.patientId,
+    payload: {
+      sessionId,
+      jobId: job.id,
+      outputIds: [clinicalOutput.id, chartOutput.id],
+      proposalIds: proposals.map((proposal) => proposal.id)
+    }
+  });
+
+  return created({
+    job,
+    draftOutputs: [clinicalOutput, chartOutput],
+    actionProposals: proposals
+  });
+}
+
+export async function recordAiScribeReviewDecision(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  sessionId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "ai.scribe.review" });
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  const input = parseRecordAiReviewDecisionInput(body);
+  const decision = await dependencies.repository.recordAiReviewDecision(scopeFrom(context), sessionId, input);
+  if (!decision) throw notFound("AI review target not found.", { session_id: sessionId, target_id: input.targetId });
+  const session = await dependencies.repository.findAiSessionById(scopeFrom(context), sessionId);
+  if (!session) throw notFound("AI scribe session not found.", { session_id: sessionId });
+
+  await audit(context, dependencies, "ai.review_decision.recorded", {
+    patientId: session.patientId,
+    resourceType: "ai_review_decision",
+    resourceId: decision.id,
+    metadata: {
+      sessionId,
+      targetType: decision.targetType,
+      targetId: decision.targetId,
+      decision: decision.decision,
+      appliedWorkflow: decision.appliedWorkflow,
+      appliedRecordId: decision.appliedRecordId
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "ai.review_decision.recorded",
+    aggregateType: "ai_review_decision",
+    aggregateId: decision.id,
+    patientId: session.patientId,
+    payload: {
+      sessionId,
+      targetType: decision.targetType,
+      targetId: decision.targetId,
+      decision: decision.decision,
+      appliedWorkflow: "review_only",
+      appliedRecordId: null
+    }
+  });
+  return ok({ reviewDecision: decision });
+}
+
+export async function deleteAiScribeRetainedPayloads(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  sessionId: UUID
+) {
+  authorize(context, { permission: "ai.scribe.review" });
+  const scope = scopeFrom(context);
+  const result = await dependencies.repository.deleteAiSessionRetainedPayloads(scope, sessionId);
+  if (!result) throw notFound("AI scribe session not found.", { session_id: sessionId });
+  await dependencies.repository.createAiJob(scope, sessionId, {
+    jobType: "retention_delete",
+    status: "succeeded",
+    providerMode: result.session.providerMode,
+    providerKey: result.session.llmProviderKey,
+    inputDigest: sha256Json({ sessionId, deletedTranscriptSegments: result.deletedTranscriptSegments }),
+    outputSummary: {
+      deletedTranscriptSegments: result.deletedTranscriptSegments,
+      deletedRawAudioReferences: result.deletedRawAudioReferences
+    },
+    completedAt: new Date().toISOString()
+  });
+  await audit(context, dependencies, "ai.retention.deleted", {
+    patientId: result.session.patientId,
+    resourceType: "ai_session",
+    resourceId: sessionId,
+    metadata: {
+      deletedTranscriptSegments: result.deletedTranscriptSegments,
+      deletedRawAudioReferences: result.deletedRawAudioReferences
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "ai.retention.deleted",
+    aggregateType: "ai_session",
+    aggregateId: sessionId,
+    patientId: result.session.patientId,
+    payload: {
+      deletedTranscriptSegments: result.deletedTranscriptSegments,
+      deletedRawAudioReferences: result.deletedRawAudioReferences
+    }
+  });
+  return ok(result);
+}
+
 export async function createEncounter(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
@@ -4614,6 +5079,92 @@ function parseCreatePatient(body: unknown): CreatePatientInput & { leadId?: UUID
     source: parsePatientSource(requiredString(input.source ?? "manual", "source")),
     sourceDetail: recordField(input.sourceDetail, "sourceDetail"),
     leadId: optionalUuid(input.leadId, "leadId")
+  };
+}
+
+function parseCreateAiScribeSessionInput(body: unknown): {
+  requireRawAudioRetention: boolean;
+  languageHint?: string | null;
+  captureSurface: string;
+} {
+  const input = objectBody(body);
+  return {
+    requireRawAudioRetention: booleanField(input.requireRawAudioRetention ?? false, "requireRawAudioRetention"),
+    languageHint: optionalNullableString(input.languageHint, "languageHint") ?? null,
+    captureSurface: optionalString(input.captureSurface, "captureSurface") ?? "unknown"
+  };
+}
+
+function parseCreateAiTranscriptSegmentInput(body: unknown): {
+  text: string;
+  speakerRole?: "doctor" | "assistant" | "patient" | "unknown";
+  startsAtMs: number;
+  endsAtMs: number;
+} {
+  const input = objectBody(body);
+  const speakerRole = optionalString(input.speakerRole, "speakerRole");
+  if (speakerRole && !["doctor", "assistant", "patient", "unknown"].includes(speakerRole)) {
+    throw validation("speakerRole is not supported.", { speakerRole });
+  }
+  const startsAtMs = integerField(input.startsAtMs, "startsAtMs");
+  const endsAtMs = integerField(input.endsAtMs, "endsAtMs");
+  if (startsAtMs < 0 || endsAtMs < startsAtMs) {
+    throw validation("Transcript segment timing is invalid.", { startsAtMs, endsAtMs });
+  }
+  return {
+    text: requiredString(input.text, "text"),
+    speakerRole: speakerRole as "doctor" | "assistant" | "patient" | "unknown" | undefined,
+    startsAtMs,
+    endsAtMs
+  };
+}
+
+function parseCreateAiSourceAnchorInput(body: unknown): CreateAiSourceAnchorInput {
+  const input = objectBody(body);
+  const anchorType = requiredString(input.anchorType, "anchorType");
+  if (!isAiSourceAnchorType(anchorType)) {
+    throw validation("anchorType is not supported.", { anchorType });
+  }
+  return {
+    anchorType,
+    sourceRecordType: requiredString(input.sourceRecordType, "sourceRecordType"),
+    sourceRecordId: requiredString(input.sourceRecordId, "sourceRecordId"),
+    transcriptSegmentId: optionalUuid(input.transcriptSegmentId, "transcriptSegmentId") ?? null,
+    startsAtMs: optionalInteger(input.startsAtMs, "startsAtMs"),
+    endsAtMs: optionalInteger(input.endsAtMs, "endsAtMs"),
+    textQuoteDigest: optionalSha256Digest(input.textQuoteDigest, "textQuoteDigest") ?? null,
+    supported: input.supported === undefined ? undefined : booleanField(input.supported, "supported"),
+    unsupportedReason: optionalNullableString(input.unsupportedReason, "unsupportedReason") ?? null
+  };
+}
+
+function parseGenerateAiDraftsInput(body: unknown): { sourceAnchorIds: UUID[] } {
+  const input = objectBody(body ?? {});
+  const values = input.sourceAnchorIds === undefined ? [] : arrayField(input.sourceAnchorIds, "sourceAnchorIds");
+  return {
+    sourceAnchorIds: values.map((value, index) => uuidField(value, `sourceAnchorIds[${index}]`))
+  };
+}
+
+function parseRecordAiReviewDecisionInput(body: unknown): RecordAiReviewDecisionInput {
+  const input = objectBody(body);
+  const targetType = requiredString(input.targetType, "targetType");
+  if (targetType !== "draft_output" && targetType !== "action_proposal") {
+    throw validation("targetType is not supported.", { targetType });
+  }
+  const decision = requiredString(input.decision, "decision");
+  if (!isAiReviewDecision(decision)) {
+    throw validation("decision is not supported.", { decision });
+  }
+  return {
+    targetType,
+    targetId: uuidField(input.targetId, "targetId"),
+    decision,
+    reason: requiredString(input.reason, "reason"),
+    editedContent:
+      input.editedContent === undefined || input.editedContent === null
+        ? null
+        : recordField(input.editedContent, "editedContent")
   };
 }
 
@@ -6728,6 +7279,111 @@ function validateCompletedMediaObject(
   }
 }
 
+function resolveAiGatewayProvider(dependencies: OperationsDependencies): AiGatewayProvider {
+  if (dependencies.aiGatewayProvider) return dependencies.aiGatewayProvider;
+  const config = dependencies.runtimeConfig;
+  return createAiGatewayProvider({
+    llmProvider: config?.providers.ai.llmProvider ?? "simulator",
+    transcriptionProvider: config?.providers.ai.transcriptionProvider ?? "simulator",
+    openaiApiKey: config?.providers.ai.openaiApiKey,
+    fireworksApiKey: config?.providers.ai.fireworksApiKey,
+    deepgramApiKey: config?.providers.ai.deepgramApiKey,
+    dataResidencyApproved: false,
+    liveCallsEnabled: false
+  });
+}
+
+async function assertAiConsentStillActive(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  session: AiSessionRecord,
+  input: { requireRawAudioRetention: boolean }
+): Promise<void> {
+  const consents = await dependencies.repository.listPatientConsents(scopeFrom(context), session.patientId);
+  const readiness = evaluateAiAudioReadiness(consents, {
+    requireRawAudioRetention: input.requireRawAudioRetention
+  });
+  await audit(context, dependencies, "consent.enforcement.checked", {
+    patientId: session.patientId,
+    resourceType: "ai_session",
+    resourceId: session.id,
+    metadata: {
+      workflow: "ai_scribe",
+      allowed: readiness.allowed,
+      blockedReasons: readiness.blockedReasons.map((reason) => ({
+        purpose: reason.purpose,
+        reason: reason.reason,
+        consentId: reason.consentId
+      }))
+    }
+  });
+  if (!readiness.allowed) {
+    throw conflict("Active AI/audio consent is required before scribe processing.", {
+      code: "AI_AUDIO_CONSENT_REQUIRED",
+      blockedReasons: readiness.blockedReasons
+    });
+  }
+}
+
+function toPublicAiSession(session: AiSessionRecord) {
+  return {
+    ...session,
+    consentSnapshot: {
+      evaluatedAt: session.consentSnapshot.evaluatedAt,
+      aiAudioCaptureAllowed: session.consentSnapshot.aiAudioCaptureAllowed,
+      rawAudioRetentionAllowed: session.consentSnapshot.rawAudioRetentionAllowed,
+      decisionReasons: session.consentSnapshot.decisionReasons
+    },
+    retentionPolicy: session.retentionPolicy
+  };
+}
+
+function toPublicAiSessionDetail(detail: AiSessionDetail) {
+  return {
+    session: toPublicAiSession(detail.session),
+    transcriptSegments: detail.transcriptSegments.map(toPublicAiTranscriptSegment),
+    sourceAnchors: detail.sourceAnchors,
+    jobs: detail.jobs,
+    draftOutputs: detail.draftOutputs,
+    actionProposals: detail.actionProposals,
+    reviewDecisions: detail.reviewDecisions
+  };
+}
+
+function toPublicAiTranscriptSegment(segment: AiSessionDetail["transcriptSegments"][number]) {
+  return {
+    id: segment.id,
+    tenantId: segment.tenantId,
+    clinicId: segment.clinicId,
+    sessionId: segment.sessionId,
+    patientId: segment.patientId,
+    encounterId: segment.encounterId,
+    sequence: segment.sequence,
+    speakerRole: segment.speakerRole,
+    startsAtMs: segment.startsAtMs,
+    endsAtMs: segment.endsAtMs,
+    textDigest: segment.sourceHash,
+    createdByUserId: segment.createdByUserId,
+    createdAt: segment.createdAt
+  };
+}
+
+function aiSessionAuditMetadata(session: AiSessionRecord) {
+  return {
+    sessionId: session.id,
+    encounterId: session.encounterId,
+    providerMode: session.providerMode,
+    llmProviderKey: session.llmProviderKey,
+    transcriptionProviderKey: session.transcriptionProviderKey,
+    rawAudioRetention: session.retentionPolicy.rawAudioRetention,
+    providerTrainingAllowed: session.retentionPolicy.providerTrainingAllowed
+  };
+}
+
+function sha256Text(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
 function mediaAuditMetadata(input: {
   mediaType: MediaType;
   mimeType: string;
@@ -7290,6 +7946,11 @@ function integerField(
     throw validation(`${field} must be at most ${options.max}.`, { field });
   }
   return number;
+}
+
+function optionalInteger(value: unknown, field: string): number | null {
+  if (value === undefined || value === null) return null;
+  return integerField(value, field);
 }
 
 function booleanField(value: unknown, field: string): boolean {

@@ -2,6 +2,18 @@ import type {
   AppointmentConflict,
   AppointmentRecord,
   AppointmentStatus,
+  AiActionProposalRecord,
+  AiDraftOutputRecord,
+  AiJobRecord,
+  AiProviderMode,
+  AiReviewDecision,
+  AiReviewDecisionRecord,
+  AiSessionDetail,
+  AiSessionRecord,
+  AiSourceAnchorRecord,
+  AiTranscriptSegmentRecord,
+  AiRetentionPolicy,
+  AiConsentSnapshot,
   AppointmentTypeRecord,
   AttributionTouchRecord,
   ChairOrRoomRecord,
@@ -668,6 +680,91 @@ export interface CreatePatientInstructionInput {
   outboxEventId?: UUID | null;
 }
 
+export interface CreateAiSessionInput {
+  patientId: UUID;
+  encounterId: UUID;
+  providerMode: AiProviderMode;
+  llmProviderKey: string;
+  transcriptionProviderKey: string;
+  consentSnapshot: AiConsentSnapshot;
+  retentionPolicy: AiRetentionPolicy;
+  languageHint?: string | null;
+  metadata?: Record<string, unknown>;
+}
+
+export interface CreateAiTranscriptSegmentInput {
+  id?: UUID;
+  text: string;
+  speakerRole?: AiTranscriptSegmentRecord["speakerRole"];
+  startsAtMs: number;
+  endsAtMs: number;
+  sourceHash: string;
+}
+
+export interface CreateAiSourceAnchorInput {
+  id?: UUID;
+  anchorType: AiSourceAnchorRecord["anchorType"];
+  sourceRecordType: string;
+  sourceRecordId: UUID | string;
+  transcriptSegmentId?: UUID | null;
+  startsAtMs?: number | null;
+  endsAtMs?: number | null;
+  textQuoteDigest?: string | null;
+  supported?: boolean;
+  unsupportedReason?: string | null;
+}
+
+export interface CreateAiJobInput {
+  jobType: AiJobRecord["jobType"];
+  status: AiJobRecord["status"];
+  providerMode: AiProviderMode;
+  providerKey: string;
+  inputDigest: string;
+  outputSummary?: Record<string, unknown>;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+  completedAt?: string | null;
+}
+
+export interface CreateAiDraftOutputInput {
+  jobId?: UUID | null;
+  outputType: AiDraftOutputRecord["outputType"];
+  content: AiDraftOutputRecord["content"];
+  confidence: number;
+  warnings?: string[];
+  sourceAnchorIds: UUID[];
+  unsupportedSourceAnchorIds?: UUID[];
+  schemaVersion: string;
+  providerMode: AiProviderMode;
+  providerRequestDigest: string;
+}
+
+export interface CreateAiActionProposalInput {
+  outputId?: UUID | null;
+  proposalType: AiActionProposalRecord["proposalType"];
+  title: string;
+  description: string;
+  proposedPayload: Record<string, unknown>;
+  requiredPermission: string;
+  sourceAnchorIds: UUID[];
+  unsupportedSourceAnchorIds?: UUID[];
+  providerMode: AiProviderMode;
+}
+
+export interface RecordAiReviewDecisionInput {
+  targetType: AiReviewDecisionRecord["targetType"];
+  targetId: UUID;
+  decision: AiReviewDecision;
+  reason: string;
+  editedContent?: Record<string, unknown> | null;
+}
+
+export interface AiRetentionDeletionResult {
+  session: AiSessionRecord;
+  deletedTranscriptSegments: number;
+  deletedRawAudioReferences: boolean;
+}
+
 export interface CreateMediaUploadReservationInput {
   id: UUID;
   patientId: UUID;
@@ -1012,6 +1109,41 @@ export interface ClinicOperationsRepository {
     patientId: UUID,
     input: CreatePatientInstructionInput
   ): Promise<PatientInstructionRecord | null>;
+
+  createAiSession(scope: RepositoryScope, input: CreateAiSessionInput): Promise<AiSessionRecord>;
+  findAiSessionById(scope: RepositoryScope, sessionId: UUID): Promise<AiSessionRecord | null>;
+  findAiSessionDetail(scope: RepositoryScope, sessionId: UUID): Promise<AiSessionDetail | null>;
+  listAiSessionsForEncounter(scope: RepositoryScope, encounterId: UUID): Promise<AiSessionRecord[]>;
+  createAiTranscriptSegment(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiTranscriptSegmentInput
+  ): Promise<{ segment: AiTranscriptSegmentRecord; sourceAnchor: AiSourceAnchorRecord } | null>;
+  createAiSourceAnchor(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiSourceAnchorInput
+  ): Promise<AiSourceAnchorRecord | null>;
+  createAiJob(scope: RepositoryScope, sessionId: UUID, input: CreateAiJobInput): Promise<AiJobRecord | null>;
+  createAiDraftOutput(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiDraftOutputInput
+  ): Promise<AiDraftOutputRecord | null>;
+  createAiActionProposal(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiActionProposalInput
+  ): Promise<AiActionProposalRecord | null>;
+  recordAiReviewDecision(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: RecordAiReviewDecisionInput
+  ): Promise<AiReviewDecisionRecord | null>;
+  deleteAiSessionRetainedPayloads(
+    scope: RepositoryScope,
+    sessionId: UUID
+  ): Promise<AiRetentionDeletionResult | null>;
 
   createMediaUploadReservation(
     scope: RepositoryScope,

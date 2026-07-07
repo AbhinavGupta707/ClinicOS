@@ -7,7 +7,14 @@ import {
   type AmendClinicalNoteInput,
   type AmendClinicalNoteResult,
   type ClinicOperationsRepository,
+  type AiRetentionDeletionResult,
   type CreateAppointmentInput,
+  type CreateAiActionProposalInput,
+  type CreateAiDraftOutputInput,
+  type CreateAiJobInput,
+  type CreateAiSessionInput,
+  type CreateAiSourceAnchorInput,
+  type CreateAiTranscriptSegmentInput,
   type CreateAttributionTouchInput,
   type CreateConsentInput,
   type CreateDentalChartSnapshotInput,
@@ -63,6 +70,7 @@ import {
   type RecallSearchFilter,
   type RepositoryScope,
   type RecordPaymentTransactionInput,
+  type RecordAiReviewDecisionInput,
   type RecordRecallActionInput,
   type ReplayIntegrationDeadLetterInput,
   type RevokeConsentInput,
@@ -99,6 +107,7 @@ import {
   assertTreatmentPlanAcceptable,
   assertTreatmentPlanMutable,
   assertValidDentalFinding,
+  assertSupportedSourceAnchors,
   buildDentalChartSnapshotState,
   buildPaymentFollowUpKey,
   buildPostOpFollowUpKey,
@@ -120,6 +129,14 @@ import {
   type AppointmentRecord,
   type AppointmentStatus,
   type AppointmentTypeRecord,
+  type AiActionProposalRecord,
+  type AiDraftOutputRecord,
+  type AiJobRecord,
+  type AiReviewDecisionRecord,
+  type AiSessionDetail,
+  type AiSessionRecord,
+  type AiSourceAnchorRecord,
+  type AiTranscriptSegmentRecord,
   type AttributionTouchRecord,
   type ChairOrRoomRecord,
   type ClinicalNoteVersionRecord,
@@ -839,6 +856,13 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly clinicalNoteVersions: ClinicalNoteVersionRecord[] = [];
   readonly prescriptions: PrescriptionRecord[] = [];
   readonly patientInstructions: PatientInstructionRecord[] = [];
+  readonly aiSessions: AiSessionRecord[] = [];
+  readonly aiTranscriptSegments: AiTranscriptSegmentRecord[] = [];
+  readonly aiSourceAnchors: AiSourceAnchorRecord[] = [];
+  readonly aiJobs: AiJobRecord[] = [];
+  readonly aiDraftOutputs: AiDraftOutputRecord[] = [];
+  readonly aiActionProposals: AiActionProposalRecord[] = [];
+  readonly aiReviewDecisions: AiReviewDecisionRecord[] = [];
   readonly mediaUploadReservations: MediaUploadReservationRecord[] = [];
   readonly mediaAssets: MediaAssetRecord[] = [];
   readonly dentalCharts: DentalChartRecord[] = [
@@ -3791,6 +3815,318 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       )
     );
     return instruction;
+  }
+
+  async createAiSession(scope: RepositoryScope, input: CreateAiSessionInput): Promise<AiSessionRecord> {
+    const now = new Date().toISOString();
+    const session: AiSessionRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: input.patientId,
+      encounterId: input.encounterId,
+      status: "capture_ready",
+      providerMode: input.providerMode,
+      llmProviderKey: input.llmProviderKey,
+      transcriptionProviderKey: input.transcriptionProviderKey,
+      consentSnapshot: input.consentSnapshot,
+      retentionPolicy: input.retentionPolicy,
+      languageHint: input.languageHint ?? null,
+      startedByUserId: scope.actorUserId,
+      startedAt: now,
+      endedAt: null,
+      rawAudioDeletedAt: input.retentionPolicy.rawAudioRetention === "disabled" ? now : null,
+      transcriptDeletedAt: null,
+      metadata: input.metadata ?? {}
+    };
+    this.aiSessions.push(session);
+    this.timelineItems.push(
+      timeline(scope, input.patientId, "ai_session_started", "ai_sessions", session.id, "AI scribe session started", {
+        encounterId: input.encounterId,
+        providerMode: input.providerMode,
+        rawAudioRetention: input.retentionPolicy.rawAudioRetention
+      })
+    );
+    return session;
+  }
+
+  async findAiSessionById(scope: RepositoryScope, sessionId: UUID): Promise<AiSessionRecord | null> {
+    return this.aiSessions.find((session) => matchesScope(session, scope) && session.id === sessionId) ?? null;
+  }
+
+  async findAiSessionDetail(scope: RepositoryScope, sessionId: UUID): Promise<AiSessionDetail | null> {
+    const session = await this.findAiSessionById(scope, sessionId);
+    if (!session) return null;
+    return {
+      session,
+      transcriptSegments: this.aiTranscriptSegments
+        .filter((segment) => matchesScope(segment, scope) && segment.sessionId === sessionId)
+        .sort((left, right) => left.sequence - right.sequence),
+      sourceAnchors: this.aiSourceAnchors.filter(
+        (anchor) => matchesScope(anchor, scope) && anchor.sessionId === sessionId
+      ),
+      jobs: this.aiJobs.filter((job) => matchesScope(job, scope) && job.sessionId === sessionId),
+      draftOutputs: this.aiDraftOutputs.filter(
+        (output) => matchesScope(output, scope) && output.sessionId === sessionId
+      ),
+      actionProposals: this.aiActionProposals.filter(
+        (proposal) => matchesScope(proposal, scope) && proposal.sessionId === sessionId
+      ),
+      reviewDecisions: this.aiReviewDecisions.filter(
+        (decision) => matchesScope(decision, scope) && decision.sessionId === sessionId
+      )
+    };
+  }
+
+  async listAiSessionsForEncounter(scope: RepositoryScope, encounterId: UUID): Promise<AiSessionRecord[]> {
+    return this.aiSessions
+      .filter((session) => matchesScope(session, scope) && session.encounterId === encounterId)
+      .sort((left, right) => right.startedAt.localeCompare(left.startedAt));
+  }
+
+  async createAiTranscriptSegment(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiTranscriptSegmentInput
+  ): Promise<{ segment: AiTranscriptSegmentRecord; sourceAnchor: AiSourceAnchorRecord } | null> {
+    const session = await this.findAiSessionById(scope, sessionId);
+    if (!session || session.status === "retention_deleted") return null;
+    const now = new Date().toISOString();
+    const sequence =
+      this.aiTranscriptSegments.filter((segment) => matchesScope(segment, scope) && segment.sessionId === sessionId)
+        .length + 1;
+    const segment: AiTranscriptSegmentRecord = {
+      id: input.id ?? uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      sessionId,
+      patientId: session.patientId,
+      encounterId: session.encounterId,
+      sequence,
+      speakerRole: input.speakerRole ?? "unknown",
+      text: input.text,
+      startsAtMs: input.startsAtMs,
+      endsAtMs: input.endsAtMs,
+      sourceHash: input.sourceHash,
+      createdByUserId: scope.actorUserId,
+      createdAt: now
+    };
+    const sourceAnchor: AiSourceAnchorRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      sessionId,
+      patientId: session.patientId,
+      encounterId: session.encounterId,
+      anchorType: "transcript_segment",
+      sourceRecordType: "ai_transcript_segments",
+      sourceRecordId: segment.id,
+      transcriptSegmentId: segment.id,
+      startsAtMs: segment.startsAtMs,
+      endsAtMs: segment.endsAtMs,
+      textQuoteDigest: segment.sourceHash,
+      supported: true,
+      unsupportedReason: null,
+      createdAt: now
+    };
+    this.aiTranscriptSegments.push(segment);
+    this.aiSourceAnchors.push(sourceAnchor);
+    session.status = "processing";
+    return { segment, sourceAnchor };
+  }
+
+  async createAiSourceAnchor(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiSourceAnchorInput
+  ): Promise<AiSourceAnchorRecord | null> {
+    const session = await this.findAiSessionById(scope, sessionId);
+    if (!session) return null;
+    const anchor: AiSourceAnchorRecord = {
+      id: input.id ?? uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      sessionId,
+      patientId: session.patientId,
+      encounterId: session.encounterId,
+      anchorType: input.anchorType,
+      sourceRecordType: input.sourceRecordType,
+      sourceRecordId: input.sourceRecordId,
+      transcriptSegmentId: input.transcriptSegmentId ?? null,
+      startsAtMs: input.startsAtMs ?? null,
+      endsAtMs: input.endsAtMs ?? null,
+      textQuoteDigest: input.textQuoteDigest ?? null,
+      supported: input.supported ?? input.anchorType === "transcript_segment",
+      unsupportedReason: input.unsupportedReason ?? (input.anchorType === "transcript_segment" ? null : "unsupported_source_anchor"),
+      createdAt: new Date().toISOString()
+    };
+    this.aiSourceAnchors.push(anchor);
+    return anchor;
+  }
+
+  async createAiJob(scope: RepositoryScope, sessionId: UUID, input: CreateAiJobInput): Promise<AiJobRecord | null> {
+    const session = await this.findAiSessionById(scope, sessionId);
+    if (!session) return null;
+    const now = new Date().toISOString();
+    const job: AiJobRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      sessionId,
+      patientId: session.patientId,
+      encounterId: session.encounterId,
+      jobType: input.jobType,
+      status: input.status,
+      providerMode: input.providerMode,
+      providerKey: input.providerKey,
+      inputDigest: input.inputDigest,
+      outputSummary: input.outputSummary ?? {},
+      errorCode: input.errorCode ?? null,
+      errorMessage: input.errorMessage ?? null,
+      createdByUserId: scope.actorUserId,
+      createdAt: now,
+      completedAt: input.completedAt ?? (input.status === "succeeded" || input.status === "failed" ? now : null)
+    };
+    this.aiJobs.push(job);
+    return job;
+  }
+
+  async createAiDraftOutput(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiDraftOutputInput
+  ): Promise<AiDraftOutputRecord | null> {
+    const session = await this.findAiSessionById(scope, sessionId);
+    if (!session) return null;
+    assertSupportedSourceAnchors(this.aiSourceAnchors, input.sourceAnchorIds);
+    const output: AiDraftOutputRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      sessionId,
+      jobId: input.jobId ?? null,
+      patientId: session.patientId,
+      encounterId: session.encounterId,
+      outputType: input.outputType,
+      reviewStatus: "needs_review",
+      content: input.content,
+      confidence: input.confidence,
+      warnings: input.warnings ?? [],
+      sourceAnchorIds: [...input.sourceAnchorIds],
+      unsupportedSourceAnchorIds: input.unsupportedSourceAnchorIds ?? [],
+      schemaVersion: input.schemaVersion,
+      providerMode: input.providerMode,
+      providerRequestDigest: input.providerRequestDigest,
+      createdByUserId: scope.actorUserId,
+      createdAt: new Date().toISOString(),
+      reviewedByUserId: null,
+      reviewedAt: null
+    };
+    this.aiDraftOutputs.push(output);
+    session.status = "ready_for_review";
+    this.timelineItems.push(
+      timeline(scope, session.patientId, "ai_draft_generated", "ai_draft_outputs", output.id, "AI draft generated", {
+        encounterId: session.encounterId,
+        outputType: output.outputType,
+        reviewStatus: output.reviewStatus
+      })
+    );
+    return output;
+  }
+
+  async createAiActionProposal(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiActionProposalInput
+  ): Promise<AiActionProposalRecord | null> {
+    const session = await this.findAiSessionById(scope, sessionId);
+    if (!session) return null;
+    assertSupportedSourceAnchors(this.aiSourceAnchors, input.sourceAnchorIds);
+    const proposal: AiActionProposalRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      sessionId,
+      outputId: input.outputId ?? null,
+      patientId: session.patientId,
+      encounterId: session.encounterId,
+      proposalType: input.proposalType,
+      reviewStatus: "needs_review",
+      title: input.title,
+      description: input.description,
+      proposedPayload: input.proposedPayload,
+      requiredPermission: input.requiredPermission,
+      sourceAnchorIds: [...input.sourceAnchorIds],
+      unsupportedSourceAnchorIds: input.unsupportedSourceAnchorIds ?? [],
+      providerMode: input.providerMode,
+      createdByUserId: scope.actorUserId,
+      createdAt: new Date().toISOString(),
+      reviewedByUserId: null,
+      reviewedAt: null
+    };
+    this.aiActionProposals.push(proposal);
+    return proposal;
+  }
+
+  async recordAiReviewDecision(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: RecordAiReviewDecisionInput
+  ): Promise<AiReviewDecisionRecord | null> {
+    const session = await this.findAiSessionById(scope, sessionId);
+    if (!session) return null;
+    const target =
+      input.targetType === "draft_output"
+        ? this.aiDraftOutputs.find((output) => matchesScope(output, scope) && output.id === input.targetId)
+        : this.aiActionProposals.find((proposal) => matchesScope(proposal, scope) && proposal.id === input.targetId);
+    if (!target) return null;
+
+    const now = new Date().toISOString();
+    target.reviewStatus =
+      input.decision === "approve"
+        ? "approved_review_only"
+        : input.decision === "reject"
+          ? "rejected"
+          : "needs_review";
+    target.reviewedByUserId = scope.actorUserId;
+    target.reviewedAt = now;
+
+    const decision: AiReviewDecisionRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      sessionId,
+      targetType: input.targetType,
+      targetId: input.targetId,
+      decision: input.decision,
+      reason: input.reason,
+      editedContent: input.editedContent ?? null,
+      appliedWorkflow: "review_only",
+      appliedRecordId: null,
+      reviewedByUserId: scope.actorUserId,
+      reviewedAt: now
+    };
+    this.aiReviewDecisions.push(decision);
+    return decision;
+  }
+
+  async deleteAiSessionRetainedPayloads(
+    scope: RepositoryScope,
+    sessionId: UUID
+  ): Promise<AiRetentionDeletionResult | null> {
+    const session = await this.findAiSessionById(scope, sessionId);
+    if (!session) return null;
+    const deletedTranscriptSegments = this.aiTranscriptSegments.filter(
+      (segment) => matchesScope(segment, scope) && segment.sessionId === sessionId
+    ).length;
+    removeWhere(
+      this.aiTranscriptSegments,
+      (segment) => matchesScope(segment, scope) && segment.sessionId === sessionId
+    );
+    session.status = "retention_deleted";
+    session.rawAudioDeletedAt = session.rawAudioDeletedAt ?? new Date().toISOString();
+    session.transcriptDeletedAt = new Date().toISOString();
+    return { session, deletedTranscriptSegments, deletedRawAudioReferences: true };
   }
 
   async createMediaUploadReservation(

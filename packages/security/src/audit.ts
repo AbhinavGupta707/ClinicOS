@@ -422,6 +422,42 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: false
   },
+  "ai.session.started": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "ai.transcript.segment_created": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "ai.draft.generated": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "ai.action_proposal.created": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "ai.review_decision.recorded": {
+    category: "clinical",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "ai.retention.deleted": {
+    category: "privacy",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
   "owner_dashboard.viewed": {
     category: "administration",
     riskLevel: "medium",

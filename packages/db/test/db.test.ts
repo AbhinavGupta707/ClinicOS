@@ -32,6 +32,10 @@ const checkpoint7Migration = readFileSync(
   resolve(import.meta.dirname, "../migrations/0008_live_integrations_migration_hardening.sql"),
   "utf8"
 );
+const checkpoint8Migration = readFileSync(
+  resolve(import.meta.dirname, "../migrations/0009_mobile_capture_ai_scribe.sql"),
+  "utf8"
+);
 const checkpoint1Seed = readFileSync(
   resolve(import.meta.dirname, "../seeds/checkpoint1_identity_auth.sql"),
   "utf8"
@@ -512,4 +516,57 @@ test("checkpoint 7 grants migration management without accountant import access"
   assert.match(checkpoint7Migration, /\('receptionist', 'migration\.manage'\)/i);
   assert.doesNotMatch(checkpoint7Migration, /\('accountant', 'migration\.manage'\)/i);
   assert.doesNotMatch(checkpoint7Migration, /\('auditor', 'migration\.manage'\)/i);
+});
+
+test("checkpoint 8 migration includes consent-gated AI scribe persistence", () => {
+  for (const table of [
+    "ai_sessions",
+    "ai_transcript_segments",
+    "ai_source_anchors",
+    "ai_jobs",
+    "ai_draft_outputs",
+    "ai_action_proposals",
+    "ai_review_decisions"
+  ]) {
+    assert.match(checkpoint8Migration, new RegExp(`create table if not exists ${table}`, "i"));
+  }
+
+  assert.match(checkpoint8Migration, /provider_mode in \('simulator', 'unconfigured', 'live_disabled'\)/i);
+  assert.match(checkpoint8Migration, /providerTrainingAllowed/i);
+  assert.match(checkpoint8Migration, /providerRawPayloadStorage/i);
+  assert.match(checkpoint8Migration, /text_quote_digest/i);
+  assert.match(checkpoint8Migration, /unsupported_source_anchor_ids/i);
+});
+
+test("checkpoint 8 migration enforces RLS, review-only approvals, and AI timeline evidence", () => {
+  for (const table of [
+    "ai_sessions",
+    "ai_transcript_segments",
+    "ai_source_anchors",
+    "ai_jobs",
+    "ai_draft_outputs",
+    "ai_action_proposals",
+    "ai_review_decisions"
+  ]) {
+    assert.match(checkpoint8Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
+    assert.match(checkpoint8Migration, new RegExp(`alter table ${table} force row level security`, "i"));
+    assert.match(checkpoint8Migration, new RegExp(`${table}_tenant_clinic_isolation`, "i"));
+  }
+
+  assert.match(checkpoint8Migration, /applied_workflow text not null default 'review_only'/i);
+  assert.match(checkpoint8Migration, /applied_record_id uuid check \(applied_record_id is null\)/i);
+  assert.match(checkpoint8Migration, /'ai_session_started'/i);
+  assert.match(checkpoint8Migration, /'ai_draft_generated'/i);
+  assert.match(checkpoint8Migration, /'ai_review_decision_recorded'/i);
+  assert.match(checkpoint8Migration, /'ai_retention_deleted'/i);
+});
+
+test("checkpoint 8 grants AI scribe permissions only to clinical/admin roles", () => {
+  for (const permission of ["ai.scribe.read", "ai.scribe.write", "ai.scribe.review"]) {
+    assert.match(checkpoint8Migration, new RegExp(`\\('${permission}'`, "i"));
+    assert.match(checkpoint8Migration, new RegExp(`\\('doctor', '${permission}'\\)`, "i"));
+    assert.match(checkpoint8Migration, new RegExp(`\\('assistant', '${permission}'\\)`, "i"));
+    assert.doesNotMatch(checkpoint8Migration, new RegExp(`\\('accountant', '${permission}'\\)`, "i"));
+    assert.doesNotMatch(checkpoint8Migration, new RegExp(`\\('auditor', '${permission}'\\)`, "i"));
+  }
 });
