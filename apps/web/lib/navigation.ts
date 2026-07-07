@@ -1,5 +1,6 @@
 import {
   Activity,
+  Bot,
   CalendarDays,
   ClipboardCheck,
   ClipboardPenLine,
@@ -318,6 +319,50 @@ export const SURFACES: SurfaceRegistration[] = [
     roles: ["owner"]
   },
   {
+    availability: "active",
+    checkpoint: 8,
+    description:
+      "AI scribe note drafts with confidence, source anchors, warnings, and doctor review boundaries.",
+    href: "/surface/note-drafts",
+    icon: Bot,
+    id: "note-drafts",
+    label: "AI note drafts",
+    requiredApis: [
+      "Configured AI Backend review queue read route",
+      "Backend-provided clinical note draft review decision route"
+    ],
+    roles: ["owner", "doctor", "assistant"]
+  },
+  {
+    availability: "active",
+    checkpoint: 8,
+    description: "AI dental chart patch drafts with tooth-level anchors and review-only decisions.",
+    href: "/surface/chart-drafts",
+    icon: Bot,
+    id: "chart-drafts",
+    label: "Chart drafts",
+    requiredApis: [
+      "Configured AI Backend review queue read route",
+      "Backend-provided dental chart patch review decision route"
+    ],
+    roles: ["owner", "doctor", "assistant"]
+  },
+  {
+    availability: "active",
+    checkpoint: 8,
+    description:
+      "AI action proposals for messages, tasks, and operational tools with explicit approval states.",
+    href: "/surface/action-proposals",
+    icon: Bot,
+    id: "action-proposals",
+    label: "Action proposals",
+    requiredApis: [
+      "Configured AI Backend review queue read route",
+      "Backend-provided action proposal review decision route"
+    ],
+    roles: ["owner", "doctor", "assistant"]
+  },
+  {
     availability: "registered_unavailable",
     checkpoint: 1,
     description: "Clinic setup, users, roles, templates, pricebook, and source policy.",
@@ -381,7 +426,12 @@ const SURFACE_ALIASES = new Map<string, string>([
   ["provider-health", "integrations"],
   ["integration-ops", "integrations"],
   ["dead-letter-replay", "event-replay"],
-  ["imports", "migration-review"]
+  ["imports", "migration-review"],
+  ["ai-review", "note-drafts"],
+  ["ai-scribe", "note-drafts"],
+  ["scribe-review", "note-drafts"],
+  ["chart-review", "chart-drafts"],
+  ["proposal-inbox", "action-proposals"]
 ]);
 
 export function hasSurface(surfaceId: string) {

@@ -5,6 +5,7 @@ import { Menu, RefreshCw, X } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useMemo, useState } from "react";
 
+import { AiReviewWorkflow, isCp8WorkflowSurface } from "@/components/ai-review-workflow";
 import { AssistantWorkflow, isCp2WorkflowSurface } from "@/components/assistant-workflow";
 import { AuthStatusPanel } from "@/components/auth-status-panel";
 import { CheckoutWorkflow, isCp5WorkflowSurface } from "@/components/checkout-workflow";
@@ -194,6 +195,8 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
             <OperationsWorkflow activeSurfaceId={activeSurface.id} profile={profile} />
           ) : isCp7WorkflowSurface(activeSurface.id) ? (
             <IntegrationOpsWorkflow activeSurfaceId={activeSurface.id} profile={profile} />
+          ) : isCp8WorkflowSurface(activeSurface.id) ? (
+            <AiReviewWorkflow activeSurfaceId={activeSurface.id} profile={profile} />
           ) : (
             <SurfaceView profile={profile} surface={activeSurface} />
           )}
