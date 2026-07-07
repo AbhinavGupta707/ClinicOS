@@ -26,7 +26,12 @@ describe("CP10 pilot readiness", () => {
       syntheticOnly: true
     });
     expect(readiness.liveVerificationGaps.map((gap) => gap.id)).toEqual(
-      expect.arrayContaining(["provider-whatsapp", "provider-razorpay", "ops-cloud-pilot-prod"])
+      expect.arrayContaining([
+        "provider-whatsapp",
+        "provider-razorpay",
+        "provider-abdm",
+        "ops-cloud-pilot-prod"
+      ])
     );
     expect(JSON.stringify(readiness)).not.toContain("Provider success confirmed");
     expect(JSON.stringify(readiness)).not.toContain("KEY_SECRET");

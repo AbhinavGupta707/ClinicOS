@@ -113,8 +113,7 @@ export function getCp10TodayInputValue(now = new Date()) {
 }
 
 export function isCp10FixtureAllowed() {
-  const fixtureRequested =
-    process.env.NEXT_PUBLIC_CLINIC_OS_USE_CP10_PILOT_FIXTURE === "true";
+  const fixtureRequested = process.env.NEXT_PUBLIC_CLINIC_OS_USE_CP10_PILOT_FIXTURE === "true";
   const environment = process.env.NEXT_PUBLIC_CLINIC_OS_ENV ?? process.env.NODE_ENV;
 
   return fixtureRequested && FIXTURE_ENVIRONMENTS.has(environment);
@@ -135,7 +134,8 @@ export function createFixtureCp10PilotReadinessPlan(
     }),
     item({
       category: "clinic_setup",
-      evidence: "Pilot evidence is synthetic-only and safe for local QA, screenshots, and training.",
+      evidence:
+        "Pilot evidence is synthetic-only and safe for local QA, screenshots, and training.",
       id: "synthetic-data-posture",
       label: "No-real-PHI pilot data posture",
       routeContracts: [],
@@ -205,7 +205,8 @@ export function createFixtureCp10PilotReadinessPlan(
     }),
     item({
       category: "provider",
-      evidence: "Telephony/missed-call capture remains deferred until an official provider is configured.",
+      evidence:
+        "Telephony/missed-call capture remains deferred until an official provider is configured.",
       externalBlocker: true,
       id: "provider-telephony",
       label: "Telephony/missed-call activation",
@@ -214,7 +215,8 @@ export function createFixtureCp10PilotReadinessPlan(
     }),
     item({
       category: "provider",
-      evidence: "Live AI and transcription remain deferred until provider, retention, and residency approval.",
+      evidence:
+        "Live AI and transcription remain deferred until provider, retention, and residency approval.",
       externalBlocker: true,
       id: "provider-ai-scribe",
       label: "Live AI/transcription activation",
@@ -225,8 +227,19 @@ export function createFixtureCp10PilotReadinessPlan(
       status: "deferred"
     }),
     item({
+      category: "provider",
+      evidence:
+        "ABDM sandbox/live exchange is not verified in CP10; FHIR projection evidence is local only.",
+      externalBlocker: true,
+      id: "provider-abdm",
+      label: "ABDM activation",
+      routeContracts: ["FHIR projection package evidence only; no live ABDM API route is claimed"],
+      status: "deferred"
+    }),
+    item({
       category: "operations",
-      evidence: "Terraform apply and cloud resource creation are not verified in local CP10 evidence.",
+      evidence:
+        "Terraform apply and cloud resource creation are not verified in local CP10 evidence.",
       externalBlocker: true,
       id: "ops-cloud-pilot-prod",
       label: "AWS pilot-prod deployment",
@@ -388,9 +401,7 @@ function item(
   }
 ): Cp10PilotReadinessItem {
   const inferredExternalBlocker =
-    input.status === "blocked" ||
-    input.status === "deferred" ||
-    input.status === "unavailable";
+    input.status === "blocked" || input.status === "deferred" || input.status === "unavailable";
 
   return {
     activationPath: input.activationPath ?? [
@@ -474,9 +485,7 @@ function normalizeCp10ReadinessPayload(
   ) {
     return {
       code: "CONTRACT_MISMATCH",
-      endpoints: [
-        { endpoint: "GET /v1/pilot-readiness", message: "Unexpected readiness schema." }
-      ],
+      endpoints: [{ endpoint: "GET /v1/pilot-readiness", message: "Unexpected readiness schema." }],
       message: "Pilot readiness is reachable but does not match the CP10 schema."
     };
   }

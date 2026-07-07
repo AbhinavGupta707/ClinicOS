@@ -24,19 +24,19 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 
 ## Checkpoints
 
-| Checkpoint                                        | Status    |     Base commit | Result commit | Notes                                                                                                                                                                                                                                                                          |
-| ------------------------------------------------- | --------- | --------------: | ------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0 - Git and orchestration preflight               | Complete  | repository root |   `main` HEAD | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured and pushed.                                                                                                                                                 |
-| 1 - Production platform foundation                | Complete  |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
-| 2 - Lead/patient/appointment/day-start            | Complete  |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
-| 3 - Intake/consent/encounter/notes                | Complete  |       `6fe2cbc` |     `eb68abd` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-3`. Master integration aligned live CP3 routes, consent enforcement, prep summary, QA fixtures, web selectors, browser smoke, and security/audit coverage.                                       |
-| 4 - Dental charting/media/imaging                 | Complete  |       `c7b222c` |     `248496a` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4` and promoted to `main`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                 |
-| 5 - Treatment/checkout/payments                   | Complete  |       `d3d341f` |     `d679a78` | CP5 visible project-scoped lanes merged into `codex/integration/checkpoint-5`, promoted to `main`, and followed by closeout docs commit `6f9fe1c`.                                                                                                                             |
-| 6 - Continuity/operations/owner dashboard         | Complete  |       `6f9fe1c` |     `08ddab9` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`, verified, documented, promoted to `main`, and post-promotion format gate repaired.                                                                                                              |
-| 7 - Live integrations/migration hardening         | Complete  |       `e7139c4` |     `92fb2b9` | CP7 visible project-scoped lanes merged into `codex/integration/checkpoint-7`, master integration reconciled live provider health/dead-letter/migration contracts, and verified branch was promoted to `main`.                                                                 |
-| 8 - Mobile capture and AI scribe/action proposals | Complete  |       `983cca5` |     `8ac2dae` | CP8 visible project-scoped lanes merged into `codex/integration/checkpoint-8` and promoted to `main`. Master integration reconciled AI safety route contracts, consent blocking semantics, review-role browser gates, and fixture/live evidence boundaries.                    |
-| 9 - Interoperability/security/ops hardening       | Complete  |       `0dc9f91` |     `131300b` | CP9 visible project-scoped lanes merged into `codex/integration/checkpoint-9` and promoted to `main`; master integration reconciled Security route contracts, FHIR projection-only evidence, restore/load fixtures, and CP9 registered-unavailable browser smoke.              |
-| 10 - Release candidate/pilot readiness            | Launching |       `a2d6501` |       pending | CP10 launch packet defines Pilot Configuration, UX Polish, End-To-End QA, and Operations/Docs lanes; live provider/ABDM/AWS/physical-device checks remain explicit gaps unless separately approved and configured.                                                             |
+| Checkpoint                                        | Status   |     Base commit | Result commit | Notes                                                                                                                                                                                                                                                                          |
+| ------------------------------------------------- | -------- | --------------: | ------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0 - Git and orchestration preflight               | Complete | repository root |   `main` HEAD | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured and pushed.                                                                                                                                                 |
+| 1 - Production platform foundation                | Complete |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
+| 2 - Lead/patient/appointment/day-start            | Complete |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
+| 3 - Intake/consent/encounter/notes                | Complete |       `6fe2cbc` |     `eb68abd` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-3`. Master integration aligned live CP3 routes, consent enforcement, prep summary, QA fixtures, web selectors, browser smoke, and security/audit coverage.                                       |
+| 4 - Dental charting/media/imaging                 | Complete |       `c7b222c` |     `248496a` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4` and promoted to `main`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                 |
+| 5 - Treatment/checkout/payments                   | Complete |       `d3d341f` |     `d679a78` | CP5 visible project-scoped lanes merged into `codex/integration/checkpoint-5`, promoted to `main`, and followed by closeout docs commit `6f9fe1c`.                                                                                                                             |
+| 6 - Continuity/operations/owner dashboard         | Complete |       `6f9fe1c` |     `08ddab9` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`, verified, documented, promoted to `main`, and post-promotion format gate repaired.                                                                                                              |
+| 7 - Live integrations/migration hardening         | Complete |       `e7139c4` |     `92fb2b9` | CP7 visible project-scoped lanes merged into `codex/integration/checkpoint-7`, master integration reconciled live provider health/dead-letter/migration contracts, and verified branch was promoted to `main`.                                                                 |
+| 8 - Mobile capture and AI scribe/action proposals | Complete |       `983cca5` |     `8ac2dae` | CP8 visible project-scoped lanes merged into `codex/integration/checkpoint-8` and promoted to `main`. Master integration reconciled AI safety route contracts, consent blocking semantics, review-role browser gates, and fixture/live evidence boundaries.                    |
+| 9 - Interoperability/security/ops hardening       | Complete |       `0dc9f91` |     `131300b` | CP9 visible project-scoped lanes merged into `codex/integration/checkpoint-9` and promoted to `main`; master integration reconciled Security route contracts, FHIR projection-only evidence, restore/load fixtures, and CP9 registered-unavailable browser smoke.              |
+| 10 - Release candidate/pilot readiness            | Verified |       `a2d6501` |       pending | CP10 visible project-scoped lanes merged into `codex/integration/checkpoint-10`; master closeout verified full gates, API/browser smoke, release docs, and accepted external go-live gaps. Main promotion is recorded after post-promotion checks.                             |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -448,3 +448,46 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - UX Polish: pending `local:1120e0db-a119-47b2-81e0-e399c07f7c3d`, thread `019f3d25-c537-7e43-abed-c56a4938202d`, worktree `/Users/abhinavgupta/.codex/worktrees/9bcb/ClinicOS`.
   - End-To-End QA: pending `local:32d83d19-e3eb-486f-acd1-c269f237a7f6`, thread `019f3d26-17d5-71a2-ac81-1e94de547afb`, worktree `/Users/abhinavgupta/.codex/worktrees/5cd7/ClinicOS`.
   - Operations/Docs: pending `local:e2eb88a3-5c16-4f6f-b546-7422f4ada13a`, thread `019f3d26-4626-7bd1-9043-a968ec6e128b`, worktree `/Users/abhinavgupta/.codex/worktrees/6dce/ClinicOS`.
+
+## Checkpoint 10 Integration Verification - 2026-07-07
+
+- Integration branch: `codex/integration/checkpoint-10`.
+- Verified integration head before master closeout patch: `fc3511f`.
+- Merge order:
+  - Pilot Configuration commit `148bad5` merged first as `c158969`.
+  - Master correction `f6f2716` kept pilot readiness approval conservative by not treating AI data-residency notes as approval.
+  - UX Polish commit `ecc6e1d` merged second as `4740a10`.
+  - End-To-End QA commit `e0be686` merged third as `23c628e`, with the CP10 fixture README and browser/contract expectations reconciled to include the pilot-readiness surface.
+  - Operations/Docs commit `266f7d7` merged fourth as `fc3511f`.
+- Master closeout patch:
+  - Added missing ABDM live-verification gap to the web CP10 pilot fixture and unit test after owner browser smoke found the mismatch.
+  - Replaced the CP10 final report skeleton and evidence matrix with actual verification evidence.
+  - Updated the CP10 orchestration packet with lane merge status and closeout evidence.
+- Full repository gates passed after the final ABDM fixture patch: `git diff --check`, `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`.
+- CP10 evidence gates passed: `node scripts/validate-cp10-fixtures.mjs`, `node scripts/cp10-contract-smoke.mjs --dry-run`, `node --test tests/acceptance/cp10-fixture-contract.test.mjs`, and `node --test tests/acceptance/*.test.mjs`.
+- Outside-sandbox API route smoke passed with zero skips: `npm --workspace @clinic-os/api test -- cp10-pilot-readiness.test.ts`, including owner-only `GET /v1/pilot-readiness`.
+- Browser/user smoke passed:
+  - Assistant clinic-day desktop and 390px mobile no-overflow: `CLINICOS_CP10_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3110 NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=assistant npx playwright test tests/e2e/checkpoint-10-clinic-day-flow.spec.ts --grep assistant`.
+  - Owner dashboard/readiness/compliance plus settings desktop/mobile: `CLINICOS_CP10_E2E_ENABLED=true CLINICOS_CP10_UX_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3111 NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=owner npx playwright test tests/e2e/checkpoint-10-clinic-day-flow.spec.ts tests/e2e/checkpoint-10-ux-polish-flow.spec.ts --grep "owner|settings|390px"`.
+  - Platform-support unavailable shell: `CLINICOS_CP10_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3112 NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=platform_admin npx playwright test tests/e2e/checkpoint-10-clinic-day-flow.spec.ts --grep "platform-support"`.
+  - Accountant clinical-route role boundary: `CLINICOS_CP10_UX_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3113 NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=accountant npx playwright test tests/e2e/checkpoint-10-ux-polish-flow.spec.ts --grep "accountant"`.
+- Browser evidence screenshots:
+  - `/private/tmp/clinicos-cp10-assistant-clinic-day-desktop.png`.
+  - `/private/tmp/clinicos-cp10-assistant-mobile-390.png`.
+  - `/private/tmp/clinicos-cp10-owner-dashboard-compliance.png`.
+  - `/private/tmp/clinicos-cp10-settings-unavailable-desktop.png`.
+  - `/private/tmp/clinicos-cp10-settings-unavailable-mobile-390.png`.
+  - `/private/tmp/clinicos-cp10-accountant-role-boundary.png`.
+- Release package evidence:
+  - `docs/release/checkpoint-10-release-notes.md`.
+  - `docs/release/pilot-go-live-checklist.md`.
+  - `docs/training/pilot-training-flow.md`.
+  - `infra/runbooks/pilot-support-admin.md`.
+  - `docs/release/known-risks-deferred-work.md`.
+  - `docs/qa/checkpoint-10-evidence-matrix.md`.
+  - `docs/orchestration/CHECKPOINT_10_FINAL_REPORT.md`.
+- Accepted gaps:
+  - Live WhatsApp, Razorpay, telephony, AI/STT, ABDM, AWS apply/live restore, GitHub push/remote CI, and physical-device verification remain external gates.
+  - Real clinic data use and pilot go-live are not approved by CP10.
+  - Final visual design replacement is deferred; CP10 validates safety, reachability, honest states, and responsive no-overflow behavior.
+  - `npm run security:audit` was not run because prior policy review rejected npm audit escalation as external dependency-inventory disclosure.

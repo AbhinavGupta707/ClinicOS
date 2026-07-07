@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` at CP10 launch commit `e41af66`; CP10 worker lanes are active from this baseline.
+- Branch: `codex/integration/checkpoint-10` is verified for CP10 closeout; main promotion is recorded after post-promotion checks.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -60,6 +60,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - UX Polish: `019f3d25-c537-7e43-abed-c56a4938202d`, `/Users/abhinavgupta/.codex/worktrees/9bcb/ClinicOS`.
   - End-To-End QA: `019f3d26-17d5-71a2-ac81-1e94de547afb`, `/Users/abhinavgupta/.codex/worktrees/5cd7/ClinicOS`.
   - Operations/Docs: `019f3d26-4626-7bd1-9043-a968ec6e128b`, `/Users/abhinavgupta/.codex/worktrees/6dce/ClinicOS`.
+- Checkpoint 10 is verified on `codex/integration/checkpoint-10` after merging Pilot Configuration (`c158969` plus `f6f2716`), UX Polish (`4740a10`), End-To-End QA (`23c628e`), and Operations/Docs (`fc3511f`). Master closeout added missing ABDM web fixture/readiness evidence, reran full gates, and recorded release-candidate evidence in `docs/orchestration/CHECKPOINT_10_FINAL_REPORT.md`.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture
@@ -188,6 +189,14 @@ Follow `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
 - Terraform/restore evidence must stay non-mutating by default. CP9 uses a validation-only Terraform profile and synthetic restore dry-run evidence; do not treat these as cloud readiness or live restore proof.
 - ABDM readiness is not ABDM activation. Empty credentials should remain `not_configured`/`unavailable`, log summaries must not expose credential values, and `liveExchangeAllowed` remains false even for sandbox-ready posture until compliance activation exists.
 - `npm run security:audit` remains an external dependency-inventory disclosure and should not be rerun after policy rejection without explicit user approval. Keep `npm run security:secrets`, code review, and local tests as the default security gates.
+
+## CP10 Integration Lessons
+
+- Release-candidate readiness must keep web fixture evidence, domain/API readiness builders, deterministic CP10 fixtures, and release docs aligned. CP10 owner browser smoke caught that the domain/API model and docs treated ABDM as an external live gate while the web fixture omitted it.
+- For CP10 and later role-specific web smoke, start separate web server processes per `NEXT_PUBLIC_CLINIC_OS_DEV_ROLE`. The role is process-scoped, so assistant, owner, platform_admin, and accountant checks need separate server runs or carefully gated specs.
+- Browser smoke should assert the presence of external-go-live gaps, not only absence of fake success. CP10 now checks that owner readiness shows ABDM and other blocked/deferred gates rather than quietly omitting them.
+- Technical release-candidate acceptance is not pilot go-live approval. Keep real clinic data, live providers, ABDM, AWS apply/live restore, GitHub push/remote CI, and physical devices as external gates until explicit evidence and sign-off exist.
+- Operations/Docs lanes should provide report structure and release artifacts, but the master closeout must replace pending/draft language with actual lane commits, commands, screenshots, accepted gaps, and go/no-go decisions.
 
 ## Shared-File Mistakes To Avoid
 

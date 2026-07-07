@@ -2,58 +2,58 @@
 
 Date: 2026-07-07
 
-Status: Draft evidence ledger for master integration
+Status: Master verified on `codex/integration/checkpoint-10`
 
-Scope: CP10 release-candidate and pilot-readiness gates
-
-The Operations/Docs lane does not fill verification results. Master should fill
-this matrix after Pilot Configuration, UX Polish, End-To-End QA, and
-Operations/Docs are merged on the CP10 integration branch.
+Scope: CP10 release-candidate and pilot-readiness gates.
 
 ## Repository And Build Gates
 
-| Gate                   | Command/evidence           | Status         | Owner notes                                                 |
-| ---------------------- | -------------------------- | -------------- | ----------------------------------------------------------- |
-| Whitespace/diff safety | `git diff --check`         | Pending master | Run after all CP10 merges and docs formatting.              |
-| Workspace check        | `npm run check`            | Pending master | Includes env/template and formatting gates.                 |
-| Typecheck              | `npm run typecheck`        | Pending master | Required if any code changed.                               |
-| Lint                   | `npm run lint`             | Pending master | Required if any code changed.                               |
-| Test                   | `npm run test`             | Pending master | Required before release-candidate claim.                    |
-| Build                  | `npm run build`            | Pending master | Required before pilot release candidate.                    |
-| Secret scan            | `npm run security:secrets` | Pending master | Must pass before any real data or provider credential work. |
+| Gate                   | Command/evidence           | Status              | Owner notes                                                                                                                |
+| ---------------------- | -------------------------- | ------------------- | -------------------------------------------------------------------------------------------------------------------------- |
+| Whitespace/diff safety | `git diff --check`         | Pass                | Clean after merge reconciliation and final formatting.                                                                     |
+| Workspace check        | `npm run check`            | Pass                | Workspace structure, env/template validation, and Prettier checks passed.                                                  |
+| Typecheck              | `npm run typecheck`        | Pass                | All workspaces passed after the final ABDM fixture patch.                                                                  |
+| Lint                   | `npm run lint`             | Pass                | All workspaces passed after the final ABDM fixture patch.                                                                  |
+| Test                   | `npm run test`             | Pass                | Full workspace suite passed. In-sandbox socket skips were covered by outside-sandbox API smoke.                            |
+| Build                  | `npm run build`            | Pass                | API checks, Expo web export, Next.js build, worker, FHIR, integrations, config, observability, and workflow builds passed. |
+| Secret scan            | `npm run security:secrets` | Pass                | Tracked-file secret scan passed.                                                                                           |
+| External npm audit     | Not run                    | Accepted limitation | `npm run security:audit` requires external dependency-inventory disclosure and was not run without explicit approval.      |
 
 ## CP10 Product Regression Gates
 
-| Area                        | Evidence required                                                                                                                                                                              | Status          | Notes                                                          |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------- | -------------------------------------------------------------- |
-| Full clinic-day flow        | Lead -> patient -> appointment -> intake -> encounter -> dental chart/media -> treatment plan -> invoice/payment -> prescription/instruction -> recall/lab/inventory/event -> owner dashboard. | Pending QA lane | Evidence must state fixture/local/live boundary for each step. |
-| Canonical routes            | CP10 scripts/web loaders use merged API route families.                                                                                                                                        | Pending master  | Resolve fixture/live drift before closeout.                    |
-| Role matrix                 | Owner, doctor, assistant, receptionist, accountant, auditor/support, and platform/admin boundaries pass.                                                                                       | Pending QA lane | Include denial assertions, not only happy paths.               |
-| Tenant isolation            | Cross-tenant reads/writes denied for CP10-relevant workflows.                                                                                                                                  | Pending QA lane | Required for any workflow added or touched.                    |
-| Provider unavailable/no-key | Provider-health and UI/API states are honest and action-oriented.                                                                                                                              | Pending QA lane | Do not claim live provider readiness from simulator.           |
-| Migration/import dry-run    | No silent overwrite of verified ClinicOS records; rollback posture documented.                                                                                                                 | Pending QA lane | Required if CP10 adds fixture/import/config changes.           |
-| Backup/restore              | Synthetic restore evidence remains current.                                                                                                                                                    | Pending master  | Use CP9 runbook unless CP10 adds new restore evidence.         |
+| Area                        | Evidence                                                                                                                             | Status                     | Notes                                                                                                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ | -------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Full clinic-day flow        | `fixtures/synthetic/cp10/clinic_day_regression_flow.json`, `node scripts/cp10-contract-smoke.mjs --dry-run`, assistant browser smoke | Pass                       | Lead -> patient -> appointment -> intake -> encounter -> dental chart/media -> treatment plan -> invoice/payment -> prescription/instruction -> continuity -> owner dashboard. |
+| Canonical routes            | CP10 dry-run script, acceptance contract, API route tests                                                                            | Pass                       | CP10 uses canonical CP2-CP9 route families and read-only `GET /v1/pilot-readiness`.                                                                                            |
+| Role matrix                 | `node --test tests/acceptance/cp10-fixture-contract.test.mjs` and browser owner/assistant/accountant/platform smokes                 | Pass                       | Owner, doctor, assistant, receptionist, accountant, auditor/support, platform/admin boundaries are covered.                                                                    |
+| Tenant isolation            | CP10 acceptance contract                                                                                                             | Pass                       | Wrong-tenant patient, note, media, invoice, and owner-dashboard assertions deny cross-tenant access.                                                                           |
+| Provider unavailable/no-key | CP10 dry-run, owner/readiness browser smoke, release notes/risk register                                                             | Pass                       | Simulator/no-key evidence is never presented as live provider readiness.                                                                                                       |
+| Migration/import dry-run    | CP10 acceptance contract references CP7 row-based migration and CP9 restore dry-run                                                  | Pass                       | No silent overwrite or live import claim.                                                                                                                                      |
+| Backup/restore              | CP9 synthetic restore dry-run reference in CP10 fixture and release docs                                                             | Pass as synthetic evidence | Live restore remains external.                                                                                                                                                 |
+| ABDM boundary               | CP9 FHIR/ABDM fixture plus CP10 owner readiness smoke                                                                                | Pass as deferred evidence  | Final closeout patched the web CP10 fixture so ABDM appears as an explicit external gate.                                                                                      |
 
 ## Browser And Manual Smoke Gates
 
-| Smoke                     | Evidence required                                                      | Status         | Notes                                              |
-| ------------------------- | ---------------------------------------------------------------------- | -------------- | -------------------------------------------------- |
-| Desktop web               | Screenshot/spec evidence for implemented CP10 surfaces.                | Pending master | Must show honest loading/error/unavailable states. |
-| Mobile web 390px          | No horizontal overflow, reachable controls, safe text.                 | Pending master | Required for touched web surfaces.                 |
-| Owner manual smoke        | Owner can review dashboard/readiness and go/no-go posture.             | Pending master | Use synthetic data unless real data approved.      |
-| Doctor manual smoke       | Doctor can complete clinical/dental tasks in scope.                    | Pending master | Must preserve consent and sign-off boundaries.     |
-| Assistant manual smoke    | Assistant can complete front-desk and continuity tasks in scope.       | Pending master | Must preserve source attribution.                  |
-| Receptionist manual smoke | Receptionist can complete checkout/instruction workflow in scope.      | Pending master | No fake provider delivery/payment success.         |
-| Accountant manual smoke   | Accountant can review payment evidence without clinical PHI overreach. | Pending master | Role denial evidence required.                     |
+| Smoke                  | Evidence                                                 | Status | Notes                                                                                          |
+| ---------------------- | -------------------------------------------------------- | ------ | ---------------------------------------------------------------------------------------------- |
+| Desktop web            | Playwright CP10 assistant/owner/platform/accountant runs | Pass   | Implemented and registered-unavailable surfaces render without fake completion claims.         |
+| Mobile web 390px       | Assistant checkout/operations and owner settings smoke   | Pass   | No horizontal overflow; key controls and state indicators are reachable.                       |
+| Owner smoke            | Owner dashboard, pilot readiness, compliance shell       | Pass   | Pilot readiness shows blocked go-live and ABDM/live external gaps.                             |
+| Doctor boundary        | API/domain role tests plus CP10 role matrix              | Pass   | No new CP10 doctor-only UI workflow was added; doctor signing/review boundaries remain tested. |
+| Assistant smoke        | Assistant clinic-day browser run                         | Pass   | Traverses CP2-CP8 implemented fixture surfaces safely.                                         |
+| Receptionist boundary  | CP10 role matrix and CP5 billing/instruction tests       | Pass   | Checkout/instruction evidence remains no-fake-delivery/no-fake-payment.                        |
+| Accountant smoke       | Direct clinical route role-boundary browser run          | Pass   | No clinical PHI or clinical workflow controls render for accountant role.                      |
+| Platform support smoke | Platform-support registered-unavailable browser run      | Pass   | No fake break-glass approval, tenant export, or provider success claim.                        |
 
 ## Live Verification Gaps To Carry Forward Unless Closed
 
-| Gap                                | Expected CP10 status                            | Closeout rule                                                                                |
-| ---------------------------------- | ----------------------------------------------- | -------------------------------------------------------------------------------------------- |
-| WhatsApp live webhook/send         | Gap unless official evidence recorded.          | Close only with signed callback and provider evidence.                                       |
-| Razorpay webhook registration      | Gap unless official evidence recorded.          | Close only with raw-body signature verification and dashboard evidence.                      |
-| Telephony live missed-call capture | Gap unless official provider evidence recorded. | Close only with official API/callback evidence.                                              |
-| ABDM live exchange                 | Gap.                                            | Close only with credentials, consent, facility/provider activation, and compliance sign-off. |
-| AWS pilot-prod apply/restore       | Gap unless explicitly approved and executed.    | Close only with cloud apply/restore evidence and approvals.                                  |
-| Physical-device mobile smoke       | Gap unless separately executed.                 | Close only with device screenshots/logs and distribution posture.                            |
-| GitHub push/Actions                | Gap unless master performs it.                  | Close only with push/CI evidence.                                                            |
+| Gap                                | Expected CP10 status           | Closeout rule                                                                                                      |
+| ---------------------------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| WhatsApp live webhook/send         | Blocked external gate          | Close only with signed callback and official provider send/status evidence.                                        |
+| Razorpay webhook registration      | Blocked external gate          | Close only with hosted HTTPS callback, raw-body signature proof, and dashboard evidence.                           |
+| Telephony live missed-call capture | Deferred external gate         | Close only with official API/callback evidence.                                                                    |
+| ABDM live exchange                 | Deferred external gate         | Close only with credentials, consent, HFR/HPR/facility activation, sandbox/live evidence, and compliance sign-off. |
+| AWS pilot-prod apply/restore       | Blocked/deferred external gate | Close only with approved cloud apply, backup, and live restore evidence.                                           |
+| Physical-device mobile smoke       | Deferred external gate         | Close only with device screenshots/logs and distribution posture.                                                  |
+| GitHub push/Actions                | Deferred external gate         | Close only with push/CI evidence.                                                                                  |
+| Final visual design                | Deferred whole workflow        | CP10 verifies safety/responsiveness only; final design replacement remains separate.                               |

@@ -32,12 +32,12 @@ without weakening shipped behavior.
 
 All CP10 lanes were launched as project-scoped Codex worktree threads from `main` at `e41af66`, so they should appear under the `ClinicOS` project in the Codex sidebar.
 
-| Lane                | Pending Worktree ID                          | Thread ID                              | Worktree                                             | Current status |
-| ------------------- | -------------------------------------------- | -------------------------------------- | ---------------------------------------------------- | -------------- |
-| Pilot Configuration | `local:794b8505-4f39-4563-ac0f-83f146f1519a` | `019f3d25-61be-7d92-a99a-a558e578a53d` | `/Users/abhinavgupta/.codex/worktrees/b1c9/ClinicOS` | active         |
-| UX Polish           | `local:1120e0db-a119-47b2-81e0-e399c07f7c3d` | `019f3d25-c537-7e43-abed-c56a4938202d` | `/Users/abhinavgupta/.codex/worktrees/9bcb/ClinicOS` | active         |
-| End-To-End QA       | `local:32d83d19-e3eb-486f-acd1-c269f237a7f6` | `019f3d26-17d5-71a2-ac81-1e94de547afb` | `/Users/abhinavgupta/.codex/worktrees/5cd7/ClinicOS` | active         |
-| Operations/Docs     | `local:e2eb88a3-5c16-4f6f-b546-7422f4ada13a` | `019f3d26-4626-7bd1-9043-a968ec6e128b` | `/Users/abhinavgupta/.codex/worktrees/6dce/ClinicOS` | active         |
+| Lane                | Pending Worktree ID                          | Thread ID                              | Worktree                                             | Current status                               |
+| ------------------- | -------------------------------------------- | -------------------------------------- | ---------------------------------------------------- | -------------------------------------------- |
+| Pilot Configuration | `local:794b8505-4f39-4563-ac0f-83f146f1519a` | `019f3d25-61be-7d92-a99a-a558e578a53d` | `/Users/abhinavgupta/.codex/worktrees/b1c9/ClinicOS` | merged via `c158969`; corrected by `f6f2716` |
+| UX Polish           | `local:1120e0db-a119-47b2-81e0-e399c07f7c3d` | `019f3d25-c537-7e43-abed-c56a4938202d` | `/Users/abhinavgupta/.codex/worktrees/9bcb/ClinicOS` | merged via `4740a10`                         |
+| End-To-End QA       | `local:32d83d19-e3eb-486f-acd1-c269f237a7f6` | `019f3d26-17d5-71a2-ac81-1e94de547afb` | `/Users/abhinavgupta/.codex/worktrees/5cd7/ClinicOS` | merged via `23c628e`                         |
+| Operations/Docs     | `local:e2eb88a3-5c16-4f6f-b546-7422f4ada13a` | `019f3d26-4626-7bd1-9043-a968ec6e128b` | `/Users/abhinavgupta/.codex/worktrees/6dce/ClinicOS` | merged via `fc3511f`                         |
 
 ## Shared-File Policy
 
@@ -109,6 +109,29 @@ for master completion:
 - `docs/orchestration/CHECKPOINT_10_FINAL_REPORT.md` - final report skeleton for
   master verification and go/no-go closeout.
 
-Operations/Docs does not move CP10 to complete. Master must fill the final
-report with actual lane commits, checks, browser/user evidence, accepted gaps,
-and go/no-go decisions after all lanes are merged.
+Operations/Docs did not move CP10 to complete by itself. Master closeout filled
+the final report with actual lane commits, checks, browser/user evidence,
+accepted gaps, and go/no-go decisions after all lanes were merged.
+
+## Master Closeout Evidence
+
+- Technical release-candidate package is accepted for local/synthetic release
+  evidence only. Pilot go-live, real clinic data, live providers, ABDM, AWS
+  apply, GitHub push/remote CI, and physical-device checks remain external
+  gates.
+- Full gates passed after final integration: `git diff --check`,
+  `npm run check`, `npm run security:secrets`, `npm run typecheck`,
+  `npm run lint`, `npm run test`, `npm run build`, CP10 fixture validation,
+  CP10 dry-run contract smoke, all acceptance contracts, and outside-sandbox
+  API route smoke.
+- Browser smoke passed for assistant clinic-day desktop/mobile, owner dashboard
+  and readiness, owner settings desktop/mobile, accountant role boundary, and
+  platform-support registered-unavailable shell.
+- The owner browser smoke caught one real integration gap before closeout: the
+  web CP10 pilot fixture omitted ABDM from live external gates. Master patched
+  `apps/web/lib/cp10-pilot-readiness.ts` and
+  `apps/web/tests/cp10-pilot-readiness.test.ts`, then reran the relevant web
+  and full repository gates.
+- Detailed evidence is recorded in
+  `docs/orchestration/CHECKPOINT_10_FINAL_REPORT.md` and
+  `docs/qa/checkpoint-10-evidence-matrix.md`.
