@@ -38,10 +38,23 @@ Doctor, assistant, and receptionist users can convert clinical treatment intent 
 
 | Lane | Pending Worktree ID | Thread ID | Worktree | Ownership |
 | --- | --- | --- | --- | --- |
-| Billing Domain | pending launch | pending launch | pending launch | Pricebook, treatment plans, estimates, procedure performed records, invoices, receipts, DB migration, repository contracts, core billing API routes, domain tests |
-| Payment Provider | pending launch | pending launch | pending launch | Razorpay/simulator provider interface, dynamic QR/payment link request contract, webhook verification/idempotency, payment transaction reconciliation, no-key/unavailable states, provider tests |
-| Checkout UX | pending launch | pending launch | pending launch | Web checkout workflow, treatment plan builder, estimate/invoice/payment/receipt UI, instruction picker, role-aware controls, desktop and 390px mobile smoke |
-| Clinical Output QA | pending launch | pending launch | pending launch | Synthetic CP5 fixture, contract smoke, acceptance tests, prescription/instruction tests, payment replay/denial tests, QA docs and E2E plan |
+| Billing Domain | `local:a52e7c05-cc94-4402-a5e9-81813fbb6cc9` | `019f3a78-1296-7181-b6c0-4bd718b77880` | `/Users/abhinavgupta/.codex/worktrees/5b11/ClinicOS` | Pricebook, treatment plans, estimates, procedure performed records, invoices, receipts, DB migration, repository contracts, core billing API routes, domain tests |
+| Payment Provider | `local:f5ea13e2-dc84-4670-aec6-76a01eda862b` | `019f3a78-5814-7f13-8e82-b621dbf0d218` | `/Users/abhinavgupta/.codex/worktrees/fd39/ClinicOS` | Razorpay/simulator provider interface, dynamic QR/payment link request contract, webhook verification/idempotency, payment transaction reconciliation, no-key/unavailable states, provider tests |
+| Checkout UX | `local:0c746ebb-eb92-40f9-8b06-fcadda99fabc` | `019f3a78-9489-7f91-ad96-338c8933028b` | `/Users/abhinavgupta/.codex/worktrees/8a54/ClinicOS` | Web checkout workflow, treatment plan builder, estimate/invoice/payment/receipt UI, instruction picker, role-aware controls, desktop and 390px mobile smoke |
+| Clinical Output QA | `local:6770c7ad-26d3-4dda-8cd8-49e768801e7f` | `019f3a78-cf86-7c61-8bf1-7738310bcc3e` | `/Users/abhinavgupta/.codex/worktrees/7b0f/ClinicOS` | Synthetic CP5 fixture, contract smoke, acceptance tests, prescription/instruction tests, payment replay/denial tests, QA docs and E2E plan |
+
+## Launch Blocker
+
+The CP5 lanes were created with the documented visible project-scoped worktree shape, and Codex created the worktree checkouts at `f495c02`. The assistant turns did not start because the Codex background model execution layer returned an account usage-limit error.
+
+Evidence:
+
+- Failed Billing retry thread: `019f3a79-c12d-7363-aa9e-2451f4f90864`, pending worktree `local:e080d56d-7c8e-4aed-9ff5-2dff7516bc39`, worktree `/Users/abhinavgupta/.codex/worktrees/5122/ClinicOS`.
+- Worktree health check passed: the replacement billing worktree exists, is detached at `f495c02`, and contains the full ClinicOS checkout.
+- Local Codex log evidence for thread `019f3a79-c12d-7363-aa9e-2451f4f90864`: `Turn error: You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Aug 6th, 2026 3:33 AM.`
+- Retrying the replacement Billing lane at medium reasoning effort produced the same usage-limit error.
+
+Result: CP5 implementation lanes are not active. Do not merge or claim CP5 progress until the account/model execution limit is cleared and the lanes are relaunched or resumed successfully.
 
 ## Shared-File Policy
 

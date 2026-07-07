@@ -31,7 +31,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 2 - Lead/patient/appointment/day-start | Complete  |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
 | 3 - Intake/consent/encounter/notes     | Complete  |       `6fe2cbc` |     `eb68abd` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-3`. Master integration aligned live CP3 routes, consent enforcement, prep summary, QA fixtures, web selectors, browser smoke, and security/audit coverage.                                         |
 | 4 - Dental charting/media/imaging      | Complete  |       `c7b222c` |     `248496a` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4` and promoted to `main`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                     |
-| 5 - Treatment/checkout/payments         | Launching |       `1e6e3cb` |       pending | CP5 launch packet added from verified CP4 `main`; visible project-scoped lanes will cover billing domain, payment provider, checkout UX, and clinical output QA.                                                                                                                |
+| 5 - Treatment/checkout/payments         | Blocked   |       `1e6e3cb` |       pending | CP5 launch packet committed at `f495c02`, but visible project-scoped worker turns failed to start due Codex account usage-limit errors. Worktrees were created; implementation lanes are not active.                                                                              |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -186,3 +186,19 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Payment Provider.
   - Checkout UX.
   - Clinical Output QA.
+
+## Checkpoint 5 Launch Blocker - 2026-07-07
+
+- CP5 launch commit: `f495c02`.
+- Attempted documented launch shape: `target.type = "project"`, `projectId = "/Users/abhinavgupta/Desktop/ClinicOS"`, `environment.type = "worktree"`.
+- Created worktrees/threads:
+  - Billing Domain: pending `local:a52e7c05-cc94-4402-a5e9-81813fbb6cc9`, thread `019f3a78-1296-7181-b6c0-4bd718b77880`, worktree `/Users/abhinavgupta/.codex/worktrees/5b11/ClinicOS`.
+  - Payment Provider: pending `local:f5ea13e2-dc84-4670-aec6-76a01eda862b`, thread `019f3a78-5814-7f13-8e82-b621dbf0d218`, worktree `/Users/abhinavgupta/.codex/worktrees/fd39/ClinicOS`.
+  - Checkout UX: pending `local:0c746ebb-eb92-40f9-8b06-fcadda99fabc`, thread `019f3a78-9489-7f91-ad96-338c8933028b`, worktree `/Users/abhinavgupta/.codex/worktrees/8a54/ClinicOS`.
+  - Clinical Output QA: pending `local:6770c7ad-26d3-4dda-8cd8-49e768801e7f`, thread `019f3a78-cf86-7c61-8bf1-7738310bcc3e`, worktree `/Users/abhinavgupta/.codex/worktrees/7b0f/ClinicOS`.
+  - Replacement Billing retry: pending `local:e080d56d-7c8e-4aed-9ff5-2dff7516bc39`, thread `019f3a79-c12d-7363-aa9e-2451f4f90864`, worktree `/Users/abhinavgupta/.codex/worktrees/5122/ClinicOS`.
+- Git/worktree layer is healthy: the replacement Billing worktree is detached at `f495c02` and contains the full checkout.
+- Background worker execution failed: `read_thread` showed only user/delegation turns and status `systemError`; no assistant implementation turn started.
+- Local Codex log evidence for the replacement Billing thread: `Turn error: You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Aug 6th, 2026 3:33 AM.`
+- A medium-reasoning retry produced the same usage-limit error.
+- Result: CP5 is blocked before implementation. Resume by clearing the account/model usage limit, then relaunch project-scoped worktree lanes from `main` or send a fresh follow-up to the replacement lanes if Codex supports resuming system-error threads.

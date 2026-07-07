@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after verified Checkpoint 4 promotion via merge commit `248496a`; Checkpoint 5 launch packet is being prepared from base `1e6e3cb`.
+- Branch: `main` after verified Checkpoint 4 promotion via merge commit `248496a`; Checkpoint 5 launch packet is committed at `f495c02` but lane execution is blocked by Codex account usage limits.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -25,6 +25,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 - CP1 worker lanes were real Codex-managed worktrees under `.codex/worktrees`.
 - A project-scoped worktree thread test succeeded: `target.type = "project"`, `projectId = "/Users/abhinavgupta/Desktop/ClinicOS"`, and `environment.type = "worktree"` made the worker visible under the `ClinicOS` project in the Codex sidebar.
 - Checkpoint 5 must start visible project-scoped worktree lanes from the committed CP5 launch packet and integrate into `codex/integration/checkpoint-5` before promotion to `main`.
+- CP5 launch attempt created visible project-scoped worktrees, but all worker turns failed before implementation with Codex account usage-limit errors. The failure is not repo setup, not the project-scoped launch shape, and not raw Git worktree creation; it is the background model execution layer. Resume only after the account/model limit is cleared.
 
 ## Non-Negotiable Product Posture
 
