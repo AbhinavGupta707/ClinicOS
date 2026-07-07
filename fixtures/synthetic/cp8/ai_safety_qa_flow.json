@@ -1,0 +1,711 @@
+{
+  "schemaVersion": "clinic-os.cp8.ai-safety-fixture.v1",
+  "fixtureUse": {
+    "localOnly": true,
+    "syntheticOnly": true,
+    "productionUseDenied": true,
+    "allowedEnvironments": ["local", "development", "test", "ci"]
+  },
+  "clock": {
+    "businessDate": "2026-07-07",
+    "timezone": "Asia/Kolkata",
+    "fixedNow": "2026-07-07T11:20:00+05:30"
+  },
+  "tenants": [
+    {
+      "id": "81111111-1111-4111-8111-111111111111",
+      "key": "primaryTenant",
+      "name": "CP8 Synthetic Tenant"
+    }
+  ],
+  "clinics": [
+    {
+      "id": "82222222-2222-4222-8222-222222222222",
+      "key": "primaryClinic",
+      "name": "CP8 Synthetic Dental Clinic",
+      "tenantId": "81111111-1111-4111-8111-111111111111"
+    }
+  ],
+  "actors": [
+    {
+      "clinicId": "82222222-2222-4222-8222-222222222222",
+      "email": "cp8.doctor@example.test",
+      "id": "83333333-3333-4333-8333-333333333333",
+      "key": "doctor",
+      "roleSlug": "doctor",
+      "tenantId": "81111111-1111-4111-8111-111111111111"
+    },
+    {
+      "clinicId": "82222222-2222-4222-8222-222222222222",
+      "email": "cp8.assistant@example.test",
+      "id": "84444444-4444-4444-8444-444444444444",
+      "key": "assistant",
+      "roleSlug": "assistant",
+      "tenantId": "81111111-1111-4111-8111-111111111111"
+    },
+    {
+      "clinicId": "82222222-2222-4222-8222-222222222222",
+      "email": "cp8.receptionist@example.test",
+      "id": "85555555-5555-4555-8555-555555555555",
+      "key": "receptionist",
+      "roleSlug": "receptionist",
+      "tenantId": "81111111-1111-4111-8111-111111111111"
+    }
+  ],
+  "patients": [
+    {
+      "email": "cp8.patient.active@example.test",
+      "id": "86666666-6666-4666-8666-666666666666",
+      "key": "activeConsentPatient",
+      "name": "CP8 Synthetic Active Consent Patient",
+      "tenantId": "81111111-1111-4111-8111-111111111111"
+    },
+    {
+      "email": "cp8.patient.no-consent@example.test",
+      "id": "87777777-7777-4777-8777-777777777777",
+      "key": "noConsentPatient",
+      "name": "CP8 Synthetic No Consent Patient",
+      "tenantId": "81111111-1111-4111-8111-111111111111"
+    },
+    {
+      "email": "cp8.patient.revoked@example.test",
+      "id": "88888888-8888-4888-8888-888888888888",
+      "key": "revokedConsentPatient",
+      "name": "CP8 Synthetic Revoked Consent Patient",
+      "tenantId": "81111111-1111-4111-8111-111111111111"
+    }
+  ],
+  "encounters": [
+    {
+      "id": "89999999-9999-4999-8999-999999999999",
+      "key": "activeConsentEncounter",
+      "patientId": "86666666-6666-4666-8666-666666666666",
+      "status": "in_progress"
+    },
+    {
+      "id": "8aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "key": "noConsentEncounter",
+      "patientId": "87777777-7777-4777-8777-777777777777",
+      "status": "in_progress"
+    },
+    {
+      "id": "8bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "key": "revokedConsentEncounter",
+      "patientId": "88888888-8888-4888-8888-888888888888",
+      "status": "in_progress"
+    }
+  ],
+  "consentStates": [
+    {
+      "active": true,
+      "aiDocumentation": true,
+      "audioTranscription": true,
+      "capturedAt": "2026-07-07T09:15:00+05:30",
+      "capturedByActorKey": "assistant",
+      "consentRecordId": "8ccccccc-cccc-4ccc-8ccc-cccccccccccc",
+      "key": "activeAiAudioConsent",
+      "patientId": "86666666-6666-4666-8666-666666666666",
+      "retentionPolicyKey": "deleteRawAudioAfter7Days",
+      "revokedAt": null
+    },
+    {
+      "active": false,
+      "aiDocumentation": false,
+      "audioTranscription": false,
+      "capturedAt": null,
+      "capturedByActorKey": null,
+      "consentRecordId": null,
+      "key": "noAiAudioConsent",
+      "patientId": "87777777-7777-4777-8777-777777777777",
+      "retentionPolicyKey": null,
+      "revokedAt": null
+    },
+    {
+      "active": false,
+      "aiDocumentation": false,
+      "audioTranscription": false,
+      "capturedAt": "2026-07-07T09:25:00+05:30",
+      "capturedByActorKey": "assistant",
+      "consentRecordId": "8ddddddd-dddd-4ddd-8ddd-dddddddddddd",
+      "key": "revokedAiAudioConsent",
+      "patientId": "88888888-8888-4888-8888-888888888888",
+      "retentionPolicyKey": "deleteRawAudioAfter7Days",
+      "revokedAt": "2026-07-07T10:05:00+05:30"
+    }
+  ],
+  "retentionPolicies": [
+    {
+      "deleteRawAudioAfterDays": 7,
+      "key": "deleteRawAudioAfter7Days",
+      "rawAudioRetained": true,
+      "transcriptRetainedForAudit": true
+    },
+    {
+      "deleteRawAudioAfterDays": 0,
+      "key": "noRawAudioRetention",
+      "rawAudioRetained": false,
+      "transcriptRetainedForAudit": true
+    }
+  ],
+  "transcripts": [
+    {
+      "consentStateKey": "activeAiAudioConsent",
+      "encounterId": "89999999-9999-4999-8999-999999999999",
+      "id": "8eeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+      "key": "activeChairsideTranscript",
+      "language": "en-IN",
+      "localOnlyAudioUri": "local-fixture://cp8/active-chairside.raw",
+      "providerMode": "simulator",
+      "segments": [
+        {
+          "id": "seg-cp8-001",
+          "speaker": "patient",
+          "startMs": 0,
+          "endMs": 4200,
+          "text": "Synthetic patient reports sensitivity on the upper right molar when drinking cold water."
+        },
+        {
+          "id": "seg-cp8-002",
+          "speaker": "doctor",
+          "startMs": 4400,
+          "endMs": 9200,
+          "text": "On examination, tooth 16 has occlusal caries. No swelling is seen today."
+        },
+        {
+          "id": "seg-cp8-003",
+          "speaker": "patient",
+          "startMs": 9400,
+          "endMs": 12600,
+          "text": "Synthetic patient denies medicine allergy and agrees to a filling plan after review."
+        },
+        {
+          "id": "seg-cp8-004",
+          "speaker": "assistant",
+          "startMs": 12800,
+          "endMs": 15200,
+          "text": "Assistant notes that the AI draft must be reviewed before the chart or note is changed."
+        }
+      ]
+    },
+    {
+      "consentStateKey": "activeAiAudioConsent",
+      "encounterId": "89999999-9999-4999-8999-999999999999",
+      "id": "8fffffff-ffff-4fff-8fff-ffffffffffff",
+      "key": "hallucinationTrapTranscript",
+      "language": "hi-en",
+      "localOnlyAudioUri": "local-fixture://cp8/hallucination-trap.raw",
+      "providerMode": "simulator",
+      "segments": [
+        {
+          "id": "seg-cp8-101",
+          "speaker": "patient",
+          "startMs": 0,
+          "endMs": 3600,
+          "text": "Synthetic patient says there is mild gum bleeding while brushing."
+        },
+        {
+          "id": "seg-cp8-102",
+          "speaker": "doctor",
+          "startMs": 3800,
+          "endMs": 7400,
+          "text": "Doctor says record plaque and give hygiene advice. No diagnosis is finalized in this transcript."
+        },
+        {
+          "id": "seg-cp8-103",
+          "speaker": "assistant",
+          "startMs": 7600,
+          "endMs": 9200,
+          "text": "Background staff conversation is unrelated and should not become a clinical claim."
+        }
+      ]
+    }
+  ],
+  "captureAttempts": [
+    {
+      "actorKey": "assistant",
+      "consentStateKey": "activeAiAudioConsent",
+      "encounterId": "89999999-9999-4999-8999-999999999999",
+      "expectedReason": null,
+      "expectedStatus": 201,
+      "key": "start-audio-with-active-consent",
+      "processingBlocked": false
+    },
+    {
+      "actorKey": "assistant",
+      "consentStateKey": "noAiAudioConsent",
+      "encounterId": "8aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      "expectedReason": "no_active_audio_ai_consent",
+      "expectedStatus": 403,
+      "key": "block-audio-with-no-consent",
+      "processingBlocked": true
+    },
+    {
+      "actorKey": "assistant",
+      "consentStateKey": "revokedAiAudioConsent",
+      "encounterId": "8bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "expectedReason": "consent_revoked",
+      "expectedStatus": 403,
+      "key": "block-audio-after-revocation",
+      "processingBlocked": true
+    }
+  ],
+  "goldenOutputs": [
+    {
+      "application": {
+        "applied": false,
+        "state": "draft_not_applied"
+      },
+      "clinicalClaims": [
+        {
+          "claim": "Sensitivity occurs on the upper right molar with cold water.",
+          "sourceSegmentIds": ["seg-cp8-001"]
+        },
+        {
+          "claim": "Tooth 16 has occlusal caries.",
+          "sourceSegmentIds": ["seg-cp8-002"]
+        },
+        {
+          "claim": "No swelling is seen today.",
+          "sourceSegmentIds": ["seg-cp8-002"]
+        }
+      ],
+      "confidence": 0.82,
+      "encounterId": "89999999-9999-4999-8999-999999999999",
+      "id": "91111111-1111-4111-8111-111111111111",
+      "key": "clinicalNoteDraftGolden",
+      "outputType": "clinical_note_draft",
+      "providerMode": "simulator",
+      "retentionPolicyKey": "deleteRawAudioAfter7Days",
+      "schemaVersion": "ClinicalNoteDraft.v1",
+      "sourceAnchors": [
+        {
+          "field": "chiefComplaint",
+          "segmentIds": ["seg-cp8-001"],
+          "transcriptKey": "activeChairsideTranscript"
+        },
+        {
+          "field": "examination",
+          "segmentIds": ["seg-cp8-002"],
+          "transcriptKey": "activeChairsideTranscript"
+        },
+        {
+          "field": "plan",
+          "segmentIds": ["seg-cp8-003", "seg-cp8-004"],
+          "transcriptKey": "activeChairsideTranscript"
+        }
+      ],
+      "structured": {
+        "assessment": "Draft only: tooth 16 occlusal caries is noted from the transcript and needs doctor review.",
+        "chiefComplaint": "Cold sensitivity on the upper right molar.",
+        "examination": "Tooth 16 occlusal caries. No swelling seen today.",
+        "history": "Synthetic patient reports cold sensitivity.",
+        "plan": "Review filling plan with doctor before signing the note or changing the chart."
+      },
+      "unsupportedClaims": [],
+      "validation": {
+        "reasons": [],
+        "status": "pass"
+      },
+      "warnings": [
+        "Draft only: doctor must review and sign before this becomes the clinical record.",
+        "No autonomous prescription, diagnosis, or treatment plan was generated."
+      ]
+    },
+    {
+      "application": {
+        "applied": false,
+        "state": "draft_not_applied"
+      },
+      "clinicalClaims": [
+        {
+          "claim": "Tooth 16 has occlusal caries.",
+          "sourceSegmentIds": ["seg-cp8-002"]
+        }
+      ],
+      "confidence": 0.86,
+      "encounterId": "89999999-9999-4999-8999-999999999999",
+      "id": "92222222-2222-4222-8222-222222222222",
+      "key": "dentalChartPatchGolden",
+      "outputType": "dental_chart_patch",
+      "providerMode": "simulator",
+      "retentionPolicyKey": "deleteRawAudioAfter7Days",
+      "schemaVersion": "DentalChartPatch.v1",
+      "sourceAnchors": [
+        {
+          "field": "findings[0].toothNumber",
+          "segmentIds": ["seg-cp8-002"],
+          "transcriptKey": "activeChairsideTranscript"
+        },
+        {
+          "field": "findings[0].findingType",
+          "segmentIds": ["seg-cp8-002"],
+          "transcriptKey": "activeChairsideTranscript"
+        }
+      ],
+      "structured": {
+        "findings": [
+          {
+            "confidence": 0.86,
+            "description": "Occlusal caries mentioned for tooth 16.",
+            "findingType": "caries",
+            "sourceSegmentIds": ["seg-cp8-002"],
+            "status": "active",
+            "surface": "occlusal",
+            "toothNumber": "16"
+          }
+        ]
+      },
+      "unsupportedClaims": [],
+      "validation": {
+        "reasons": [],
+        "status": "pass"
+      },
+      "warnings": [
+        "Chart patch is a draft and must be reviewed before application.",
+        "Tooth number was validated against transcript source text."
+      ]
+    },
+    {
+      "application": {
+        "applied": false,
+        "state": "proposal_not_executed"
+      },
+      "clinicalClaims": [
+        {
+          "claim": "Create a review task rather than silently changing the chart.",
+          "sourceSegmentIds": ["seg-cp8-004"]
+        }
+      ],
+      "confidence": 0.78,
+      "encounterId": "89999999-9999-4999-8999-999999999999",
+      "id": "93333333-3333-4333-8333-333333333333",
+      "key": "reviewTaskActionProposalGolden",
+      "outputType": "action_proposal",
+      "providerMode": "simulator",
+      "retentionPolicyKey": "deleteRawAudioAfter7Days",
+      "schemaVersion": "ActionProposal.v1",
+      "sourceAnchors": [
+        {
+          "field": "proposal",
+          "segmentIds": ["seg-cp8-004"],
+          "transcriptKey": "activeChairsideTranscript"
+        }
+      ],
+      "structured": {
+        "action": "create_review_task",
+        "approvalRequired": "assistant_or_doctor",
+        "proposal": "Create a task to review the AI chart patch before applying it."
+      },
+      "unsupportedClaims": [],
+      "validation": {
+        "reasons": [],
+        "status": "pass"
+      },
+      "warnings": [
+        "Action proposal only: no task is created until an authorized user approves it."
+      ]
+    }
+  ],
+  "unsafeOutputs": [
+    {
+      "application": {
+        "applied": false,
+        "state": "rejected_not_applied"
+      },
+      "clinicalClaims": [
+        {
+          "claim": "Patient has generalized aggressive periodontitis.",
+          "sourceSegmentIds": []
+        }
+      ],
+      "encounterId": "89999999-9999-4999-8999-999999999999",
+      "expectedValidation": {
+        "reasons": ["unsupported_claim"],
+        "status": "reject"
+      },
+      "id": "94444444-4444-4444-8444-444444444444",
+      "key": "unsupportedDiagnosisOutput",
+      "outputType": "clinical_note_draft",
+      "retentionPolicyKey": "deleteRawAudioAfter7Days",
+      "sourceAnchors": [],
+      "structured": {
+        "assessment": "Unsupported diagnosis: generalized aggressive periodontitis.",
+        "plan": "Unsupported treatment recommendation."
+      },
+      "transcriptKey": "hallucinationTrapTranscript",
+      "unsupportedClaims": ["generalized aggressive periodontitis"],
+      "warnings": [
+        "Rejected: the diagnosis is not source-anchored in the transcript."
+      ]
+    },
+    {
+      "application": {
+        "applied": false,
+        "state": "rejected_not_applied"
+      },
+      "clinicalClaims": [
+        {
+          "claim": "Tooth 26 has occlusal caries.",
+          "sourceSegmentIds": ["seg-cp8-002"]
+        }
+      ],
+      "encounterId": "89999999-9999-4999-8999-999999999999",
+      "expectedValidation": {
+        "reasons": ["wrong_tooth"],
+        "status": "reject"
+      },
+      "id": "95555555-5555-4555-8555-555555555555",
+      "key": "wrongToothChartPatchOutput",
+      "outputType": "dental_chart_patch",
+      "retentionPolicyKey": "deleteRawAudioAfter7Days",
+      "sourceAnchors": [
+        {
+          "field": "findings[0].toothNumber",
+          "segmentIds": ["seg-cp8-002"],
+          "transcriptKey": "activeChairsideTranscript"
+        }
+      ],
+      "structured": {
+        "findings": [
+          {
+            "confidence": 0.91,
+            "description": "Wrong-tooth trap: transcript says tooth 16, output says 26.",
+            "findingType": "caries",
+            "sourceSegmentIds": ["seg-cp8-002"],
+            "status": "active",
+            "surface": "occlusal",
+            "toothNumber": "26"
+          }
+        ]
+      },
+      "transcriptKey": "activeChairsideTranscript",
+      "unsupportedClaims": [],
+      "warnings": [
+        "Rejected: tooth number does not match source segment."
+      ]
+    }
+  ],
+  "reviewDecisions": [
+    {
+      "actorKey": "doctor",
+      "applied": false,
+      "decision": "approve_for_note_review",
+      "key": "doctor-approves-note-draft-for-review",
+      "outputKey": "clinicalNoteDraftGolden",
+      "requiresSeparateClinicalSign": true,
+      "retainedForEvaluation": true
+    },
+    {
+      "actorKey": "assistant",
+      "applied": false,
+      "decision": "approve_chart_patch_for_doctor_review",
+      "key": "assistant-approves-chart-patch-review-only",
+      "outputKey": "dentalChartPatchGolden",
+      "requiresSeparateClinicalSign": true,
+      "retainedForEvaluation": true
+    },
+    {
+      "actorKey": "doctor",
+      "applied": false,
+      "decision": "reject",
+      "key": "doctor-rejects-unsupported-output",
+      "outputKey": "unsupportedDiagnosisOutput",
+      "rejectionReason": "Unsupported diagnosis is not source anchored.",
+      "retainedForEvaluation": true
+    }
+  ],
+  "roleTenantExpectations": [
+    {
+      "actorKey": "doctor",
+      "expected": "allow",
+      "key": "doctor-can-approve-note-draft",
+      "operation": "ai.review.clinical_note.approve",
+      "outputKey": "clinicalNoteDraftGolden"
+    },
+    {
+      "actorKey": "assistant",
+      "expected": "deny",
+      "expectedReason": "doctor_required",
+      "expectedStatus": 403,
+      "key": "assistant-cannot-sign-or-apply-clinical-note",
+      "operation": "ai.review.clinical_note.apply",
+      "outputKey": "clinicalNoteDraftGolden"
+    },
+    {
+      "actorKey": "assistant",
+      "expected": "allow_review_only",
+      "key": "assistant-can-review-chart-patch-but-not-final-sign",
+      "operation": "ai.review.dental_chart_patch.approve_review_only",
+      "outputKey": "dentalChartPatchGolden"
+    },
+    {
+      "actorKey": "receptionist",
+      "expected": "deny",
+      "expectedReason": "missing_permission",
+      "expectedStatus": 403,
+      "key": "receptionist-cannot-review-ai-clinical-output",
+      "operation": "ai.review.any",
+      "outputKey": "clinicalNoteDraftGolden"
+    }
+  ],
+  "flow": {
+    "name": "consent-gated capture -> transcript -> anchored draft outputs -> explicit review decisions",
+    "steps": [
+      {
+        "actorKey": "assistant",
+        "expectedBodyIncludes": ["captureSession", "activeAiAudioConsent", "simulator"],
+        "expectedBodyMustNotInclude": ["audioPayload", "secret", "applied"],
+        "expectedStatus": 201,
+        "key": "start-capture-with-active-consent",
+        "liveImplemented": false,
+        "method": "POST",
+        "path": "/v1/ai/capture-sessions",
+        "requestBody": {
+          "consentStateKey": "activeAiAudioConsent",
+          "encounterId": "89999999-9999-4999-8999-999999999999",
+          "patientId": "86666666-6666-4666-8666-666666666666",
+          "providerMode": "simulator"
+        },
+        "routeFamily": "ai-capture-session"
+      },
+      {
+        "actorKey": "assistant",
+        "expectedBodyIncludes": ["no_active_audio_ai_consent"],
+        "expectedBodyMustNotInclude": ["captureSession", "transcript"],
+        "expectedStatus": 403,
+        "key": "block-capture-with-no-consent",
+        "liveImplemented": false,
+        "method": "POST",
+        "path": "/v1/ai/capture-sessions",
+        "requestBody": {
+          "encounterId": "8aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "patientId": "87777777-7777-4777-8777-777777777777",
+          "providerMode": "simulator"
+        },
+        "routeFamily": "ai-consent-block"
+      },
+      {
+        "actorKey": "assistant",
+        "expectedBodyIncludes": ["consent_revoked"],
+        "expectedBodyMustNotInclude": ["captureSession", "transcript"],
+        "expectedStatus": 403,
+        "key": "block-capture-after-consent-revoked",
+        "liveImplemented": false,
+        "method": "POST",
+        "path": "/v1/ai/capture-sessions",
+        "requestBody": {
+          "encounterId": "8bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "patientId": "88888888-8888-4888-8888-888888888888",
+          "providerMode": "simulator"
+        },
+        "routeFamily": "ai-consent-block"
+      },
+      {
+        "actorKey": "assistant",
+        "expectedBodyIncludes": ["transcriptSegment", "seg-cp8-002"],
+        "expectedBodyMustNotInclude": ["audioPayload", "secret"],
+        "expectedStatus": 202,
+        "key": "append-source-anchored-transcript-segment",
+        "liveImplemented": false,
+        "method": "POST",
+        "path": "/v1/ai/capture-sessions/{captureSessionId}/transcript-segments",
+        "requestBody": {
+          "segment": {
+            "id": "seg-cp8-002",
+            "speaker": "doctor",
+            "text": "On examination, tooth 16 has occlusal caries. No swelling is seen today."
+          }
+        },
+        "routeFamily": "ai-transcript-segment"
+      },
+      {
+        "actorKey": "doctor",
+        "expectedBodyIncludes": ["clinicalNoteDraft", "sourceAnchors", "warnings"],
+        "expectedBodyMustNotInclude": ["signedAt", "appliedToRecord"],
+        "expectedStatus": 201,
+        "key": "create-anchored-clinical-note-draft",
+        "liveImplemented": false,
+        "method": "POST",
+        "path": "/v1/encounters/89999999-9999-4999-8999-999999999999/ai/clinical-note-drafts",
+        "requestBody": {
+          "transcriptId": "8eeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+        },
+        "routeFamily": "ai-clinical-note-draft"
+      },
+      {
+        "actorKey": "assistant",
+        "expectedBodyIncludes": ["dentalChartPatch", "sourceAnchors", "warnings"],
+        "expectedBodyMustNotInclude": ["chartUpdatedAt", "appliedToChart"],
+        "expectedStatus": 201,
+        "key": "create-anchored-dental-chart-patch",
+        "liveImplemented": false,
+        "method": "POST",
+        "path": "/v1/encounters/89999999-9999-4999-8999-999999999999/ai/dental-chart-patches",
+        "requestBody": {
+          "transcriptId": "8eeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+        },
+        "routeFamily": "ai-dental-chart-patch"
+      },
+      {
+        "actorKey": "doctor",
+        "expectedBodyIncludes": ["rejected", "unsupported_claim", "retainedForEvaluation"],
+        "expectedBodyMustNotInclude": ["appliedToRecord", "signedAt"],
+        "expectedStatus": 200,
+        "key": "reject-unsupported-output-retained-not-applied",
+        "liveImplemented": false,
+        "method": "POST",
+        "path": "/v1/ai/outputs/94444444-4444-4444-8444-444444444444/review-decisions",
+        "requestBody": {
+          "decision": "reject",
+          "reason": "Unsupported diagnosis is not source anchored."
+        },
+        "routeFamily": "ai-review-decision"
+      },
+      {
+        "actorKey": "assistant",
+        "expectedBodyIncludes": ["doctor_required"],
+        "expectedBodyMustNotInclude": ["appliedToRecord", "signedAt"],
+        "expectedStatus": 403,
+        "key": "assistant-cannot-apply-clinical-note-output",
+        "liveImplemented": false,
+        "method": "POST",
+        "path": "/v1/ai/outputs/91111111-1111-4111-8111-111111111111/review-decisions",
+        "requestBody": {
+          "decision": "approve_and_apply"
+        },
+        "routeFamily": "ai-review-boundary"
+      },
+      {
+        "actorKey": "doctor",
+        "expectedBodyIncludes": ["clinicalNoteDraft", "sourceAnchors", "warnings", "draft_not_applied"],
+        "expectedBodyMustNotInclude": ["audioPayload", "secret", "objectKey"],
+        "expectedStatus": 200,
+        "key": "read-ai-output-with-audit-provenance",
+        "liveImplemented": false,
+        "method": "GET",
+        "path": "/v1/ai/outputs/91111111-1111-4111-8111-111111111111",
+        "routeFamily": "ai-output-read"
+      }
+    ]
+  },
+  "browserSmokeChecklist": {
+    "routeCandidates": ["/surface/ai-review", "/surface/mobile-capture"],
+    "requiredSelectors": [
+      "cp8-ai-review-workspace",
+      "cp8-fixture-alert",
+      "cp8-consent-status",
+      "cp8-capture-disabled",
+      "cp8-source-anchors",
+      "cp8-ai-warnings",
+      "cp8-reject-output",
+      "cp8-review-decision-status",
+      "cp8-mobile-capture-workspace"
+    ],
+    "mobileViewport": {
+      "height": 844,
+      "noHorizontalOverflowRequired": true,
+      "width": 390
+    },
+    "status": "pending_review_ux_and_mobile_lanes"
+  }
+}
