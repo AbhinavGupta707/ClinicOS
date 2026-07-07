@@ -22,9 +22,9 @@ const REQUIRED_EVENTS = [
   "form_response.submitted",
   "consent.created",
   "encounter.started",
-  "clinical_note.drafted",
+  "clinical_note.draft_created",
   "clinical_note.signed",
-  "prescription.created",
+  "prescription.draft_created",
   "prescription.signed",
   "clinical_note.amended",
   "consent.revoked"

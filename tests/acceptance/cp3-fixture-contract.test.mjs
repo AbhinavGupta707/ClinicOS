@@ -93,9 +93,9 @@ test("CP3 scenario requires audit, timeline, and domain event evidence", async (
     "form_response.submitted",
     "consent.created",
     "encounter.started",
-    "clinical_note.drafted",
+    "clinical_note.draft_created",
     "clinical_note.signed",
-    "prescription.created",
+    "prescription.draft_created",
     "prescription.signed",
     "clinical_note.amended",
     "consent.revoked"

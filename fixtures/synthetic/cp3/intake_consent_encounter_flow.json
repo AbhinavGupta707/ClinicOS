@@ -655,10 +655,10 @@
         "path": "/v1/encounters/30000000-0000-4000-8000-000000008001/clinical-notes/drafts",
         "idempotencyKey": "cp3-draft-new-patient-note-as-assistant",
         "expectedStatus": 201,
-        "expectedEvents": ["clinical_note.drafted"],
+        "expectedEvents": ["clinical_note.draft_created"],
         "expectedAudit": [
           {
-            "action": "clinical_note.drafted",
+            "action": "clinical_note.draft_created",
             "phiFields": ["patientId", "history", "diagnosis"],
             "resourceType": "clinical_note",
             "resourceId": "30000000-0000-4000-8000-000000009001"
@@ -667,7 +667,7 @@
         "timelineExpectations": [
           {
             "patientId": "30000000-0000-4000-8000-000000002001",
-            "entryType": "clinical_note.drafted"
+            "entryType": "clinical_note.draft_created"
           }
         ],
         "requestBody": {
@@ -719,10 +719,10 @@
         "path": "/v1/encounters/30000000-0000-4000-8000-000000008001/prescriptions",
         "idempotencyKey": "cp3-create-new-patient-prescription-as-doctor",
         "expectedStatus": 201,
-        "expectedEvents": ["prescription.created"],
+        "expectedEvents": ["prescription.draft_created"],
         "expectedAudit": [
           {
-            "action": "prescription.created",
+            "action": "prescription.draft_created",
             "phiFields": ["patientId", "medicationName"],
             "resourceType": "prescription",
             "resourceId": "30000000-0000-4000-8000-000000010001"
@@ -731,7 +731,7 @@
         "timelineExpectations": [
           {
             "patientId": "30000000-0000-4000-8000-000000002001",
-            "entryType": "prescription.created"
+            "entryType": "prescription.draft_created"
           }
         ],
         "requestBody": {
@@ -1089,9 +1089,9 @@
         "form_response.submitted",
         "consent.created",
         "encounter.started",
-        "clinical_note.drafted",
+        "clinical_note.draft_created",
         "clinical_note.signed",
-        "prescription.created",
+        "prescription.draft_created",
         "prescription.signed",
         "clinical_note.amended",
         "consent.revoked"
