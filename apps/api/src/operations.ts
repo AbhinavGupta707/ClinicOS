@@ -1183,7 +1183,7 @@ export async function getPilotReadiness(
         signedWebhookConfigured: false
       },
       ai: {
-        dataResidencyApproved: Boolean(config.providers.ai.dataResidencyNotes),
+        dataResidencyApproved: false,
         llmCredentialsPresent: Boolean(
           (config.providers.ai.llmProvider === "fireworks" &&
             config.providers.ai.fireworksApiKey &&
