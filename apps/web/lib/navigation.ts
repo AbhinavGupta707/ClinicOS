@@ -205,47 +205,67 @@ export const SURFACES: SurfaceRegistration[] = [
     roles: ["owner", "doctor", "assistant", "receptionist", "accountant"]
   },
   {
-    availability: "registered_unavailable",
+    availability: "active",
     checkpoint: 6,
     description: "Recalls, follow-ups, payment tasks, SOPs, and staff work queues.",
     href: "/surface/tasks",
     icon: ListTodo,
     id: "tasks",
     label: "Tasks and recalls",
-    requiredApis: ["GET /v1/tasks", "GET /v1/recalls/due"],
+    requiredApis: [
+      "GET /v1/tasks?status=&dueDate=",
+      "POST /v1/tasks",
+      "PATCH /v1/tasks/{taskId}",
+      "GET /v1/recalls?status=&dueBefore=",
+      "POST /v1/recalls/{recallId}/actions",
+      "GET /v1/sop-runs?date=",
+      "PATCH /v1/sop-runs/{sopRunId}"
+    ],
     roles: ["owner", "assistant", "receptionist"]
   },
   {
-    availability: "registered_unavailable",
+    availability: "active",
     checkpoint: 6,
     description: "Lab cases, slips, due work, returns, and reconciliation.",
     href: "/surface/lab",
     icon: ClipboardCheck,
     id: "lab",
     label: "Lab",
-    requiredApis: ["POST /v1/lab-cases", "PATCH /v1/lab-cases/{labCaseId}"],
+    requiredApis: [
+      "POST /v1/lab-cases",
+      "PATCH /v1/lab-cases/{labCaseId}",
+      "GET /v1/lab-cases?status=&dueBefore=",
+      "POST /v1/lab-reconciliations"
+    ],
     roles: ["owner", "doctor", "assistant"]
   },
   {
-    availability: "registered_unavailable",
+    availability: "active",
     checkpoint: 6,
     description: "Inventory checks, stock exceptions, SOP runs, and event diary.",
     href: "/surface/operations",
     icon: PackageCheck,
     id: "operations",
     label: "Operations",
-    requiredApis: ["GET /v1/sop-runs", "POST /v1/incidents"],
+    requiredApis: [
+      "POST /v1/inventory/check-runs",
+      "PATCH /v1/inventory/check-runs/{checkRunId}",
+      "GET /v1/inventory/exceptions",
+      "POST /v1/incidents",
+      "POST /v1/corrective-actions",
+      "PATCH /v1/corrective-actions/{correctiveActionId}"
+    ],
     roles: ["owner", "assistant"]
   },
   {
-    availability: "registered_unavailable",
+    availability: "active",
     checkpoint: 6,
     description: "Source-attributed metrics, leakage views, audit review, and exports.",
     href: "/surface/owner-control",
     icon: LineChart,
     id: "owner-control",
     label: "Owner control",
-    requiredApis: ["GET /v1/analytics/owner", "GET /v1/audit-events"],
+    requiredApis: ["GET /v1/owner-dashboard?from=&to="],
     roles: ["owner"]
   },
   {
@@ -304,7 +324,9 @@ const SURFACE_ALIASES = new Map<string, string>([
   ["clinical", "encounter"],
   ["dental", "dental-media"],
   ["billing", "checkout"],
+  ["continuity", "tasks"],
   ["odontogram", "dental-media"],
+  ["recalls", "tasks"],
   ["payments", "checkout"],
   ["day-start", "today"]
 ]);

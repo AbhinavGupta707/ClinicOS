@@ -45,7 +45,7 @@ describe("role-aware navigation", () => {
 
   it("reports active versus registered unavailable surfaces", () => {
     expect(summarizeSurfaceAccess(["assistant"])).toMatchObject({
-      activeCount: 11,
+      activeCount: 14,
       registeredCount: expect.any(Number),
       unavailableCount: expect.any(Number)
     });
@@ -104,5 +104,26 @@ describe("role-aware navigation", () => {
     expect(accountantActive).not.toContain("dental-media");
     expect(hasSurface("billing")).toBe(true);
     expect(resolveSurfaceId("payments")).toBe("checkout");
+  });
+
+  it("activates CP6 operations surfaces with owner-only analytics boundaries", () => {
+    const assistantActive = getVisibleSurfaces(["assistant"])
+      .filter((surface) => surface.availability === "active")
+      .map((surface) => surface.id);
+    const ownerActive = getVisibleSurfaces(["owner"])
+      .filter((surface) => surface.availability === "active")
+      .map((surface) => surface.id);
+    const accountantVisible = getVisibleSurfaces(["accountant"]).map((surface) => surface.id);
+
+    expect(assistantActive).toEqual(expect.arrayContaining(["tasks", "lab", "operations"]));
+    expect(ownerActive).toEqual(
+      expect.arrayContaining(["tasks", "lab", "operations", "owner-control"])
+    );
+    expect(accountantVisible).not.toContain("tasks");
+    expect(accountantVisible).not.toContain("lab");
+    expect(accountantVisible).not.toContain("operations");
+    expect(accountantVisible).not.toContain("owner-control");
+    expect(hasSurface("recalls")).toBe(true);
+    expect(resolveSurfaceId("continuity")).toBe("tasks");
   });
 });
