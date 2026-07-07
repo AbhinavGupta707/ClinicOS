@@ -11,6 +11,8 @@ import type {
   ClinicUser,
   ConsentEnforcementState,
   ConsentRecord,
+  AcceptTreatmentPlanInput,
+  CreateTreatmentPlanInput,
   CreateDentalFindingInput,
   DentalChartRecord,
   DentalChartSnapshotRecord,
@@ -18,6 +20,9 @@ import type {
   DentalFindingHistoryRecord,
   DentalFindingRecord,
   EncounterRecord,
+  InvoiceDetail,
+  InvoiceItemRecord,
+  InvoiceRecord,
   IntakeFormSubmissionRecord,
   IntakeFormTemplateRecord,
   LeadRecord,
@@ -25,29 +30,45 @@ import type {
   MediaScanStatus,
   MediaStorageProviderKey,
   MediaUploadReservationRecord,
+  PaymentRequestRecord,
+  PaymentTransactionRecord,
   PatientGender,
   PatientRecord,
   PatientTimelineItem,
+  PricebookProcedureRecord,
   PrescriptionRecord,
+  ProcedurePerformedRecord,
   ProviderScheduleRecord,
   QueueEntryRecord,
   QueueStatus,
+  ReceiptRecord,
   RoleAssignment,
   TaskRecord,
   Tenant,
   TenantMembership,
+  TreatmentPlanDetail,
+  TreatmentPlanEstimateItemRecord,
+  TreatmentPlanPhaseRecord,
+  TreatmentPlanRecord,
   UUID
 } from "@clinic-os/domain";
 import {
+  assertInvoiceReceiptable,
   assertDentalFindingUpdateReason,
   assertClinicalNoteCanBeAmended,
   assertClinicalNoteCanBeSigned,
   assertPrescriptionCanBeSigned,
+  assertPositiveMinorCurrencyAmount,
+  assertTreatmentPlanAcceptable,
+  assertTreatmentPlanMutable,
   assertValidDentalFinding,
   buildDentalChartSnapshotState,
+  calculateBillingLineTotals,
+  calculateInvoicePaymentStatus,
   normalizeDentalSurface,
   normalizeDentalToothNumber,
   buildConsentEnforcementState,
+  isSettledPaymentTransaction,
   mediaAssetStatusForScan,
   normalizeClinicalNoteContent,
   normalizePhone,
@@ -60,6 +81,10 @@ import type {
   AmendClinicalNoteInput,
   AmendClinicalNoteResult,
   ClinicOperationsRepository,
+  CreateInvoiceInput,
+  CreatePaymentRequestInput,
+  CreateProcedurePerformedInput,
+  CreateReceiptInput,
   CreateDentalChartSnapshotInput,
   CreateAppointmentInput,
   CreateAttributionTouchInput,
@@ -80,11 +105,13 @@ import type {
   LeadSearchFilter,
   OutboxEventInput,
   PatientSearchFilter,
+  RecordPaymentTransactionInput,
   RepositoryScope,
   RevokeConsentInput,
   SaveClinicalNoteDraftInput,
   SignClinicalNoteResult,
   UpdateDentalFindingRepositoryInput,
+  UpdateTreatmentPlanInput,
   UpdatePatientInput
 } from "./repositories.ts";
 
@@ -1300,6 +1327,30 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
+  async listPricebookProcedures(scope: RepositoryScope): Promise<PricebookProcedureRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<PricebookProcedureRow>(
+        `
+          select *
+          from pricebook_procedures
+          where tenant_id = $1 and clinic_id = $2 and status = 'active'
+          order by category, display_name
+        `,
+        [scope.tenantId, scope.clinicId]
+      );
+      return result.rows.map(mapPricebookProcedureRow);
+    });
+  }
+
+  async findPricebookProcedureById(
+    scope: RepositoryScope,
+    procedureId: UUID
+  ): Promise<PricebookProcedureRecord | null> {
+    return this.#withRls(scope, async (client) =>
+      this.#findPricebookProcedureByIdInTransaction(client, scope, procedureId)
+    );
+  }
+
   async listIntakeFormTemplates(scope: RepositoryScope): Promise<IntakeFormTemplateRecord[]> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<IntakeFormTemplateRow>(
@@ -2466,6 +2517,705 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
+  async createTreatmentPlan(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreateTreatmentPlanInput
+  ) {
+    return this.#withRls(scope, async (client) => {
+      const patient = await this.#findPatientByIdInTransaction(client, scope, patientId);
+      if (!patient) return null;
+      if (input.encounterId) {
+        const encounter = await this.#findEncounterByIdInTransaction(client, scope, input.encounterId);
+        if (!encounter || encounter.patientId !== patientId) return null;
+      }
+
+      const result = await client.query<TreatmentPlanRow>(
+        `
+          insert into treatment_plans (
+            tenant_id,
+            clinic_id,
+            patient_id,
+            encounter_id,
+            title,
+            status,
+            clinical_summary,
+            presented_at,
+            created_by_user_id,
+            updated_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, case when $6 = 'presented' then now() else null end, $8, $8)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          patientId,
+          input.encounterId ?? null,
+          input.title.trim(),
+          input.status ?? "draft",
+          input.clinicalSummary?.trim() || null,
+          scope.actorUserId
+        ]
+      );
+      const plan = mapTreatmentPlanRow(result.rows[0]);
+      await this.#replaceTreatmentPlanPhasesInTransaction(client, scope, plan, input.phases);
+      await this.#recalculateTreatmentPlanTotalsInTransaction(client, scope, plan.id);
+      const detail = await this.#findTreatmentPlanDetailInTransaction(client, scope, plan.id);
+      if (!detail) return null;
+
+      await this.#appendTimeline(client, scope, {
+        patientId,
+        itemType: "treatment_plan_created",
+        sourceTable: "treatment_plans",
+        sourceId: plan.id,
+        title: "Treatment plan created",
+        summary: detail.treatmentPlan.title,
+        metadata: {
+          treatmentPlanId: plan.id,
+          status: detail.treatmentPlan.status,
+          totalMinor: detail.treatmentPlan.totalMinor
+        }
+      });
+
+      return { detail };
+    });
+  }
+
+  async findTreatmentPlanById(
+    scope: RepositoryScope,
+    treatmentPlanId: UUID
+  ): Promise<TreatmentPlanDetail | null> {
+    return this.#withRls(scope, async (client) =>
+      this.#findTreatmentPlanDetailInTransaction(client, scope, treatmentPlanId)
+    );
+  }
+
+  async updateTreatmentPlan(
+    scope: RepositoryScope,
+    treatmentPlanId: UUID,
+    input: UpdateTreatmentPlanInput
+  ) {
+    return this.#withRls(scope, async (client) => {
+      const existing = await this.#findTreatmentPlanRowInTransaction(client, scope, treatmentPlanId);
+      if (!existing) return null;
+      assertTreatmentPlanMutable(existing);
+
+      if (input.status === "accepted") {
+        throw new Error("Use acceptTreatmentPlan to record patient acceptance evidence.");
+      }
+
+      await client.query(
+        `
+          update treatment_plans
+          set
+            title = coalesce($4, title),
+            clinical_summary = $5,
+            status = coalesce($6, status),
+            presented_at = case
+              when coalesce($6, status) = 'presented' then coalesce(presented_at, now())
+              else presented_at
+            end,
+            updated_by_user_id = $7
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          treatmentPlanId,
+          input.title?.trim() ?? null,
+          input.clinicalSummary === undefined ? existing.clinicalSummary : input.clinicalSummary?.trim() || null,
+          input.status ?? null,
+          scope.actorUserId
+        ]
+      );
+
+      if (input.phases) {
+        await client.query(
+          `
+            delete from treatment_plan_phases
+            where tenant_id = $1 and clinic_id = $2 and treatment_plan_id = $3
+          `,
+          [scope.tenantId, scope.clinicId, treatmentPlanId]
+        );
+        await this.#replaceTreatmentPlanPhasesInTransaction(client, scope, existing, input.phases);
+        await this.#recalculateTreatmentPlanTotalsInTransaction(client, scope, treatmentPlanId);
+      }
+
+      const detail = await this.#findTreatmentPlanDetailInTransaction(client, scope, treatmentPlanId);
+      return detail ? { detail } : null;
+    });
+  }
+
+  async acceptTreatmentPlan(
+    scope: RepositoryScope,
+    treatmentPlanId: UUID,
+    input: AcceptTreatmentPlanInput
+  ) {
+    return this.#withRls(scope, async (client) => {
+      const detail = await this.#findTreatmentPlanDetailInTransaction(client, scope, treatmentPlanId);
+      if (!detail) return null;
+      assertTreatmentPlanAcceptable(
+        detail.treatmentPlan,
+        detail.phases.reduce((count, phase) => count + phase.estimateItems.length, 0)
+      );
+
+      await client.query(
+        `
+          update treatment_plans
+          set
+            status = 'accepted',
+            presented_at = coalesce(presented_at, now()),
+            accepted_at = now(),
+            accepted_by_user_id = $4,
+            accepted_by_name = $5,
+            acceptance_evidence = $6::jsonb,
+            updated_by_user_id = $4
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          treatmentPlanId,
+          scope.actorUserId,
+          input.acceptedByName?.trim() || null,
+          JSON.stringify(input.acceptanceEvidence ?? {})
+        ]
+      );
+      await client.query(
+        `
+          update treatment_plan_estimate_items
+          set status = 'accepted'
+          where tenant_id = $1 and clinic_id = $2 and treatment_plan_id = $3 and status = 'planned'
+        `,
+        [scope.tenantId, scope.clinicId, treatmentPlanId]
+      );
+      const accepted = await this.#findTreatmentPlanDetailInTransaction(client, scope, treatmentPlanId);
+      if (!accepted) return null;
+
+      await this.#appendTimeline(client, scope, {
+        patientId: accepted.treatmentPlan.patientId,
+        itemType: "treatment_plan_accepted",
+        sourceTable: "treatment_plans",
+        sourceId: accepted.treatmentPlan.id,
+        title: "Treatment plan accepted",
+        summary: accepted.treatmentPlan.title,
+        metadata: {
+          treatmentPlanId,
+          totalMinor: accepted.treatmentPlan.totalMinor,
+          currency: accepted.treatmentPlan.currency
+        }
+      });
+
+      return { detail: accepted };
+    });
+  }
+
+  async createProcedurePerformed(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    input: CreateProcedurePerformedInput
+  ) {
+    return this.#withRls(scope, async (client) => {
+      const encounter = await this.#findEncounterByIdInTransaction(client, scope, encounterId);
+      if (!encounter) return null;
+      const plan = await this.#findTreatmentPlanDetailInTransaction(client, scope, input.treatmentPlanId);
+      if (!plan || plan.treatmentPlan.patientId !== encounter.patientId) return null;
+      if (plan.treatmentPlan.status !== "accepted") {
+        throw new Error("Procedures can only be completed from an accepted treatment plan.");
+      }
+      const estimateItem = plan.phases
+        .flatMap((phase) => phase.estimateItems)
+        .find((item) => item.id === input.treatmentPlanEstimateItemId);
+      if (!estimateItem || estimateItem.status !== "accepted") return null;
+
+      const duplicate = await client.query<{ id: UUID }>(
+        `
+          select id
+          from procedure_performed_records
+          where tenant_id = $1
+            and clinic_id = $2
+            and treatment_plan_estimate_item_id = $3
+            and status = 'completed'
+          limit 1
+        `,
+        [scope.tenantId, scope.clinicId, estimateItem.id]
+      );
+      if (duplicate.rows[0]) {
+        throw new Error("This accepted treatment plan item is already completed.");
+      }
+
+      const result = await client.query<ProcedurePerformedRow>(
+        `
+          insert into procedure_performed_records (
+            tenant_id,
+            clinic_id,
+            patient_id,
+            encounter_id,
+            treatment_plan_id,
+            treatment_plan_estimate_item_id,
+            pricebook_procedure_id,
+            dental_finding_id,
+            tooth_number,
+            quantity,
+            unit_price_minor,
+            discount_minor,
+            tax_rate_basis_points,
+            tax_minor,
+            total_minor,
+            performed_by_user_id,
+            performed_at,
+            notes,
+            outcome,
+            provenance
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, coalesce($17::timestamptz, now()), $18, $19, $20::jsonb)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          encounter.patientId,
+          encounterId,
+          plan.treatmentPlan.id,
+          estimateItem.id,
+          estimateItem.pricebookProcedureId,
+          estimateItem.dentalFindingId,
+          estimateItem.toothNumber,
+          estimateItem.quantity,
+          estimateItem.unitPriceMinor,
+          estimateItem.discountMinor,
+          estimateItem.taxRateBasisPoints,
+          estimateItem.taxMinor,
+          estimateItem.totalMinor,
+          scope.actorUserId,
+          input.performedAt ?? null,
+          input.notes?.trim() || null,
+          input.outcome?.trim() || null,
+          JSON.stringify(input.provenance ?? {})
+        ]
+      );
+      const procedure = mapProcedurePerformedRow(result.rows[0]);
+      await client.query(
+        `
+          update treatment_plan_estimate_items
+          set status = 'completed'
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+        `,
+        [scope.tenantId, scope.clinicId, estimateItem.id]
+      );
+      await this.#appendTimeline(client, scope, {
+        patientId: procedure.patientId,
+        itemType: "procedure_completed",
+        sourceTable: "procedure_performed_records",
+        sourceId: procedure.id,
+        title: "Procedure completed",
+        summary: null,
+        metadata: {
+          procedurePerformedId: procedure.id,
+          treatmentPlanId: procedure.treatmentPlanId,
+          estimateItemId: procedure.treatmentPlanEstimateItemId
+        }
+      });
+      const treatmentPlan = await this.#findTreatmentPlanDetailInTransaction(
+        client,
+        scope,
+        procedure.treatmentPlanId
+      );
+      if (!treatmentPlan) return null;
+
+      return { procedure, treatmentPlan };
+    });
+  }
+
+  async listCompletedProceduresForInvoice(
+    scope: RepositoryScope,
+    input: CreateInvoiceInput
+  ): Promise<ProcedurePerformedRecord[]> {
+    return this.#withRls(scope, async (client) =>
+      this.#listCompletedProceduresForInvoiceInTransaction(client, scope, input)
+    );
+  }
+
+  async createInvoice(scope: RepositoryScope, input: CreateInvoiceInput) {
+    return this.#withRls(scope, async (client) => {
+      const procedures = await this.#listCompletedProceduresForInvoiceInTransaction(client, scope, input);
+      if (procedures.length === 0) return null;
+      const patientIds = new Set(procedures.map((procedure) => procedure.patientId));
+      if (patientIds.size !== 1) throw new Error("Invoice procedures must belong to exactly one patient.");
+
+      const subtotalMinor = procedures.reduce(
+        (total, procedure) => total + procedure.unitPriceMinor * procedure.quantity,
+        0
+      );
+      const discountMinor = procedures.reduce((total, procedure) => total + procedure.discountMinor, 0);
+      const taxMinor = procedures.reduce((total, procedure) => total + procedure.taxMinor, 0);
+      const totalMinor = procedures.reduce((total, procedure) => total + procedure.totalMinor, 0);
+      const invoiceNumber = await this.#nextInvoiceNumber(client, scope);
+      const planIds = new Set(procedures.map((procedure) => procedure.treatmentPlanId));
+      const invoiceResult = await client.query<InvoiceRow>(
+        `
+          insert into invoices (
+            tenant_id,
+            clinic_id,
+            patient_id,
+            invoice_number,
+            subtotal_minor,
+            discount_minor,
+            tax_minor,
+            total_minor,
+            balance_minor,
+            treatment_plan_id,
+            due_at,
+            created_by_user_id,
+            updated_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $8, $9, $10, $11, $11)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          procedures[0].patientId,
+          invoiceNumber,
+          subtotalMinor,
+          discountMinor,
+          taxMinor,
+          totalMinor,
+          input.treatmentPlanId ?? (planIds.size === 1 ? procedures[0].treatmentPlanId : null),
+          input.dueAt ?? null,
+          scope.actorUserId
+        ]
+      );
+      const invoice = mapInvoiceRow(invoiceResult.rows[0]);
+
+      for (const procedure of procedures) {
+        const pricebookProcedure = await this.#findPricebookProcedureByIdInTransaction(
+          client,
+          scope,
+          procedure.pricebookProcedureId
+        );
+        await client.query(
+          `
+            insert into invoice_items (
+              tenant_id,
+              clinic_id,
+              invoice_id,
+              patient_id,
+              procedure_performed_id,
+              treatment_plan_estimate_item_id,
+              pricebook_procedure_id,
+              description,
+              quantity,
+              unit_price_minor,
+              discount_minor,
+              tax_rate_basis_points,
+              tax_minor,
+              total_minor
+            )
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14)
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            invoice.id,
+            invoice.patientId,
+            procedure.id,
+            procedure.treatmentPlanEstimateItemId,
+            procedure.pricebookProcedureId,
+            pricebookProcedure?.displayName ?? "Completed dental procedure",
+            procedure.quantity,
+            procedure.unitPriceMinor,
+            procedure.discountMinor,
+            procedure.taxRateBasisPoints,
+            procedure.taxMinor,
+            procedure.totalMinor
+          ]
+        );
+        await client.query(
+          `
+            update procedure_performed_records
+            set invoice_id = $4
+            where tenant_id = $1 and clinic_id = $2 and id = $3
+          `,
+          [scope.tenantId, scope.clinicId, procedure.id, invoice.id]
+        );
+      }
+
+      await this.#appendTimeline(client, scope, {
+        patientId: invoice.patientId,
+        itemType: "invoice_created",
+        sourceTable: "invoices",
+        sourceId: invoice.id,
+        title: "Invoice created",
+        summary: invoice.invoiceNumber,
+        metadata: {
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber,
+          totalMinor: invoice.totalMinor,
+          currency: invoice.currency
+        }
+      });
+      const invoiceDetail = await this.#findInvoiceDetailInTransaction(client, scope, invoice.id);
+      if (!invoiceDetail) return null;
+
+      return { invoiceDetail, procedures };
+    });
+  }
+
+  async findInvoiceById(scope: RepositoryScope, invoiceId: UUID): Promise<InvoiceDetail | null> {
+    return this.#withRls(scope, async (client) =>
+      this.#findInvoiceDetailInTransaction(client, scope, invoiceId)
+    );
+  }
+
+  async createPaymentRequest(
+    scope: RepositoryScope,
+    input: CreatePaymentRequestInput
+  ): Promise<PaymentRequestRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const invoice = await this.#findInvoiceRowInTransaction(client, scope, input.invoiceId);
+      if (!invoice || invoice.status !== "issued") return null;
+      assertPositiveMinorCurrencyAmount(input.amountMinor, "amountMinor");
+      if (input.amountMinor > invoice.balanceMinor) {
+        throw new Error("Payment request amount cannot exceed invoice balance.");
+      }
+
+      const result = await client.query<PaymentRequestRow>(
+        `
+          insert into payment_requests (
+            tenant_id,
+            clinic_id,
+            invoice_id,
+            patient_id,
+            provider,
+            request_type,
+            status,
+            amount_minor,
+            currency,
+            provider_reference_id,
+            provider_url,
+            provider_qr_payload,
+            expires_at,
+            metadata,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14::jsonb, $15)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          invoice.id,
+          invoice.patientId,
+          input.provider,
+          input.requestType,
+          input.providerReferenceId ? "provider_created" : "requested",
+          input.amountMinor,
+          input.currency ?? invoice.currency,
+          input.providerReferenceId ?? null,
+          input.providerUrl ?? null,
+          input.providerQrPayload ?? null,
+          input.expiresAt ?? null,
+          JSON.stringify(input.metadata ?? {}),
+          scope.actorUserId
+        ]
+      );
+      await this.#recalculateInvoicePaymentStateInTransaction(client, scope, invoice.id);
+      return mapPaymentRequestRow(result.rows[0]);
+    });
+  }
+
+  async recordPaymentTransaction(
+    scope: RepositoryScope,
+    input: RecordPaymentTransactionInput
+  ): Promise<PaymentTransactionRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const invoice = await this.#findInvoiceRowInTransaction(client, scope, input.invoiceId);
+      if (!invoice) return null;
+      if (input.status === "succeeded" && input.verificationStatus !== "verified") {
+        throw new Error("Provider payment success requires verified provider evidence.");
+      }
+      if (input.status === "manually_recorded" && input.verificationStatus !== "not_required_manual") {
+        throw new Error("Manual payment requires not_required_manual verification status.");
+      }
+      if (input.currency && input.currency !== invoice.currency) {
+        throw new Error("Payment currency must match invoice currency.");
+      }
+      if (input.paymentRequestId) {
+        const request = await client.query<{ id: UUID }>(
+          `
+            select id
+            from payment_requests
+            where tenant_id = $1 and clinic_id = $2 and id = $3 and invoice_id = $4
+          `,
+          [scope.tenantId, scope.clinicId, input.paymentRequestId, invoice.id]
+        );
+        if (!request.rows[0]) return null;
+      }
+      if (input.idempotencyKey) {
+        const existing = await client.query<PaymentTransactionRow>(
+          `
+            select *
+            from payment_transactions
+            where tenant_id = $1 and clinic_id = $2 and provider = $3 and idempotency_key = $4
+            limit 1
+          `,
+          [scope.tenantId, scope.clinicId, input.provider, input.idempotencyKey]
+        );
+        if (existing.rows[0]) return mapPaymentTransactionRow(existing.rows[0]);
+      }
+
+      const result = await client.query<PaymentTransactionRow>(
+        `
+          insert into payment_transactions (
+            tenant_id,
+            clinic_id,
+            invoice_id,
+            patient_id,
+            payment_request_id,
+            provider,
+            provider_payment_id,
+            provider_order_id,
+            amount_minor,
+            currency,
+            method,
+            status,
+            verification_status,
+            reconciliation_status,
+            idempotency_key,
+            received_at,
+            recorded_by_user_id,
+            metadata
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, coalesce($16::timestamptz, now()), $17, $18::jsonb)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          invoice.id,
+          invoice.patientId,
+          input.paymentRequestId ?? null,
+          input.provider,
+          input.providerPaymentId ?? null,
+          input.providerOrderId ?? null,
+          input.amountMinor,
+          input.currency ?? invoice.currency,
+          input.method.trim(),
+          input.status,
+          input.verificationStatus,
+          input.reconciliationStatus ?? "matched",
+          input.idempotencyKey ?? null,
+          input.receivedAt ?? null,
+          input.recordedByUserId ?? scope.actorUserId,
+          JSON.stringify(input.metadata ?? {})
+        ]
+      );
+      const payment = mapPaymentTransactionRow(result.rows[0]);
+      await this.#recalculateInvoicePaymentStateInTransaction(client, scope, invoice.id);
+
+      if (isSettledPaymentTransaction(payment)) {
+        await this.#appendTimeline(client, scope, {
+          patientId: payment.patientId,
+          itemType: "payment_recorded",
+          sourceTable: "payment_transactions",
+          sourceId: payment.id,
+          title: "Payment recorded",
+          summary: payment.method,
+          metadata: {
+            invoiceId: payment.invoiceId,
+            paymentTransactionId: payment.id,
+            provider: payment.provider,
+            amountMinor: payment.amountMinor
+          }
+        });
+      }
+
+      return payment;
+    });
+  }
+
+  async createReceipt(
+    scope: RepositoryScope,
+    invoiceId: UUID,
+    input: CreateReceiptInput
+  ) {
+    return this.#withRls(scope, async (client) => {
+      const detail = await this.#findInvoiceDetailInTransaction(client, scope, invoiceId);
+      if (!detail) return null;
+      const requestedIds = new Set(input.paymentTransactionIds ?? []);
+      const candidatePayments = detail.payments.filter(
+        (payment) => requestedIds.size === 0 || requestedIds.has(payment.id)
+      );
+      assertInvoiceReceiptable({ invoice: detail.invoice, payments: candidatePayments });
+      const payments = candidatePayments.filter(
+        (payment) => isSettledPaymentTransaction(payment) && !payment.receiptId
+      );
+      const allocations = payments.map((payment) => ({
+        paymentTransactionId: payment.id,
+        amountMinor: payment.amountMinor
+      }));
+      const amountMinor = allocations.reduce((sum, allocation) => sum + allocation.amountMinor, 0);
+      const receiptNumber = await this.#nextReceiptNumber(client, scope);
+      const result = await client.query<ReceiptRow>(
+        `
+          insert into receipts (
+            tenant_id,
+            clinic_id,
+            invoice_id,
+            patient_id,
+            receipt_number,
+            amount_minor,
+            currency,
+            payment_allocations,
+            generated_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          detail.invoice.id,
+          detail.invoice.patientId,
+          receiptNumber,
+          amountMinor,
+          detail.invoice.currency,
+          JSON.stringify(allocations),
+          scope.actorUserId
+        ]
+      );
+      const receipt = mapReceiptRow(result.rows[0]);
+      await client.query(
+        `
+          update payment_transactions
+          set receipt_id = $4
+          where tenant_id = $1 and clinic_id = $2 and id = any($3::uuid[])
+        `,
+        [scope.tenantId, scope.clinicId, payments.map((payment) => payment.id), receipt.id]
+      );
+      await this.#appendTimeline(client, scope, {
+        patientId: receipt.patientId,
+        itemType: "receipt_generated",
+        sourceTable: "receipts",
+        sourceId: receipt.id,
+        title: "Receipt generated",
+        summary: receipt.receiptNumber,
+        metadata: {
+          invoiceId: receipt.invoiceId,
+          receiptId: receipt.id,
+          receiptNumber: receipt.receiptNumber,
+          amountMinor: receipt.amountMinor
+        }
+      });
+      const invoiceDetail = await this.#findInvoiceDetailInTransaction(client, scope, invoiceId);
+      if (!invoiceDetail) return null;
+
+      return { invoiceDetail, receipt };
+    });
+  }
+
   async #withRls<T>(
     scope: RepositoryScope,
     callback: (client: SqlQueryClient) => Promise<T>
@@ -2666,6 +3416,426 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       [scope.tenantId, scope.clinicId, uploadId]
     );
     return result.rows[0] ? mapMediaUploadReservationRow(result.rows[0]) : null;
+  }
+
+  async #findPricebookProcedureByIdInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    procedureId: UUID
+  ): Promise<PricebookProcedureRecord | null> {
+    const result = await client.query<PricebookProcedureRow>(
+      `
+        select *
+        from pricebook_procedures
+        where tenant_id = $1 and clinic_id = $2 and id = $3 and status = 'active'
+      `,
+      [scope.tenantId, scope.clinicId, procedureId]
+    );
+    return result.rows[0] ? mapPricebookProcedureRow(result.rows[0]) : null;
+  }
+
+  async #findTreatmentPlanRowInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    treatmentPlanId: UUID
+  ): Promise<TreatmentPlanRecord | null> {
+    const result = await client.query<TreatmentPlanRow>(
+      `
+        select *
+        from treatment_plans
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, treatmentPlanId]
+    );
+    return result.rows[0] ? mapTreatmentPlanRow(result.rows[0]) : null;
+  }
+
+  async #findTreatmentPlanDetailInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    treatmentPlanId: UUID
+  ): Promise<TreatmentPlanDetail | null> {
+    const treatmentPlan = await this.#findTreatmentPlanRowInTransaction(
+      client,
+      scope,
+      treatmentPlanId
+    );
+    if (!treatmentPlan) return null;
+
+    const phases = (
+      await client.query<TreatmentPlanPhaseRow>(
+        `
+          select *
+          from treatment_plan_phases
+          where tenant_id = $1 and clinic_id = $2 and treatment_plan_id = $3
+          order by phase_index
+        `,
+        [scope.tenantId, scope.clinicId, treatmentPlanId]
+      )
+    ).rows.map(mapTreatmentPlanPhaseRow);
+    const items = (
+      await client.query<TreatmentPlanEstimateItemRow>(
+        `
+          select *
+          from treatment_plan_estimate_items
+          where tenant_id = $1 and clinic_id = $2 and treatment_plan_id = $3
+          order by created_at
+        `,
+        [scope.tenantId, scope.clinicId, treatmentPlanId]
+      )
+    ).rows.map(mapTreatmentPlanEstimateItemRow);
+
+    return {
+      treatmentPlan,
+      phases: phases.map((phase) => ({
+        ...phase,
+        estimateItems: items.filter((item) => item.phaseId === phase.id)
+      }))
+    };
+  }
+
+  async #replaceTreatmentPlanPhasesInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    plan: TreatmentPlanRecord,
+    phases: CreateTreatmentPlanInput["phases"]
+  ): Promise<void> {
+    if (phases.length === 0) {
+      throw new Error("Treatment plan requires at least one phase.");
+    }
+
+    for (const [phaseIndex, phaseInput] of phases.entries()) {
+      if (phaseInput.items.length === 0) {
+        throw new Error("Treatment plan phases require at least one estimate item.");
+      }
+
+      const phaseResult = await client.query<TreatmentPlanPhaseRow>(
+        `
+          insert into treatment_plan_phases (
+            tenant_id,
+            clinic_id,
+            treatment_plan_id,
+            phase_index,
+            title,
+            description,
+            estimated_start_after_days
+          )
+          values ($1, $2, $3, $4, $5, $6, $7)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          plan.id,
+          phaseIndex + 1,
+          phaseInput.title.trim(),
+          phaseInput.description?.trim() || null,
+          phaseInput.estimatedStartAfterDays ?? null
+        ]
+      );
+      const phase = mapTreatmentPlanPhaseRow(phaseResult.rows[0]);
+
+      for (const itemInput of phaseInput.items) {
+        const procedure = await this.#findPricebookProcedureByIdInTransaction(
+          client,
+          scope,
+          itemInput.pricebookProcedureId
+        );
+        if (!procedure) {
+          throw new Error("Pricebook procedure is not active or not available.");
+        }
+        if (itemInput.dentalFindingId) {
+          const finding = await this.#findDentalFindingByIdInTransaction(
+            client,
+            scope,
+            itemInput.dentalFindingId
+          );
+          if (!finding || finding.patientId !== plan.patientId) {
+            throw new Error("Dental finding does not belong to the treatment plan patient.");
+          }
+        }
+
+        const quantity = itemInput.quantity ?? 1;
+        const unitPriceMinor = itemInput.unitPriceMinor ?? procedure.defaultUnitPriceMinor;
+        const taxRateBasisPoints =
+          itemInput.taxRateBasisPoints ?? procedure.taxRateBasisPoints;
+        const totals = calculateBillingLineTotals({
+          quantity,
+          unitPriceMinor,
+          discountMinor: itemInput.discountMinor ?? 0,
+          taxRateBasisPoints
+        });
+        await client.query(
+          `
+            insert into treatment_plan_estimate_items (
+              tenant_id,
+              clinic_id,
+              treatment_plan_id,
+              phase_id,
+              pricebook_procedure_id,
+              dental_finding_id,
+              tooth_number,
+              quantity,
+              unit_price_minor,
+              discount_minor,
+              tax_rate_basis_points,
+              tax_minor,
+              total_minor,
+              estimated_visits,
+              priority,
+              notes,
+              status
+            )
+            values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            plan.id,
+            phase.id,
+            procedure.id,
+            itemInput.dentalFindingId ?? null,
+            itemInput.toothNumber ? normalizeDentalToothNumber(itemInput.toothNumber) : null,
+            quantity,
+            unitPriceMinor,
+            totals.discountMinor,
+            taxRateBasisPoints,
+            totals.taxMinor,
+            totals.totalMinor,
+            itemInput.estimatedVisits ?? 1,
+            itemInput.priority?.trim() || null,
+            itemInput.notes?.trim() || null,
+            plan.status === "accepted" ? "accepted" : "planned"
+          ]
+        );
+      }
+    }
+  }
+
+  async #recalculateTreatmentPlanTotalsInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    treatmentPlanId: UUID
+  ): Promise<void> {
+    await client.query(
+      `
+        update treatment_plans
+        set
+          subtotal_minor = coalesce(totals.subtotal_minor, 0),
+          discount_minor = coalesce(totals.discount_minor, 0),
+          tax_minor = coalesce(totals.tax_minor, 0),
+          total_minor = coalesce(totals.total_minor, 0),
+          updated_by_user_id = $4
+        from (
+          select
+            treatment_plan_id,
+            sum(quantity * unit_price_minor)::bigint as subtotal_minor,
+            sum(discount_minor)::bigint as discount_minor,
+            sum(tax_minor)::bigint as tax_minor,
+            sum(total_minor)::bigint as total_minor
+          from treatment_plan_estimate_items
+          where tenant_id = $1 and clinic_id = $2 and treatment_plan_id = $3
+          group by treatment_plan_id
+        ) totals
+        where treatment_plans.tenant_id = $1
+          and treatment_plans.clinic_id = $2
+          and treatment_plans.id = $3
+      `,
+      [scope.tenantId, scope.clinicId, treatmentPlanId, scope.actorUserId]
+    );
+  }
+
+  async #listCompletedProceduresForInvoiceInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    input: CreateInvoiceInput
+  ): Promise<ProcedurePerformedRecord[]> {
+    const ids = input.procedurePerformedIds ?? [];
+    const result = await client.query<ProcedurePerformedRow>(
+      `
+        select *
+        from procedure_performed_records
+        where tenant_id = $1
+          and clinic_id = $2
+          and status = 'completed'
+          and invoice_id is null
+          and ($3::uuid is null or patient_id = $3)
+          and ($4::uuid is null or treatment_plan_id = $4)
+          and (cardinality($5::uuid[]) = 0 or id = any($5::uuid[]))
+        order by performed_at
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        input.patientId ?? null,
+        input.treatmentPlanId ?? null,
+        ids
+      ]
+    );
+    return result.rows.map(mapProcedurePerformedRow);
+  }
+
+  async #findInvoiceRowInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    invoiceId: UUID
+  ): Promise<InvoiceRecord | null> {
+    const result = await client.query<InvoiceRow>(
+      `
+        select *
+        from invoices
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, invoiceId]
+    );
+    return result.rows[0] ? mapInvoiceRow(result.rows[0]) : null;
+  }
+
+  async #findInvoiceDetailInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    invoiceId: UUID
+  ): Promise<InvoiceDetail | null> {
+    await this.#recalculateInvoicePaymentStateInTransaction(client, scope, invoiceId);
+    const invoice = await this.#findInvoiceRowInTransaction(client, scope, invoiceId);
+    if (!invoice) return null;
+    const items = (
+      await client.query<InvoiceItemRow>(
+        `
+          select *
+          from invoice_items
+          where tenant_id = $1 and clinic_id = $2 and invoice_id = $3
+          order by created_at
+        `,
+        [scope.tenantId, scope.clinicId, invoiceId]
+      )
+    ).rows.map(mapInvoiceItemRow);
+    const paymentRequests = (
+      await client.query<PaymentRequestRow>(
+        `
+          select *
+          from payment_requests
+          where tenant_id = $1 and clinic_id = $2 and invoice_id = $3
+          order by created_at desc
+        `,
+        [scope.tenantId, scope.clinicId, invoiceId]
+      )
+    ).rows.map(mapPaymentRequestRow);
+    const payments = (
+      await client.query<PaymentTransactionRow>(
+        `
+          select *
+          from payment_transactions
+          where tenant_id = $1 and clinic_id = $2 and invoice_id = $3
+          order by received_at desc
+        `,
+        [scope.tenantId, scope.clinicId, invoiceId]
+      )
+    ).rows.map(mapPaymentTransactionRow);
+    const receipts = (
+      await client.query<ReceiptRow>(
+        `
+          select *
+          from receipts
+          where tenant_id = $1 and clinic_id = $2 and invoice_id = $3
+          order by generated_at desc
+        `,
+        [scope.tenantId, scope.clinicId, invoiceId]
+      )
+    ).rows.map(mapReceiptRow);
+
+    return { invoice, items, paymentRequests, payments, receipts };
+  }
+
+  async #nextInvoiceNumber(client: SqlQueryClient, scope: RepositoryScope): Promise<string> {
+    const result = await client.query<{ next_sequence: number }>(
+      `
+        select count(*)::integer + 1 as next_sequence
+        from invoices
+        where tenant_id = $1 and clinic_id = $2
+      `,
+      [scope.tenantId, scope.clinicId]
+    );
+    return `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(
+      Number(result.rows[0]?.next_sequence ?? 1)
+    ).padStart(4, "0")}`;
+  }
+
+  async #nextReceiptNumber(client: SqlQueryClient, scope: RepositoryScope): Promise<string> {
+    const result = await client.query<{ next_sequence: number }>(
+      `
+        select count(*)::integer + 1 as next_sequence
+        from receipts
+        where tenant_id = $1 and clinic_id = $2
+      `,
+      [scope.tenantId, scope.clinicId]
+    );
+    return `RCT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(
+      Number(result.rows[0]?.next_sequence ?? 1)
+    ).padStart(4, "0")}`;
+  }
+
+  async #recalculateInvoicePaymentStateInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    invoiceId: UUID
+  ): Promise<void> {
+    const invoice = await this.#findInvoiceRowInTransaction(client, scope, invoiceId);
+    if (!invoice) return;
+    const payments = (
+      await client.query<PaymentTransactionRow>(
+        `
+          select *
+          from payment_transactions
+          where tenant_id = $1 and clinic_id = $2 and invoice_id = $3
+        `,
+        [scope.tenantId, scope.clinicId, invoiceId]
+      )
+    ).rows.map(mapPaymentTransactionRow);
+    const requestCount = Number(
+      (
+        await client.query<{ count: string }>(
+          `
+            select count(*) as count
+            from payment_requests
+            where tenant_id = $1 and clinic_id = $2 and invoice_id = $3
+          `,
+          [scope.tenantId, scope.clinicId, invoiceId]
+        )
+      ).rows[0]?.count ?? 0
+    );
+    const paidMinor = payments
+      .filter((payment) => isSettledPaymentTransaction(payment))
+      .reduce((total, payment) => total + payment.amountMinor, 0);
+    const refundedMinor = payments
+      .filter((payment) => payment.status === "refunded")
+      .reduce((total, payment) => total + payment.amountMinor, 0);
+    const hasReconciliationIssue = payments.some(
+      (payment) =>
+        payment.status === "reconciliation_required" ||
+        payment.reconciliationStatus === "requires_review"
+    );
+    const paymentStatus = calculateInvoicePaymentStatus({
+      totalMinor: invoice.totalMinor,
+      paidMinor,
+      refundedMinor,
+      hasPaymentRequest: requestCount > 0,
+      hasReconciliationIssue,
+      invoiceStatus: invoice.status
+    });
+
+    await client.query(
+      `
+        update invoices
+        set
+          paid_minor = $4,
+          refunded_minor = $5,
+          balance_minor = greatest(total_minor - $4 + $5, 0),
+          payment_status = $6
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, invoiceId, paidMinor, refundedMinor, paymentStatus]
+    );
   }
 
   async #ensureDentalChartInTransaction(
@@ -3300,6 +4470,219 @@ interface DentalChartSnapshotRow {
   created_at: Date | string;
 }
 
+interface PricebookProcedureRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  code: string;
+  display_name: string;
+  category: string;
+  description: string | null;
+  default_unit_price_minor: number | string;
+  currency: PricebookProcedureRecord["currency"];
+  tax_rate_basis_points: number;
+  status: PricebookProcedureRecord["status"];
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface TreatmentPlanRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  patient_id: UUID;
+  encounter_id: UUID | null;
+  title: string;
+  status: TreatmentPlanRecord["status"];
+  currency: TreatmentPlanRecord["currency"];
+  subtotal_minor: number | string;
+  discount_minor: number | string;
+  tax_minor: number | string;
+  total_minor: number | string;
+  clinical_summary: string | null;
+  presented_at: Date | string | null;
+  accepted_at: Date | string | null;
+  accepted_by_user_id: UUID | null;
+  accepted_by_name: string | null;
+  acceptance_evidence: Record<string, unknown>;
+  created_by_user_id: UUID;
+  updated_by_user_id: UUID | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface TreatmentPlanPhaseRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  treatment_plan_id: UUID;
+  phase_index: number;
+  title: string;
+  description: string | null;
+  estimated_start_after_days: number | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface TreatmentPlanEstimateItemRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  treatment_plan_id: UUID;
+  phase_id: UUID;
+  pricebook_procedure_id: UUID;
+  dental_finding_id: UUID | null;
+  tooth_number: TreatmentPlanEstimateItemRecord["toothNumber"];
+  quantity: number;
+  unit_price_minor: number | string;
+  discount_minor: number | string;
+  tax_rate_basis_points: number;
+  tax_minor: number | string;
+  total_minor: number | string;
+  estimated_visits: number;
+  priority: string | null;
+  notes: string | null;
+  status: TreatmentPlanEstimateItemRecord["status"];
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface ProcedurePerformedRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  patient_id: UUID;
+  encounter_id: UUID;
+  treatment_plan_id: UUID;
+  treatment_plan_estimate_item_id: UUID;
+  pricebook_procedure_id: UUID;
+  dental_finding_id: UUID | null;
+  invoice_id: UUID | null;
+  tooth_number: ProcedurePerformedRecord["toothNumber"];
+  quantity: number;
+  unit_price_minor: number | string;
+  discount_minor: number | string;
+  tax_rate_basis_points: number;
+  tax_minor: number | string;
+  total_minor: number | string;
+  status: ProcedurePerformedRecord["status"];
+  performed_by_user_id: UUID;
+  performed_at: Date | string;
+  notes: string | null;
+  outcome: string | null;
+  provenance: Record<string, unknown>;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface InvoiceRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  patient_id: UUID;
+  invoice_number: string;
+  status: InvoiceRecord["status"];
+  payment_status: InvoiceRecord["paymentStatus"];
+  currency: InvoiceRecord["currency"];
+  subtotal_minor: number | string;
+  discount_minor: number | string;
+  tax_minor: number | string;
+  total_minor: number | string;
+  paid_minor: number | string;
+  refunded_minor: number | string;
+  balance_minor: number | string;
+  treatment_plan_id: UUID | null;
+  issued_at: Date | string;
+  due_at: Date | string | null;
+  created_by_user_id: UUID;
+  updated_by_user_id: UUID | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface InvoiceItemRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  invoice_id: UUID;
+  patient_id: UUID;
+  procedure_performed_id: UUID;
+  treatment_plan_estimate_item_id: UUID;
+  pricebook_procedure_id: UUID;
+  description: string;
+  quantity: number;
+  unit_price_minor: number | string;
+  discount_minor: number | string;
+  tax_rate_basis_points: number;
+  tax_minor: number | string;
+  total_minor: number | string;
+  created_at: Date | string;
+}
+
+interface PaymentRequestRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  invoice_id: UUID;
+  patient_id: UUID;
+  provider: PaymentRequestRecord["provider"];
+  request_type: PaymentRequestRecord["requestType"];
+  status: PaymentRequestRecord["status"];
+  amount_minor: number | string;
+  currency: PaymentRequestRecord["currency"];
+  provider_reference_id: string | null;
+  provider_url: string | null;
+  provider_qr_payload: string | null;
+  expires_at: Date | string | null;
+  metadata: Record<string, unknown>;
+  created_by_user_id: UUID;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface PaymentTransactionRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  invoice_id: UUID;
+  patient_id: UUID;
+  payment_request_id: UUID | null;
+  provider: PaymentTransactionRecord["provider"];
+  provider_payment_id: string | null;
+  provider_order_id: string | null;
+  amount_minor: number | string;
+  currency: PaymentTransactionRecord["currency"];
+  method: string;
+  status: PaymentTransactionRecord["status"];
+  verification_status: PaymentTransactionRecord["verificationStatus"];
+  reconciliation_status: PaymentTransactionRecord["reconciliationStatus"];
+  idempotency_key: string | null;
+  received_at: Date | string;
+  recorded_by_user_id: UUID | null;
+  receipt_id: UUID | null;
+  metadata: Record<string, unknown>;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface ReceiptRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  invoice_id: UUID;
+  patient_id: UUID;
+  receipt_number: string;
+  status: ReceiptRecord["status"];
+  amount_minor: number | string;
+  currency: ReceiptRecord["currency"];
+  payment_allocations: ReceiptRecord["paymentAllocations"];
+  generated_by_user_id: UUID;
+  generated_at: Date | string;
+  voided_by_user_id: UUID | null;
+  voided_at: Date | string | null;
+  void_reason: string | null;
+}
+
 function mapPatientRow(row: PatientRow): PatientRecord {
   return {
     id: row.id,
@@ -3713,6 +5096,241 @@ function mapDentalChartSnapshotRow(row: DentalChartSnapshotRow): DentalChartSnap
     provenance: row.provenance,
     createdByUserId: row.created_by_user_id,
     createdAt: toIso(row.created_at)
+  };
+}
+
+function mapPricebookProcedureRow(row: PricebookProcedureRow): PricebookProcedureRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    code: row.code,
+    displayName: row.display_name,
+    category: row.category,
+    description: row.description,
+    defaultUnitPriceMinor: Number(row.default_unit_price_minor),
+    currency: row.currency,
+    taxRateBasisPoints: row.tax_rate_basis_points,
+    status: row.status,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapTreatmentPlanRow(row: TreatmentPlanRow): TreatmentPlanRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    patientId: row.patient_id,
+    encounterId: row.encounter_id,
+    title: row.title,
+    status: row.status,
+    currency: row.currency,
+    subtotalMinor: Number(row.subtotal_minor),
+    discountMinor: Number(row.discount_minor),
+    taxMinor: Number(row.tax_minor),
+    totalMinor: Number(row.total_minor),
+    clinicalSummary: row.clinical_summary,
+    presentedAt: row.presented_at ? toIso(row.presented_at) : null,
+    acceptedAt: row.accepted_at ? toIso(row.accepted_at) : null,
+    acceptedByUserId: row.accepted_by_user_id,
+    acceptedByName: row.accepted_by_name,
+    acceptanceEvidence: row.acceptance_evidence ?? {},
+    createdByUserId: row.created_by_user_id,
+    updatedByUserId: row.updated_by_user_id,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapTreatmentPlanPhaseRow(row: TreatmentPlanPhaseRow): TreatmentPlanPhaseRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    treatmentPlanId: row.treatment_plan_id,
+    phaseIndex: row.phase_index,
+    title: row.title,
+    description: row.description,
+    estimatedStartAfterDays: row.estimated_start_after_days,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapTreatmentPlanEstimateItemRow(
+  row: TreatmentPlanEstimateItemRow
+): TreatmentPlanEstimateItemRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    treatmentPlanId: row.treatment_plan_id,
+    phaseId: row.phase_id,
+    pricebookProcedureId: row.pricebook_procedure_id,
+    dentalFindingId: row.dental_finding_id,
+    toothNumber: row.tooth_number,
+    quantity: row.quantity,
+    unitPriceMinor: Number(row.unit_price_minor),
+    discountMinor: Number(row.discount_minor),
+    taxRateBasisPoints: row.tax_rate_basis_points,
+    taxMinor: Number(row.tax_minor),
+    totalMinor: Number(row.total_minor),
+    estimatedVisits: row.estimated_visits,
+    priority: row.priority,
+    notes: row.notes,
+    status: row.status,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapProcedurePerformedRow(row: ProcedurePerformedRow): ProcedurePerformedRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    patientId: row.patient_id,
+    encounterId: row.encounter_id,
+    treatmentPlanId: row.treatment_plan_id,
+    treatmentPlanEstimateItemId: row.treatment_plan_estimate_item_id,
+    pricebookProcedureId: row.pricebook_procedure_id,
+    dentalFindingId: row.dental_finding_id,
+    invoiceId: row.invoice_id,
+    toothNumber: row.tooth_number,
+    quantity: row.quantity,
+    unitPriceMinor: Number(row.unit_price_minor),
+    discountMinor: Number(row.discount_minor),
+    taxRateBasisPoints: row.tax_rate_basis_points,
+    taxMinor: Number(row.tax_minor),
+    totalMinor: Number(row.total_minor),
+    status: row.status,
+    performedByUserId: row.performed_by_user_id,
+    performedAt: toIso(row.performed_at),
+    notes: row.notes,
+    outcome: row.outcome,
+    provenance: row.provenance ?? {},
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapInvoiceRow(row: InvoiceRow): InvoiceRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    patientId: row.patient_id,
+    invoiceNumber: row.invoice_number,
+    status: row.status,
+    paymentStatus: row.payment_status,
+    currency: row.currency,
+    subtotalMinor: Number(row.subtotal_minor),
+    discountMinor: Number(row.discount_minor),
+    taxMinor: Number(row.tax_minor),
+    totalMinor: Number(row.total_minor),
+    paidMinor: Number(row.paid_minor),
+    refundedMinor: Number(row.refunded_minor),
+    balanceMinor: Number(row.balance_minor),
+    treatmentPlanId: row.treatment_plan_id,
+    issuedAt: toIso(row.issued_at),
+    dueAt: row.due_at ? toIso(row.due_at) : null,
+    createdByUserId: row.created_by_user_id,
+    updatedByUserId: row.updated_by_user_id,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapInvoiceItemRow(row: InvoiceItemRow): InvoiceItemRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    invoiceId: row.invoice_id,
+    patientId: row.patient_id,
+    procedurePerformedId: row.procedure_performed_id,
+    treatmentPlanEstimateItemId: row.treatment_plan_estimate_item_id,
+    pricebookProcedureId: row.pricebook_procedure_id,
+    description: row.description,
+    quantity: row.quantity,
+    unitPriceMinor: Number(row.unit_price_minor),
+    discountMinor: Number(row.discount_minor),
+    taxRateBasisPoints: row.tax_rate_basis_points,
+    taxMinor: Number(row.tax_minor),
+    totalMinor: Number(row.total_minor),
+    createdAt: toIso(row.created_at)
+  };
+}
+
+function mapPaymentRequestRow(row: PaymentRequestRow): PaymentRequestRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    invoiceId: row.invoice_id,
+    patientId: row.patient_id,
+    provider: row.provider,
+    requestType: row.request_type,
+    status: row.status,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    providerReferenceId: row.provider_reference_id,
+    providerUrl: row.provider_url,
+    providerQrPayload: row.provider_qr_payload,
+    expiresAt: row.expires_at ? toIso(row.expires_at) : null,
+    metadata: row.metadata ?? {},
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapPaymentTransactionRow(row: PaymentTransactionRow): PaymentTransactionRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    invoiceId: row.invoice_id,
+    patientId: row.patient_id,
+    paymentRequestId: row.payment_request_id,
+    provider: row.provider,
+    providerPaymentId: row.provider_payment_id,
+    providerOrderId: row.provider_order_id,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    method: row.method,
+    status: row.status,
+    verificationStatus: row.verification_status,
+    reconciliationStatus: row.reconciliation_status,
+    idempotencyKey: row.idempotency_key,
+    receivedAt: toIso(row.received_at),
+    recordedByUserId: row.recorded_by_user_id,
+    receiptId: row.receipt_id,
+    metadata: row.metadata ?? {},
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapReceiptRow(row: ReceiptRow): ReceiptRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    invoiceId: row.invoice_id,
+    patientId: row.patient_id,
+    receiptNumber: row.receipt_number,
+    status: row.status,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    paymentAllocations: row.payment_allocations,
+    generatedByUserId: row.generated_by_user_id,
+    generatedAt: toIso(row.generated_at),
+    voidedByUserId: row.voided_by_user_id,
+    voidedAt: row.voided_at ? toIso(row.voided_at) : null,
+    voidReason: row.void_reason
   };
 }
 

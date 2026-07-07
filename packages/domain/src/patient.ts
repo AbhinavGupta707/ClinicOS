@@ -70,6 +70,12 @@ export type PatientTimelineItemType =
   | "dental_finding_created"
   | "dental_finding_updated"
   | "dental_chart_snapshot_created"
+  | "treatment_plan_created"
+  | "treatment_plan_accepted"
+  | "procedure_completed"
+  | "invoice_created"
+  | "payment_recorded"
+  | "receipt_generated"
   | "prescription_draft_created"
   | "prescription_signed"
   | "media_uploaded";

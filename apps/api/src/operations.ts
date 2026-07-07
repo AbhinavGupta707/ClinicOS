@@ -11,13 +11,18 @@ import type {
   CreateConsentInput,
   CreateDentalChartSnapshotInput,
   CreateEncounterInput,
+  CreateInvoiceInput,
   CreateIntakeFormSubmissionInput,
   CreateIntakeFormTemplateInput,
   CreateLeadInput,
   CreatePatientInput,
+  CreateProcedurePerformedInput,
   CreatePrescriptionInput,
+  CreateReceiptInput,
+  CreateTreatmentPlanInput,
   RepositoryScope,
-  UpdateDentalFindingRepositoryInput
+  UpdateDentalFindingRepositoryInput,
+  UpdateTreatmentPlanInput
 } from "@clinic-os/db";
 import {
   assertAppointmentTransition,
@@ -28,9 +33,11 @@ import {
   assertPatientCreateMinimum,
   buildMorningDashboard,
   buildPatientDuplicateSuggestions,
+  calculateBillingLineTotals,
   calculateEndAt,
   hasClinicalNoteContent,
   isAppointmentStatus,
+  isBillingCurrency,
   isConsentCaptureMethod,
   isConsentPurpose,
   isDentalFindingReviewStatus,
@@ -42,6 +49,7 @@ import {
   isIntakeSubmissionSource,
   isMediaScanStatus,
   isMediaType,
+  isTreatmentPlanStatus,
   isValidLeadStatus,
   mediaAssetCanBeViewed,
   isUuid,
@@ -57,6 +65,7 @@ import {
   type EncounterStatus,
   type IntakeFormType,
   type IntakeSubmissionSource,
+  type InvoiceDetail,
   type LeadIntent,
   type LeadSource,
   type LeadStatus,
@@ -64,8 +73,10 @@ import {
   type MediaType,
   type PatientTimelineItem as DomainPatientTimelineItem,
   type PatientSource,
+  type PricebookProcedureRecord,
   type PrescriptionMedication,
   type QueueStatus,
+  type TreatmentPlanDetail,
   type UUID
 } from "@clinic-os/domain";
 import {
@@ -761,6 +772,310 @@ export async function getMorningDashboard(
   authorize(context, { permission: "schedule.read" });
   const data = await dependencies.repository.loadDashboardData(scopeFrom(context), date);
   return ok({ dashboard: buildMorningDashboard({ date, ...data }) });
+}
+
+export async function listPricebookProcedures(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "billing.read" });
+  const procedures = await dependencies.repository.listPricebookProcedures(scopeFrom(context));
+
+  await audit(context, dependencies, "pricebook.procedure_catalog.viewed", {
+    resourceType: "pricebook_procedure",
+    resourceId: context.clinicId,
+    metadata: { procedureCount: procedures.length }
+  });
+
+  return ok({ procedures: procedures.map(publicPricebookProcedure) });
+}
+
+export async function createPatientTreatmentPlan(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.write" });
+  const scope = scopeFrom(context);
+  const patient = await dependencies.repository.findPatientById(scope, patientId);
+  if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
+
+  const input = parseCreateTreatmentPlan(body);
+  const result = await billingRepositoryOperation(
+    () => dependencies.repository.createTreatmentPlan(scope, patientId, input),
+    { patient_id: patientId }
+  );
+  if (!result) throw notFound("Patient or encounter not found.", { patient_id: patientId });
+
+  await audit(context, dependencies, "treatment_plan.created", {
+    patientId,
+    resourceType: "treatment_plan",
+    resourceId: result.detail.treatmentPlan.id,
+    metadata: treatmentPlanAuditMetadata(result.detail)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "treatment_plan.created",
+    aggregateType: "treatment_plan",
+    aggregateId: result.detail.treatmentPlan.id,
+    patientId,
+    payload: {
+      treatmentPlanId: result.detail.treatmentPlan.id,
+      patientId,
+      status: result.detail.treatmentPlan.status,
+      totalMinor: result.detail.treatmentPlan.totalMinor,
+      itemCount: treatmentPlanItemCount(result.detail)
+    }
+  });
+
+  return created({ treatmentPlan: publicTreatmentPlanDetail(result.detail) });
+}
+
+export async function updateTreatmentPlan(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  treatmentPlanId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.write" });
+  const input = parseUpdateTreatmentPlan(body);
+  const result = await billingRepositoryOperation(
+    () =>
+      dependencies.repository.updateTreatmentPlan(
+        scopeFrom(context),
+        treatmentPlanId,
+        input
+      ),
+    { treatment_plan_id: treatmentPlanId }
+  );
+  if (!result) throw notFound("Treatment plan not found.", { treatment_plan_id: treatmentPlanId });
+
+  await audit(context, dependencies, "treatment_plan.updated", {
+    patientId: result.detail.treatmentPlan.patientId,
+    resourceType: "treatment_plan",
+    resourceId: result.detail.treatmentPlan.id,
+    metadata: treatmentPlanAuditMetadata(result.detail)
+  });
+
+  return ok({ treatmentPlan: publicTreatmentPlanDetail(result.detail) });
+}
+
+export async function acceptTreatmentPlan(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  treatmentPlanId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "dental.chart.write" });
+  const input = parseAcceptTreatmentPlan(body);
+  const result = await billingRepositoryOperation(
+    () =>
+      dependencies.repository.acceptTreatmentPlan(
+        scopeFrom(context),
+        treatmentPlanId,
+        input
+      ),
+    { treatment_plan_id: treatmentPlanId }
+  );
+  if (!result) throw notFound("Treatment plan not found.", { treatment_plan_id: treatmentPlanId });
+
+  await audit(context, dependencies, "treatment_plan.accepted", {
+    patientId: result.detail.treatmentPlan.patientId,
+    resourceType: "treatment_plan",
+    resourceId: result.detail.treatmentPlan.id,
+    metadata: treatmentPlanAuditMetadata(result.detail)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "treatment_plan.accepted",
+    aggregateType: "treatment_plan",
+    aggregateId: result.detail.treatmentPlan.id,
+    patientId: result.detail.treatmentPlan.patientId,
+    payload: {
+      treatmentPlanId: result.detail.treatmentPlan.id,
+      patientId: result.detail.treatmentPlan.patientId,
+      acceptedAt: result.detail.treatmentPlan.acceptedAt,
+      totalMinor: result.detail.treatmentPlan.totalMinor
+    }
+  });
+
+  return ok({ treatmentPlan: publicTreatmentPlanDetail(result.detail) });
+}
+
+export async function createEncounterProcedurePerformed(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  encounterId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "clinical.note.write" });
+  const input = parseCreateProcedurePerformed(body);
+  const result = await billingRepositoryOperation(
+    () =>
+      dependencies.repository.createProcedurePerformed(
+        scopeFrom(context),
+        encounterId,
+        input
+      ),
+    {
+      encounter_id: encounterId,
+      treatment_plan_id: input.treatmentPlanId,
+      treatment_plan_estimate_item_id: input.treatmentPlanEstimateItemId
+    }
+  );
+  if (!result) throw notFound("Encounter or accepted treatment plan item not found.", {
+    encounter_id: encounterId
+  });
+
+  await audit(context, dependencies, "procedure.completed", {
+    patientId: result.procedure.patientId,
+    resourceType: "procedure_performed",
+    resourceId: result.procedure.id,
+    metadata: {
+      encounterId,
+      treatmentPlanId: result.procedure.treatmentPlanId,
+      estimateItemId: result.procedure.treatmentPlanEstimateItemId,
+      totalMinor: result.procedure.totalMinor
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "procedure.completed",
+    aggregateType: "procedure_performed",
+    aggregateId: result.procedure.id,
+    patientId: result.procedure.patientId,
+    payload: {
+      procedurePerformedId: result.procedure.id,
+      encounterId,
+      patientId: result.procedure.patientId,
+      treatmentPlanId: result.procedure.treatmentPlanId,
+      treatmentPlanEstimateItemId: result.procedure.treatmentPlanEstimateItemId
+    }
+  });
+
+  return created({
+    procedure: publicProcedurePerformed(result.procedure),
+    treatmentPlan: publicTreatmentPlanDetail(result.treatmentPlan)
+  });
+}
+
+export async function createInvoice(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "billing.write" });
+  const input = parseCreateInvoice(body);
+  const result = await billingRepositoryOperation(
+    () => dependencies.repository.createInvoice(scopeFrom(context), input),
+    {
+      treatment_plan_id: input.treatmentPlanId ?? null,
+      procedure_performed_ids: input.procedurePerformedIds ?? []
+    }
+  );
+  if (!result) {
+    throw conflict("Invoice requires completed, accepted, uninvoiced procedure evidence.", {
+      treatment_plan_id: input.treatmentPlanId ?? null,
+      procedure_performed_ids: input.procedurePerformedIds ?? []
+    });
+  }
+
+  await audit(context, dependencies, "invoice.created", {
+    patientId: result.invoiceDetail.invoice.patientId,
+    resourceType: "invoice",
+    resourceId: result.invoiceDetail.invoice.id,
+    metadata: invoiceAuditMetadata(result.invoiceDetail)
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "invoice.created",
+    aggregateType: "invoice",
+    aggregateId: result.invoiceDetail.invoice.id,
+    patientId: result.invoiceDetail.invoice.patientId,
+    payload: {
+      invoiceId: result.invoiceDetail.invoice.id,
+      invoiceNumber: result.invoiceDetail.invoice.invoiceNumber,
+      patientId: result.invoiceDetail.invoice.patientId,
+      totalMinor: result.invoiceDetail.invoice.totalMinor,
+      procedurePerformedIds: result.procedures.map((procedure) => procedure.id)
+    }
+  });
+
+  return created({ invoice: publicInvoiceDetail(result.invoiceDetail) });
+}
+
+export async function getInvoice(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  invoiceId: UUID
+) {
+  authorize(context, { permission: "billing.read" });
+  const invoice = await dependencies.repository.findInvoiceById(scopeFrom(context), invoiceId);
+  if (!invoice) throw notFound("Invoice not found.", { invoice_id: invoiceId });
+
+  await audit(context, dependencies, "invoice.viewed", {
+    patientId: invoice.invoice.patientId,
+    resourceType: "invoice",
+    resourceId: invoice.invoice.id,
+    metadata: invoiceAuditMetadata(invoice)
+  });
+
+  return ok({ invoice: publicInvoiceDetail(invoice) });
+}
+
+export async function createInvoiceReceipt(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  invoiceId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "billing.write" });
+  const input = parseCreateReceipt(body);
+  const result = await billingRepositoryOperation(
+    () => dependencies.repository.createReceipt(scopeFrom(context), invoiceId, input),
+    {
+      invoice_id: invoiceId,
+      payment_transaction_ids: input.paymentTransactionIds ?? []
+    }
+  );
+  if (!result) throw notFound("Invoice not found.", { invoice_id: invoiceId });
+
+  await audit(context, dependencies, "receipt.generated", {
+    patientId: result.receipt.patientId,
+    resourceType: "receipt",
+    resourceId: result.receipt.id,
+    metadata: {
+      invoiceId,
+      receiptNumber: result.receipt.receiptNumber,
+      amountMinor: result.receipt.amountMinor,
+      paymentTransactionIds: result.receipt.paymentAllocations.map(
+        (allocation) => allocation.paymentTransactionId
+      )
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "receipt.generated",
+    aggregateType: "receipt",
+    aggregateId: result.receipt.id,
+    patientId: result.receipt.patientId,
+    payload: {
+      receiptId: result.receipt.id,
+      invoiceId,
+      patientId: result.receipt.patientId,
+      receiptNumber: result.receipt.receiptNumber,
+      amountMinor: result.receipt.amountMinor
+    }
+  });
+
+  return created({
+    receipt: publicReceipt(result.receipt),
+    invoice: publicInvoiceDetail(result.invoiceDetail)
+  });
 }
 
 export async function listIntakeFormTemplates(
@@ -1944,10 +2259,13 @@ type PublicTimelineItemType =
   | "message"
   | "clinical_note"
   | "dental"
+  | "treatment_plan"
+  | "procedure"
   | "prescription"
   | "media"
   | "invoice"
   | "payment"
+  | "receipt"
   | "task"
   | "consent";
 
@@ -2005,6 +2323,17 @@ function publicTimelineItemType(
     case "dental_finding_updated":
     case "dental_chart_snapshot_created":
       return "dental";
+    case "treatment_plan_created":
+    case "treatment_plan_accepted":
+      return "treatment_plan";
+    case "procedure_completed":
+      return "procedure";
+    case "invoice_created":
+      return "invoice";
+    case "payment_recorded":
+      return "payment";
+    case "receipt_generated":
+      return "receipt";
     case "prescription_draft_created":
     case "prescription_signed":
       return "prescription";
@@ -2059,6 +2388,18 @@ function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): Dom
       return "dental.finding.updated";
     case "dental_chart_snapshot_created":
       return "dental.chart.snapshot_created";
+    case "treatment_plan_created":
+      return "treatment_plan.created";
+    case "treatment_plan_accepted":
+      return "treatment_plan.accepted";
+    case "procedure_completed":
+      return "procedure.completed";
+    case "invoice_created":
+      return "invoice.created";
+    case "payment_recorded":
+      return "payment.succeeded";
+    case "receipt_generated":
+      return "receipt.generated";
     case "prescription_draft_created":
       return "prescription.draft_created";
     case "prescription_signed":
@@ -2342,6 +2683,193 @@ function parseDentalChartSnapshot(body: unknown): CreateDentalChartSnapshotInput
   };
 }
 
+function parseCreateTreatmentPlan(body: unknown): CreateTreatmentPlanInput {
+  const input = objectBody(body);
+  return {
+    encounterId: optionalUuid(input.encounterId, "encounterId"),
+    title: requiredString(input.title, "title"),
+    clinicalSummary: optionalNullableString(input.clinicalSummary, "clinicalSummary"),
+    status:
+      input.status === undefined
+        ? undefined
+        : parseDraftTreatmentPlanStatus(requiredString(input.status, "status")),
+    phases: parseTreatmentPlanPhases(input.phases)
+  };
+}
+
+function parseUpdateTreatmentPlan(body: unknown): UpdateTreatmentPlanInput {
+  const input = objectBody(body);
+  return {
+    title: input.title === undefined ? undefined : requiredString(input.title, "title"),
+    clinicalSummary:
+      input.clinicalSummary === undefined
+        ? undefined
+        : optionalNullableString(input.clinicalSummary, "clinicalSummary"),
+    status:
+      input.status === undefined
+        ? undefined
+        : parseMutableTreatmentPlanStatus(requiredString(input.status, "status")),
+    phases: input.phases === undefined ? undefined : parseTreatmentPlanPhases(input.phases)
+  };
+}
+
+function parseAcceptTreatmentPlan(body: unknown) {
+  const input = body === undefined ? {} : objectBody(body);
+  return {
+    acceptedByName: optionalNullableString(input.acceptedByName, "acceptedByName"),
+    acceptanceEvidence: recordField(input.acceptanceEvidence, "acceptanceEvidence")
+  };
+}
+
+function parseCreateProcedurePerformed(body: unknown): CreateProcedurePerformedInput {
+  const input = objectBody(body);
+  return {
+    treatmentPlanId: uuidField(input.treatmentPlanId, "treatmentPlanId"),
+    treatmentPlanEstimateItemId: uuidField(
+      input.treatmentPlanEstimateItemId ?? input.estimateItemId,
+      "treatmentPlanEstimateItemId"
+    ),
+    performedAt: optionalNullableString(input.performedAt, "performedAt"),
+    notes: optionalNullableString(input.notes, "notes"),
+    outcome: optionalNullableString(input.outcome, "outcome"),
+    provenance: recordField(input.provenance, "provenance")
+  };
+}
+
+function parseCreateInvoice(body: unknown): CreateInvoiceInput {
+  const input = objectBody(body);
+  if (input.items !== undefined || input.lineItems !== undefined) {
+    throw validation("Invoice line items must be derived from completed procedure evidence.", {
+      forbidden_fields: ["items", "lineItems"]
+    });
+  }
+  const procedurePerformedIds = uuidArrayField(
+    input.procedurePerformedIds ?? input.procedureIds,
+    "procedurePerformedIds"
+  );
+  const treatmentPlanId = optionalUuid(input.treatmentPlanId, "treatmentPlanId");
+
+  if (!treatmentPlanId && procedurePerformedIds.length === 0) {
+    throw validation("Invoice creation requires treatmentPlanId or procedurePerformedIds.", {
+      required_any: ["treatmentPlanId", "procedurePerformedIds"]
+    });
+  }
+
+  return {
+    patientId: optionalUuid(input.patientId, "patientId"),
+    treatmentPlanId,
+    procedurePerformedIds,
+    dueAt: optionalNullableString(input.dueAt, "dueAt")
+  };
+}
+
+function parseCreateReceipt(body: unknown): CreateReceiptInput {
+  const input = body === undefined ? {} : objectBody(body);
+  return {
+    paymentTransactionIds: uuidArrayField(input.paymentTransactionIds, "paymentTransactionIds")
+  };
+}
+
+function parseTreatmentPlanPhases(value: unknown): CreateTreatmentPlanInput["phases"] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw validation("phases must be a non-empty array.", { field: "phases" });
+  }
+
+  return value.map((phaseValue, phaseIndex) => {
+    const phase = objectField(phaseValue, `phases[${phaseIndex}]`);
+    const items = phase.items;
+    if (!Array.isArray(items) || items.length === 0) {
+      throw validation(`phases[${phaseIndex}].items must be a non-empty array.`, {
+        field: `phases[${phaseIndex}].items`
+      });
+    }
+
+    return {
+      title: requiredString(phase.title, `phases[${phaseIndex}].title`),
+      description: optionalNullableString(phase.description, `phases[${phaseIndex}].description`),
+      estimatedStartAfterDays:
+        phase.estimatedStartAfterDays === undefined || phase.estimatedStartAfterDays === null
+          ? null
+          : integerField(phase.estimatedStartAfterDays, `phases[${phaseIndex}].estimatedStartAfterDays`, {
+              min: 0
+            }),
+      items: items.map((itemValue, itemIndex) => {
+        const item = objectField(itemValue, `phases[${phaseIndex}].items[${itemIndex}]`);
+        const quantity = integerField(item.quantity ?? 1, `phases[${phaseIndex}].items[${itemIndex}].quantity`, {
+          min: 1,
+          max: 999
+        });
+        const unitPriceMinor =
+          item.unitPriceMinor === undefined || item.unitPriceMinor === null
+            ? null
+            : integerField(item.unitPriceMinor, `phases[${phaseIndex}].items[${itemIndex}].unitPriceMinor`, {
+                min: 0
+              });
+        const discountMinor = integerField(
+          item.discountMinor ?? 0,
+          `phases[${phaseIndex}].items[${itemIndex}].discountMinor`,
+          { min: 0 }
+        );
+        const taxRateBasisPoints =
+          item.taxRateBasisPoints === undefined || item.taxRateBasisPoints === null
+            ? null
+            : integerField(
+                item.taxRateBasisPoints,
+                `phases[${phaseIndex}].items[${itemIndex}].taxRateBasisPoints`,
+                { min: 0, max: 10000 }
+              );
+
+        if (unitPriceMinor !== null) {
+          try {
+            calculateBillingLineTotals({
+              quantity,
+              unitPriceMinor,
+              discountMinor,
+              taxRateBasisPoints: taxRateBasisPoints ?? 0
+            });
+          } catch (error) {
+            throw validation(error instanceof Error ? error.message : "Invalid estimate item total.", {
+              field: `phases[${phaseIndex}].items[${itemIndex}]`
+            });
+          }
+        }
+
+        return {
+          pricebookProcedureId: uuidField(
+            item.pricebookProcedureId,
+            `phases[${phaseIndex}].items[${itemIndex}].pricebookProcedureId`
+          ),
+          dentalFindingId: optionalUuid(
+            item.dentalFindingId,
+            `phases[${phaseIndex}].items[${itemIndex}].dentalFindingId`
+          ),
+          toothNumber: optionalNullableString(
+            item.toothNumber,
+            `phases[${phaseIndex}].items[${itemIndex}].toothNumber`
+          ),
+          quantity,
+          unitPriceMinor,
+          discountMinor,
+          taxRateBasisPoints,
+          estimatedVisits: integerField(
+            item.estimatedVisits ?? 1,
+            `phases[${phaseIndex}].items[${itemIndex}].estimatedVisits`,
+            { min: 1, max: 99 }
+          ),
+          priority: optionalNullableString(
+            item.priority,
+            `phases[${phaseIndex}].items[${itemIndex}].priority`
+          ),
+          notes: optionalNullableString(
+            item.notes,
+            `phases[${phaseIndex}].items[${itemIndex}].notes`
+          )
+        };
+      })
+    };
+  });
+}
+
 function parseMediaUploadRequest(body: unknown): {
   patientId: UUID;
   encounterId: UUID | null;
@@ -2536,6 +3064,28 @@ function parseConsentCaptureMethod(value: string): ConsentCaptureMethod {
 function parseEncounterStatus(value: string): EncounterStatus {
   if (!isEncounterStatus(value)) {
     throw validation("Invalid encounter status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseDraftTreatmentPlanStatus(value: string): "draft" | "presented" {
+  if (value !== "draft" && value !== "presented") {
+    throw validation("Treatment plan creation only supports draft or presented status.", {
+      field: "status",
+      value
+    });
+  }
+  return value;
+}
+
+function parseMutableTreatmentPlanStatus(
+  value: string
+): "draft" | "presented" | "declined" | "deferred" | "cancelled" {
+  if (!isTreatmentPlanStatus(value) || value === "accepted") {
+    throw validation("Treatment plan status must be draft, presented, declined, deferred, or cancelled.", {
+      field: "status",
+      value
+    });
   }
   return value;
 }
@@ -2787,6 +3337,147 @@ function publicDentalChartSnapshot<T extends { chartState: { numberingSystem: st
   };
 }
 
+function publicPricebookProcedure(procedure: PricebookProcedureRecord) {
+  return {
+    id: procedure.id,
+    code: procedure.code,
+    displayName: procedure.displayName,
+    category: procedure.category,
+    description: procedure.description,
+    defaultUnitPriceMinor: procedure.defaultUnitPriceMinor,
+    currency: procedure.currency,
+    taxRateBasisPoints: procedure.taxRateBasisPoints,
+    status: procedure.status
+  };
+}
+
+function publicTreatmentPlanDetail(detail: TreatmentPlanDetail) {
+  return {
+    ...detail.treatmentPlan,
+    phases: detail.phases.map((phase) => ({
+      ...phase,
+      estimateItems: phase.estimateItems.map((item) => ({ ...item }))
+    }))
+  };
+}
+
+function publicProcedurePerformed<T extends { provenance?: Record<string, unknown> }>(
+  procedure: T
+) {
+  const { provenance: _provenance, ...publicProcedure } = procedure;
+  return publicProcedure;
+}
+
+function publicInvoiceDetail(detail: InvoiceDetail) {
+  return {
+    ...detail.invoice,
+    items: detail.items.map((item) => ({
+      id: item.id,
+      invoiceId: item.invoiceId,
+      patientId: item.patientId,
+      procedurePerformedId: item.procedurePerformedId,
+      treatmentPlanEstimateItemId: item.treatmentPlanEstimateItemId,
+      pricebookProcedureId: item.pricebookProcedureId,
+      description: item.description,
+      quantity: item.quantity,
+      unitPriceMinor: item.unitPriceMinor,
+      discountMinor: item.discountMinor,
+      taxRateBasisPoints: item.taxRateBasisPoints,
+      taxMinor: item.taxMinor,
+      totalMinor: item.totalMinor,
+      createdAt: item.createdAt
+    })),
+    paymentRequests: detail.paymentRequests.map((request) => ({
+      id: request.id,
+      invoiceId: request.invoiceId,
+      patientId: request.patientId,
+      provider: request.provider,
+      requestType: request.requestType,
+      status: request.status,
+      amountMinor: request.amountMinor,
+      currency: request.currency,
+      providerReferenceId: request.providerReferenceId,
+      providerUrl: request.providerUrl,
+      providerQrPayload: request.providerQrPayload,
+      expiresAt: request.expiresAt,
+      createdAt: request.createdAt,
+      updatedAt: request.updatedAt
+    })),
+    payments: detail.payments.map((payment) => ({
+      id: payment.id,
+      invoiceId: payment.invoiceId,
+      patientId: payment.patientId,
+      paymentRequestId: payment.paymentRequestId,
+      provider: payment.provider,
+      providerPaymentId: payment.providerPaymentId,
+      providerOrderId: payment.providerOrderId,
+      amountMinor: payment.amountMinor,
+      currency: payment.currency,
+      method: payment.method,
+      status: payment.status,
+      verificationStatus: payment.verificationStatus,
+      reconciliationStatus: payment.reconciliationStatus,
+      receivedAt: payment.receivedAt,
+      receiptId: payment.receiptId,
+      createdAt: payment.createdAt,
+      updatedAt: payment.updatedAt
+    })),
+    receipts: detail.receipts.map(publicReceipt)
+  };
+}
+
+function publicReceipt<T extends {
+  id: UUID;
+  invoiceId: UUID;
+  patientId: UUID;
+  receiptNumber: string;
+  status: string;
+  amountMinor: number;
+  currency: string;
+  paymentAllocations: readonly unknown[];
+  generatedAt: string;
+}>(receipt: T) {
+  return {
+    id: receipt.id,
+    invoiceId: receipt.invoiceId,
+    patientId: receipt.patientId,
+    receiptNumber: receipt.receiptNumber,
+    status: receipt.status,
+    amountMinor: receipt.amountMinor,
+    currency: receipt.currency,
+    paymentAllocations: receipt.paymentAllocations,
+    generatedAt: receipt.generatedAt
+  };
+}
+
+function treatmentPlanItemCount(detail: TreatmentPlanDetail): number {
+  return detail.phases.reduce((count, phase) => count + phase.estimateItems.length, 0);
+}
+
+function treatmentPlanAuditMetadata(detail: TreatmentPlanDetail) {
+  return {
+    status: detail.treatmentPlan.status,
+    phaseCount: detail.phases.length,
+    itemCount: treatmentPlanItemCount(detail),
+    totalMinor: detail.treatmentPlan.totalMinor,
+    currency: detail.treatmentPlan.currency
+  };
+}
+
+function invoiceAuditMetadata(detail: InvoiceDetail) {
+  return {
+    invoiceNumber: detail.invoice.invoiceNumber,
+    status: detail.invoice.status,
+    paymentStatus: detail.invoice.paymentStatus,
+    totalMinor: detail.invoice.totalMinor,
+    paidMinor: detail.invoice.paidMinor,
+    balanceMinor: detail.invoice.balanceMinor,
+    itemCount: detail.items.length,
+    paymentCount: detail.payments.length,
+    receiptCount: detail.receipts.length
+  };
+}
+
 function dentalFindingAuditMetadata(input: {
   toothNumber: string;
   surface?: string | null;
@@ -2925,6 +3616,13 @@ function stringArrayField(value: unknown, field: string): string[] {
   });
 }
 
+function uuidArrayField(value: unknown, field: string): UUID[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw validation(`${field} must be an array.`, { field });
+
+  return value.map((item, index) => uuidField(item, `${field}[${index}]`));
+}
+
 function optionalSha256Digest(value: unknown, field: string): string | null {
   const digest = optionalNullableString(value, field);
   if (digest === undefined || digest === null) return null;
@@ -2959,6 +3657,21 @@ function validation(message: string, details: Record<string, unknown> = {}): Api
 
 function conflict(message: string, details: Record<string, unknown> = {}): ApiError {
   return new ApiError(409, "CONFLICT", message, details);
+}
+
+async function billingRepositoryOperation<T>(
+  operation: () => Promise<T>,
+  details: Record<string, unknown>
+): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    if (error instanceof ApiError) throw error;
+    throw conflict(
+      error instanceof Error ? error.message : "Billing operation violated a domain invariant.",
+      details
+    );
+  }
 }
 
 export function randomRequestId(): string {
