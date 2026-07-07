@@ -363,6 +363,18 @@ export const SURFACES: SurfaceRegistration[] = [
     roles: ["owner", "doctor", "assistant"]
   },
   {
+    availability: "active",
+    checkpoint: 10,
+    description:
+      "Release-candidate pilot configuration, provider activation gaps, and go-live evidence.",
+    href: "/surface/pilot-readiness",
+    icon: ClipboardCheck,
+    id: "pilot-readiness",
+    label: "Pilot readiness",
+    requiredApis: ["GET /v1/pilot-readiness"],
+    roles: ["owner"]
+  },
+  {
     availability: "registered_unavailable",
     checkpoint: 1,
     description: "Clinic setup, users, roles, templates, pricebook, and source policy.",
@@ -439,7 +451,10 @@ const SURFACE_ALIASES = new Map<string, string>([
   ["ai-scribe", "note-drafts"],
   ["scribe-review", "note-drafts"],
   ["chart-review", "chart-drafts"],
-  ["proposal-inbox", "action-proposals"]
+  ["proposal-inbox", "action-proposals"],
+  ["pilot", "pilot-readiness"],
+  ["pilot-config", "pilot-readiness"],
+  ["release-readiness", "pilot-readiness"]
 ]);
 
 export function hasSurface(surfaceId: string) {
@@ -502,9 +517,25 @@ export function getUnavailableReason(surface: SurfaceRegistration) {
     return "Available in this checkpoint";
   }
 
+  if (surface.id === "settings") {
+    return "Registered for pilot clinic configuration; user, template, pricebook, provider, and rollout APIs must be activated by the owning CP10 configuration slice before product data appears";
+  }
+
+  if (surface.id === "compliance") {
+    return "Registered for compliance operations; export, audit-review, retention, and privacy APIs must be active before any compliance workflow is shown";
+  }
+
+  if (surface.id === "platform-support") {
+    return "Registered for platform support; audited break-glass and tenant-diagnostic APIs must be active before support actions are exposed";
+  }
+
   if (surface.checkpoint === 1) {
     return "Registered in Checkpoint 1; backend capability is not active yet";
   }
 
   return `Registered for Checkpoint ${surface.checkpoint}; API capability is not active yet`;
+}
+
+export function getSurfaceStateLabel(surface: SurfaceRegistration) {
+  return surface.availability === "active" ? "Available" : "Registered unavailable";
 }

@@ -362,6 +362,13 @@ textarea {
   padding: 9px 10px;
 }
 
+.nav-item > span:not(.nav-status) {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .nav-item:hover,
 .nav-item--active {
   background: rgba(255, 255, 255, 0.09);
@@ -668,7 +675,7 @@ textarea {
 .activation-layout {
   display: grid;
   gap: 12px;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .activation-card {
@@ -962,6 +969,25 @@ textarea {
   background: var(--mint-soft);
   border-color: #bce8e1;
   color: #06584f !important;
+}
+
+.state-pill--ready {
+  background: var(--mint-soft);
+  border-color: #bce8e1;
+  color: #06584f !important;
+}
+
+.state-pill--blocked {
+  background: var(--danger-soft);
+  border-color: #f1b4ad;
+  color: var(--danger) !important;
+}
+
+.state-pill--deferred,
+.state-pill--unavailable {
+  background: var(--warning-soft);
+  border-color: #f2ce84;
+  color: #684002 !important;
 }
 
 .lead-detail {
@@ -1919,6 +1945,12 @@ button.duplicate-item {
     var(--paper);
 }
 
+.surface-hero--pilot {
+  background:
+    linear-gradient(110deg, rgba(223, 247, 243, 0.78), rgba(255, 243, 216, 0.68)),
+    var(--paper);
+}
+
 .cp6-workflow .workflow-tabs {
   gap: var(--space-3);
   grid-template-columns: repeat(3, minmax(0, 1fr));
@@ -1949,6 +1981,10 @@ button.duplicate-item {
   grid-template-columns: minmax(280px, 0.45fr) minmax(0, 1fr);
 }
 
+.workflow-grid--cp10 {
+  grid-template-columns: minmax(0, 1.05fr) minmax(320px, 0.75fr);
+}
+
 .readiness-grid--cp6 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
@@ -1966,6 +2002,91 @@ button.duplicate-item {
   display: grid;
   gap: var(--space-3);
   min-width: 0;
+}
+
+.cp10-status-list {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+}
+
+.cp10-item-row {
+  align-items: center;
+  border-bottom: 1px solid var(--border);
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-height: 58px;
+  min-width: 0;
+  padding: 11px 0;
+}
+
+.cp10-item-row:last-child {
+  border-bottom: 0;
+}
+
+.cp10-item-row strong,
+.cp10-item-row span {
+  display: block;
+}
+
+.cp10-item-row strong {
+  overflow-wrap: anywhere;
+}
+
+.cp10-item-row span:not(.state-pill) {
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.4;
+  margin-top: 3px;
+  overflow-wrap: anywhere;
+}
+
+.cp10-item-row--compact {
+  min-height: 52px;
+}
+
+.cp10-provider-grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  min-width: 0;
+}
+
+.cp10-readiness-card {
+  display: grid;
+  gap: var(--space-2);
+}
+
+.cp10-card-heading {
+  align-items: flex-start;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.cp10-card-heading strong {
+  margin-top: 0;
+  overflow-wrap: anywhere;
+}
+
+.cp10-route-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.cp10-route-list code {
+  background: #eef3f7;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  color: var(--ink-soft);
+  font-size: 0.72rem;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+  padding: 4px 6px;
 }
 
 .cp7-card-list,
@@ -2249,6 +2370,7 @@ button.cp6-card:hover {
 
   .workflow-grid--dashboard,
   .workflow-grid--checkout,
+  .workflow-grid--cp10,
   .workflow-grid--cp7,
   .workflow-grid--cp8,
   .workflow-grid--cp6,
@@ -2266,6 +2388,10 @@ button.cp6-card:hover {
 
   .workflow-grid--encounter .work-panel:nth-child(2) {
     grid-row: auto;
+  }
+
+  .cp10-provider-grid {
+    grid-template-columns: 1fr;
   }
 
   .clinic-nav {
@@ -2416,6 +2542,11 @@ button.cp6-card:hover {
   .readiness-gate .ui-button {
     grid-column: 1 / -1;
     justify-self: start;
+  }
+
+  .cp10-item-row {
+    align-items: flex-start;
+    grid-template-columns: 1fr;
   }
 }
 

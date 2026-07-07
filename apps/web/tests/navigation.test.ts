@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   canAccessSurface,
   getPrimarySurfaceId,
+  getSurfaceStateLabel,
+  getUnavailableReason,
   getSurface,
   getVisibleSurfaces,
   hasSurface,
@@ -171,5 +173,32 @@ describe("role-aware navigation", () => {
     expect(resolveSurfaceId("ai-scribe")).toBe("note-drafts");
     expect(resolveSurfaceId("chart-review")).toBe("chart-drafts");
     expect(resolveSurfaceId("proposal-inbox")).toBe("action-proposals");
+  });
+
+  it("activates CP10 pilot readiness for owners only", () => {
+    const ownerActive = getVisibleSurfaces(["owner"])
+      .filter((surface) => surface.availability === "active")
+      .map((surface) => surface.id);
+    const assistantVisible = getVisibleSurfaces(["assistant"]).map((surface) => surface.id);
+    const accountantVisible = getVisibleSurfaces(["accountant"]).map((surface) => surface.id);
+
+    expect(ownerActive).toContain("pilot-readiness");
+    expect(assistantVisible).not.toContain("pilot-readiness");
+    expect(accountantVisible).not.toContain("pilot-readiness");
+    expect(canAccessSurface(getSurface("pilot-readiness"), ["owner"])).toBe(true);
+    expect(resolveSurfaceId("pilot")).toBe("pilot-readiness");
+    expect(resolveSurfaceId("release-readiness")).toBe("pilot-readiness");
+  });
+
+  it("keeps CP10 pilot settings registered unavailable with explicit activation wording", () => {
+    const settings = getSurface("settings");
+
+    expect(settings.availability).toBe("registered_unavailable");
+    expect(getSurfaceStateLabel(settings)).toBe("Registered unavailable");
+    expect(getUnavailableReason(settings)).toContain("pilot clinic configuration");
+    expect(getUnavailableReason(settings)).toContain("owning CP10 configuration slice");
+    expect(settings.requiredApis).toEqual(
+      expect.arrayContaining(["GET /v1/users", "GET /external-systems/accounts"])
+    );
   });
 });

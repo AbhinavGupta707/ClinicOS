@@ -1,0 +1,951 @@
+{
+  "schemaVersion": "clinic-os.cp10.release-candidate-qa-fixture.v1",
+  "fixtureUse": {
+    "localOnly": true,
+    "syntheticOnly": true,
+    "productionUseDenied": true,
+    "allowedEnvironments": ["local", "development", "test", "ci"]
+  },
+  "clock": {
+    "businessDate": "2026-07-07",
+    "timezone": "Asia/Kolkata",
+    "fixedNow": "2026-07-07T18:45:00+05:30",
+    "clinicDayWindow": {
+      "startsAt": "2026-07-07T09:00:00+05:30",
+      "endsAt": "2026-07-07T20:00:00+05:30"
+    }
+  },
+  "sourceReferences": [
+    {
+      "checkpoint": 2,
+      "fixturePath": "fixtures/synthetic/cp2/lead_patient_appointment_flow.json",
+      "validator": "node scripts/validate-cp2-fixtures.mjs",
+      "contractSmoke": "node scripts/cp2-contract-smoke.mjs --dry-run",
+      "evidenceBoundary": "Implemented lead, patient, appointment, queue, and morning dashboard API/UI workflows."
+    },
+    {
+      "checkpoint": 3,
+      "fixturePath": "fixtures/synthetic/cp3/intake_consent_encounter_flow.json",
+      "validator": "node scripts/validate-cp3-fixtures.mjs",
+      "contractSmoke": "node scripts/cp3-contract-smoke.mjs --dry-run",
+      "evidenceBoundary": "Implemented intake, consent, encounter, note, and prescription workflow evidence."
+    },
+    {
+      "checkpoint": 4,
+      "fixturePath": "fixtures/synthetic/cp4/dental_chart_media_imaging_flow.json",
+      "validator": "node scripts/validate-cp4-fixtures.mjs",
+      "contractSmoke": "node scripts/cp4-contract-smoke.mjs --dry-run",
+      "evidenceBoundary": "Implemented dental chart and durable media upload/signed-access route family; fixture-only external imaging references remain deferred."
+    },
+    {
+      "checkpoint": 5,
+      "fixturePath": "fixtures/synthetic/cp5/treatment_checkout_payments_flow.json",
+      "validator": "node scripts/validate-cp5-fixtures.mjs",
+      "contractSmoke": "node scripts/cp5-contract-smoke.mjs --dry-run",
+      "evidenceBoundary": "Implemented treatment plan, invoice, payment simulator/manual payment, receipt, prescription, and instruction request evidence."
+    },
+    {
+      "checkpoint": 6,
+      "fixturePath": "fixtures/synthetic/cp6/continuity_owner_dashboard_flow.json",
+      "validator": "node scripts/validate-cp6-fixtures.mjs",
+      "contractSmoke": "node scripts/cp6-contract-smoke.mjs --dry-run",
+      "evidenceBoundary": "Implemented continuity tasks, recalls, lab, inventory, event diary, corrective actions, and owner dashboard evidence."
+    },
+    {
+      "checkpoint": 7,
+      "fixturePath": "fixtures/synthetic/cp7/integration_ops_migration_flow.json",
+      "validator": "node scripts/validate-cp7-fixtures.mjs",
+      "contractSmoke": "node scripts/cp7-contract-smoke.mjs --dry-run",
+      "evidenceBoundary": "Implemented provider-health, dead-letter replay request evidence, and row-based migration dry-run review/commit evidence."
+    },
+    {
+      "checkpoint": 8,
+      "fixturePath": "fixtures/synthetic/cp8/ai_safety_qa_flow.json",
+      "validator": "node scripts/validate-cp8-fixtures.mjs",
+      "contractSmoke": "node scripts/cp8-contract-smoke.mjs --dry-run",
+      "evidenceBoundary": "Implemented AI scribe session/review safety contract; clinical application remains a deferred whole workflow."
+    },
+    {
+      "checkpoint": 9,
+      "fixturePath": "fixtures/synthetic/cp9/performance_qa_flow.json",
+      "validator": "node scripts/validate-cp9-fixtures.mjs",
+      "contractSmoke": "node scripts/cp9-contract-smoke.mjs --dry-run",
+      "evidenceBoundary": "Implemented security/privacy route foundations and registered-unavailable compliance/platform web shells; FHIR remains projection-package evidence."
+    }
+  ],
+  "tenants": [
+    {
+      "key": "primaryTenant",
+      "id": "10100000-0000-4000-8000-000000000001",
+      "name": "ClinicOS CP10 Synthetic Tenant"
+    },
+    {
+      "key": "otherTenant",
+      "id": "10100000-0000-4000-8000-000000000002",
+      "name": "ClinicOS CP10 Other Synthetic Tenant"
+    }
+  ],
+  "clinics": [
+    {
+      "key": "primaryClinic",
+      "id": "10100000-0000-4000-8000-000000000101",
+      "tenantId": "10100000-0000-4000-8000-000000000001",
+      "name": "CP10 Synthetic Dental Clinic",
+      "timezone": "Asia/Kolkata"
+    },
+    {
+      "key": "otherClinic",
+      "id": "10100000-0000-4000-8000-000000000102",
+      "tenantId": "10100000-0000-4000-8000-000000000002",
+      "name": "CP10 Other Synthetic Dental Clinic",
+      "timezone": "Asia/Kolkata"
+    }
+  ],
+  "actors": [
+    {
+      "key": "owner",
+      "id": "10100000-0000-4000-8000-000000000201",
+      "tenantId": "10100000-0000-4000-8000-000000000001",
+      "clinicId": "10100000-0000-4000-8000-000000000101",
+      "roleSlug": "owner_admin",
+      "webRoleSlug": "owner",
+      "email": "cp10.owner@example.test"
+    },
+    {
+      "key": "doctor",
+      "id": "10100000-0000-4000-8000-000000000202",
+      "tenantId": "10100000-0000-4000-8000-000000000001",
+      "clinicId": "10100000-0000-4000-8000-000000000101",
+      "roleSlug": "doctor",
+      "webRoleSlug": "doctor",
+      "email": "cp10.doctor@example.test"
+    },
+    {
+      "key": "assistant",
+      "id": "10100000-0000-4000-8000-000000000203",
+      "tenantId": "10100000-0000-4000-8000-000000000001",
+      "clinicId": "10100000-0000-4000-8000-000000000101",
+      "roleSlug": "assistant",
+      "webRoleSlug": "assistant",
+      "email": "cp10.assistant@example.test"
+    },
+    {
+      "key": "receptionist",
+      "id": "10100000-0000-4000-8000-000000000204",
+      "tenantId": "10100000-0000-4000-8000-000000000001",
+      "clinicId": "10100000-0000-4000-8000-000000000101",
+      "roleSlug": "receptionist",
+      "webRoleSlug": "receptionist",
+      "email": "cp10.receptionist@example.test"
+    },
+    {
+      "key": "accountant",
+      "id": "10100000-0000-4000-8000-000000000205",
+      "tenantId": "10100000-0000-4000-8000-000000000001",
+      "clinicId": "10100000-0000-4000-8000-000000000101",
+      "roleSlug": "accountant",
+      "webRoleSlug": "accountant",
+      "email": "cp10.accountant@example.test"
+    },
+    {
+      "key": "auditor",
+      "id": "10100000-0000-4000-8000-000000000206",
+      "tenantId": "10100000-0000-4000-8000-000000000001",
+      "clinicId": "10100000-0000-4000-8000-000000000101",
+      "roleSlug": "auditor",
+      "webRoleSlug": null,
+      "email": "cp10.auditor@example.test"
+    },
+    {
+      "key": "platformSupport",
+      "id": "10100000-0000-4000-8000-000000000207",
+      "tenantId": "10100000-0000-4000-8000-000000000001",
+      "clinicId": "10100000-0000-4000-8000-000000000101",
+      "roleSlug": "platform_admin",
+      "webRoleSlug": "platform_admin",
+      "email": "cp10.platform-support@example.test"
+    },
+    {
+      "key": "wrongTenantOwner",
+      "id": "10100000-0000-4000-8000-000000000208",
+      "tenantId": "10100000-0000-4000-8000-000000000002",
+      "clinicId": "10100000-0000-4000-8000-000000000102",
+      "roleSlug": "owner_admin",
+      "webRoleSlug": "owner",
+      "email": "cp10.other-owner@example.test"
+    }
+  ],
+  "patients": [
+    {
+      "key": "clinicDayPatient",
+      "id": "10100000-0000-4000-8000-000000000301",
+      "tenantId": "10100000-0000-4000-8000-000000000001",
+      "clinicId": "10100000-0000-4000-8000-000000000101",
+      "fullName": "CP10 Synthetic Clinic Day Patient",
+      "email": "cp10.patient@example.test",
+      "phone": "+919910000001"
+    }
+  ],
+  "clinicDayWorkflow": {
+    "mode": "deterministic_contract_dry_run",
+    "coverageAssertion": "lead -> patient -> appointment -> intake -> encounter -> dental/media -> treatment/checkout/payment/instructions -> continuity/lab/inventory/events -> owner dashboard",
+    "segments": [
+      {
+        "key": "lead-patient-appointment",
+        "checkpoint": 2,
+        "implemented": true,
+        "primaryActorKey": "receptionist",
+        "routeFamilies": ["leads", "patients", "appointments", "queue", "morning-dashboard"],
+        "steps": [
+          {
+            "key": "capture-lead",
+            "method": "POST",
+            "path": "/v1/leads",
+            "actorKey": "receptionist",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "match-lead-to-patient",
+            "method": "POST",
+            "path": "/v1/leads/{leadId}/match-patient",
+            "actorKey": "receptionist",
+            "expectedStatus": [200],
+            "liveImplemented": true
+          },
+          {
+            "key": "create-patient-from-lead",
+            "method": "POST",
+            "path": "/v1/patients",
+            "actorKey": "receptionist",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "convert-lead-to-appointment",
+            "method": "POST",
+            "path": "/v1/leads/{leadId}/convert-to-appointment",
+            "actorKey": "receptionist",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "confirm-and-check-in",
+            "method": "POST",
+            "path": "/v1/appointments/{appointmentId}/check-in",
+            "actorKey": "receptionist",
+            "expectedStatus": [200],
+            "liveImplemented": true
+          },
+          {
+            "key": "read-day-queue",
+            "method": "GET",
+            "path": "/v1/queue?date=2026-07-07",
+            "actorKey": "assistant",
+            "expectedStatus": [200],
+            "liveImplemented": true
+          }
+        ]
+      },
+      {
+        "key": "intake-consent-encounter",
+        "checkpoint": 3,
+        "implemented": true,
+        "primaryActorKey": "assistant",
+        "routeFamilies": ["intake", "consent", "encounter", "clinical-note", "prescription"],
+        "steps": [
+          {
+            "key": "submit-intake",
+            "method": "POST",
+            "path": "/v1/patients/{patientId}/form-responses",
+            "actorKey": "assistant",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "capture-consent",
+            "method": "POST",
+            "path": "/v1/patients/{patientId}/consents",
+            "actorKey": "assistant",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "start-encounter",
+            "method": "POST",
+            "path": "/v1/encounters",
+            "actorKey": "doctor",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "draft-and-sign-note",
+            "method": "POST",
+            "path": "/v1/encounters/{encounterId}/sign-note",
+            "actorKey": "doctor",
+            "expectedStatus": [200],
+            "liveImplemented": true
+          }
+        ]
+      },
+      {
+        "key": "dental-chart-media",
+        "checkpoint": 4,
+        "implemented": true,
+        "primaryActorKey": "doctor",
+        "routeFamilies": ["dental-chart", "media-upload", "media-signed-access"],
+        "steps": [
+          {
+            "key": "create-dental-finding",
+            "method": "POST",
+            "path": "/v1/encounters/{encounterId}/dental-findings",
+            "actorKey": "assistant",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "review-dental-finding",
+            "method": "PATCH",
+            "path": "/v1/dental-findings/{findingId}",
+            "actorKey": "doctor",
+            "expectedStatus": [200],
+            "liveImplemented": true
+          },
+          {
+            "key": "request-media-upload",
+            "method": "POST",
+            "path": "/v1/media/upload-urls",
+            "actorKey": "assistant",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "upload-media-content",
+            "method": "PUT",
+            "path": "/v1/media/uploads/{uploadId}/content",
+            "actorKey": "assistant",
+            "expectedStatus": [200],
+            "liveImplemented": true
+          },
+          {
+            "key": "complete-media-upload",
+            "method": "POST",
+            "path": "/v1/media/uploads/{uploadId}/complete",
+            "actorKey": "assistant",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "request-signed-media-url",
+            "method": "POST",
+            "path": "/v1/media/assets/{mediaAssetId}/signed-url",
+            "actorKey": "doctor",
+            "expectedStatus": [200],
+            "liveImplemented": true
+          }
+        ]
+      },
+      {
+        "key": "treatment-checkout-payment-instructions",
+        "checkpoint": 5,
+        "implemented": true,
+        "primaryActorKey": "doctor",
+        "routeFamilies": [
+          "pricebook",
+          "treatment-plan",
+          "billing",
+          "payment",
+          "receipt",
+          "instructions"
+        ],
+        "steps": [
+          {
+            "key": "read-pricebook",
+            "method": "GET",
+            "path": "/v1/pricebook/procedures",
+            "actorKey": "doctor",
+            "expectedStatus": [200],
+            "liveImplemented": true
+          },
+          {
+            "key": "create-treatment-plan",
+            "method": "POST",
+            "path": "/v1/patients/{patientId}/treatment-plans",
+            "actorKey": "doctor",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "record-procedure",
+            "method": "POST",
+            "path": "/v1/encounters/{encounterId}/procedures",
+            "actorKey": "doctor",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "create-invoice",
+            "method": "POST",
+            "path": "/v1/invoices",
+            "actorKey": "receptionist",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "request-payment",
+            "method": "POST",
+            "path": "/v1/invoices/{invoiceId}/payment-requests",
+            "actorKey": "receptionist",
+            "expectedStatus": [201, 503],
+            "liveImplemented": true,
+            "providerBoundary": "simulator_or_unavailable_until_live_credential_activation"
+          },
+          {
+            "key": "record-manual-payment-and-receipt",
+            "method": "POST",
+            "path": "/v1/invoices/{invoiceId}/manual-payments",
+            "actorKey": "receptionist",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "request-instructions",
+            "method": "POST",
+            "path": "/v1/patients/{patientId}/instructions",
+            "actorKey": "receptionist",
+            "expectedStatus": [201],
+            "liveImplemented": true,
+            "providerBoundary": "request_and_outbox_evidence_only_until_messaging_provider_confirmation"
+          }
+        ]
+      },
+      {
+        "key": "continuity-lab-inventory-events",
+        "checkpoint": 6,
+        "implemented": true,
+        "primaryActorKey": "assistant",
+        "routeFamilies": [
+          "tasks",
+          "recalls",
+          "lab",
+          "inventory",
+          "incidents",
+          "corrective-actions"
+        ],
+        "steps": [
+          {
+            "key": "create-follow-up-task",
+            "method": "POST",
+            "path": "/v1/tasks",
+            "actorKey": "assistant",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "complete-recall-action",
+            "method": "POST",
+            "path": "/v1/recalls/{recallId}/actions",
+            "actorKey": "receptionist",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "create-and-update-lab-case",
+            "method": "PATCH",
+            "path": "/v1/lab-cases/{labCaseId}",
+            "actorKey": "assistant",
+            "expectedStatus": [200],
+            "liveImplemented": true
+          },
+          {
+            "key": "run-inventory-check",
+            "method": "POST",
+            "path": "/v1/inventory/check-runs",
+            "actorKey": "assistant",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          },
+          {
+            "key": "create-incident-and-corrective-action",
+            "method": "POST",
+            "path": "/v1/corrective-actions",
+            "actorKey": "assistant",
+            "expectedStatus": [201],
+            "liveImplemented": true
+          }
+        ]
+      },
+      {
+        "key": "integration-migration-ops",
+        "checkpoint": 7,
+        "implemented": true,
+        "primaryActorKey": "owner",
+        "routeFamilies": [
+          "provider-health",
+          "dead-letter-replay",
+          "migration-row-resolution",
+          "migration-commit"
+        ],
+        "steps": [
+          {
+            "key": "read-provider-health",
+            "method": "GET",
+            "path": "/v1/provider-health",
+            "actorKey": "owner",
+            "expectedStatus": [200],
+            "liveImplemented": true
+          },
+          {
+            "key": "replay-dead-letter-request",
+            "method": "POST",
+            "path": "/v1/dead-letter-events/{deadLetterEventId}/replay",
+            "actorKey": "owner",
+            "expectedStatus": [202],
+            "liveImplemented": true,
+            "providerBoundary": "replay_request_evidence_not_provider_success"
+          },
+          {
+            "key": "resolve-migration-row",
+            "method": "POST",
+            "path": "/v1/migration-batches/{migrationBatchId}/rows/{rowId}/resolve",
+            "actorKey": "owner",
+            "expectedStatus": [200],
+            "liveImplemented": true
+          },
+          {
+            "key": "commit-migration-batch",
+            "method": "POST",
+            "path": "/v1/migration-batches/{migrationBatchId}/commit",
+            "actorKey": "owner",
+            "expectedStatus": [202],
+            "liveImplemented": true
+          }
+        ]
+      },
+      {
+        "key": "ai-review-safety",
+        "checkpoint": 8,
+        "implemented": true,
+        "primaryActorKey": "doctor",
+        "routeFamilies": ["ai-scribe", "ai-review-decision", "ai-consent-block"],
+        "steps": [
+          {
+            "key": "start-ai-scribe-session",
+            "method": "POST",
+            "path": "/v1/encounters/{encounterId}/ai-scribe/sessions",
+            "actorKey": "doctor",
+            "expectedStatus": [201],
+            "liveImplemented": true,
+            "providerBoundary": "simulator_contract_not_live_ai_readiness"
+          },
+          {
+            "key": "review-ai-draft",
+            "method": "POST",
+            "path": "/v1/ai-scribe/sessions/{sessionId}/review-decisions",
+            "actorKey": "doctor",
+            "expectedStatus": [201],
+            "liveImplemented": true,
+            "providerBoundary": "review_only_no_clinical_application"
+          }
+        ]
+      },
+      {
+        "key": "security-privacy-readiness",
+        "checkpoint": 9,
+        "implemented": true,
+        "primaryActorKey": "owner",
+        "routeFamilies": ["patient-export", "audit-review", "break-glass", "retention"],
+        "steps": [
+          {
+            "key": "request-patient-export",
+            "method": "POST",
+            "path": "/v1/patients/{patientId}/record-exports",
+            "actorKey": "owner",
+            "expectedStatus": [201, 202],
+            "liveImplemented": true
+          },
+          {
+            "key": "start-retention-dry-run",
+            "method": "POST",
+            "path": "/v1/privacy/retention-runs",
+            "actorKey": "owner",
+            "expectedStatus": [201, 202],
+            "liveImplemented": true
+          }
+        ]
+      },
+      {
+        "key": "owner-dashboard",
+        "checkpoint": 6,
+        "implemented": true,
+        "primaryActorKey": "owner",
+        "routeFamilies": ["owner-dashboard", "analytics"],
+        "steps": [
+          {
+            "key": "read-owner-dashboard",
+            "method": "GET",
+            "path": "/v1/owner-dashboard?from=2026-07-01&to=2026-07-07",
+            "actorKey": "owner",
+            "expectedStatus": [200],
+            "liveImplemented": true
+          }
+        ]
+      }
+    ]
+  },
+  "roleMatrix": [
+    {
+      "actorKey": "owner",
+      "roleSlug": "owner_admin",
+      "mustAllowPermissions": [
+        "patient.write",
+        "clinical.note.sign",
+        "billing.write",
+        "analytics.read",
+        "integration.manage",
+        "migration.manage",
+        "retention.manage"
+      ],
+      "mustDenyPermissions": [],
+      "mustSeeSurfaces": ["today", "checkout", "integrations", "owner-control", "compliance"],
+      "mustNotSeeSurfaces": ["platform-support"]
+    },
+    {
+      "actorKey": "doctor",
+      "roleSlug": "doctor",
+      "mustAllowPermissions": [
+        "clinical.note.sign",
+        "dental.chart.write",
+        "prescription.sign",
+        "ai.scribe.review",
+        "break_glass.request"
+      ],
+      "mustDenyPermissions": ["billing.write", "retention.manage", "break_glass.approve"],
+      "mustSeeSurfaces": ["appointments", "encounter", "dental-media", "checkout", "note-drafts"],
+      "mustNotSeeSurfaces": ["owner-control", "accounting", "platform-support"]
+    },
+    {
+      "actorKey": "assistant",
+      "roleSlug": "assistant",
+      "mustAllowPermissions": [
+        "patient.write",
+        "schedule.write",
+        "clinical.note.write",
+        "dental.chart.write",
+        "media.write",
+        "task.manage",
+        "inventory.manage"
+      ],
+      "mustDenyPermissions": [
+        "clinical.note.sign",
+        "prescription.sign",
+        "billing.write",
+        "retention.manage"
+      ],
+      "mustSeeSurfaces": [
+        "today",
+        "lead-inbox",
+        "patients",
+        "encounter",
+        "dental-media",
+        "tasks",
+        "integrations"
+      ],
+      "mustNotSeeSurfaces": ["owner-control", "accounting", "platform-support"]
+    },
+    {
+      "actorKey": "receptionist",
+      "roleSlug": "receptionist",
+      "mustAllowPermissions": [
+        "patient.write",
+        "schedule.write",
+        "queue.manage",
+        "billing.write",
+        "patient_instruction.write",
+        "message.write"
+      ],
+      "mustDenyPermissions": [
+        "patient.phi.read",
+        "clinical.note.sign",
+        "dental.chart.write",
+        "audit.read",
+        "retention.manage"
+      ],
+      "mustSeeSurfaces": ["today", "lead-inbox", "appointments", "patients", "checkout", "tasks"],
+      "mustNotSeeSurfaces": ["encounter", "dental-media", "owner-control", "platform-support"]
+    },
+    {
+      "actorKey": "accountant",
+      "roleSlug": "accountant",
+      "mustAllowPermissions": ["billing.read", "billing.write", "billing.export", "analytics.read"],
+      "mustDenyPermissions": [
+        "patient.read",
+        "patient.phi.read",
+        "clinical.note.read",
+        "dental.chart.read",
+        "media.read",
+        "patient_instruction.write"
+      ],
+      "mustSeeSurfaces": ["checkout", "accounting"],
+      "mustNotSeeSurfaces": ["patients", "encounter", "dental-media", "tasks", "lab", "operations"]
+    },
+    {
+      "actorKey": "auditor",
+      "roleSlug": "auditor",
+      "mustAllowPermissions": ["audit.read", "audit.review", "analytics.read"],
+      "mustDenyPermissions": [
+        "patient.write",
+        "patient.phi.read",
+        "billing.write",
+        "clinical.note.write",
+        "dental.chart.write"
+      ],
+      "mustSeeSurfaces": [],
+      "mustNotSeeSurfaces": ["checkout", "encounter", "dental-media"]
+    },
+    {
+      "actorKey": "platformSupport",
+      "roleSlug": "platform_admin",
+      "mustAllowPermissions": [
+        "audit.read",
+        "break_glass.approve",
+        "integration.manage",
+        "retention.manage"
+      ],
+      "mustDenyPermissions": [],
+      "mustSeeSurfaces": ["platform-support"],
+      "mustNotSeeSurfaces": ["today"]
+    }
+  ],
+  "tenantIsolationAssertions": [
+    {
+      "key": "wrong-tenant-cannot-read-patient",
+      "actorKey": "wrongTenantOwner",
+      "method": "GET",
+      "path": "/v1/patients/10100000-0000-4000-8000-000000000301",
+      "requiredPermission": "patient.read",
+      "expected": "deny",
+      "expectedStatus": [403, 404],
+      "expectedReason": "tenant_mismatch",
+      "liveImplemented": true
+    },
+    {
+      "key": "wrong-tenant-cannot-sign-note",
+      "actorKey": "wrongTenantOwner",
+      "method": "POST",
+      "path": "/v1/encounters/{encounterId}/sign-note",
+      "requiredPermission": "clinical.note.sign",
+      "expected": "deny",
+      "expectedStatus": [403, 404],
+      "expectedReason": "tenant_mismatch",
+      "liveImplemented": true
+    },
+    {
+      "key": "wrong-tenant-cannot-view-media",
+      "actorKey": "wrongTenantOwner",
+      "method": "POST",
+      "path": "/v1/media/assets/{mediaAssetId}/signed-url",
+      "requiredPermission": "media.read",
+      "expected": "deny",
+      "expectedStatus": [403, 404],
+      "expectedReason": "tenant_mismatch",
+      "liveImplemented": true
+    },
+    {
+      "key": "wrong-tenant-cannot-read-invoice",
+      "actorKey": "wrongTenantOwner",
+      "method": "GET",
+      "path": "/v1/invoices/{invoiceId}",
+      "requiredPermission": "billing.read",
+      "expected": "deny",
+      "expectedStatus": [403, 404],
+      "expectedReason": "tenant_mismatch",
+      "liveImplemented": true
+    },
+    {
+      "key": "wrong-tenant-cannot-read-owner-dashboard",
+      "actorKey": "wrongTenantOwner",
+      "method": "GET",
+      "path": "/v1/owner-dashboard?from=2026-07-01&to=2026-07-07",
+      "requiredPermission": "analytics.read",
+      "expected": "deny",
+      "expectedStatus": [403, 404],
+      "expectedReason": "tenant_mismatch",
+      "liveImplemented": true
+    }
+  ],
+  "providerUnavailableChecks": [
+    {
+      "key": "messaging-no-live-confirmation",
+      "providerKey": "whatsapp_cloud",
+      "mode": "simulator_or_not_configured",
+      "evidence": "CP5 instruction request and CP7 provider-health fixture",
+      "liveProviderReady": false,
+      "mustReportState": ["not_configured", "unavailable", "configured/degraded"],
+      "mustNotClaim": ["delivered", "read", "live message sent"]
+    },
+    {
+      "key": "payment-no-live-credential-activation",
+      "providerKey": "razorpay",
+      "mode": "simulator_or_not_configured",
+      "evidence": "CP5 payment request/manual payment fixture and provider-health fixture",
+      "liveProviderReady": false,
+      "mustReportState": ["provider_unavailable", "not_configured", "configured/degraded"],
+      "mustNotClaim": ["provider-paid", "live settlement", "bank confirmation"]
+    },
+    {
+      "key": "telephony-unavailable",
+      "providerKey": "exotel",
+      "mode": "not_configured",
+      "evidence": "CP7 provider-health fixture",
+      "liveProviderReady": false,
+      "mustReportState": ["unavailable"],
+      "mustNotClaim": ["missed-call captured", "call recording imported"]
+    },
+    {
+      "key": "ai-simulator-not-live-readiness",
+      "providerKey": "ai_gateway",
+      "mode": "simulator_local_only",
+      "evidence": "CP8 AI safety contract",
+      "liveProviderReady": false,
+      "mustReportState": ["simulator_local_only", "not_configured"],
+      "mustNotClaim": ["live model approved", "clinical record updated by AI"]
+    },
+    {
+      "key": "abdm-unavailable",
+      "providerKey": "abdm",
+      "mode": "not_configured",
+      "evidence": "CP9 FHIR/ABDM readiness fixture",
+      "liveProviderReady": false,
+      "mustReportState": ["not_configured", "unavailable"],
+      "mustNotClaim": ["ABDM exchange active", "ABHA link complete"]
+    },
+    {
+      "key": "aws-apply-not-run",
+      "providerKey": "aws",
+      "mode": "validation_only",
+      "evidence": "CP9 Terraform validation profile and restore dry-run",
+      "liveProviderReady": false,
+      "mustReportState": ["validation_only", "not_applied"],
+      "mustNotClaim": ["pilot-prod applied", "live restore verified"]
+    }
+  ],
+  "migrationDryRunEvidence": [
+    {
+      "key": "cp7-row-based-migration-review",
+      "source": "fixtures/synthetic/cp7/integration_ops_migration_flow.json",
+      "requiredRoutes": [
+        "GET /v1/migration-batches/{migrationBatchId}",
+        "POST /v1/migration-batches/{migrationBatchId}/rows/{rowId}/resolve",
+        "POST /v1/migration-batches/{migrationBatchId}/commit"
+      ],
+      "mustPreserve": [
+        "row-level resolution",
+        "duplicate review",
+        "no overwrite without explicit resolution"
+      ]
+    },
+    {
+      "key": "cp9-restore-dry-run-reference",
+      "source": "scripts/cp9-restore-drill.mjs --dry-run",
+      "requiredRoutes": [],
+      "mustPreserve": [
+        "synthetic-only restore evidence",
+        "non-mutating default",
+        "no cloud apply claim"
+      ]
+    }
+  ],
+  "fixtureOnlyOrDeferredEvidence": [
+    {
+      "key": "external-imaging-link-coexistence",
+      "checkpoint": 4,
+      "reason": "External imaging reference/link workflow remains deferred until an official integration is owned.",
+      "mustNotMarkPassed": true
+    },
+    {
+      "key": "fhir-live-api",
+      "checkpoint": 9,
+      "reason": "FHIR is package projection evidence, not a live FHIR API route.",
+      "mustNotMarkPassed": true
+    },
+    {
+      "key": "live-provider-activation",
+      "checkpoint": 10,
+      "reason": "Live WhatsApp, payment, telephony, AI, ABDM, AWS, and physical-device checks require explicit credentials/access.",
+      "mustNotMarkPassed": true
+    }
+  ],
+  "browserSmokePlan": {
+    "mode": "gated_playwright_existing_surfaces",
+    "requiredFixtureEnv": [
+      "NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true",
+      "NEXT_PUBLIC_CLINIC_OS_USE_CP2_WORKFLOW_FIXTURE=true",
+      "NEXT_PUBLIC_CLINIC_OS_USE_CP3_WORKFLOW_FIXTURE=true",
+      "NEXT_PUBLIC_CLINIC_OS_USE_CP4_WORKFLOW_FIXTURE=true",
+      "NEXT_PUBLIC_CLINIC_OS_USE_CP5_WORKFLOW_FIXTURE=true",
+      "NEXT_PUBLIC_CLINIC_OS_USE_CP6_OPERATIONS_FIXTURE=true",
+      "NEXT_PUBLIC_CLINIC_OS_USE_CP7_INTEGRATION_OPS_FIXTURE=true",
+      "NEXT_PUBLIC_CLINIC_OS_USE_CP8_REVIEW_FIXTURE=true"
+    ],
+    "mobileViewport": {
+      "width": 390,
+      "height": 844,
+      "maxHorizontalOverflowPx": 1
+    },
+    "surfaces": [
+      {
+        "key": "assistant-clinic-day-chain",
+        "role": "assistant",
+        "paths": [
+          "/surface/day-start?scenario=cp10",
+          "/surface/clinical?scenario=cp10",
+          "/surface/dental-media?scenario=cp10",
+          "/surface/checkout?scenario=cp10",
+          "/surface/tasks?scenario=cp10",
+          "/surface/integrations?scenario=cp10",
+          "/surface/ai-review?scenario=cp10"
+        ],
+        "expectedTestIds": [
+          "cp2-morning-dashboard",
+          "cp3-clinical-workspace",
+          "cp4-dental-media-workspace",
+          "cp5-checkout-workspace",
+          "cp6-operations-workspace",
+          "cp7-integration-ops-workspace",
+          "cp8-ai-review-workspace"
+        ],
+        "mustNotContain": [
+          "Delivery confirmed",
+          "Read receipt confirmed",
+          "Provider success confirmed",
+          "signed by AI"
+        ]
+      },
+      {
+        "key": "owner-dashboard-and-compliance-shell",
+        "role": "owner",
+        "paths": [
+          "/surface/owner-control?scenario=cp10",
+          "/surface/pilot-readiness?scenario=cp10",
+          "/surface/compliance?scenario=cp10"
+        ],
+        "expectedText": [
+          "Open tasks",
+          "Pilot readiness",
+          "External go-live gates",
+          "Registered unavailable",
+          "Required API boundary"
+        ],
+        "mustNotContain": ["FHIR exchange active", "Export complete"]
+      },
+      {
+        "key": "platform-support-unavailable-shell",
+        "role": "platform_admin",
+        "paths": ["/surface/platform-support?scenario=cp10"],
+        "expectedText": ["Platform support", "Registered unavailable", "GET /v1/provider-health"],
+        "mustNotContain": ["Break-glass approved", "Tenant data exported"]
+      }
+    ]
+  }
+}

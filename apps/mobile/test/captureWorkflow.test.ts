@@ -2,7 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { ClinicOsApiClient, type PublicMediaAsset } from "../src/lib/apiClient.ts";
 import { StaticPhotoCaptureProvider } from "../src/features/capture/adapters/photoCaptureProvider.ts";
-import { evaluateAudioControl } from "../src/features/capture/audioConsent.ts";
+import {
+  applyNativeAudioCapability,
+  evaluateAudioControl
+} from "../src/features/capture/audioConsent.ts";
 import { InMemorySecureCaptureCache, sanitizeError } from "../src/features/capture/secureCache.ts";
 import { MobileUploadQueue } from "../src/features/capture/uploadQueue.ts";
 import type { CapturedPhoto, PatientCaptureContext } from "../src/features/capture/types.ts";
@@ -61,6 +64,27 @@ test("audio controls stay disabled without complete AI/audio consent and retenti
     }
   });
   assert.equal(ready.enabled, true);
+});
+
+test("native audio capability keeps consent-ready recording controls unavailable until adapter registration", () => {
+  const consentReady = evaluateAudioControl({
+    patientId,
+    enforcementState: {
+      aiAudioCaptureAllowed: true,
+      rawAudioRetentionAllowed: true,
+      activePurposes: ["ai_audio_capture", "raw_audio_retention"],
+      revokedPurposes: []
+    }
+  });
+
+  const unavailable = applyNativeAudioCapability(consentReady, {
+    state: "unavailable",
+    reason: "Native recording packages are not installed."
+  });
+
+  assert.equal(unavailable.enabled, false);
+  assert.equal(unavailable.reason, "adapter_unavailable");
+  assert.match(unavailable.detail, /Consent gate: Audio controls ready/);
 });
 
 test("photo upload queue uses durable CP4 media route contract and does not persist raw bytes in snapshots", async () => {
