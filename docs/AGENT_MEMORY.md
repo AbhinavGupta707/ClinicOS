@@ -36,11 +36,11 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Lab/Inventory/Event: `019f3c1d-6d96-7310-ba40-bed750544a62`, `/Users/abhinavgupta/.codex/worktrees/0166/ClinicOS`.
   - Operations UX: `019f3c1d-b7c5-7a32-8ee4-a1669e58aa73`, `/Users/abhinavgupta/.codex/worktrees/9f26/ClinicOS`.
   - Analytics/QA: `019f3c1e-1658-7aa2-ab3a-ca5135838beb`, `/Users/abhinavgupta/.codex/worktrees/4ff2/ClinicOS`.
-- Checkpoint 7 launch packet is `docs/orchestration/CHECKPOINT_07_LIVE_INTEGRATIONS_MIGRATION_HARDENING.md`. Launch lanes as visible project-scoped worktree threads from current `main`:
-  - Messaging Provider.
-  - Telephony/Source.
-  - Migration/Data.
-  - Integration Ops/QA.
+- Checkpoint 7 launch packet is `docs/orchestration/CHECKPOINT_07_LIVE_INTEGRATIONS_MIGRATION_HARDENING.md`. CP7 visible project-scoped worktree lanes:
+  - Messaging Provider: `019f3c69-e395-7f43-85e0-9513a2546ad6`, `/Users/abhinavgupta/.codex/worktrees/aa0f/ClinicOS`.
+  - Telephony/Source: `019f3c6a-2d9c-7c01-bbad-d95e05fdcf9c`, `/Users/abhinavgupta/.codex/worktrees/046c/ClinicOS`.
+  - Migration/Data: `019f3c6a-655d-7223-8cf2-8cde3cf10b80`, `/Users/abhinavgupta/.codex/worktrees/9644/ClinicOS`.
+  - Integration Ops/QA: `019f3c6a-9b72-7642-ab14-ce002f1d9511`, `/Users/abhinavgupta/.codex/worktrees/386a/ClinicOS`.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture

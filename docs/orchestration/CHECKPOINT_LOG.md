@@ -300,8 +300,8 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Base commit before launch packet: `e7139c4`.
 - Credential/input preflight: `.secrets/orchestration.env` is present; WhatsApp/Meta sandbox variables are present; Razorpay sandbox variables are present but `RAZORPAY_WEBHOOK_URL` is empty; Exotel-style telephony variables and Google Business Profile variables are missing/empty.
 - Integration branch rule: CP7 lane commits merge first into `codex/integration/checkpoint-7`; promote to `main` only after code checks, provider no-key/sandbox checks, migration conflict tests, browser/user evidence, docs, and accepted-gap review pass.
-- Planned visible project-scoped lanes:
-  - Messaging Provider.
-  - Telephony/Source.
-  - Migration/Data.
-  - Integration Ops/QA.
+- Visible project-scoped lanes launched:
+  - Messaging Provider: pending `local:3dace615-d0fc-404d-b5cf-55a4f8160e05`, thread `019f3c69-e395-7f43-85e0-9513a2546ad6`, worktree `/Users/abhinavgupta/.codex/worktrees/aa0f/ClinicOS`.
+  - Telephony/Source: pending `local:480585d3-3208-4e03-9377-ff468927e57b`, thread `019f3c6a-2d9c-7c01-bbad-d95e05fdcf9c`, worktree `/Users/abhinavgupta/.codex/worktrees/046c/ClinicOS`.
+  - Migration/Data: pending `local:e2e401d4-7304-4cbf-9b5d-fb87c28b44f1`, thread `019f3c6a-655d-7223-8cf2-8cde3cf10b80`, worktree `/Users/abhinavgupta/.codex/worktrees/9644/ClinicOS`.
+  - Integration Ops/QA: pending `local:6c4aa04d-328a-415f-ad92-21d4bf54c75a`, thread `019f3c6a-9b72-7642-ab14-ce002f1d9511`, worktree `/Users/abhinavgupta/.codex/worktrees/386a/ClinicOS`.

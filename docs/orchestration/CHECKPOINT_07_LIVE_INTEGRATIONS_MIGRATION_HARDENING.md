@@ -29,6 +29,15 @@ ClinicOS exposes pilot-ready integration foundations for messaging, source captu
 | Migration/Data | Canonical CP7 migration `0008_live_integrations_migration_hardening.sql`, migration batches/rows/conflicts/commits, imported/unverified record links, duplicate/conflict review, DB repositories, API migration routes | Own the only CP7 database migration. Coordinate with Messaging/Telephony handoffs before merging. No silent overwrite of verified ClinicOS records. | DB typecheck/tests, API typecheck/tests, import fixture validation, conflict/rollback/commit tests |
 | Integration Ops/QA | Provider health/capability dashboard, dead-letter/replay UX and backend wiring where missing, CP7 fixture and contract smoke scripts, browser/user smoke, runbook docs | Web may consume only implemented APIs or explicit fixture mode. No fake provider success states. Browser smoke must prove unavailable states and 390px mobile reachability. | Web tests/typecheck/lint/build, CP7 contract smoke, Playwright desktop/mobile smoke, docs/runbook evidence |
 
+## Worker Sessions
+
+| Lane | Pending worktree ID | Thread ID | Worktree path |
+| --- | --- | --- | --- |
+| Messaging Provider | `local:3dace615-d0fc-404d-b5cf-55a4f8160e05` | `019f3c69-e395-7f43-85e0-9513a2546ad6` | `/Users/abhinavgupta/.codex/worktrees/aa0f/ClinicOS` |
+| Telephony/Source | `local:480585d3-3208-4e03-9377-ff468927e57b` | `019f3c6a-2d9c-7c01-bbad-d95e05fdcf9c` | `/Users/abhinavgupta/.codex/worktrees/046c/ClinicOS` |
+| Migration/Data | `local:e2e401d4-7304-4cbf-9b5d-fb87c28b44f1` | `019f3c6a-655d-7223-8cf2-8cde3cf10b80` | `/Users/abhinavgupta/.codex/worktrees/9644/ClinicOS` |
+| Integration Ops/QA | `local:6c4aa04d-328a-415f-ad92-21d4bf54c75a` | `019f3c6a-9b72-7642-ab14-ce002f1d9511` | `/Users/abhinavgupta/.codex/worktrees/386a/ClinicOS` |
+
 ## Merge Order
 
 Messaging Provider -> Telephony/Source -> Migration/Data -> Integration Ops/QA -> master integration patch.
