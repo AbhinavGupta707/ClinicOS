@@ -31,7 +31,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 2 - Lead/patient/appointment/day-start | Complete  |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
 | 3 - Intake/consent/encounter/notes     | Complete  |       `6fe2cbc` |     `eb68abd` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-3`. Master integration aligned live CP3 routes, consent enforcement, prep summary, QA fixtures, web selectors, browser smoke, and security/audit coverage.                                         |
 | 4 - Dental charting/media/imaging      | Complete  |       `c7b222c` |     `248496a` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4` and promoted to `main`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                     |
-| 5 - Treatment/checkout/payments         | Blocked   |       `1e6e3cb` |       pending | CP5 launch packet committed at `f495c02`, but visible project-scoped worker turns failed to start due Codex account usage-limit errors. Worktrees were created; implementation lanes are not active.                                                                              |
+| 5 - Treatment/checkout/payments         | In Progress |       `d3d341f` |       pending | CP5 initial launch at `f495c02` failed due Codex usage-limit errors. After CP4 re-verification and commit `d3d341f`, fresh visible project-scoped worker lanes were relaunched and are active.                                                                                   |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -213,3 +213,14 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Local Codex log evidence for the replacement Billing thread: `Turn error: You've hit your usage limit. Upgrade to Plus to continue using Codex (https://chatgpt.com/explore/plus), or try again at Aug 6th, 2026 3:33 AM.`
 - A medium-reasoning retry produced the same usage-limit error.
 - Result: CP5 is blocked before implementation. Resume by clearing the account/model usage limit, then relaunch project-scoped worktree lanes from `main` or send a fresh follow-up to the replacement lanes if Codex supports resuming system-error threads.
+
+## Checkpoint 5 Relaunch - 2026-07-07
+
+- Relaunch base: `d3d341f` (`fix(web): align cp4 media live routes`), after CP4 re-verification.
+- Launch shape: `target.type = "project"`, `projectId = "/Users/abhinavgupta/Desktop/ClinicOS"`, `environment.type = "worktree"`, starting from branch `main`.
+- Fresh visible project-scoped lanes:
+  - Billing Domain: pending `local:57f1e52c-12d3-4712-bb03-c460eae56e42`, thread `019f3bcc-2145-7dc0-9518-dc8477e86b51`, worktree `/Users/abhinavgupta/.codex/worktrees/a598/ClinicOS`.
+  - Payment Provider: pending `local:42818d80-8709-4a09-9e19-107c519db2e3`, thread `019f3bcc-213b-7191-8424-2856a60a85a0`, worktree `/Users/abhinavgupta/.codex/worktrees/fae5/ClinicOS`.
+  - Checkout UX: pending `local:e7a4b597-aa4a-4a50-9543-9c1da12ff7d1`, thread `019f3bcc-213b-7191-8424-284dd78c7323`, worktree `/Users/abhinavgupta/.codex/worktrees/82db/ClinicOS`.
+  - Clinical Output QA: pending `local:8997eec3-d82f-4348-b27d-b4349d72ab19`, thread `019f3bcc-216e-79b3-bd9d-db6d77e928a5`, worktree `/Users/abhinavgupta/.codex/worktrees/1f2d/ClinicOS`.
+- All four fresh lanes resolved as active in `list_threads`; the old `CP5 FAILED - ...` threads remain historical and must not be integrated.

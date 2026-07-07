@@ -8,6 +8,7 @@ Doctor, assistant, and receptionist users can convert clinical treatment intent 
 
 - Branch: `main`
 - Base commit before launch packet: `1e6e3cb`
+- Fresh relaunch base after CP4 re-verification: `d3d341f`
 - Launch date: 2026-07-07
 
 ## Scope
@@ -36,6 +37,21 @@ Doctor, assistant, and receptionist users can convert clinical treatment intent 
 
 ## Lanes
 
+### Active Relaunch Lanes
+
+These lanes were relaunched after CP4 re-verification fixed the web live media route drift. Use these lanes for CP5 integration.
+
+| Lane | Pending Worktree ID | Thread ID | Worktree | Ownership |
+| --- | --- | --- | --- | --- |
+| Billing Domain | `local:57f1e52c-12d3-4712-bb03-c460eae56e42` | `019f3bcc-2145-7dc0-9518-dc8477e86b51` | `/Users/abhinavgupta/.codex/worktrees/a598/ClinicOS` | Pricebook, treatment plans, estimates, procedure performed records, invoices, receipts, DB migration, repository contracts, core billing API routes, domain tests |
+| Payment Provider | `local:42818d80-8709-4a09-9e19-107c519db2e3` | `019f3bcc-213b-7191-8424-2856a60a85a0` | `/Users/abhinavgupta/.codex/worktrees/fae5/ClinicOS` | Razorpay/simulator provider interface, dynamic QR/payment link request contract, webhook verification/idempotency, payment transaction reconciliation, no-key/unavailable states, provider tests |
+| Checkout UX | `local:e7a4b597-aa4a-4a50-9543-9c1da12ff7d1` | `019f3bcc-213b-7191-8424-284dd78c7323` | `/Users/abhinavgupta/.codex/worktrees/82db/ClinicOS` | Web checkout workflow, treatment plan builder, estimate/invoice/payment/receipt UI, instruction picker, role-aware controls, desktop and 390px mobile smoke |
+| Clinical Output QA | `local:8997eec3-d82f-4348-b27d-b4349d72ab19` | `019f3bcc-216e-79b3-bd9d-db6d77e928a5` | `/Users/abhinavgupta/.codex/worktrees/1f2d/ClinicOS` | Synthetic CP5 fixture, contract smoke, acceptance tests, prescription/instruction tests, payment replay/denial tests, QA docs and E2E plan |
+
+### Initial Failed Lanes
+
+The initial CP5 lanes below were created at `f495c02` but failed before implementation due the Codex account usage-limit error. Do not use them for CP5 integration.
+
 | Lane | Pending Worktree ID | Thread ID | Worktree | Ownership |
 | --- | --- | --- | --- | --- |
 | Billing Domain | `local:a52e7c05-cc94-4402-a5e9-81813fbb6cc9` | `019f3a78-1296-7181-b6c0-4bd718b77880` | `/Users/abhinavgupta/.codex/worktrees/5b11/ClinicOS` | Pricebook, treatment plans, estimates, procedure performed records, invoices, receipts, DB migration, repository contracts, core billing API routes, domain tests |
@@ -55,6 +71,8 @@ Evidence:
 - Retrying the replacement Billing lane at medium reasoning effort produced the same usage-limit error.
 
 Result: CP5 implementation lanes are not active. Do not merge or claim CP5 progress until the account/model execution limit is cleared and the lanes are relaunched or resumed successfully.
+
+The blocker was cleared for the master session by the fresh relaunch above. The active CP5 lanes are now the relaunch lanes based at `d3d341f`.
 
 ## Shared-File Policy
 
