@@ -31,23 +31,37 @@ import {
 import { getMe } from "./me.ts";
 import {
   checkInAppointment,
+  amendEncounterClinicalNote,
   confirmAppointment,
   convertLeadToAppointment,
   createAppointment,
+  createEncounter,
+  createEncounterPrescription,
+  createIntakeFormTemplate,
   createLead,
   createPatient,
+  createPatientConsent,
   getMorningDashboard,
+  getEncounter,
   getPatient,
   getPatientTimeline,
   listAppointmentTypes,
   listAppointments,
   listChairs,
+  listIntakeFormTemplates,
   listLeads,
+  listPatientConsents,
   listPatients,
   listProviderSchedules,
   listQueue,
   markAppointmentNoShow,
   matchLeadToPatient,
+  revokePatientConsent,
+  saveEncounterClinicalNoteDraft,
+  signEncounterClinicalNote,
+  signPrescription,
+  startEncounter,
+  submitPatientIntakeForm,
   updateAppointment,
   updateLeadStatus,
   updatePatient,
@@ -268,6 +282,14 @@ async function routeOperationsRequest(input: {
     ? await readJsonBody(input.request)
     : undefined;
 
+  if (input.request.method === "GET" && pathname === "/v1/form-templates") {
+    return listIntakeFormTemplates(operationsContext, dependencies);
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/form-templates") {
+    return createIntakeFormTemplate(operationsContext, dependencies, body);
+  }
+
   if (input.request.method === "GET" && pathname === "/v1/patients") {
     return listPatients(operationsContext, dependencies, {
       query: url.searchParams.get("query"),
@@ -295,6 +317,38 @@ async function routeOperationsRequest(input: {
       operationsContext,
       dependencies,
       pathUuid(timelineMatch[1], "patientId")
+    );
+  }
+
+  const formResponseMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/form-responses$/);
+  if (formResponseMatch && input.request.method === "POST") {
+    return submitPatientIntakeForm(
+      operationsContext,
+      dependencies,
+      pathUuid(formResponseMatch[1], "patientId"),
+      body
+    );
+  }
+
+  const consentsMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/consents$/);
+  if (consentsMatch) {
+    const patientId = pathUuid(consentsMatch[1], "patientId");
+    if (input.request.method === "GET")
+      return listPatientConsents(operationsContext, dependencies, patientId);
+    if (input.request.method === "POST")
+      return createPatientConsent(operationsContext, dependencies, patientId, body);
+  }
+
+  const consentRevokeMatch = pathname.match(
+    /^\/v1\/patients\/([^/]+)\/consents\/([^/]+)\/revoke$/
+  );
+  if (consentRevokeMatch && input.request.method === "POST") {
+    return revokePatientConsent(
+      operationsContext,
+      dependencies,
+      pathUuid(consentRevokeMatch[1], "patientId"),
+      pathUuid(consentRevokeMatch[2], "consentId"),
+      body
     );
   }
 
@@ -427,6 +481,73 @@ async function routeOperationsRequest(input: {
       operationsContext,
       dependencies,
       url.searchParams.get("date") ?? todayIsoDate()
+    );
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/encounters") {
+    return createEncounter(operationsContext, dependencies, body);
+  }
+
+  const encounterMatch = pathname.match(/^\/v1\/encounters\/([^/]+)$/);
+  if (encounterMatch) {
+    const encounterId = pathUuid(encounterMatch[1], "encounterId");
+    if (input.request.method === "GET")
+      return getEncounter(operationsContext, dependencies, encounterId);
+    if (input.request.method === "PATCH")
+      return saveEncounterClinicalNoteDraft(
+        operationsContext,
+        dependencies,
+        encounterId,
+        body
+      );
+  }
+
+  const encounterStartMatch = pathname.match(/^\/v1\/encounters\/([^/]+)\/start$/);
+  if (encounterStartMatch && input.request.method === "POST") {
+    return startEncounter(
+      operationsContext,
+      dependencies,
+      pathUuid(encounterStartMatch[1], "encounterId")
+    );
+  }
+
+  const encounterSignNoteMatch = pathname.match(/^\/v1\/encounters\/([^/]+)\/sign-note$/);
+  if (encounterSignNoteMatch && input.request.method === "POST") {
+    return signEncounterClinicalNote(
+      operationsContext,
+      dependencies,
+      pathUuid(encounterSignNoteMatch[1], "encounterId")
+    );
+  }
+
+  const encounterAmendNoteMatch = pathname.match(/^\/v1\/encounters\/([^/]+)\/amend-note$/);
+  if (encounterAmendNoteMatch && input.request.method === "POST") {
+    return amendEncounterClinicalNote(
+      operationsContext,
+      dependencies,
+      pathUuid(encounterAmendNoteMatch[1], "encounterId"),
+      body
+    );
+  }
+
+  const encounterPrescriptionMatch = pathname.match(
+    /^\/v1\/encounters\/([^/]+)\/prescriptions$/
+  );
+  if (encounterPrescriptionMatch && input.request.method === "POST") {
+    return createEncounterPrescription(
+      operationsContext,
+      dependencies,
+      pathUuid(encounterPrescriptionMatch[1], "encounterId"),
+      body
+    );
+  }
+
+  const prescriptionSignMatch = pathname.match(/^\/v1\/prescriptions\/([^/]+)\/sign$/);
+  if (prescriptionSignMatch && input.request.method === "POST") {
+    return signPrescription(
+      operationsContext,
+      dependencies,
+      pathUuid(prescriptionSignMatch[1], "prescriptionId")
     );
   }
 

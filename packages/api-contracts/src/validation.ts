@@ -1,4 +1,4 @@
-import { isCp2EventType } from "@clinic-os/domain";
+import { isCp2EventType, isCp3EventType } from "@clinic-os/domain";
 import type { AuditActor, EventProvenanceSource } from "@clinic-os/domain";
 
 export interface ContractValidationIssue {
@@ -450,6 +450,21 @@ export function parseCp2EventType(
 
   if (value && !isCp2EventType(value)) {
     issues.push({ path: `${path}.${key}`, message: "Expected a canonical Checkpoint 2 event type." });
+  }
+
+  return value;
+}
+
+export function parseCp3EventType(
+  record: Record<string, unknown>,
+  key: string,
+  path: string,
+  issues: ContractValidationIssue[]
+): string {
+  const value = requiredString(record, key, path, issues);
+
+  if (value && !isCp3EventType(value)) {
+    issues.push({ path: `${path}.${key}`, message: "Expected a canonical Checkpoint 3 event type." });
   }
 
   return value;

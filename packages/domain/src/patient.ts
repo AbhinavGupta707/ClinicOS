@@ -57,7 +57,16 @@ export type PatientTimelineItemType =
   | "patient_checked_in"
   | "queue_entry_created"
   | "appointment_no_show"
-  | "task_created";
+  | "task_created"
+  | "form_response_submitted"
+  | "consent_created"
+  | "consent_revoked"
+  | "encounter_created"
+  | "encounter_started"
+  | "clinical_note_signed"
+  | "clinical_note_amended"
+  | "prescription_created"
+  | "prescription_signed";
 
 export interface PatientTimelineItem {
   id: UUID;

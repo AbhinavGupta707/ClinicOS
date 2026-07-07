@@ -4,11 +4,18 @@ import {
   CHECKPOINT1_SEED_IDS,
   CHECKPOINT1_SEED_USERS,
   type AppointmentSearchFilter,
+  type AmendClinicalNoteInput,
+  type AmendClinicalNoteResult,
   type ClinicOperationsRepository,
   type CreateAppointmentInput,
   type CreateAttributionTouchInput,
+  type CreateConsentInput,
+  type CreateEncounterInput,
+  type CreateIntakeFormSubmissionInput,
+  type CreateIntakeFormTemplateInput,
   type CreateLeadInput,
   type CreatePatientInput,
+  type CreatePrescriptionInput,
   type CreateTaskInput,
   type DashboardDataSet,
   type IdentityAccessSnapshot,
@@ -17,10 +24,19 @@ import {
   type OutboxEventInput,
   type PatientSearchFilter,
   type RepositoryScope,
+  type RevokeConsentInput,
+  type SaveClinicalNoteDraftInput,
+  type SignClinicalNoteResult,
   type UpdatePatientInput
 } from "@clinic-os/db";
 import {
+  assertClinicalNoteCanBeAmended,
+  assertClinicalNoteCanBeSigned,
+  assertEncounterTransition,
+  assertPrescriptionCanBeSigned,
+  buildConsentEnforcementState,
   detectAppointmentConflicts,
+  normalizeClinicalNoteContent,
   normalizePhone,
   type AppointmentConflict,
   type AppointmentRecord,
@@ -28,9 +44,15 @@ import {
   type AppointmentTypeRecord,
   type AttributionTouchRecord,
   type ChairOrRoomRecord,
+  type ClinicalNoteVersionRecord,
+  type ConsentRecord,
+  type EncounterRecord,
+  type IntakeFormSubmissionRecord,
+  type IntakeFormTemplateRecord,
   type LeadRecord,
   type PatientRecord,
   type PatientTimelineItem,
+  type PrescriptionRecord,
   type ProviderScheduleRecord,
   type QueueEntryRecord,
   type QueueStatus,
@@ -185,6 +207,28 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   ];
   readonly attributionTouches: AttributionTouchRecord[] = [];
   readonly outboxEvents: OutboxEventInput[] = [];
+  readonly intakeFormTemplates: IntakeFormTemplateRecord[] = [
+    {
+      id: uuid(),
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      code: "new_patient_intake",
+      displayName: "New patient intake",
+      formType: "patient_intake",
+      version: 1,
+      schema: {
+        fields: ["chiefComplaint", "medicalHistory", "allergies", "currentMedications"]
+      },
+      active: true,
+      createdAt: "2026-07-07T08:00:00.000Z",
+      updatedAt: "2026-07-07T08:00:00.000Z"
+    }
+  ];
+  readonly intakeFormSubmissions: IntakeFormSubmissionRecord[] = [];
+  readonly consents: ConsentRecord[] = [];
+  readonly encounters: EncounterRecord[] = [];
+  readonly clinicalNoteVersions: ClinicalNoteVersionRecord[] = [];
+  readonly prescriptions: PrescriptionRecord[] = [];
 
   async listPatients(
     scope: RepositoryScope,
@@ -626,9 +670,437 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
             (appointment) =>
               matchesScope(appointment, scope) && appointment.startAt < `${date}T00:00:00.000Z`
           )
-          .map((appointment) => appointment.patientId)
+        .map((appointment) => appointment.patientId)
       )
     };
+  }
+
+  async listIntakeFormTemplates(scope: RepositoryScope): Promise<IntakeFormTemplateRecord[]> {
+    return this.intakeFormTemplates
+      .filter((template) => matchesScope(template, scope) && template.active)
+      .sort((left, right) => left.code.localeCompare(right.code) || right.version - left.version);
+  }
+
+  async findIntakeFormTemplateById(
+    scope: RepositoryScope,
+    templateId: UUID
+  ): Promise<IntakeFormTemplateRecord | null> {
+    return (
+      this.intakeFormTemplates.find(
+        (template) => matchesScope(template, scope) && template.id === templateId
+      ) ?? null
+    );
+  }
+
+  async createIntakeFormTemplate(
+    scope: RepositoryScope,
+    input: CreateIntakeFormTemplateInput
+  ): Promise<IntakeFormTemplateRecord> {
+    const now = new Date().toISOString();
+    const template: IntakeFormTemplateRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      code: input.code,
+      displayName: input.displayName,
+      formType: input.formType,
+      version: input.version,
+      schema: input.schema,
+      active: input.active ?? true,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.intakeFormTemplates.push(template);
+    return template;
+  }
+
+  async createIntakeFormSubmission(
+    scope: RepositoryScope,
+    input: CreateIntakeFormSubmissionInput
+  ): Promise<IntakeFormSubmissionRecord> {
+    const template = await this.findIntakeFormTemplateById(scope, input.templateId);
+    if (!template) throw new Error("Intake form template not found.");
+    const submittedAt = new Date().toISOString();
+    const submission: IntakeFormSubmissionRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: input.patientId,
+      templateId: input.templateId,
+      templateVersion: template.version,
+      source: input.source,
+      responses: input.responses,
+      medicalHistorySnapshot: input.medicalHistorySnapshot ?? {},
+      provenance: input.provenance ?? {},
+      submittedByUserId: scope.actorUserId,
+      submittedAt
+    };
+
+    this.intakeFormSubmissions.push(submission);
+    this.timelineItems.push(
+      timeline(
+        scope,
+        input.patientId,
+        "form_response_submitted",
+        "form_responses",
+        submission.id,
+        input.source === "assistant_paper_card"
+          ? "Assistant-entered paper intake"
+          : "Digital intake submitted"
+      )
+    );
+    return submission;
+  }
+
+  async listPatientIntakeFormSubmissions(
+    scope: RepositoryScope,
+    patientId: UUID
+  ): Promise<IntakeFormSubmissionRecord[]> {
+    return this.intakeFormSubmissions
+      .filter((submission) => matchesScope(submission, scope) && submission.patientId === patientId)
+      .sort((left, right) => right.submittedAt.localeCompare(left.submittedAt));
+  }
+
+  async listPatientConsents(scope: RepositoryScope, patientId: UUID): Promise<ConsentRecord[]> {
+    return this.consents
+      .filter((consent) => matchesScope(consent, scope) && consent.patientId === patientId)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt));
+  }
+
+  async createConsent(scope: RepositoryScope, input: CreateConsentInput): Promise<ConsentRecord> {
+    const now = new Date().toISOString();
+    const consent: ConsentRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: input.patientId,
+      purpose: input.purpose,
+      status: "active",
+      templateCode: input.templateCode,
+      templateVersion: input.templateVersion,
+      captureMethod: input.captureMethod,
+      grantedByName: input.grantedByName ?? null,
+      relationshipToPatient: input.relationshipToPatient ?? null,
+      evidence: input.evidence ?? {},
+      provenance: input.provenance ?? {},
+      createdByUserId: scope.actorUserId,
+      createdAt: now,
+      revokedByUserId: null,
+      revokedAt: null,
+      revocationReason: null
+    };
+
+    this.consents.push(consent);
+    this.timelineItems.push(
+      timeline(scope, input.patientId, "consent_created", "consents", consent.id, "Consent recorded")
+    );
+    return consent;
+  }
+
+  async revokeConsent(
+    scope: RepositoryScope,
+    consentId: UUID,
+    input: RevokeConsentInput
+  ): Promise<ConsentRecord | null> {
+    const consent = this.consents.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === consentId
+    );
+    if (!consent || consent.status !== "active") return null;
+
+    consent.status = "revoked";
+    consent.revokedByUserId = scope.actorUserId;
+    consent.revokedAt = new Date().toISOString();
+    consent.revocationReason = input.revocationReason;
+    this.timelineItems.push(
+      timeline(scope, consent.patientId, "consent_revoked", "consents", consent.id, "Consent revoked")
+    );
+    return consent;
+  }
+
+  async getConsentEnforcementState(scope: RepositoryScope, patientId: UUID) {
+    return buildConsentEnforcementState(patientId, await this.listPatientConsents(scope, patientId));
+  }
+
+  async createEncounter(scope: RepositoryScope, input: CreateEncounterInput): Promise<EncounterRecord> {
+    const now = new Date().toISOString();
+    const encounter: EncounterRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: input.patientId,
+      appointmentId: input.appointmentId ?? null,
+      providerUserId: input.providerUserId,
+      status: "scheduled",
+      reason: input.reason ?? null,
+      medicalHistorySnapshot: input.medicalHistorySnapshot ?? {},
+      startedAt: null,
+      closedAt: null,
+      createdAt: now,
+      updatedAt: now
+    };
+
+    this.encounters.push(encounter);
+    this.timelineItems.push(
+      timeline(scope, input.patientId, "encounter_created", "encounters", encounter.id, "Encounter created")
+    );
+    return encounter;
+  }
+
+  async findEncounterById(scope: RepositoryScope, encounterId: UUID): Promise<EncounterRecord | null> {
+    return (
+      this.encounters.find(
+        (encounter) => matchesScope(encounter, scope) && encounter.id === encounterId
+      ) ?? null
+    );
+  }
+
+  async transitionEncounter(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    status: EncounterRecord["status"],
+    _reason?: string | null
+  ): Promise<EncounterRecord | null> {
+    const encounter = await this.findEncounterById(scope, encounterId);
+    if (!encounter) return null;
+
+    assertEncounterTransition(encounter.status, status);
+    const previous = encounter.status;
+    encounter.status = status;
+    encounter.updatedAt = new Date().toISOString();
+    if (status === "drafting") encounter.startedAt = encounter.startedAt ?? encounter.updatedAt;
+    if (status === "closed") encounter.closedAt = encounter.closedAt ?? encounter.updatedAt;
+
+    if (previous === "scheduled" && status === "drafting") {
+      this.timelineItems.push(
+        timeline(
+          scope,
+          encounter.patientId,
+          "encounter_started",
+          "encounters",
+          encounter.id,
+          "Encounter started"
+        )
+      );
+    }
+
+    return encounter;
+  }
+
+  async saveClinicalNoteDraft(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    input: SaveClinicalNoteDraftInput
+  ): Promise<ClinicalNoteVersionRecord | null> {
+    const encounter = await this.findEncounterById(scope, encounterId);
+    if (!encounter || ["signed", "amended", "closed", "cancelled"].includes(encounter.status)) {
+      return null;
+    }
+
+    const content = normalizeClinicalNoteContent(input.content);
+    const existingDraft = this.clinicalNoteVersions
+      .filter(
+        (note) =>
+          matchesScope(note, scope) && note.encounterId === encounterId && note.status === "draft"
+      )
+      .sort((left, right) => right.versionNumber - left.versionNumber)[0];
+
+    if (existingDraft) {
+      existingDraft.content = content;
+      return existingDraft;
+    }
+
+    const note: ClinicalNoteVersionRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      encounterId,
+      patientId: encounter.patientId,
+      versionNumber: this.nextClinicalNoteVersion(scope, encounterId),
+      status: "draft",
+      content,
+      amendmentReason: null,
+      amendedFromVersionId: null,
+      signedByUserId: null,
+      signedAt: null,
+      createdByUserId: scope.actorUserId,
+      createdAt: new Date().toISOString()
+    };
+
+    this.clinicalNoteVersions.push(note);
+    encounter.status = input.readyForSign ? "ready_for_sign" : "drafting";
+    encounter.updatedAt = note.createdAt;
+    return note;
+  }
+
+  async listClinicalNoteVersions(
+    scope: RepositoryScope,
+    encounterId: UUID
+  ): Promise<ClinicalNoteVersionRecord[]> {
+    return this.clinicalNoteVersions
+      .filter((note) => matchesScope(note, scope) && note.encounterId === encounterId)
+      .sort((left, right) => right.versionNumber - left.versionNumber);
+  }
+
+  async signClinicalNote(
+    scope: RepositoryScope,
+    encounterId: UUID
+  ): Promise<SignClinicalNoteResult | null> {
+    const encounter = await this.findEncounterById(scope, encounterId);
+    if (!encounter) return null;
+    const draft = (await this.listClinicalNoteVersions(scope, encounterId)).find(
+      (note) => note.status === "draft"
+    );
+    if (!draft) return null;
+
+    assertClinicalNoteCanBeSigned(draft);
+    draft.status = "signed";
+    draft.signedByUserId = scope.actorUserId;
+    draft.signedAt = new Date().toISOString();
+    encounter.status = "signed";
+    encounter.updatedAt = draft.signedAt;
+    this.timelineItems.push(
+      timeline(
+        scope,
+        encounter.patientId,
+        "clinical_note_signed",
+        "clinical_note_versions",
+        draft.id,
+        "Clinical note signed"
+      )
+    );
+
+    return { encounter, note: draft };
+  }
+
+  async amendClinicalNote(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    input: AmendClinicalNoteInput
+  ): Promise<AmendClinicalNoteResult | null> {
+    const encounter = await this.findEncounterById(scope, encounterId);
+    if (!encounter) return null;
+    const amendedFrom = (await this.listClinicalNoteVersions(scope, encounterId)).find((note) =>
+      ["signed", "amended"].includes(note.status)
+    );
+    if (!amendedFrom) return null;
+
+    assertClinicalNoteCanBeAmended(amendedFrom);
+    const now = new Date().toISOString();
+    const note: ClinicalNoteVersionRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      encounterId,
+      patientId: encounter.patientId,
+      versionNumber: this.nextClinicalNoteVersion(scope, encounterId),
+      status: "amended",
+      content: normalizeClinicalNoteContent(input.content),
+      amendmentReason: input.amendmentReason,
+      amendedFromVersionId: amendedFrom.id,
+      signedByUserId: scope.actorUserId,
+      signedAt: now,
+      createdByUserId: scope.actorUserId,
+      createdAt: now
+    };
+
+    this.clinicalNoteVersions.push(note);
+    encounter.status = "amended";
+    encounter.updatedAt = now;
+    this.timelineItems.push(
+      timeline(
+        scope,
+        encounter.patientId,
+        "clinical_note_amended",
+        "clinical_note_versions",
+        note.id,
+        "Clinical note amended"
+      )
+    );
+
+    return { encounter, note, amendedFrom };
+  }
+
+  async createPrescription(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    input: CreatePrescriptionInput
+  ): Promise<PrescriptionRecord | null> {
+    const encounter = await this.findEncounterById(scope, encounterId);
+    if (!encounter) return null;
+    const prescription: PrescriptionRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      encounterId,
+      patientId: encounter.patientId,
+      status: "draft",
+      medications: input.medications,
+      notes: input.notes ?? null,
+      createdByUserId: scope.actorUserId,
+      createdAt: new Date().toISOString(),
+      signedByUserId: null,
+      signedAt: null
+    };
+
+    this.prescriptions.push(prescription);
+    this.timelineItems.push(
+      timeline(
+        scope,
+        encounter.patientId,
+        "prescription_created",
+        "prescriptions",
+        prescription.id,
+        "Prescription drafted"
+      )
+    );
+    return prescription;
+  }
+
+  async findPrescriptionById(
+    scope: RepositoryScope,
+    prescriptionId: UUID
+  ): Promise<PrescriptionRecord | null> {
+    return (
+      this.prescriptions.find(
+        (prescription) => matchesScope(prescription, scope) && prescription.id === prescriptionId
+      ) ?? null
+    );
+  }
+
+  async signPrescription(
+    scope: RepositoryScope,
+    prescriptionId: UUID
+  ): Promise<PrescriptionRecord | null> {
+    const prescription = await this.findPrescriptionById(scope, prescriptionId);
+    if (!prescription) return null;
+
+    assertPrescriptionCanBeSigned(prescription);
+    prescription.status = "signed";
+    prescription.signedByUserId = scope.actorUserId;
+    prescription.signedAt = new Date().toISOString();
+    this.timelineItems.push(
+      timeline(
+        scope,
+        prescription.patientId,
+        "prescription_signed",
+        "prescriptions",
+        prescription.id,
+        "Prescription signed"
+      )
+    );
+    return prescription;
+  }
+
+  nextClinicalNoteVersion(scope: RepositoryScope, encounterId: UUID): number {
+    return (
+      Math.max(
+        0,
+        ...this.clinicalNoteVersions
+          .filter((note) => matchesScope(note, scope) && note.encounterId === encounterId)
+          .map((note) => note.versionNumber)
+      ) + 1
+    );
   }
 }
 
