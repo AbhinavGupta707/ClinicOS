@@ -89,7 +89,7 @@ export function buildCp8SmokePlan(scenario) {
     {
       key: "browser-mobile-checklist",
       reason:
-        "Review UX/mobile route selectors and 390px no-overflow checks are documented until UI lanes merge.",
+        "Review UX selectors and 390px no-overflow checks are documented; mobile capture consent is verified in the Expo mobile lane.",
       source: "browserSmokeChecklist"
     }
   ];

@@ -18,25 +18,26 @@ export const CP8_SCENARIO_PATH = path.join(
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f]{12}$/;
 const TEST_EMAIL_PATTERN = /^[^@\s]+@example\.test$/;
 const REQUIRED_ROUTE_FAMILIES = [
-  "ai-capture-session",
+  "ai-scribe-session",
   "ai-consent-block",
   "ai-transcript-segment",
-  "ai-clinical-note-draft",
-  "ai-dental-chart-patch",
+  "ai-source-anchor",
+  "ai-draft-generation",
   "ai-review-decision",
   "ai-review-boundary",
-  "ai-output-read"
+  "ai-session-read",
+  "ai-retention-delete"
 ];
 const REQUIRED_BROWSER_SELECTORS = [
   "cp8-ai-review-workspace",
   "cp8-fixture-alert",
-  "cp8-consent-status",
-  "cp8-capture-disabled",
+  "cp8-review-readiness",
   "cp8-source-anchors",
-  "cp8-ai-warnings",
-  "cp8-reject-output",
-  "cp8-review-decision-status",
-  "cp8-mobile-capture-workspace"
+  "cp8-warning-list",
+  "cp8-reject-draft",
+  "cp8-selected-status",
+  "cp8-dental-chart-draft",
+  "cp8-action-proposal-draft"
 ];
 
 export async function loadCp8Scenario(scenarioPath = CP8_SCENARIO_PATH) {
@@ -209,9 +210,9 @@ function assertCaptureAttempts(scenario, knownEncounterIds, knownActorKeys) {
   const attemptByKey = new Map(scenario.captureAttempts.map((attempt) => [attempt.key, attempt]));
 
   assert.equal(attemptByKey.get("start-audio-with-active-consent")?.expectedStatus, 201);
-  assert.equal(attemptByKey.get("block-audio-with-no-consent")?.expectedStatus, 403);
+  assert.equal(attemptByKey.get("block-audio-with-no-consent")?.expectedStatus, 409);
   assert.equal(attemptByKey.get("block-audio-with-no-consent")?.processingBlocked, true);
-  assert.equal(attemptByKey.get("block-audio-after-revocation")?.expectedStatus, 403);
+  assert.equal(attemptByKey.get("block-audio-after-revocation")?.expectedStatus, 409);
   assert.equal(attemptByKey.get("block-audio-after-revocation")?.processingBlocked, true);
 
   for (const attempt of scenario.captureAttempts) {
@@ -236,7 +237,7 @@ function assertCaptureAttempts(scenario, knownEncounterIds, knownActorKeys) {
         true,
         `inactive consent attempt ${attempt.key} must be blocked`
       );
-      assert.equal(attempt.expectedStatus, 403);
+      assert.equal(attempt.expectedStatus, 409);
       assert.match(attempt.expectedReason, /consent/);
     }
   }
@@ -419,7 +420,7 @@ function assertFlow(scenario, knownActorKeys) {
     assertKnownKey(knownActorKeys, step.actorKey, `flow ${step.key}.actorKey`);
     assert.ok(["GET", "POST"].includes(step.method), `Unsupported method ${step.method}`);
     assert.ok(step.path.startsWith("/v1/"), `flow ${step.key}.path must be a /v1 route`);
-    assert.ok([200, 201, 202, 403].includes(Number(step.expectedStatus)));
+    assert.ok([200, 201, 202, 400, 403, 409].includes(Number(step.expectedStatus)));
     assert.equal(
       step.path.includes("/apply"),
       false,
@@ -439,7 +440,7 @@ function assertBrowserChecklist(checklist) {
     noHorizontalOverflowRequired: true,
     width: 390
   });
-  assert.equal(checklist.status, "pending_review_ux_and_mobile_lanes");
+  assert.equal(checklist.status, "review_ux_merged_mobile_capture_verified_in_expo");
   for (const selector of REQUIRED_BROWSER_SELECTORS) {
     assert.ok(
       checklist.requiredSelectors.includes(selector),

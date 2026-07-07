@@ -16,7 +16,7 @@ test("CP8 AI safety scenario is deterministic and local-test only", async () => 
     browserSelectors: 9,
     captureAttempts: 3,
     consentStates: 3,
-    flowSteps: 9,
+    flowSteps: 10,
     goldenOutputs: 3,
     reviewDecisions: 3,
     roleTenantExpectations: 4,
@@ -71,7 +71,7 @@ test("CP8 no-consent and revoked-consent attempts block AI/audio processing", as
 
   for (const key of ["block-audio-with-no-consent", "block-audio-after-revocation"]) {
     const attempt = attempts.get(key);
-    assert.equal(attempt.expectedStatus, 403);
+    assert.equal(attempt.expectedStatus, 409);
     assert.equal(attempt.processingBlocked, true);
     assert.match(attempt.expectedReason, /consent/);
   }
@@ -118,21 +118,22 @@ test("CP8 smoke plan separates dry-run contracts from fixture-only evidence", as
   const scenario = await loadCp8Scenario();
   const plan = buildCp8SmokePlan(scenario);
 
-  assert.equal(plan.flowRequests.length, 9);
+  assert.equal(plan.flowRequests.length, 10);
   assert.equal(plan.safetyRequests.length, 4);
   assert.equal(plan.fixtureOnlyEvidence.length, 3);
   assert.deepEqual(
     plan.flowRequests.map((request) => `${request.method} ${request.path}`),
     [
-      "POST /v1/ai/capture-sessions",
-      "POST /v1/ai/capture-sessions",
-      "POST /v1/ai/capture-sessions",
-      "POST /v1/ai/capture-sessions/{captureSessionId}/transcript-segments",
-      "POST /v1/encounters/89999999-9999-4999-8999-999999999999/ai/clinical-note-drafts",
-      "POST /v1/encounters/89999999-9999-4999-8999-999999999999/ai/dental-chart-patches",
-      "POST /v1/ai/outputs/94444444-4444-4444-8444-444444444444/review-decisions",
-      "POST /v1/ai/outputs/91111111-1111-4111-8111-111111111111/review-decisions",
-      "GET /v1/ai/outputs/91111111-1111-4111-8111-111111111111"
+      "POST /v1/encounters/89999999-9999-4999-8999-999999999999/ai-scribe/sessions",
+      "POST /v1/encounters/8aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/ai-scribe/sessions",
+      "POST /v1/encounters/8bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/ai-scribe/sessions",
+      "POST /v1/ai-scribe/sessions/{aiScribeSessionId}/transcript-segments",
+      "POST /v1/ai-scribe/sessions/{aiScribeSessionId}/generate-drafts",
+      "POST /v1/ai-scribe/sessions/{aiScribeSessionId}/source-anchors",
+      "POST /v1/ai-scribe/sessions/{aiScribeSessionId}/review-decisions",
+      "POST /v1/ai-scribe/sessions/{aiScribeSessionId}/review-decisions",
+      "GET /v1/ai-scribe/sessions/{aiScribeSessionId}",
+      "POST /v1/ai-scribe/sessions/{aiScribeSessionId}/retention-delete"
     ]
   );
 

@@ -235,7 +235,7 @@
       "consentStateKey": "noAiAudioConsent",
       "encounterId": "8aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
       "expectedReason": "no_active_audio_ai_consent",
-      "expectedStatus": 403,
+      "expectedStatus": 409,
       "key": "block-audio-with-no-consent",
       "processingBlocked": true
     },
@@ -244,7 +244,7 @@
       "consentStateKey": "revokedAiAudioConsent",
       "encounterId": "8bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       "expectedReason": "consent_revoked",
-      "expectedStatus": 403,
+      "expectedStatus": 409,
       "key": "block-audio-after-revocation",
       "processingBlocked": true
     }
@@ -553,98 +553,98 @@
     "steps": [
       {
         "actorKey": "assistant",
-        "expectedBodyIncludes": ["captureSession", "activeAiAudioConsent", "simulator"],
+        "expectedBodyIncludes": ["session", "simulator", "retentionPolicy"],
         "expectedBodyMustNotInclude": ["audioPayload", "secret", "applied"],
         "expectedStatus": 201,
         "key": "start-capture-with-active-consent",
         "liveImplemented": false,
         "method": "POST",
-        "path": "/v1/ai/capture-sessions",
+        "path": "/v1/encounters/89999999-9999-4999-8999-999999999999/ai-scribe/sessions",
         "requestBody": {
-          "consentStateKey": "activeAiAudioConsent",
-          "encounterId": "89999999-9999-4999-8999-999999999999",
-          "patientId": "86666666-6666-4666-8666-666666666666",
-          "providerMode": "simulator"
+          "captureSurface": "mobile",
+          "languageHint": "en-IN",
+          "requireRawAudioRetention": false
         },
-        "routeFamily": "ai-capture-session"
+        "routeFamily": "ai-scribe-session"
       },
       {
         "actorKey": "assistant",
-        "expectedBodyIncludes": ["no_active_audio_ai_consent"],
+        "expectedBodyIncludes": ["AI_AUDIO_CONSENT_REQUIRED"],
         "expectedBodyMustNotInclude": ["captureSession", "transcript"],
-        "expectedStatus": 403,
+        "expectedStatus": 409,
         "key": "block-capture-with-no-consent",
         "liveImplemented": false,
         "method": "POST",
-        "path": "/v1/ai/capture-sessions",
+        "path": "/v1/encounters/8aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/ai-scribe/sessions",
         "requestBody": {
-          "encounterId": "8aaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
-          "patientId": "87777777-7777-4777-8777-777777777777",
-          "providerMode": "simulator"
+          "captureSurface": "mobile",
+          "requireRawAudioRetention": false
         },
         "routeFamily": "ai-consent-block"
       },
       {
         "actorKey": "assistant",
-        "expectedBodyIncludes": ["consent_revoked"],
+        "expectedBodyIncludes": ["AI_AUDIO_CONSENT_REQUIRED"],
         "expectedBodyMustNotInclude": ["captureSession", "transcript"],
-        "expectedStatus": 403,
+        "expectedStatus": 409,
         "key": "block-capture-after-consent-revoked",
         "liveImplemented": false,
         "method": "POST",
-        "path": "/v1/ai/capture-sessions",
+        "path": "/v1/encounters/8bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb/ai-scribe/sessions",
         "requestBody": {
-          "encounterId": "8bbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
-          "patientId": "88888888-8888-4888-8888-888888888888",
-          "providerMode": "simulator"
+          "captureSurface": "mobile",
+          "requireRawAudioRetention": false
         },
         "routeFamily": "ai-consent-block"
       },
       {
         "actorKey": "assistant",
-        "expectedBodyIncludes": ["transcriptSegment", "seg-cp8-002"],
-        "expectedBodyMustNotInclude": ["audioPayload", "secret"],
-        "expectedStatus": 202,
+        "expectedBodyIncludes": ["segment", "sourceAnchor", "textDigest"],
+        "expectedBodyMustNotInclude": ["audioPayload", "secret", "On examination"],
+        "expectedStatus": 201,
         "key": "append-source-anchored-transcript-segment",
         "liveImplemented": false,
         "method": "POST",
-        "path": "/v1/ai/capture-sessions/{captureSessionId}/transcript-segments",
+        "path": "/v1/ai-scribe/sessions/{aiScribeSessionId}/transcript-segments",
         "requestBody": {
-          "segment": {
-            "id": "seg-cp8-002",
-            "speaker": "doctor",
-            "text": "On examination, tooth 16 has occlusal caries. No swelling is seen today."
-          }
+          "speakerRole": "doctor",
+          "startsAtMs": 4400,
+          "endsAtMs": 9200,
+          "text": "On examination, tooth 16 has occlusal caries. No swelling is seen today."
         },
         "routeFamily": "ai-transcript-segment"
       },
       {
         "actorKey": "doctor",
-        "expectedBodyIncludes": ["clinicalNoteDraft", "sourceAnchors", "warnings"],
-        "expectedBodyMustNotInclude": ["signedAt", "appliedToRecord"],
+        "expectedBodyIncludes": ["draftOutputs", "actionProposals", "warnings"],
+        "expectedBodyMustNotInclude": ["signedAt", "appliedToRecord", "appliedToChart"],
         "expectedStatus": 201,
-        "key": "create-anchored-clinical-note-draft",
+        "key": "generate-anchored-review-only-drafts",
         "liveImplemented": false,
         "method": "POST",
-        "path": "/v1/encounters/89999999-9999-4999-8999-999999999999/ai/clinical-note-drafts",
+        "path": "/v1/ai-scribe/sessions/{aiScribeSessionId}/generate-drafts",
         "requestBody": {
-          "transcriptId": "8eeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+          "sourceAnchorIds": ["{transcriptSourceAnchorId}"]
         },
-        "routeFamily": "ai-clinical-note-draft"
+        "routeFamily": "ai-draft-generation"
       },
       {
         "actorKey": "assistant",
-        "expectedBodyIncludes": ["dentalChartPatch", "sourceAnchors", "warnings"],
-        "expectedBodyMustNotInclude": ["chartUpdatedAt", "appliedToChart"],
+        "expectedBodyIncludes": ["sourceAnchor", "external_document_parser_not_enabled"],
+        "expectedBodyMustNotInclude": ["draftOutputs", "appliedToChart"],
         "expectedStatus": 201,
-        "key": "create-anchored-dental-chart-patch",
+        "key": "record-unsupported-source-anchor",
         "liveImplemented": false,
         "method": "POST",
-        "path": "/v1/encounters/89999999-9999-4999-8999-999999999999/ai/dental-chart-patches",
+        "path": "/v1/ai-scribe/sessions/{aiScribeSessionId}/source-anchors",
         "requestBody": {
-          "transcriptId": "8eeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+          "anchorType": "external_document",
+          "sourceRecordType": "legacy_pdf",
+          "sourceRecordId": "legacy-note-1",
+          "supported": false,
+          "unsupportedReason": "external_document_parser_not_enabled"
         },
-        "routeFamily": "ai-dental-chart-patch"
+        "routeFamily": "ai-source-anchor"
       },
       {
         "actorKey": "doctor",
@@ -654,8 +654,10 @@
         "key": "reject-unsupported-output-retained-not-applied",
         "liveImplemented": false,
         "method": "POST",
-        "path": "/v1/ai/outputs/94444444-4444-4444-8444-444444444444/review-decisions",
+        "path": "/v1/ai-scribe/sessions/{aiScribeSessionId}/review-decisions",
         "requestBody": {
+          "targetType": "draft_output",
+          "targetId": "94444444-4444-4444-8444-444444444444",
           "decision": "reject",
           "reason": "Unsupported diagnosis is not source anchored."
         },
@@ -663,49 +665,63 @@
       },
       {
         "actorKey": "assistant",
-        "expectedBodyIncludes": ["doctor_required"],
-        "expectedBodyMustNotInclude": ["appliedToRecord", "signedAt"],
-        "expectedStatus": 403,
-        "key": "assistant-cannot-apply-clinical-note-output",
+        "expectedBodyIncludes": ["review_only"],
+        "expectedBodyMustNotInclude": ["appliedToRecord", "signedAt", "chartUpdatedAt"],
+        "expectedStatus": 200,
+        "key": "assistant-review-remains-review-only",
         "liveImplemented": false,
         "method": "POST",
-        "path": "/v1/ai/outputs/91111111-1111-4111-8111-111111111111/review-decisions",
+        "path": "/v1/ai-scribe/sessions/{aiScribeSessionId}/review-decisions",
         "requestBody": {
-          "decision": "approve_and_apply"
+          "targetType": "draft_output",
+          "targetId": "92222222-2222-4222-8222-222222222222",
+          "decision": "approve",
+          "reason": "Assistant reviewed chart patch for doctor review only."
         },
         "routeFamily": "ai-review-boundary"
       },
       {
         "actorKey": "doctor",
-        "expectedBodyIncludes": ["clinicalNoteDraft", "sourceAnchors", "warnings", "draft_not_applied"],
-        "expectedBodyMustNotInclude": ["audioPayload", "secret", "objectKey"],
+        "expectedBodyIncludes": ["aiScribeSession", "sourceAnchors", "draftOutputs", "actionProposals"],
+        "expectedBodyMustNotInclude": ["audioPayload", "secret", "objectKey", "On examination"],
         "expectedStatus": 200,
-        "key": "read-ai-output-with-audit-provenance",
+        "key": "read-ai-session-with-audit-provenance",
         "liveImplemented": false,
         "method": "GET",
-        "path": "/v1/ai/outputs/91111111-1111-4111-8111-111111111111",
-        "routeFamily": "ai-output-read"
+        "path": "/v1/ai-scribe/sessions/{aiScribeSessionId}",
+        "routeFamily": "ai-session-read"
+      },
+      {
+        "actorKey": "doctor",
+        "expectedBodyIncludes": ["retention_deleted", "deletedTranscriptSegments"],
+        "expectedBodyMustNotInclude": ["audioPayload", "secret", "On examination"],
+        "expectedStatus": 200,
+        "key": "retention-delete-removes-transcript-payloads",
+        "liveImplemented": false,
+        "method": "POST",
+        "path": "/v1/ai-scribe/sessions/{aiScribeSessionId}/retention-delete",
+        "routeFamily": "ai-retention-delete"
       }
     ]
   },
   "browserSmokeChecklist": {
-    "routeCandidates": ["/surface/ai-review", "/surface/mobile-capture"],
+    "routeCandidates": ["/surface/ai-review", "/surface/note-drafts", "/surface/chart-drafts", "/surface/action-proposals"],
     "requiredSelectors": [
       "cp8-ai-review-workspace",
       "cp8-fixture-alert",
-      "cp8-consent-status",
-      "cp8-capture-disabled",
+      "cp8-review-readiness",
       "cp8-source-anchors",
-      "cp8-ai-warnings",
-      "cp8-reject-output",
-      "cp8-review-decision-status",
-      "cp8-mobile-capture-workspace"
+      "cp8-warning-list",
+      "cp8-reject-draft",
+      "cp8-selected-status",
+      "cp8-dental-chart-draft",
+      "cp8-action-proposal-draft"
     ],
     "mobileViewport": {
       "height": 844,
       "noHorizontalOverflowRequired": true,
       "width": 390
     },
-    "status": "pending_review_ux_and_mobile_lanes"
+    "status": "review_ux_merged_mobile_capture_verified_in_expo"
   }
 }

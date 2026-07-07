@@ -2,12 +2,15 @@ import { expect, test } from "@playwright/test";
 
 const e2eEnabled = process.env.CLINICOS_CP8_E2E_ENABLED === "true";
 const baseURL = process.env.CLINICOS_WEB_BASE_URL ?? "http://127.0.0.1:3000";
+const devRole = process.env.NEXT_PUBLIC_CLINIC_OS_DEV_ROLE ?? "assistant";
 
 test.describe("Checkpoint 8 AI review workflow smoke", () => {
   test.skip(!e2eEnabled, "Set CLINICOS_CP8_E2E_ENABLED=true for CP8 browser smoke.");
   test.use({ baseURL });
 
   test("doctor reviews note drafts with anchors and no fake application", async ({ page }) => {
+    test.skip(devRole !== "doctor", "Run with NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=doctor.");
+
     await page.goto("/surface/note-drafts?scenario=cp8-ai-review-doctor");
 
     await expect(page.getByTestId("cp8-ai-review-workspace")).toBeVisible();
@@ -30,6 +33,8 @@ test.describe("Checkpoint 8 AI review workflow smoke", () => {
   });
 
   test("assistant sees doctor boundary and can review assistant-owned proposals", async ({ page }) => {
+    test.skip(devRole !== "assistant", "Run with NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=assistant.");
+
     await page.goto("/surface/note-drafts?scenario=cp8-ai-review-assistant");
 
     await expect(page.getByTestId("cp8-ai-review-workspace")).toBeVisible();
