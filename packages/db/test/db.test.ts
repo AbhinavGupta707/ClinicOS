@@ -36,6 +36,10 @@ const checkpoint8Migration = readFileSync(
   resolve(import.meta.dirname, "../migrations/0009_mobile_capture_ai_scribe.sql"),
   "utf8"
 );
+const checkpoint9Migration = readFileSync(
+  resolve(import.meta.dirname, "../migrations/0010_security_privacy_ops.sql"),
+  "utf8"
+);
 const checkpoint1Seed = readFileSync(
   resolve(import.meta.dirname, "../seeds/checkpoint1_identity_auth.sql"),
   "utf8"
@@ -569,4 +573,64 @@ test("checkpoint 8 grants AI scribe permissions only to clinical/admin roles", (
     assert.doesNotMatch(checkpoint8Migration, new RegExp(`\\('accountant', '${permission}'\\)`, "i"));
     assert.doesNotMatch(checkpoint8Migration, new RegExp(`\\('auditor', '${permission}'\\)`, "i"));
   }
+});
+
+test("checkpoint 9 migration includes security privacy operations tables", () => {
+  for (const table of [
+    "audit_event_reviews",
+    "data_exports",
+    "deletion_requests",
+    "retention_job_runs",
+    "retention_actions"
+  ]) {
+    assert.match(checkpoint9Migration, new RegExp(`create table if not exists ${table}`, "i"));
+  }
+
+  assert.match(checkpoint9Migration, /alter table break_glass_accesses\s+[\s\S]*access_categories/i);
+  assert.match(checkpoint9Migration, /alter table break_glass_accesses\s+[\s\S]*access_scope/i);
+  assert.match(checkpoint9Migration, /audit_events_immutable/i);
+  assert.match(checkpoint9Migration, /audit_event_reviews_immutable/i);
+});
+
+test("checkpoint 9 migration enforces RLS and tenant-clinic scope", () => {
+  for (const table of [
+    "audit_event_reviews",
+    "data_exports",
+    "deletion_requests",
+    "retention_job_runs",
+    "retention_actions",
+    "break_glass_accesses"
+  ]) {
+    assert.match(checkpoint9Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
+    assert.match(checkpoint9Migration, new RegExp(`alter table ${table} force row level security`, "i"));
+    assert.match(checkpoint9Migration, new RegExp(`${table}_tenant_clinic_isolation`, "i"));
+  }
+
+  assert.match(checkpoint9Migration, /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i);
+  assert.match(checkpoint9Migration, /foreign key \(tenant_id, patient_id\) references patients\(tenant_id, id\)/i);
+});
+
+test("checkpoint 9 grants privacy and audit review permissions conservatively", () => {
+  for (const permission of ["audit.review", "privacy.request", "retention.manage"]) {
+    assert.match(checkpoint9Migration, new RegExp(`\\('${permission}'`, "i"));
+    assert.match(checkpoint9Migration, new RegExp(`\\('owner_admin', '${permission}'\\)`, "i"));
+    assert.match(checkpoint9Migration, new RegExp(`\\('platform_admin', '${permission}'\\)`, "i"));
+  }
+
+  assert.match(checkpoint9Migration, /\('auditor', 'audit\.review'\)/i);
+  assert.doesNotMatch(checkpoint9Migration, /\('auditor', 'retention\.manage'\)/i);
+  assert.doesNotMatch(checkpoint9Migration, /\('accountant', 'patient\.export'\)/i);
+  assert.doesNotMatch(checkpoint9Migration, /\('doctor', 'retention\.manage'\)/i);
+});
+
+test("checkpoint 9 migration hardens export, retention, and break-glass safety", () => {
+  assert.match(checkpoint9Migration, /data_exports_no_private_storage_payload/i);
+  assert.match(checkpoint9Migration, /rawProviderPayload\|privatePayload/i);
+  assert.match(checkpoint9Migration, /protectedClinicalRecords'\s*=\s*'not_deleted'/i);
+  assert.match(checkpoint9Migration, /protectedAuditRecords'\s*=\s*'not_deleted'/i);
+  assert.match(checkpoint9Migration, /protected_clinical_record_skipped/i);
+  assert.match(checkpoint9Migration, /protected_audit_record_skipped/i);
+  assert.match(checkpoint9Migration, /break_glass_accesses_expiry_window_check/i);
+  assert.match(checkpoint9Migration, /interval '8 hours'/i);
+  assert.match(checkpoint9Migration, /break_glass_accesses_review_state_check/i);
 });

@@ -147,6 +147,41 @@ test("CP8 AI scribe audit classifications require patient-linked PHI evidence", 
   );
 });
 
+test("CP9 privacy audit classifications cover export deletion retention review and break-glass", () => {
+  for (const action of [
+    "patient.record.export_requested",
+    "patient.record.exported",
+    "patient.record.export_failed",
+    "deletion.request.created",
+    "deletion.request.reviewed",
+    "break_glass.requested",
+    "break_glass.approved",
+    "break_glass.denied",
+    "break_glass.revoked",
+    "break_glass.expired",
+    "break_glass.access_used"
+  ] as const) {
+    const classification = classifyAuditAction(action);
+    assert.equal(classification.phiInvolved, true, `${action} should involve PHI/privacy evidence`);
+    assert.equal(classification.requiresPatientId, true, `${action} should require patientId`);
+  }
+
+  assert.equal(classifyAuditAction("audit_event.reviewed").requiresPatientId, false);
+  assert.equal(classifyAuditAction("audit_event.reviewed").category, "privacy");
+  assert.equal(classifyAuditAction("retention.job.completed").requiresPatientId, false);
+  assert.equal(classifyAuditAction("retention.job.completed").riskLevel, "critical");
+  assert.throws(
+    () =>
+      createAuditEvent({
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000101",
+        actor: { type: "user", id: "10000000-0000-4000-8000-000000001001" },
+        action: "patient.record.exported"
+      }),
+    /requires patientId/
+  );
+});
+
 test("CP6 continuity audit classifications separate patient-linked recalls from clinic SOPs", () => {
   for (const action of ["recall.due", "recall.sent", "recall.action_recorded", "recall.completed"] as const) {
     const classification = classifyAuditAction(action);
@@ -370,4 +405,22 @@ test("PHI redaction covers media object keys, filenames, and signed URLs", () =>
   assert.equal(redacted.media.objectKey, "[REDACTED]");
   assert.equal(redacted.media.signedUrl, "[REDACTED]");
   assert.equal(redacted.media.dicomMetadata, "[REDACTED]");
+});
+
+test("PHI redaction covers CP9 export payloads and private provider storage references", () => {
+  const redacted = redactPhi({
+    privacy: {
+      exportPayload: { patientName: "Rhea Synthetic", clinicalNote: "Sensitive note" },
+      rawPayload: { providerSecret: "not-for-logs", patientPhone: "+91 98765 43210" },
+      privatePayload: "raw webhook body",
+      storagePath: "s3://clinic-os/private/patients/rhea/file.pdf",
+      bucketName: "clinic-os-prod-private"
+    }
+  });
+
+  assert.equal(redacted.privacy.exportPayload, "[REDACTED]");
+  assert.equal(redacted.privacy.rawPayload, "[REDACTED]");
+  assert.equal(redacted.privacy.privatePayload, "[REDACTED]");
+  assert.equal(redacted.privacy.storagePath, "[REDACTED]");
+  assert.equal(redacted.privacy.bucketName, "[REDACTED]");
 });

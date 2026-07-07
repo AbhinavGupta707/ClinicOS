@@ -56,6 +56,18 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "patient.record.export_requested": {
+    category: "privacy",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "patient.record.export_failed": {
+    category: "privacy",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
   "patient.timeline.viewed": {
     category: "phi_access",
     riskLevel: "medium",
@@ -201,6 +213,30 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     requiresPatientId: true
   },
   "break_glass.approved": {
+    category: "security",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "break_glass.denied": {
+    category: "security",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "break_glass.revoked": {
+    category: "security",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "break_glass.expired": {
+    category: "security",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "break_glass.access_used": {
     category: "security",
     riskLevel: "critical",
     phiInvolved: true,
@@ -457,6 +493,30 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     riskLevel: "critical",
     phiInvolved: true,
     requiresPatientId: true
+  },
+  "audit_event.reviewed": {
+    category: "privacy",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "deletion.request.created": {
+    category: "privacy",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "deletion.request.reviewed": {
+    category: "privacy",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "retention.job.completed": {
+    category: "privacy",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: false
   },
   "owner_dashboard.viewed": {
     category: "administration",

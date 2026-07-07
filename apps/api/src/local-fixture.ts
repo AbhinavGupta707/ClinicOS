@@ -6,9 +6,14 @@ import {
   type AppointmentSearchFilter,
   type AmendClinicalNoteInput,
   type AmendClinicalNoteResult,
+  type ActiveBreakGlassAccessFilter,
+  type AuditEventSearchFilter,
   type ClinicOperationsRepository,
   type AiRetentionDeletionResult,
   type CreateAppointmentInput,
+  type CreateAuditReviewInput,
+  type CreateBreakGlassAccessInput,
+  type CreateDeletionRequestInput,
   type CreateAiActionProposalInput,
   type CreateAiDraftOutputInput,
   type CreateAiJobInput,
@@ -40,12 +45,14 @@ import {
   type CompleteMediaUploadInput,
   type CreateCorrectiveActionInput,
   type DashboardDataSet,
+  type DeletionRequestSearchFilter,
   type DentalFindingMutationResult,
   type GenerateDueContinuityInput,
   type GenerateDueContinuityResult,
   type GenerateDueSopRunsInput,
   type GenerateDueSopRunsResult,
   type IntegrationDeadLetterSearchFilter,
+  type BreakGlassAccessSearchFilter,
   type CreateInventoryCategoryInput,
   type CreateInventoryCheckRunInput,
   type CreateInventoryCheckTemplateInput,
@@ -67,15 +74,21 @@ import {
   type OwnerDashboardProjectionData,
   type OutboxEventInput,
   type PatientSearchFilter,
+  type PatientRecordExportInput,
+  type PatientRecordExportSearchFilter,
   type RecallSearchFilter,
   type RepositoryScope,
   type RecordPaymentTransactionInput,
   type RecordAiReviewDecisionInput,
   type RecordRecallActionInput,
   type ReplayIntegrationDeadLetterInput,
+  type RetentionRunResult,
+  type ReviewBreakGlassAccessInput,
+  type ReviewDeletionRequestInput,
   type RevokeConsentInput,
   type ResolveMigrationRowInput,
   type RollbackMigrationBatchInput,
+  type RunRetentionJobInput,
   type SaveClinicalNoteDraftInput,
   type SignClinicalNoteResult,
   type SopRunSearchFilter,
@@ -129,6 +142,8 @@ import {
   type AppointmentRecord,
   type AppointmentStatus,
   type AppointmentTypeRecord,
+  type AuditEventForReviewRecord,
+  type AuditReviewRecord,
   type AiActionProposalRecord,
   type AiDraftOutputRecord,
   type AiJobRecord,
@@ -138,11 +153,13 @@ import {
   type AiSourceAnchorRecord,
   type AiTranscriptSegmentRecord,
   type AttributionTouchRecord,
+  type BreakGlassAccessRecord,
   type ChairOrRoomRecord,
   type ClinicalNoteVersionRecord,
   type ConsentRecord,
   correctiveActionEffectiveStatus,
   type CorrectiveActionRecord,
+  type DeletionRequestRecord,
   type DentalChartRecord,
   type DentalChartSnapshotRecord,
   type DentalFindingHistoryRecord,
@@ -186,6 +203,9 @@ import {
   type PaymentRequestRecord,
   type PaymentTransactionRecord,
   type PatientRecord,
+  type PatientRecordExportRecord,
+  type PatientRecordExportSection,
+  type PatientRecordExportSnapshot,
   type PatientInstructionRecord,
   type PatientTimelineItem,
   type PricebookProcedureRecord,
@@ -199,6 +219,8 @@ import {
   type RecallRuleRecord,
   type ReceiptPaymentAllocation,
   type ReceiptRecord,
+  type RetentionActionRecord,
+  type RetentionRunRecord,
   type SopRunDetail,
   type SopRunItemRecord,
   type SopRunItemStatus,
@@ -952,6 +974,34 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly paymentRequests: PaymentRequestRecord[] = [];
   readonly paymentTransactions: PaymentTransactionRecord[] = [];
   readonly receipts: ReceiptRecord[] = [];
+  readonly auditEvents: AuditEventForReviewRecord[] = [
+    {
+      id: uuid(),
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      actorType: "user",
+      actorId: CHECKPOINT1_SEED_IDS.users.assistant,
+      action: "patient.record.viewed",
+      category: "phi_access",
+      riskLevel: "medium",
+      phiInvolved: true,
+      resourceType: "patient",
+      resourceId: CHECKPOINT1_SEED_IDS.patients.rheaSynthetic,
+      patientId: CHECKPOINT1_SEED_IDS.patients.rheaSynthetic,
+      metadata: { workflow: "local_cp9_audit_review_fixture", patientName: "Rhea Synthetic" },
+      ipAddress: null,
+      userAgent: "local-fixture",
+      correlationId: "cp9-audit-fixture",
+      occurredAt: "2026-07-07T08:30:00.000Z",
+      review: null
+    }
+  ];
+  readonly auditReviews: AuditReviewRecord[] = [];
+  readonly patientRecordExports: PatientRecordExportRecord[] = [];
+  readonly deletionRequests: DeletionRequestRecord[] = [];
+  readonly retentionRuns: RetentionRunRecord[] = [];
+  readonly retentionActions: RetentionActionRecord[] = [];
+  readonly breakGlassAccesses: BreakGlassAccessRecord[] = [];
 
   async listPatients(
     scope: RepositoryScope,
@@ -1054,6 +1104,508 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     });
 
     return patient;
+  }
+
+  async listAuditEvents(
+    scope: RepositoryScope,
+    filter: AuditEventSearchFilter = {}
+  ): Promise<AuditEventForReviewRecord[]> {
+    return this.auditEvents
+      .filter((event) => event.tenantId === scope.tenantId)
+      .filter((event) => !event.clinicId || event.clinicId === scope.clinicId)
+      .filter((event) => !filter.patientId || event.patientId === filter.patientId)
+      .filter((event) => !filter.action || event.action === filter.action)
+      .filter((event) => !filter.category || event.category === filter.category)
+      .filter((event) => !filter.riskLevel || event.riskLevel === filter.riskLevel)
+      .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt))
+      .slice(0, filter.limit ?? 50)
+      .map((event) => ({
+        ...event,
+        review:
+          this.auditReviews.find(
+            (review) => matchesScope(review, scope) && review.auditEventId === event.id
+          ) ?? null
+      }));
+  }
+
+  async createAuditReview(
+    scope: RepositoryScope,
+    auditEventId: UUID,
+    input: CreateAuditReviewInput
+  ): Promise<AuditReviewRecord | null> {
+    const event = (await this.listAuditEvents(scope, { limit: 100 })).find(
+      (candidate) => candidate.id === auditEventId
+    );
+    if (!event) return null;
+
+    const now = new Date().toISOString();
+    const review: AuditReviewRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      auditEventId,
+      reviewStatus: input.reviewStatus,
+      disposition: input.disposition,
+      notes: input.notes ?? null,
+      reviewedByUserId: scope.actorUserId,
+      reviewedAt: now,
+      createdAt: now
+    };
+    this.auditReviews.push(review);
+    return review;
+  }
+
+  async buildPatientRecordExportSnapshot(
+    scope: RepositoryScope,
+    patientId: UUID,
+    sections: PatientRecordExportSection[]
+  ): Promise<PatientRecordExportSnapshot | null> {
+    const patient = await this.findPatientById(scope, patientId);
+    if (!patient) return null;
+
+    const sectionSet = new Set(sections);
+    const patientEncounters = this.encounters.filter(
+      (encounter) => matchesScope(encounter, scope) && encounter.patientId === patientId
+    );
+    const encounterIds = new Set(patientEncounters.map((encounter) => encounter.id));
+    const patientAiSessions = this.aiSessions.filter(
+      (session) => matchesScope(session, scope) && session.patientId === patientId
+    );
+    const aiSessionIds = new Set(patientAiSessions.map((session) => session.id));
+    const mediaAssets = this.mediaAssets
+      .filter((asset) => matchesScope(asset, scope) && asset.patientId === patientId)
+      .map((asset) => {
+        const {
+          objectKey: _objectKey,
+          storageProvider: _storageProvider,
+          storageRegion: _storageRegion,
+          ...publicAsset
+        } = asset;
+        return publicAsset;
+      });
+    const chart =
+      this.dentalCharts.find((candidate) => matchesScope(candidate, scope) && candidate.patientId === patientId) ??
+      null;
+    const findings = this.dentalFindings.filter(
+      (finding) => matchesScope(finding, scope) && finding.patientId === patientId
+    );
+    const findingIds = new Set(findings.map((finding) => finding.id));
+    const invoices = this.invoices.filter(
+      (invoice) => matchesScope(invoice, scope) && invoice.patientId === patientId
+    );
+    const invoiceIds = new Set(invoices.map((invoice) => invoice.id));
+
+    return {
+      manifest: {
+        schemaVersion: "cp9.patient_record_export.v1",
+        generatedAt: new Date().toISOString(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        patientId,
+        sections,
+        format: "json",
+        safety: {
+          rawStorageReferences: "excluded",
+          rawProviderPayloads: "excluded",
+          auditMetadata: "phi_redacted",
+          tenantScoped: true
+        }
+      },
+      patient: sectionSet.has("demographics") ? patient : null,
+      consents: sectionSet.has("consents")
+        ? this.consents.filter((consent) => matchesScope(consent, scope) && consent.patientId === patientId)
+        : [],
+      timeline: sectionSet.has("timeline")
+        ? await this.findPatientTimeline(scope, patientId)
+        : [],
+      intakeSubmissions: sectionSet.has("intake")
+        ? this.intakeFormSubmissions.filter(
+            (submission) => matchesScope(submission, scope) && submission.patientId === patientId
+          )
+        : [],
+      encounters: sectionSet.has("encounters") ? patientEncounters : [],
+      clinicalNotes: sectionSet.has("clinical_notes")
+        ? this.clinicalNoteVersions.filter(
+            (note) => matchesScope(note, scope) && encounterIds.has(note.encounterId)
+          )
+        : [],
+      prescriptions: sectionSet.has("prescriptions")
+        ? this.prescriptions.filter(
+            (prescription) =>
+              matchesScope(prescription, scope) && prescription.patientId === patientId
+          )
+        : [],
+      instructions: sectionSet.has("instructions")
+        ? this.patientInstructions.filter(
+            (instruction) =>
+              matchesScope(instruction, scope) && instruction.patientId === patientId
+          )
+        : [],
+      dentalChart: {
+        chart: sectionSet.has("dental_chart") ? chart : null,
+        findings: sectionSet.has("dental_chart") ? findings : [],
+        findingHistory: sectionSet.has("dental_chart")
+          ? this.dentalFindingHistory.filter(
+              (entry) => matchesScope(entry, scope) && findingIds.has(entry.findingId)
+            )
+          : [],
+        snapshots: sectionSet.has("dental_chart")
+          ? this.dentalChartSnapshots.filter(
+              (snapshot) => matchesScope(snapshot, scope) && snapshot.patientId === patientId
+            )
+          : []
+      },
+      mediaAssets: sectionSet.has("media") ? mediaAssets : [],
+      billing: {
+        invoices: sectionSet.has("billing") ? invoices : [],
+        paymentRequests: sectionSet.has("billing")
+          ? this.paymentRequests.filter(
+              (request) => matchesScope(request, scope) && invoiceIds.has(request.invoiceId)
+            )
+          : [],
+        paymentTransactions: sectionSet.has("billing")
+          ? this.paymentTransactions.filter(
+              (transaction) =>
+                matchesScope(transaction, scope) && invoiceIds.has(transaction.invoiceId)
+            )
+          : [],
+        receipts: sectionSet.has("billing")
+          ? this.receipts.filter((receipt) => matchesScope(receipt, scope) && invoiceIds.has(receipt.invoiceId))
+          : []
+      },
+      aiEvidence: {
+        sessions: sectionSet.has("ai_evidence") ? patientAiSessions : [],
+        sourceAnchors: sectionSet.has("ai_evidence")
+          ? this.aiSourceAnchors.filter((anchor) => matchesScope(anchor, scope) && aiSessionIds.has(anchor.sessionId))
+          : [],
+        draftOutputs: sectionSet.has("ai_evidence")
+          ? this.aiDraftOutputs.filter((output) => matchesScope(output, scope) && aiSessionIds.has(output.sessionId))
+          : [],
+        actionProposals: sectionSet.has("ai_evidence")
+          ? this.aiActionProposals.filter(
+              (proposal) => matchesScope(proposal, scope) && aiSessionIds.has(proposal.sessionId)
+            )
+          : [],
+        reviewDecisions: sectionSet.has("ai_evidence")
+          ? this.aiReviewDecisions.filter(
+              (decision) => matchesScope(decision, scope) && aiSessionIds.has(decision.sessionId)
+            )
+          : []
+      },
+      privacyAuditTrail: sectionSet.has("privacy_audit")
+        ? await this.listAuditEvents(scope, { patientId, limit: 100 })
+        : []
+    };
+  }
+
+  async createPatientRecordExport(
+    scope: RepositoryScope,
+    input: PatientRecordExportInput
+  ): Promise<PatientRecordExportRecord> {
+    const now = new Date().toISOString();
+    const record: PatientRecordExportRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: input.patientId,
+      status: "completed",
+      format: input.format,
+      sections: input.sections,
+      requestedByUserId: scope.actorUserId,
+      completedByUserId: scope.actorUserId,
+      requestedAt: now,
+      completedAt: now,
+      manifest: input.snapshot.manifest,
+      payload: input.snapshot,
+      payloadDigest: input.payloadDigest,
+      failureReason: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.patientRecordExports.push(record);
+    return record;
+  }
+
+  async listPatientRecordExports(
+    scope: RepositoryScope,
+    filter: PatientRecordExportSearchFilter = {}
+  ): Promise<PatientRecordExportRecord[]> {
+    return this.patientRecordExports
+      .filter((record) => matchesScope(record, scope))
+      .filter((record) => !filter.patientId || record.patientId === filter.patientId)
+      .filter((record) => !filter.status || record.status === filter.status)
+      .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt))
+      .slice(0, filter.limit ?? 25);
+  }
+
+  async createDeletionRequest(
+    scope: RepositoryScope,
+    input: CreateDeletionRequestInput
+  ): Promise<DeletionRequestRecord | null> {
+    const patient = await this.findPatientById(scope, input.patientId);
+    if (!patient) return null;
+    const now = new Date().toISOString();
+    const request: DeletionRequestRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: input.patientId,
+      requestType: input.requestType,
+      status: "requested",
+      reason: input.reason,
+      requestedByUserId: scope.actorUserId,
+      requestedAt: now,
+      reviewedByUserId: null,
+      reviewedAt: null,
+      reviewReason: null,
+      scope: {
+        requestedCategories: input.requestedCategories,
+        protectedClinicalRecords: "not_deleted",
+        protectedAuditRecords: "not_deleted"
+      },
+      createdAt: now,
+      updatedAt: now
+    };
+    this.deletionRequests.push(request);
+    return request;
+  }
+
+  async listDeletionRequests(
+    scope: RepositoryScope,
+    filter: DeletionRequestSearchFilter = {}
+  ): Promise<DeletionRequestRecord[]> {
+    return this.deletionRequests
+      .filter((request) => matchesScope(request, scope))
+      .filter((request) => !filter.patientId || request.patientId === filter.patientId)
+      .filter((request) => !filter.status || request.status === filter.status)
+      .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt))
+      .slice(0, filter.limit ?? 50);
+  }
+
+  async findDeletionRequestById(
+    scope: RepositoryScope,
+    requestId: UUID
+  ): Promise<DeletionRequestRecord | null> {
+    return (
+      this.deletionRequests.find(
+        (request) => matchesScope(request, scope) && request.id === requestId
+      ) ?? null
+    );
+  }
+
+  async reviewDeletionRequest(
+    scope: RepositoryScope,
+    requestId: UUID,
+    input: ReviewDeletionRequestInput
+  ): Promise<DeletionRequestRecord | null> {
+    const request = this.deletionRequests.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === requestId
+    );
+    if (!request) return null;
+    const now = new Date().toISOString();
+    request.status =
+      input.decision === "approve"
+        ? "approved_pending_retention_job"
+        : input.decision === "cancel"
+          ? "cancelled"
+          : "rejected";
+    request.reviewedByUserId = scope.actorUserId;
+    request.reviewedAt = now;
+    request.reviewReason = input.reviewReason;
+    request.updatedAt = now;
+    return request;
+  }
+
+  async runRetentionJob(
+    scope: RepositoryScope,
+    input: RunRetentionJobInput
+  ): Promise<RetentionRunResult> {
+    const asOf = new Date(input.asOf);
+    const cutoff = new Date(asOf.getTime() - input.transcriptDeleteAfterDays * 24 * 60 * 60 * 1000);
+    const now = new Date().toISOString();
+    const runId = uuid();
+    const actions: RetentionActionRecord[] = [];
+    const eligibleSessions = this.aiSessions.filter((session) => {
+      if (!matchesScope(session, scope)) return false;
+      if (input.patientId && session.patientId !== input.patientId) return false;
+      if (session.status === "retention_deleted") return false;
+      return new Date(session.startedAt).getTime() <= cutoff.getTime();
+    });
+
+    for (const session of eligibleSessions) {
+      const segmentCount = this.aiTranscriptSegments.filter(
+        (segment) => matchesScope(segment, scope) && segment.sessionId === session.id
+      ).length;
+      const status = input.mode === "execute" ? "completed" : "planned";
+      actions.push({
+        id: uuid(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        runId,
+        patientId: session.patientId,
+        actionKind: "ai_transcript_delete",
+        status,
+        targetType: "ai_session",
+        targetId: session.id,
+        protectedRecord: false,
+        evidence: {
+          transcriptSegmentCount: segmentCount,
+          policyCode: input.policyCode,
+          mode: input.mode
+        },
+        completedAt: input.mode === "execute" ? now : null,
+        createdAt: now
+      });
+
+      if (input.mode === "execute") {
+        const remainingSegments = this.aiTranscriptSegments.filter((segment) => segment.sessionId !== session.id);
+        this.aiTranscriptSegments.splice(0, this.aiTranscriptSegments.length, ...remainingSegments);
+        session.status = "retention_deleted";
+        session.rawAudioDeletedAt = now;
+        session.transcriptDeletedAt = now;
+      }
+    }
+
+    for (const protectedTarget of ["clinical_records", "audit_events"] as const) {
+      actions.push({
+        id: uuid(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        runId,
+        patientId: input.patientId ?? null,
+        actionKind:
+          protectedTarget === "clinical_records"
+            ? "protected_clinical_record_skipped"
+            : "protected_audit_record_skipped",
+        status: "skipped",
+        targetType: protectedTarget,
+        targetId: input.patientId ?? scope.clinicId,
+        protectedRecord: true,
+        evidence: {
+          reason: "Protected clinical and audit records are never deleted by CP9 retention jobs.",
+          mode: input.mode,
+          deletionRequestId: input.deletionRequestId ?? null
+        },
+        completedAt: null,
+        createdAt: now
+      });
+    }
+
+    const run: RetentionRunRecord = {
+      id: runId,
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      mode: input.mode,
+      status: "completed",
+      policyCode: input.policyCode,
+      asOf: input.asOf,
+      deletionRequestId: input.deletionRequestId ?? null,
+      startedByUserId: scope.actorUserId,
+      startedAt: now,
+      completedAt: now,
+      summary: {
+        eligibleTransientPayloads: eligibleSessions.length,
+        completedActions: actions.filter((action) => action.status === "completed").length,
+        protectedRecordsSkipped: actions.filter((action) => action.protectedRecord).length
+      },
+      createdAt: now
+    };
+    this.retentionRuns.push(run);
+    this.retentionActions.push(...actions);
+    if (input.mode === "execute" && input.deletionRequestId) {
+      const request = await this.findDeletionRequestById(scope, input.deletionRequestId);
+      if (request) {
+        request.status = "completed";
+        request.updatedAt = now;
+      }
+    }
+    return { run, actions };
+  }
+
+  async createBreakGlassAccessRequest(
+    scope: RepositoryScope,
+    input: CreateBreakGlassAccessInput
+  ): Promise<BreakGlassAccessRecord | null> {
+    const patient = await this.findPatientById(scope, input.patientId);
+    if (!patient) return null;
+    const now = new Date().toISOString();
+    const access: BreakGlassAccessRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      requestedByUserId: scope.actorUserId,
+      patientId: input.patientId,
+      reason: input.reason,
+      status: "requested",
+      accessCategories: input.accessCategories,
+      accessScope: {
+        patientId: input.patientId,
+        resourceTypes: input.accessCategories,
+        clinicalJustification: input.reason
+      },
+      requestedAt: now,
+      expiresAt: input.expiresAt,
+      reviewedByUserId: null,
+      reviewedAt: null,
+      reviewReason: null,
+      revokedAt: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.breakGlassAccesses.push(access);
+    return access;
+  }
+
+  async listBreakGlassAccessRequests(
+    scope: RepositoryScope,
+    filter: BreakGlassAccessSearchFilter = {}
+  ): Promise<BreakGlassAccessRecord[]> {
+    return this.breakGlassAccesses
+      .filter((access) => matchesScope(access, scope))
+      .filter((access) => !filter.patientId || access.patientId === filter.patientId)
+      .filter((access) => !filter.status || access.status === filter.status)
+      .filter((access) => !filter.requestedByUserId || access.requestedByUserId === filter.requestedByUserId)
+      .sort((left, right) => right.requestedAt.localeCompare(left.requestedAt))
+      .slice(0, filter.limit ?? 50);
+  }
+
+  async reviewBreakGlassAccessRequest(
+    scope: RepositoryScope,
+    requestId: UUID,
+    input: ReviewBreakGlassAccessInput
+  ): Promise<BreakGlassAccessRecord | null> {
+    const access = this.breakGlassAccesses.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === requestId
+    );
+    if (!access) return null;
+    const now = new Date().toISOString();
+    access.status =
+      input.decision === "approve" ? "approved" : input.decision === "revoke" ? "revoked" : "denied";
+    access.reviewedByUserId = scope.actorUserId;
+    access.reviewedAt = now;
+    access.reviewReason = input.reviewReason;
+    access.revokedAt = input.decision === "revoke" ? now : access.revokedAt;
+    access.updatedAt = now;
+    return access;
+  }
+
+  async findActiveBreakGlassAccess(
+    scope: RepositoryScope,
+    filter: ActiveBreakGlassAccessFilter
+  ): Promise<BreakGlassAccessRecord | null> {
+    const at = new Date(filter.at).getTime();
+    return (
+      this.breakGlassAccesses.find(
+        (access) =>
+          matchesScope(access, scope) &&
+          access.status === "approved" &&
+          access.revokedAt === null &&
+          access.requestedByUserId === filter.userId &&
+          access.patientId === filter.patientId &&
+          new Date(access.expiresAt).getTime() > at &&
+          (!filter.requiredCategory || access.accessCategories.includes(filter.requiredCategory))
+      ) ?? null
+    );
   }
 
   async createMigrationBatch(

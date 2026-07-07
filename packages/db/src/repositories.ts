@@ -2,6 +2,8 @@ import type {
   AppointmentConflict,
   AppointmentRecord,
   AppointmentStatus,
+  AuditEventForReviewRecord,
+  AuditReviewRecord,
   AiActionProposalRecord,
   AiDraftOutputRecord,
   AiJobRecord,
@@ -16,6 +18,8 @@ import type {
   AiConsentSnapshot,
   AppointmentTypeRecord,
   AttributionTouchRecord,
+  BreakGlassAccessCategory,
+  BreakGlassAccessRecord,
   ChairOrRoomRecord,
   ClinicalNoteContent,
   ClinicalNoteVersionRecord,
@@ -27,6 +31,9 @@ import type {
   ConsentPurpose,
   ConsentRecord,
   AcceptTreatmentPlanInput,
+  CreateAuditReviewInput,
+  CreateBreakGlassAccessInput,
+  CreateDeletionRequestInput,
   CreateInvoiceInput,
   CreatePaymentRequestInput,
   CreateProcedurePerformedInput,
@@ -35,6 +42,9 @@ import type {
   CorrectiveActionRecord,
   CorrectiveActionStatus,
   CreateTreatmentPlanInput,
+  DataExportStatus,
+  DeletionRequestRecord,
+  DeletionRequestStatus,
   DomainEventType,
   DentalChartSnapshotRecord,
   DentalChartView,
@@ -85,6 +95,9 @@ import type {
   PaymentTransactionRecord,
   MediaUploadReservationRecord,
   OwnerDashboardProjectionData,
+  PatientRecordExportRecord,
+  PatientRecordExportSection,
+  PatientRecordExportSnapshot,
   PatientRecord,
   PatientInstructionRecord,
   PatientSource,
@@ -104,7 +117,11 @@ import type {
   RecallStatus,
   ReceiptRecord,
   RecordPaymentTransactionInput,
+  RetentionRunResult,
+  ReviewBreakGlassAccessInput,
+  ReviewDeletionRequestInput,
   RoleAssignment,
+  RunRetentionJobInput,
   SopRecurrenceType,
   SopRunDetail,
   SopRunItemStatus,
@@ -163,6 +180,49 @@ export interface PatientSearchFilter {
   phone?: string | null;
   source?: PatientSource | null;
   limit?: number | null;
+}
+
+export interface AuditEventSearchFilter {
+  patientId?: UUID | null;
+  action?: string | null;
+  category?: AuditEventForReviewRecord["category"] | null;
+  riskLevel?: AuditEventForReviewRecord["riskLevel"] | null;
+  limit?: number | null;
+}
+
+export interface PatientRecordExportInput {
+  patientId: UUID;
+  sections: PatientRecordExportSection[];
+  reason: string;
+  format: "json";
+  snapshot: PatientRecordExportSnapshot;
+  payloadDigest: string;
+}
+
+export interface PatientRecordExportSearchFilter {
+  patientId?: UUID | null;
+  status?: DataExportStatus | null;
+  limit?: number | null;
+}
+
+export interface DeletionRequestSearchFilter {
+  patientId?: UUID | null;
+  status?: DeletionRequestStatus | null;
+  limit?: number | null;
+}
+
+export interface BreakGlassAccessSearchFilter {
+  patientId?: UUID | null;
+  status?: BreakGlassAccessRecord["status"] | null;
+  requestedByUserId?: UUID | null;
+  limit?: number | null;
+}
+
+export interface ActiveBreakGlassAccessFilter {
+  patientId: UUID;
+  userId: UUID;
+  requiredCategory?: BreakGlassAccessCategory | null;
+  at: string;
 }
 
 export interface CreatePatientInput {
@@ -876,6 +936,64 @@ export interface ClinicOperationsRepository {
   ): Promise<PatientRecord[]>;
   createPatient(scope: RepositoryScope, input: CreatePatientInput): Promise<PatientRecord>;
   updatePatient(scope: RepositoryScope, patientId: UUID, input: UpdatePatientInput): Promise<PatientRecord | null>;
+
+  listAuditEvents(
+    scope: RepositoryScope,
+    filter?: AuditEventSearchFilter
+  ): Promise<AuditEventForReviewRecord[]>;
+  createAuditReview(
+    scope: RepositoryScope,
+    auditEventId: UUID,
+    input: CreateAuditReviewInput
+  ): Promise<AuditReviewRecord | null>;
+  buildPatientRecordExportSnapshot(
+    scope: RepositoryScope,
+    patientId: UUID,
+    sections: PatientRecordExportSection[]
+  ): Promise<PatientRecordExportSnapshot | null>;
+  createPatientRecordExport(
+    scope: RepositoryScope,
+    input: PatientRecordExportInput
+  ): Promise<PatientRecordExportRecord>;
+  listPatientRecordExports(
+    scope: RepositoryScope,
+    filter?: PatientRecordExportSearchFilter
+  ): Promise<PatientRecordExportRecord[]>;
+  createDeletionRequest(
+    scope: RepositoryScope,
+    input: CreateDeletionRequestInput
+  ): Promise<DeletionRequestRecord | null>;
+  findDeletionRequestById(
+    scope: RepositoryScope,
+    requestId: UUID
+  ): Promise<DeletionRequestRecord | null>;
+  listDeletionRequests(
+    scope: RepositoryScope,
+    filter?: DeletionRequestSearchFilter
+  ): Promise<DeletionRequestRecord[]>;
+  reviewDeletionRequest(
+    scope: RepositoryScope,
+    requestId: UUID,
+    input: ReviewDeletionRequestInput
+  ): Promise<DeletionRequestRecord | null>;
+  runRetentionJob(scope: RepositoryScope, input: RunRetentionJobInput): Promise<RetentionRunResult>;
+  createBreakGlassAccessRequest(
+    scope: RepositoryScope,
+    input: CreateBreakGlassAccessInput
+  ): Promise<BreakGlassAccessRecord | null>;
+  listBreakGlassAccessRequests(
+    scope: RepositoryScope,
+    filter?: BreakGlassAccessSearchFilter
+  ): Promise<BreakGlassAccessRecord[]>;
+  reviewBreakGlassAccessRequest(
+    scope: RepositoryScope,
+    requestId: UUID,
+    input: ReviewBreakGlassAccessInput
+  ): Promise<BreakGlassAccessRecord | null>;
+  findActiveBreakGlassAccess(
+    scope: RepositoryScope,
+    filter: ActiveBreakGlassAccessFilter
+  ): Promise<BreakGlassAccessRecord | null>;
 
   createMigrationBatch(scope: RepositoryScope, input: CreateMigrationBatchInput): Promise<MigrationBatchDetail>;
   listMigrationBatches(

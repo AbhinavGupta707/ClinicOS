@@ -9,6 +9,9 @@ import type { ClinicOsConfig } from "@clinic-os/config";
 import type {
   ClinicOperationsRepository,
   CreateAppointmentInput,
+  CreateAuditReviewInput,
+  CreateBreakGlassAccessInput,
+  CreateDeletionRequestInput,
   CreateAiActionProposalInput,
   CreateAiDraftOutputInput,
   CreateAiSourceAnchorInput,
@@ -42,10 +45,14 @@ import type {
   CreateTreatmentPlanInput,
   GenerateDueContinuityInput,
   GenerateDueSopRunsInput,
+  PatientRecordExportInput,
   RecordRecallActionInput,
   RepositoryScope,
   ResolveMigrationRowInput,
   RecordAiReviewDecisionInput,
+  ReviewBreakGlassAccessInput,
+  ReviewDeletionRequestInput,
+  RunRetentionJobInput,
   SopRunSearchFilter,
   TaskSearchFilter,
   UpdateCorrectiveActionInput,
@@ -64,8 +71,10 @@ import {
   assertMediaMimeType,
   assertManualPaymentEvidence,
   assertPrescriptionMedicationList,
+  assertBreakGlassRequestPolicy,
   assertLeadTransition,
   assertPatientCreateMinimum,
+  assertRetentionRunPolicy,
   applyPaymentToInvoice,
   buildOwnerDashboardProjection,
   buildMorningDashboard,
@@ -77,9 +86,12 @@ import {
   isAppointmentStatus,
   isAiReviewDecision,
   isAiSourceAnchorType,
+  isAuditReviewStatus,
   isBillingCurrency,
+  isBreakGlassAccessCategory,
   isConsentCaptureMethod,
   isConsentPurpose,
+  isDeletionRequestType,
   isDentalFindingReviewStatus,
   isDentalFindingSource,
   isDentalFindingStatus,
@@ -116,8 +128,10 @@ import {
   isTaskType,
   isTreatmentPlanStatus,
   isManualPaymentMethod,
+  isRetentionJobMode,
   isValidLeadStatus,
   mediaAssetCanBeViewed,
+  normalizePatientRecordExportSections,
   isUuid,
   toPublicMediaAsset,
   toPublicMediaUploadReservation,
@@ -126,6 +140,7 @@ import {
   validatePatientImportRow,
   type AppointmentRecord,
   type AppointmentStatus,
+  type AuditEventForReviewRecord,
   type AiSessionDetail,
   type AiSessionRecord,
   type ClinicalNoteContent,
@@ -153,8 +168,10 @@ import {
   type PaymentRequestRecord,
   type PaymentRequestType,
   type PaymentTransactionRecord,
+  type PatientRecordExportRecord,
   type PatientTimelineItem as DomainPatientTimelineItem,
   type PatientInstructionRecord,
+  type PatientRecordExportSnapshot,
   type PatientSource,
   type PricebookProcedureRecord,
   type PrescriptionMedication,
@@ -184,6 +201,7 @@ import {
 } from "@clinic-os/integrations";
 import {
   createAuditEvent,
+  redactPhi,
   type AuditEventRecord,
   type KnownAuditAction
 } from "@clinic-os/security";
@@ -578,6 +596,411 @@ export async function updatePatient(
   });
 
   return ok({ patient });
+}
+
+export async function listAuditReviewEvents(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: {
+    patientId?: string | null;
+    action?: string | null;
+    category?: string | null;
+    riskLevel?: string | null;
+    limit?: string | null;
+  }
+) {
+  authorize(context, { permission: "audit.read" });
+  const auditEvents = await dependencies.repository.listAuditEvents(scopeFrom(context), {
+    patientId: filter.patientId ? uuidField(filter.patientId, "patientId") : null,
+    action: filter.action,
+    category: parseOptionalAuditCategory(filter.category),
+    riskLevel: parseOptionalAuditRiskLevel(filter.riskLevel),
+    limit: parseOptionalLimit(filter.limit, 50, 100)
+  });
+
+  return ok({ auditEvents: auditEvents.map(publicAuditEventForReview) });
+}
+
+export async function reviewAuditEvent(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  auditEventId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "audit.review" });
+  const input = parseAuditReviewInput(body);
+  const review = await dependencies.repository.createAuditReview(scopeFrom(context), auditEventId, input);
+  if (!review) throw notFound("Audit event not found.", { audit_event_id: auditEventId });
+
+  await audit(context, dependencies, "audit_event.reviewed", {
+    resourceType: "audit_event",
+    resourceId: auditEventId,
+    metadata: {
+      reviewStatus: review.reviewStatus,
+      disposition: review.disposition
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "audit_event.reviewed",
+    aggregateType: "audit_event",
+    aggregateId: auditEventId,
+    payload: {
+      auditEventId,
+      reviewId: review.id,
+      reviewStatus: review.reviewStatus
+    }
+  });
+
+  return created({ review });
+}
+
+export async function createPatientRecordExport(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "patient.export" });
+  const input = parsePatientRecordExportInput(patientId, body);
+  const snapshot = await dependencies.repository.buildPatientRecordExportSnapshot(
+    scopeFrom(context),
+    patientId,
+    input.sections
+  );
+  if (!snapshot) throw notFound("Patient not found.", { patient_id: patientId });
+
+  const safeSnapshot = sanitizePatientRecordExportSnapshot(snapshot);
+  const payloadDigest = createHash("sha256").update(JSON.stringify(safeSnapshot)).digest("hex");
+  const exportRecord = await dependencies.repository.createPatientRecordExport(scopeFrom(context), {
+    ...input,
+    snapshot: safeSnapshot,
+    payloadDigest
+  });
+
+  await audit(context, dependencies, "patient.record.export_requested", {
+    patientId,
+    resourceType: "data_export",
+    resourceId: exportRecord.id,
+    metadata: {
+      reason: input.reason,
+      sections: input.sections,
+      format: input.format
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "patient.record_export.requested",
+    aggregateType: "data_export",
+    aggregateId: exportRecord.id,
+    patientId,
+    payload: {
+      exportId: exportRecord.id,
+      patientId,
+      sections: input.sections,
+      format: input.format
+    }
+  });
+  await audit(context, dependencies, "patient.record.exported", {
+    patientId,
+    resourceType: "data_export",
+    resourceId: exportRecord.id,
+    metadata: {
+      sections: input.sections,
+      payloadDigest,
+      safety: safeSnapshot.manifest.safety
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "patient.record_export.completed",
+    aggregateType: "data_export",
+    aggregateId: exportRecord.id,
+    patientId,
+    payload: {
+      exportId: exportRecord.id,
+      patientId,
+      sections: input.sections,
+      payloadDigest,
+      safety: safeSnapshot.manifest.safety
+    }
+  });
+
+  return created({ export: publicPatientRecordExport(exportRecord, { includePayload: true }) });
+}
+
+export async function listPatientRecordExports(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  filter: { status?: string | null; limit?: string | null }
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.export" });
+  const patient = await dependencies.repository.findPatientById(scopeFrom(context), patientId);
+  if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
+
+  const exports = await dependencies.repository.listPatientRecordExports(scopeFrom(context), {
+    patientId,
+    status: parseOptionalDataExportStatus(filter.status),
+    limit: parseOptionalLimit(filter.limit, 25, 100)
+  });
+  return ok({ exports: exports.map((record) => publicPatientRecordExport(record)) });
+}
+
+export async function createDeletionRequest(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "privacy.request" });
+  const input = parseCreateDeletionRequest(body);
+  const request = await dependencies.repository.createDeletionRequest(scopeFrom(context), input);
+  if (!request) throw notFound("Patient not found.", { patient_id: input.patientId });
+
+  await audit(context, dependencies, "deletion.request.created", {
+    patientId: request.patientId,
+    resourceType: "deletion_request",
+    resourceId: request.id,
+    metadata: {
+      requestType: request.requestType,
+      requestedCategories: request.scope.requestedCategories,
+      protectedClinicalRecords: request.scope.protectedClinicalRecords,
+      protectedAuditRecords: request.scope.protectedAuditRecords
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "deletion_request.created",
+    aggregateType: "deletion_request",
+    aggregateId: request.id,
+    patientId: request.patientId,
+    payload: {
+      deletionRequestId: request.id,
+      patientId: request.patientId,
+      requestType: request.requestType,
+      status: request.status
+    }
+  });
+
+  return created({ deletionRequest: request });
+}
+
+export async function listDeletionRequests(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { patientId?: string | null; status?: string | null; limit?: string | null }
+) {
+  authorize(context, { permission: "retention.manage" });
+  const requests = await dependencies.repository.listDeletionRequests(scopeFrom(context), {
+    patientId: filter.patientId ? uuidField(filter.patientId, "patientId") : null,
+    status: parseOptionalDeletionRequestStatus(filter.status),
+    limit: parseOptionalLimit(filter.limit, 50, 100)
+  });
+  return ok({ deletionRequests: requests });
+}
+
+export async function reviewDeletionRequest(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  requestId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "retention.manage" });
+  const input = parseReviewDeletionRequest(body);
+  const request = await dependencies.repository.reviewDeletionRequest(scopeFrom(context), requestId, input);
+  if (!request) throw notFound("Deletion request not found.", { deletion_request_id: requestId });
+
+  await audit(context, dependencies, "deletion.request.reviewed", {
+    patientId: request.patientId,
+    resourceType: "deletion_request",
+    resourceId: request.id,
+    metadata: {
+      decision: input.decision,
+      status: request.status,
+      protectedClinicalRecords: request.scope.protectedClinicalRecords,
+      protectedAuditRecords: request.scope.protectedAuditRecords
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "deletion_request.reviewed",
+    aggregateType: "deletion_request",
+    aggregateId: request.id,
+    patientId: request.patientId,
+    payload: {
+      deletionRequestId: request.id,
+      patientId: request.patientId,
+      status: request.status,
+      decision: input.decision
+    }
+  });
+
+  return ok({ deletionRequest: request });
+}
+
+export async function runRetentionJob(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "retention.manage" });
+  const input = parseRunRetentionJob(body);
+  const scope = scopeFrom(context);
+  const deletionRequest = input.deletionRequestId
+    ? await dependencies.repository.findDeletionRequestById(scope, input.deletionRequestId)
+    : null;
+  if (input.deletionRequestId && !deletionRequest) {
+    throw notFound("Deletion request not found.", { deletion_request_id: input.deletionRequestId });
+  }
+  if (deletionRequest && deletionRequest.status !== "approved_pending_retention_job") {
+    throw conflict("Retention jobs require an approved deletion request.", {
+      deletion_request_id: deletionRequest.id,
+      status: deletionRequest.status
+    });
+  }
+  if (deletionRequest && input.patientId && deletionRequest.patientId !== input.patientId) {
+    throw validation("Retention job patientId must match the approved deletion request.", {
+      deletion_request_id: deletionRequest.id,
+      request_patient_id: deletionRequest.patientId,
+      patient_id: input.patientId
+    });
+  }
+  const runInput = deletionRequest && !input.patientId
+    ? { ...input, patientId: deletionRequest.patientId }
+    : input;
+  const result = await dependencies.repository.runRetentionJob(scope, runInput);
+
+  await audit(context, dependencies, "retention.job.completed", {
+    resourceType: "retention_job_run",
+    resourceId: result.run.id,
+    metadata: {
+      mode: result.run.mode,
+      policyCode: result.run.policyCode,
+      deletionRequestId: result.run.deletionRequestId,
+      summary: result.run.summary,
+      protectedActions: result.actions
+        .filter((action) => action.protectedRecord)
+        .map((action) => ({
+          actionKind: action.actionKind,
+          targetType: action.targetType,
+          status: action.status
+        }))
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "retention.run.completed",
+    aggregateType: "retention_run",
+    aggregateId: result.run.id,
+    patientId: runInput.patientId ?? undefined,
+    payload: {
+      runId: result.run.id,
+      mode: result.run.mode,
+      policyCode: result.run.policyCode,
+      summary: result.run.summary
+    }
+  });
+
+  return accepted({ retentionRun: result.run, actions: result.actions });
+}
+
+export async function createBreakGlassAccessRequest(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "break_glass.request" });
+  const input = parseCreateBreakGlassAccessRequest(body);
+  const access = await dependencies.repository.createBreakGlassAccessRequest(scopeFrom(context), input);
+  if (!access) throw notFound("Patient not found.", { patient_id: input.patientId });
+
+  await audit(context, dependencies, "break_glass.requested", {
+    patientId: access.patientId,
+    resourceType: "break_glass_access",
+    resourceId: access.id,
+    metadata: {
+      reason: access.reason,
+      expiresAt: access.expiresAt,
+      accessCategories: access.accessCategories,
+      status: access.status
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "break_glass.requested",
+    aggregateType: "break_glass_access",
+    aggregateId: access.id,
+    patientId: access.patientId,
+    payload: {
+      breakGlassAccessId: access.id,
+      patientId: access.patientId,
+      expiresAt: access.expiresAt,
+      accessCategories: access.accessCategories,
+      status: access.status
+    }
+  });
+
+  return created({ breakGlassAccess: access });
+}
+
+export async function listBreakGlassAccessRequests(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { patientId?: string | null; status?: string | null; requestedByUserId?: string | null; limit?: string | null }
+) {
+  authorize(context, { permission: "break_glass.approve" });
+  const accesses = await dependencies.repository.listBreakGlassAccessRequests(scopeFrom(context), {
+    patientId: filter.patientId ? uuidField(filter.patientId, "patientId") : null,
+    status: parseOptionalBreakGlassStatus(filter.status),
+    requestedByUserId: filter.requestedByUserId ? uuidField(filter.requestedByUserId, "requestedByUserId") : null,
+    limit: parseOptionalLimit(filter.limit, 50, 100)
+  });
+  return ok({ breakGlassAccesses: accesses });
+}
+
+export async function reviewBreakGlassAccessRequest(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  requestId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "break_glass.approve" });
+  const input = parseReviewBreakGlassAccessRequest(body);
+  const access = await dependencies.repository.reviewBreakGlassAccessRequest(
+    scopeFrom(context),
+    requestId,
+    input
+  );
+  if (!access) throw notFound("Break-glass access request not found.", { break_glass_access_id: requestId });
+
+  const action: KnownAuditAction =
+    input.decision === "approve"
+      ? "break_glass.approved"
+      : input.decision === "revoke"
+        ? "break_glass.revoked"
+        : "break_glass.denied";
+  await audit(context, dependencies, action, {
+    patientId: access.patientId,
+    resourceType: "break_glass_access",
+    resourceId: access.id,
+    metadata: {
+      decision: input.decision,
+      status: access.status,
+      expiresAt: access.expiresAt,
+      accessCategories: access.accessCategories
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "break_glass.reviewed",
+    aggregateType: "break_glass_access",
+    aggregateId: access.id,
+    patientId: access.patientId,
+    payload: {
+      breakGlassAccessId: access.id,
+      patientId: access.patientId,
+      decision: input.decision,
+      status: access.status,
+      expiresAt: access.expiresAt
+    }
+  });
+
+  return ok({ breakGlassAccess: access });
 }
 
 export async function createMigrationBatch(
@@ -5358,6 +5781,200 @@ function parseOptionalLimit(value: string | null | undefined, fallback: number, 
   return Math.min(parsed, max);
 }
 
+function parseOptionalAuditCategory(value: string | null | undefined) {
+  if (!value) return null;
+  if (
+    [
+      "security",
+      "administration",
+      "phi_access",
+      "clinical",
+      "billing",
+      "operations",
+      "quality",
+      "integration",
+      "privacy"
+    ].includes(value)
+  ) {
+    return value as
+      | "security"
+      | "administration"
+      | "phi_access"
+      | "clinical"
+      | "billing"
+      | "operations"
+      | "quality"
+      | "integration"
+      | "privacy";
+  }
+  throw validation("Unknown audit category.", { category: value });
+}
+
+function parseOptionalAuditRiskLevel(value: string | null | undefined) {
+  if (!value) return null;
+  if (["low", "medium", "high", "critical"].includes(value)) {
+    return value as "low" | "medium" | "high" | "critical";
+  }
+  throw validation("Unknown audit risk level.", { riskLevel: value });
+}
+
+function parseOptionalDataExportStatus(value: string | null | undefined) {
+  if (!value) return null;
+  if (["requested", "completed", "failed", "cancelled"].includes(value)) {
+    return value as "requested" | "completed" | "failed" | "cancelled";
+  }
+  throw validation("Unknown data export status.", { status: value });
+}
+
+function parseOptionalDeletionRequestStatus(value: string | null | undefined) {
+  if (!value) return null;
+  if (
+    [
+      "requested",
+      "approved_pending_retention_job",
+      "rejected",
+      "completed",
+      "cancelled"
+    ].includes(value)
+  ) {
+    return value as
+      | "requested"
+      | "approved_pending_retention_job"
+      | "rejected"
+      | "completed"
+      | "cancelled";
+  }
+  throw validation("Unknown deletion request status.", { status: value });
+}
+
+function parseOptionalBreakGlassStatus(value: string | null | undefined) {
+  if (!value) return null;
+  if (["requested", "approved", "denied", "revoked", "expired"].includes(value)) {
+    return value as "requested" | "approved" | "denied" | "revoked" | "expired";
+  }
+  throw validation("Unknown break-glass status.", { status: value });
+}
+
+function parseAuditReviewInput(body: unknown): CreateAuditReviewInput {
+  const input = objectBody(body);
+  const reviewStatus = requiredString(input.reviewStatus ?? input.status, "reviewStatus");
+  if (!isAuditReviewStatus(reviewStatus)) {
+    throw validation("reviewStatus must be reviewed, escalated, or dismissed.", { reviewStatus });
+  }
+  return {
+    reviewStatus,
+    disposition: requiredString(input.disposition, "disposition"),
+    notes: optionalNullableString(input.notes, "notes") ?? null
+  };
+}
+
+function parsePatientRecordExportInput(
+  patientId: UUID,
+  body: unknown
+): Omit<PatientRecordExportInput, "snapshot" | "payloadDigest"> {
+  const input = body === undefined ? {} : objectBody(body);
+  const sectionValues =
+    input.sections === undefined ? undefined : stringArrayField(input.sections, "sections");
+  return {
+    patientId,
+    sections: normalizePatientRecordExportSections(sectionValues),
+    reason: optionalString(input.reason, "reason") ?? "patient_record_handover",
+    format: "json"
+  };
+}
+
+function parseCreateDeletionRequest(body: unknown): CreateDeletionRequestInput {
+  const input = objectBody(body);
+  const requestType = requiredString(input.requestType, "requestType");
+  if (!isDeletionRequestType(requestType)) {
+    throw validation("requestType is not supported for CP9 deletion workflows.", { requestType });
+  }
+  const requestedCategories = stringArrayField(
+    input.requestedCategories ?? ["ai_transient_payloads"],
+    "requestedCategories"
+  );
+  if (requestedCategories.length === 0) {
+    throw validation("requestedCategories must include at least one category.", {
+      requestedCategories
+    });
+  }
+  return {
+    patientId: uuidField(input.patientId, "patientId"),
+    requestType,
+    reason: requiredString(input.reason, "reason"),
+    requestedCategories
+  };
+}
+
+function parseReviewDeletionRequest(body: unknown): ReviewDeletionRequestInput {
+  const input = objectBody(body);
+  const decision = requiredString(input.decision, "decision");
+  if (!["approve", "reject", "cancel"].includes(decision)) {
+    throw validation("decision must be approve, reject, or cancel.", { decision });
+  }
+  return {
+    decision: decision as ReviewDeletionRequestInput["decision"],
+    reviewReason: requiredString(input.reviewReason ?? input.reason, "reviewReason")
+  };
+}
+
+function parseRunRetentionJob(body: unknown): RunRetentionJobInput {
+  const input = objectBody(body);
+  const mode = optionalString(input.mode, "mode") ?? "dry_run";
+  if (!isRetentionJobMode(mode)) throw validation("mode must be dry_run or execute.", { mode });
+  const parsed = {
+    mode,
+    asOf: optionalString(input.asOf, "asOf") ?? new Date().toISOString(),
+    policyCode: optionalString(input.policyCode, "policyCode") ?? "cp9-ai-transient-payloads-v1",
+    patientId: optionalUuid(input.patientId, "patientId"),
+    deletionRequestId: optionalUuid(input.deletionRequestId, "deletionRequestId"),
+    transcriptDeleteAfterDays:
+      input.transcriptDeleteAfterDays === undefined
+        ? 1
+        : integerField(input.transcriptDeleteAfterDays, "transcriptDeleteAfterDays", {
+            min: 0,
+            max: 3650
+          })
+  };
+  assertRetentionRunPolicy(parsed);
+  return parsed;
+}
+
+function parseCreateBreakGlassAccessRequest(body: unknown): CreateBreakGlassAccessInput {
+  const input = objectBody(body);
+  const categories = stringArrayField(input.accessCategories, "accessCategories");
+  const accessCategories = categories.map((category, index) => {
+    if (!isBreakGlassAccessCategory(category)) {
+      throw validation(`accessCategories[${index}] is not supported.`, { category });
+    }
+    return category;
+  });
+  const parsed = {
+    patientId: uuidField(input.patientId, "patientId"),
+    reason: requiredString(input.reason, "reason"),
+    expiresAt: requiredString(input.expiresAt, "expiresAt"),
+    accessCategories
+  };
+  try {
+    assertBreakGlassRequestPolicy(parsed);
+  } catch (error) {
+    throw validation(error instanceof Error ? error.message : "Invalid break-glass request.");
+  }
+  return parsed;
+}
+
+function parseReviewBreakGlassAccessRequest(body: unknown): ReviewBreakGlassAccessInput {
+  const input = objectBody(body);
+  const decision = requiredString(input.decision, "decision");
+  if (!["approve", "deny", "revoke"].includes(decision)) {
+    throw validation("decision must be approve, deny, or revoke.", { decision });
+  }
+  return {
+    decision: decision as ReviewBreakGlassAccessInput["decision"],
+    reviewReason: requiredString(input.reviewReason ?? input.reason, "reviewReason")
+  };
+}
+
 function toMigrationBatchResponse(detail: MigrationBatchDetail) {
   return {
     batch: detail.batch,
@@ -7697,6 +8314,96 @@ function publicReceipt<T extends {
     paymentAllocations: receipt.paymentAllocations,
     generatedAt: receipt.generatedAt
   };
+}
+
+const EXPORT_PRIVATE_KEY_PATTERNS = [
+  /^objectKey$/i,
+  /storage.*key/i,
+  /storage.*path/i,
+  /^storageProvider$/i,
+  /^storageRegion$/i,
+  /bucket/i,
+  /signed.*url/i,
+  /upload.*url/i,
+  /download.*url/i,
+  /^raw.*payload$/i,
+  /private.*payload/i,
+  /provider.*payload/i,
+  /^rawProvider/i
+];
+
+function publicAuditEventForReview(event: AuditEventForReviewRecord) {
+  return {
+    ...event,
+    metadata: redactPhi(event.metadata),
+    review: event.review ? { ...event.review } : null
+  };
+}
+
+function publicPatientRecordExport(
+  record: PatientRecordExportRecord,
+  options: { includePayload?: boolean } = {}
+) {
+  return {
+    id: record.id,
+    tenantId: record.tenantId,
+    clinicId: record.clinicId,
+    patientId: record.patientId,
+    status: record.status,
+    format: record.format,
+    sections: record.sections,
+    requestedByUserId: record.requestedByUserId,
+    completedByUserId: record.completedByUserId,
+    requestedAt: record.requestedAt,
+    completedAt: record.completedAt,
+    manifest: record.manifest,
+    payloadDigest: record.payloadDigest,
+    payloadAvailable: record.payload !== null,
+    failureReason: record.failureReason,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    ...(options.includePayload && record.payload
+      ? { payload: sanitizePatientRecordExportSnapshot(record.payload) }
+      : {})
+  };
+}
+
+function sanitizePatientRecordExportSnapshot(
+  snapshot: PatientRecordExportSnapshot
+): PatientRecordExportSnapshot {
+  const scrubbed = scrubPrivateExportPayloads(snapshot);
+
+  return {
+    ...scrubbed,
+    manifest: {
+      ...scrubbed.manifest,
+      safety: {
+        rawStorageReferences: "excluded",
+        rawProviderPayloads: "excluded",
+        auditMetadata: "phi_redacted",
+        tenantScoped: true
+      }
+    },
+    privacyAuditTrail: scrubbed.privacyAuditTrail.map((event) =>
+      publicAuditEventForReview(event)
+    ) as AuditEventForReviewRecord[]
+  };
+}
+
+function scrubPrivateExportPayloads<T>(value: T): T {
+  if (value === null || value === undefined) return value;
+  if (typeof value !== "object") return value;
+  if (Array.isArray(value)) {
+    return value.map((item) => scrubPrivateExportPayloads(item)) as T;
+  }
+
+  const output: Record<string, unknown> = {};
+  for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+    if (EXPORT_PRIVATE_KEY_PATTERNS.some((pattern) => pattern.test(key))) continue;
+    output[key] = scrubPrivateExportPayloads(nestedValue);
+  }
+
+  return output as T;
 }
 
 function treatmentPlanItemCount(detail: TreatmentPlanDetail): number {
