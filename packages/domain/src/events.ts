@@ -99,6 +99,12 @@ export const DOMAIN_EVENT_TYPES = [
   "integration.raw_event.received",
   "integration.dead_letter.created",
   "integration.dead_letter.replayed",
+  "ai.session.started",
+  "ai.transcript.segment_created",
+  "ai.draft.generated",
+  "ai.action_proposal.created",
+  "ai.review_decision.recorded",
+  "ai.retention.deleted",
   "patient.timeline_item.created"
 ] as const;
 
@@ -278,6 +284,17 @@ export const CP7_EVENT_TYPES = [
   ...CP7_INTEGRATION_EVENT_TYPES
 ] as const;
 
+export const CP8_AI_EVENT_TYPES = [
+  "ai.session.started",
+  "ai.transcript.segment_created",
+  "ai.draft.generated",
+  "ai.action_proposal.created",
+  "ai.review_decision.recorded",
+  "ai.retention.deleted"
+] as const;
+
+export const CP8_EVENT_TYPES = [...CP7_EVENT_TYPES, ...CP8_AI_EVENT_TYPES] as const;
+
 export type Cp2LeadEventType = (typeof CP2_LEAD_EVENT_TYPES)[number];
 export type Cp2PatientEventType = (typeof CP2_PATIENT_EVENT_TYPES)[number];
 export type Cp2AppointmentEventType = (typeof CP2_APPOINTMENT_EVENT_TYPES)[number];
@@ -302,6 +319,8 @@ export type Cp6EventType = (typeof CP6_EVENT_TYPES)[number];
 export type Cp7MigrationEventType = (typeof CP7_MIGRATION_EVENT_TYPES)[number];
 export type Cp7IntegrationEventType = (typeof CP7_INTEGRATION_EVENT_TYPES)[number];
 export type Cp7EventType = (typeof CP7_EVENT_TYPES)[number];
+export type Cp8AiEventType = (typeof CP8_AI_EVENT_TYPES)[number];
+export type Cp8EventType = (typeof CP8_EVENT_TYPES)[number];
 
 export type EventSourceKind =
   | "external_system"
@@ -374,6 +393,11 @@ export interface DomainEventAggregate {
     | "imported_record_link"
     | "integration_event"
     | "integration_dead_letter"
+    | "ai_session"
+    | "ai_transcript_segment"
+    | "ai_draft_output"
+    | "ai_action_proposal"
+    | "ai_review_decision"
     | "patient_timeline_item";
   id: UUID | string;
 }

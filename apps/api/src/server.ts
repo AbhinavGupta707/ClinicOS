@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import { safeParseClinicOsEnv, type ClinicOsConfig } from "@clinic-os/config";
-import { createPaymentProvider, type PaymentProvider } from "@clinic-os/integrations";
+import { createPaymentProvider, type AiGatewayProvider, type PaymentProvider } from "@clinic-os/integrations";
 import {
   AuthenticationError,
   AuthorizationError,
@@ -34,6 +34,9 @@ import {
   checkInAppointment,
   acceptTreatmentPlan,
   amendEncounterClinicalNote,
+  createAiScribeSession,
+  createAiScribeSourceAnchor,
+  createAiScribeTranscriptSegment,
   confirmAppointment,
   commitMigrationBatch,
   convertLeadToAppointment,
@@ -71,8 +74,11 @@ import {
   createSopTemplate,
   generateDueContinuityTasks,
   generateDueSopRuns,
+  generateAiScribeDrafts,
   listDeadLetterEvents,
+  listEncounterAiScribeSessions,
   getMorningDashboard,
+  getAiScribeSession,
   getOwnerDashboard,
   getEncounter,
   getInvoice,
@@ -112,11 +118,13 @@ import {
   revokePatientConsent,
   receiveMediaUploadContent,
   recordInvoiceManualPayment,
+  recordAiScribeReviewDecision,
   requestMediaUploadUrl,
   replayDeadLetterEvent,
   resolveMigrationBatchRow,
   processPaymentWebhook,
   rollbackMigrationBatch,
+  deleteAiScribeRetainedPayloads,
   saveEncounterClinicalNoteDraft,
   signEncounterClinicalNote,
   signPrescription,
@@ -157,6 +165,7 @@ export interface ClinicOsApiServerOptions {
   auditSink?: AuditSink;
   mediaStorage?: MediaStorageProvider;
   paymentProvider?: PaymentProvider;
+  aiGatewayProvider?: AiGatewayProvider;
   tokenVerifier?: TokenVerifier;
   useLocalAuthFixture?: boolean;
   fixtureSubject?: string;
@@ -289,6 +298,7 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
           auditSink: options.auditSink,
           mediaStorage: options.mediaStorage,
           paymentProvider: options.paymentProvider ?? createRuntimePaymentProvider(options.config),
+          aiGatewayProvider: options.aiGatewayProvider,
           useLocalAuthFixture: options.useLocalAuthFixture ?? false,
           fixtureSubject: options.fixtureSubject
         });
@@ -370,6 +380,7 @@ async function routeOperationsRequest(input: {
   auditSink?: AuditSink;
   mediaStorage?: MediaStorageProvider;
   paymentProvider?: PaymentProvider;
+  aiGatewayProvider?: AiGatewayProvider;
   useLocalAuthFixture: boolean;
   fixtureSubject?: string | undefined;
 }) {
@@ -389,6 +400,7 @@ async function routeOperationsRequest(input: {
     auditSink: input.auditSink,
     mediaStorage: input.mediaStorage,
     paymentProvider: input.paymentProvider,
+    aiGatewayProvider: input.aiGatewayProvider,
     paymentRepository: paymentRepositoryFromOperationsRepository(input.repository),
     runtimeConfig: input.config
   };
@@ -1031,6 +1043,79 @@ async function routeOperationsRequest(input: {
         encounterId,
         body
       );
+  }
+
+  const encounterAiSessionsMatch = pathname.match(/^\/v1\/encounters\/([^/]+)\/ai-scribe\/sessions$/);
+  if (encounterAiSessionsMatch) {
+    const encounterId = pathUuid(encounterAiSessionsMatch[1], "encounterId");
+    if (input.request.method === "GET")
+      return listEncounterAiScribeSessions(operationsContext, dependencies, encounterId);
+    if (input.request.method === "POST")
+      return createAiScribeSession(operationsContext, dependencies, encounterId, body);
+  }
+
+  const aiSessionMatch = pathname.match(/^\/v1\/ai-scribe\/sessions\/([^/]+)$/);
+  if (aiSessionMatch && input.request.method === "GET") {
+    return getAiScribeSession(
+      operationsContext,
+      dependencies,
+      pathUuid(aiSessionMatch[1], "sessionId")
+    );
+  }
+
+  const aiTranscriptSegmentMatch = pathname.match(
+    /^\/v1\/ai-scribe\/sessions\/([^/]+)\/transcript-segments$/
+  );
+  if (aiTranscriptSegmentMatch && input.request.method === "POST") {
+    return createAiScribeTranscriptSegment(
+      operationsContext,
+      dependencies,
+      pathUuid(aiTranscriptSegmentMatch[1], "sessionId"),
+      body
+    );
+  }
+
+  const aiSourceAnchorMatch = pathname.match(
+    /^\/v1\/ai-scribe\/sessions\/([^/]+)\/source-anchors$/
+  );
+  if (aiSourceAnchorMatch && input.request.method === "POST") {
+    return createAiScribeSourceAnchor(
+      operationsContext,
+      dependencies,
+      pathUuid(aiSourceAnchorMatch[1], "sessionId"),
+      body
+    );
+  }
+
+  const aiGenerateMatch = pathname.match(/^\/v1\/ai-scribe\/sessions\/([^/]+)\/generate-drafts$/);
+  if (aiGenerateMatch && input.request.method === "POST") {
+    return generateAiScribeDrafts(
+      operationsContext,
+      dependencies,
+      pathUuid(aiGenerateMatch[1], "sessionId"),
+      body
+    );
+  }
+
+  const aiReviewMatch = pathname.match(/^\/v1\/ai-scribe\/sessions\/([^/]+)\/review-decisions$/);
+  if (aiReviewMatch && input.request.method === "POST") {
+    return recordAiScribeReviewDecision(
+      operationsContext,
+      dependencies,
+      pathUuid(aiReviewMatch[1], "sessionId"),
+      body
+    );
+  }
+
+  const aiRetentionDeleteMatch = pathname.match(
+    /^\/v1\/ai-scribe\/sessions\/([^/]+)\/retention-delete$/
+  );
+  if (aiRetentionDeleteMatch && input.request.method === "POST") {
+    return deleteAiScribeRetainedPayloads(
+      operationsContext,
+      dependencies,
+      pathUuid(aiRetentionDeleteMatch[1], "sessionId")
+    );
   }
 
   const encounterStartMatch = pathname.match(/^\/v1\/encounters\/([^/]+)\/start$/);

@@ -119,6 +119,34 @@ test("CP5 provider audit classifications separate config health from invoice pay
   assert.equal(classifyAuditAction("owner_dashboard.viewed").phiInvolved, false);
 });
 
+test("CP8 AI scribe audit classifications require patient-linked PHI evidence", () => {
+  for (const action of [
+    "ai.session.started",
+    "ai.transcript.segment_created",
+    "ai.draft.generated",
+    "ai.action_proposal.created",
+    "ai.review_decision.recorded",
+    "ai.retention.deleted"
+  ] as const) {
+    const classification = classifyAuditAction(action);
+    assert.equal(classification.phiInvolved, true, `${action} should involve clinical PHI`);
+    assert.equal(classification.requiresPatientId, true, `${action} should require patientId`);
+  }
+
+  assert.equal(classifyAuditAction("ai.review_decision.recorded").riskLevel, "critical");
+  assert.equal(classifyAuditAction("ai.retention.deleted").category, "privacy");
+  assert.throws(
+    () =>
+      createAuditEvent({
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000101",
+        actor: { type: "user", id: "10000000-0000-4000-8000-000000001002" },
+        action: "ai.draft.generated"
+      }),
+    /requires patientId/
+  );
+});
+
 test("CP6 continuity audit classifications separate patient-linked recalls from clinic SOPs", () => {
   for (const action of ["recall.due", "recall.sent", "recall.action_recorded", "recall.completed"] as const) {
     const classification = classifyAuditAction(action);

@@ -97,7 +97,11 @@ export type PatientTimelineItemType =
   | "lab_case_completed"
   | "incident_created"
   | "corrective_action_created"
-  | "corrective_action_completed";
+  | "corrective_action_completed"
+  | "ai_session_started"
+  | "ai_draft_generated"
+  | "ai_review_decision_recorded"
+  | "ai_retention_deleted";
 
 export interface PatientTimelineItem {
   id: UUID;

@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after CP4 current-tree verification commit `ac7211d`; Checkpoint 8 worker lanes are active in visible project-scoped worktrees.
+- Branch: `codex/integration/checkpoint-8` after verified CP8 integration patch `f967144`; promote to `main` after CP8 evidence docs are committed, then launch Checkpoint 9 from updated `main`.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -48,6 +48,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Review UX: `019f3cb8-6e4e-73d3-9754-9cbd5aa583d9`, `/Users/abhinavgupta/.codex/worktrees/fc5f/ClinicOS`.
   - AI Safety/QA: `019f3cb8-a9ea-79b2-9edd-d44513a60668`, `/Users/abhinavgupta/.codex/worktrees/25b2/ClinicOS`.
   - Superseded duplicate Mobile Capture thread `019f3cab-83a6-7d42-8813-7829e961a04f` from base `f562a8e` was archived and must not be integrated.
+- Checkpoint 8 is verified on `codex/integration/checkpoint-8` at `f967144`. It is ready for documented promotion to `main` once CP8 closeout docs are committed.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture
@@ -154,6 +155,17 @@ Follow `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
 - Provider health dashboards must not treat local simulators as provider readiness. Surface simulator/dev state as local-only, unavailable, or not configured for CP7 ops while still allowing simulator-backed contract tests elsewhere.
 - Dead-letter replay is a request/evidence workflow until a handler confirms processing. Do not mark WhatsApp delivery/read, missed-call capture, payment, or patient state as completed from the replay button alone.
 - For migration imports, resolve rows, not abstract conflicts. The row is the durable commit/skip/link unit and carries the conflict evidence needed to preserve no-overwrite behavior.
+
+## CP8 Integration Lessons
+
+- In deterministic contract smokes, `liveImplemented: false` means the fixture step is not directly executable against an arbitrary live runtime with deterministic fixture IDs; it does not mean the product route is absent. Cross-check API tests and route registration before treating a dry-run fixture marker as a missing feature.
+- Keep CP8 route families canonical across backend, safety fixtures, and browser specs. The implemented route family is `ai-scribe`, for example `POST /v1/encounters/{encounterId}/ai-scribe/sessions` and `POST /v1/ai-scribe/sessions/{sessionId}/review-decisions`.
+- Missing or revoked AI/audio consent is a workflow-state block (`409 AI_AUDIO_CONSENT_REQUIRED`), not a generic authorization denial. Preserve the distinction between role permission failures and patient-consent state.
+- Shared packages with ignored `dist` output may leave stale compiled code for narrow package tests. Run `npm run build:shared` before package-level API/integrations tests when shared package contracts changed.
+- Dev identity fixture roles are process-wide for web browser smokes. Run separate web server processes for doctor and assistant smokes with `NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=doctor` or `assistant`, or gate role-specific assertions in the Playwright spec.
+- Do not invent fake web routes for Expo mobile workflows. Mobile capture evidence belongs to the mobile lane through Expo/mobile tests and screenshots; the web CP8 surface owns review UX only.
+- If the Codex in-app browser is unavailable in a worker lane, record that blocker and use explicit Playwright fallback evidence. Do not claim in-app browser evidence when only Playwright ran.
+- AI review approvals in CP8 are review-only evidence. Do not let future lanes interpret CP8 approval buttons as chart, note, prescription, billing, or messaging application unless a later checkpoint owns that whole authorized workflow.
 
 ## Shared-File Mistakes To Avoid
 

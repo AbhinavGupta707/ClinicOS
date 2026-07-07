@@ -64,3 +64,48 @@ An older duplicate Mobile Capture thread from base `f562a8e` (`019f3cab-83a6-7d4
 ## Merge Order
 
 AI Backend -> Mobile Capture -> Review UX -> AI Safety/QA -> master integration patch.
+
+## Integration Closeout - 2026-07-07
+
+- Integration branch: `codex/integration/checkpoint-8`.
+- Verified integration patch commit: `f967144`.
+- Lane commits integrated:
+  - AI Backend: `4b00076`.
+  - Mobile Capture: `ea8a6a2`.
+  - Review UX: `f2a192e`.
+  - AI Safety/QA: `b38b6b8`.
+- Master integration reconciled the CP8 safety dry-run to the canonical `ai-scribe` route family, changed missing/revoked consent expectations to HTTP `409` workflow-state blocking, removed a fake web mobile-capture route assumption, and made the role-specific Playwright smokes explicitly depend on `NEXT_PUBLIC_CLINIC_OS_DEV_ROLE`.
+- Implemented API surface:
+  - `GET|POST /v1/encounters/{encounterId}/ai-scribe/sessions`.
+  - `GET /v1/ai-scribe/sessions/{sessionId}`.
+  - `POST /v1/ai-scribe/sessions/{sessionId}/transcript-segments`.
+  - `POST /v1/ai-scribe/sessions/{sessionId}/source-anchors`.
+  - `POST /v1/ai-scribe/sessions/{sessionId}/generate-drafts`.
+  - `POST /v1/ai-scribe/sessions/{sessionId}/review-decisions`.
+  - `POST /v1/ai-scribe/sessions/{sessionId}/retention-delete`.
+- CP8 outputs are review-only. Review decisions are persisted for audit/evaluation but do not sign notes, write chart findings, create prescriptions, perform billing actions, or send patient communications.
+- Transcript read payloads redact raw transcript text and expose digests/provenance instead of raw audio/transcript content.
+- The AI gateway runs in deterministic simulator mode unless live AI/STT activation is explicitly approved with provider key, data-residency, and retention posture.
+
+## Verification Evidence
+
+- Targeted CP8 checks passed: `node scripts/validate-cp8-fixtures.mjs`, `node --test tests/acceptance/cp8-fixture-contract.test.mjs`, `node scripts/cp8-contract-smoke.mjs --dry-run`, `npm --workspace @clinic-os/mobile run typecheck`, `npm --workspace @clinic-os/mobile test`, `npm --workspace @clinic-os/web run typecheck`, `npm --workspace @clinic-os/web test`, `npm --workspace @clinic-os/web run lint`, `npm --workspace @clinic-os/api test`, and `node --test tests/acceptance/*.test.mjs`.
+- Full repository gates passed: `git diff --check`, `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`.
+- Browser/app smoke passed:
+  - Doctor review and 390px mobile review against the CP8 fixture.
+  - Assistant review boundary against the CP8 fixture.
+  - Root AI safety review flow against the CP8 fixture.
+  - Mobile lane Expo web export smoke at 390px.
+- Evidence screenshots:
+  - `/private/tmp/clinicos-cp8-ai-review-doctor-desktop.png`.
+  - `/private/tmp/clinicos-cp8-ai-review-assistant-desktop.png`.
+  - `/private/tmp/clinicos-cp8-ai-review-mobile-390.png`.
+  - `/private/tmp/clinicos-cp8-mobile-capture-web-390.png`.
+
+## Accepted Gaps
+
+- Live AI/STT provider activation is deferred until explicit approval exists for provider credentials, no-training/no-retention posture, and data residency.
+- Web non-fixture aggregate review queue mode requires a real configured review queue endpoint and per-item review-decision hrefs. Without those, the product shows an honest unavailable state.
+- Clinical application of AI output is deferred as whole workflows. CP8 does not autonomously mutate signed notes, dental charts, prescriptions, billing, or patient communications.
+- Physical-device camera/audio smoke and app-store distribution are deferred. CP8 verifies the mobile contract through Expo shell/export, unit tests, and consent-disabled behavior.
+- `npm run security:audit` was not rerun because prior escalation was policy-rejected; npm audit discloses dependency inventory to an external registry. `npm run security:secrets` passed.

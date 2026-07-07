@@ -1,4 +1,5 @@
 export * from "./appointment.ts";
+export * from "./ai.ts";
 export * from "./audit.ts";
 export * from "./billing.ts";
 export * from "./clinical.ts";

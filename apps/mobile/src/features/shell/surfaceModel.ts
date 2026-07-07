@@ -19,23 +19,24 @@ export const mobileSurfaces: readonly MobileSurface[] = [
   {
     id: "chairside-media",
     label: "Chairside photo capture",
-    state: "registered_unavailable",
+    state: "available",
     checkpoint: 8,
-    apiBoundary: "POST /v1/patients/{id}/media"
+    apiBoundary:
+      "POST /v1/media/upload-urls -> PUT /v1/media/uploads/{uploadId}/content -> POST /v1/media/uploads/{uploadId}/complete"
   },
   {
     id: "voice-note",
     label: "Clinical voice note",
-    state: "registered_unavailable",
+    state: "available",
     checkpoint: 8,
-    apiBoundary: "POST /v1/encounters/{id}/voice-notes"
+    apiBoundary: "GET /v1/patients/{patientId}/consents gates future AI/audio capture sessions"
   },
   {
     id: "offline-upload",
     label: "Consent-gated upload queue",
-    state: "registered_unavailable",
+    state: "available",
     checkpoint: 8,
-    apiBoundary: "POST /v1/mobile/upload-queue"
+    apiBoundary: "Device-local secure cache abstraction plus durable CP4 media upload contract"
   }
 ] as const;
 
@@ -45,4 +46,8 @@ export function getAvailableMobileSurfaces() {
 
 export function getUnavailableMobileSurfaces() {
   return mobileSurfaces.filter((surface) => surface.state === "registered_unavailable");
+}
+
+export function getActiveCaptureSurfaces() {
+  return mobileSurfaces.filter((surface) => surface.state === "available");
 }
