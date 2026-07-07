@@ -7,11 +7,11 @@ import { useEffect, useMemo, useState } from "react";
 
 import { AssistantWorkflow, isCp2WorkflowSurface } from "@/components/assistant-workflow";
 import { AuthStatusPanel } from "@/components/auth-status-panel";
+import { ClinicalWorkflow, isCp3WorkflowSurface } from "@/components/clinical-workflow";
 import { SurfaceView } from "@/components/surface-view";
 import { loadMe, type MeState } from "@/lib/me";
 import {
   canAccessSurface,
-  getPrimarySurfaceId,
   getSurface,
   getVisibleSurfaces
 } from "@/lib/navigation";
@@ -59,16 +59,6 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
 
     return getVisibleSurfaces(meState.profile.roles);
   }, [meState]);
-
-  useEffect(() => {
-    if (!isAuthenticatedState(meState)) {
-      return;
-    }
-
-    if (!canAccessSurface(activeSurface, meState.profile.roles)) {
-      setActiveSurfaceId(getPrimarySurfaceId(meState.profile.roles));
-    }
-  }, [activeSurface, meState]);
 
   if (meState.status === "loading") {
     return <ShellLoading />;
@@ -179,8 +169,16 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
         </header>
 
         <main className="clinic-main" id="clinic-main">
-          {isCp2WorkflowSurface(activeSurface.id) ? (
+          {!canAccessSurface(activeSurface, profile.roles) ? (
+            <SurfaceView profile={profile} surface={activeSurface} />
+          ) : isCp2WorkflowSurface(activeSurface.id) ? (
             <AssistantWorkflow
+              activeSurfaceId={activeSurface.id}
+              profile={profile}
+              setActiveSurfaceId={setActiveSurfaceId}
+            />
+          ) : isCp3WorkflowSurface(activeSurface.id) ? (
+            <ClinicalWorkflow
               activeSurfaceId={activeSurface.id}
               profile={profile}
               setActiveSurfaceId={setActiveSurfaceId}
