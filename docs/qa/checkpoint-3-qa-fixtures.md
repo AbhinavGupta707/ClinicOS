@@ -111,74 +111,87 @@ If no audit read API is merged in CP3, verify audit rows through backend/securit
 The smoke plan currently assumes these CP3 endpoint contracts:
 
 ```text
-POST /v1/patients/{patientId}/intake-responses
+POST /v1/patients/{patientId}/form-responses
 POST /v1/patients/{patientId}/consents
 POST /v1/encounters
-POST /v1/encounters/{encounterId}/clinical-notes/drafts
-POST /v1/clinical-notes/{noteId}/sign
+POST /v1/encounters/{encounterId}/start
+PATCH /v1/encounters/{encounterId}
+POST /v1/encounters/{encounterId}/sign-note
 POST /v1/encounters/{encounterId}/prescriptions
 POST /v1/prescriptions/{prescriptionId}/sign
-POST /v1/clinical-notes/{noteId}/amendments
-POST /v1/consents/{consentId}/revoke
-GET /v1/patients/{patientId}/ai-audio-readiness?encounterId={encounterId}
+POST /v1/encounters/{encounterId}/amend-note
+POST /v1/patients/{patientId}/consents/{consentId}/revoke
+GET /v1/patients/{patientId}/consents
 GET /v1/patients/{patientId}/prep-summary?appointmentId={appointmentId}
 GET /v1/patients/{patientId}/timeline
-GET /v1/clinical-notes/{noteId}/versions
 GET /v1/encounters/{encounterId}
-POST /v1/encounters/{encounterId}/audio-captures
-PUT /v1/clinical-notes/{noteId}/versions/{versionId}
 ```
 
-If backend lanes choose different durable paths or response envelopes, update `scripts/cp3-contract-smoke.mjs`, `tests/acceptance/cp3-fixture-contract.test.mjs`, and this document during integration. Do not weaken the underlying assertions.
+Backend may return generated IDs rather than fixture IDs. If so, the master integration smoke should add a runtime ID map after each creation response before executing downstream requests. Do not hard-code production-generated IDs into product code.
+
+The fixture also documents the future `POST /v1/encounters/{encounterId}/audio-captures` consent-revoked denial, but that route is not a CP3 live-smoke requirement because AI/audio capture is explicitly deferred. CP3 verifies the guard input through consent enforcement state instead.
 
 ## Web E2E After Integration
 
-After Doctor/Assistant UX lands and the web app is running:
+For local synthetic browser smoke, start the web app with the CP3 workflow fixture and doctor role:
+
+```sh
+NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_USE_CP3_WORKFLOW_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_ENV=local \
+NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=doctor \
+npm --workspace @clinic-os/web run dev -- --hostname 127.0.0.1 --port 3000
+```
+
+Then run either the app-owned spec or the mirrored root E2E spec:
 
 ```sh
 CLINICOS_CP3_E2E_ENABLED=true \
 CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000 \
-CLINICOS_CP3_ASSISTANT_STORAGE_STATE=/path/to/assistant-storage-state.json \
-CLINICOS_CP3_DOCTOR_STORAGE_STATE=/path/to/doctor-storage-state.json \
-./node_modules/.bin/playwright test tests/e2e/checkpoint-3-clinical-flow.spec.ts
+npx playwright test apps/web/tests/checkpoint-3-clinical-workflow.spec.ts
+
+CLINICOS_CP3_E2E_ENABLED=true \
+CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000 \
+npx playwright test tests/e2e/checkpoint-3-clinical-flow.spec.ts
 ```
 
-For web role denial smoke, also set:
+For role denial smoke, start a separate fixture server with the accountant role:
 
-```text
-CLINICOS_CP3_ACCOUNTANT_STORAGE_STATE=/path/to/accountant-storage-state.json
+```sh
+NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_USE_CP3_WORKFLOW_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_ENV=local \
+NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=accountant \
+npm --workspace @clinic-os/web run dev -- --hostname 127.0.0.1 --port 3001
+
+CLINICOS_CP3_ROLE_DENIAL_ENABLED=true \
+CLINICOS_WEB_BASE_URL=http://127.0.0.1:3001 \
+npx playwright test apps/web/tests/checkpoint-3-clinical-workflow.spec.ts --grep "clinical role denial"
 ```
 
-The E2E spec expects the CP3 route and stable selectors declared in the fixture:
+The integrated E2E specs expect the CP3 route and stable selectors below:
 
 ```text
 /surface/clinical?scenario=cp3-intake-consent-encounter
 cp3-clinical-workspace
-cp3-patient-profile-newPatient
+cp3-workflow
+cp3-fixture-alert
+cp3-patient-selector
 cp3-new-patient-intake-form
-cp3-submit-new-patient-intake
-cp3-intake-status-newPatient
-cp3-consent-treatment-toggle
-cp3-consent-ai-audio-toggle
-cp3-save-new-patient-consents
-cp3-start-encounter-newPatient
-cp3-note-draft-editor
-cp3-save-note-draft-newPatientEncounter
+cp3-submit-intake
+cp3-capture-consent-ai_audio_capture
+cp3-consent-ai_audio_capture-status
+cp3-revoke-consent-ai_audio_capture
+cp3-ai-audio-readiness-blocked
+cp3-start-encounter-newPatientEncounter
+cp3-save-note-draft
 cp3-sign-note-newPatientEncounter
-cp3-note-status-newPatientEncounter
-cp3-create-prescription-newPatientEncounter
-cp3-sign-prescription-newPatientPrescription
-cp3-amend-note-newPatientNote
-cp3-amendment-reason-newPatientNote
-cp3-submit-amendment-newPatientNote
-cp3-note-version-timeline-newPatientNote
-cp3-revoke-ai-audio-consent-newPatient
-cp3-ai-audio-readiness-newPatient
-cp3-doctor-prep-returningPatient
-cp3-submit-returning-paper-card-intake
-cp3-start-encounter-returningPatient
-cp3-note-sign-denied
-cp3-prescription-sign-denied
+cp3-note-signed-immutable
+cp3-amend-note
+cp3-timeline
+cp3-save-prescription-draft
+cp3-sign-prescription-newPatientEncounter
+cp3-sign-prescription
 cp3-clinical-access-denied
 ```
 
@@ -198,9 +211,9 @@ The QA lane did not edit root `package.json`. Suggested scripts for the master i
 }
 ```
 
-## Current Gaps Before Integration
+## Current Verification Notes
 
-- Live API smoke cannot run until CP3 backend endpoints exist.
-- Live web E2E cannot run until CP3 frontend route and selectors exist.
-- The smoke script sends deterministic fixture IDs. If backend endpoints generate runtime IDs in local mode, integration should add the same runtime-ID adaptation pattern used by the CP2 smoke script.
-- Audit verification is contractually specified in the fixture; live audit probing depends on an audit read endpoint or backend/security DB evidence.
+- The local API HTTP workflow is verified by `npm --workspace @clinic-os/api test`; run it outside the sandbox when socket binding is blocked.
+- `scripts/cp3-contract-smoke.mjs --dry-run` remains the deterministic fixture-environment contract printer. The local fixture API intentionally generates runtime IDs, so the local API test is the authoritative runtime-ID smoke.
+- Audit verification is covered by backend operation tests and security package tests until an audit read endpoint is added.
+- AI/audio capture is deferred as a future workflow; CP3 verifies the consent-enforcement state that future capture workflows must consume.

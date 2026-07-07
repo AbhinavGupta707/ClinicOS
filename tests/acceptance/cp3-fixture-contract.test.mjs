@@ -178,7 +178,7 @@ test("CP3 consent revocation blocks future AI/audio readiness and capture", asyn
     consentRecordId: "30000000-0000-4000-8000-000000007002",
     purpose: "AI_AUDIO_CAPTURE",
     readinessEndpoint:
-      "/v1/patients/30000000-0000-4000-8000-000000002001/ai-audio-readiness?encounterId=30000000-0000-4000-8000-000000008001",
+      "/v1/patients/30000000-0000-4000-8000-000000002001/consents",
     readyBeforeRevocation: true,
     readyAfterRevocation: false,
     blockedCapabilities: ["audio_capture", "transcription", "ai_draft"],
@@ -202,23 +202,23 @@ test("CP3 smoke plan can be built from documented contracts", async () => {
   const plan = buildCp3SmokePlan(scenario);
 
   assert.equal(plan.flowRequests.length, 14);
-  assert.equal(plan.negativeRequests.length, 6);
+  assert.equal(plan.negativeRequests.length, 5);
   assert.equal(plan.postFlowVerification.length, 4);
   assert.deepEqual(
     plan.flowRequests.map((request) => `${request.method} ${request.path}`),
     [
-      "POST /v1/patients/30000000-0000-4000-8000-000000002001/intake-responses",
+      "POST /v1/patients/30000000-0000-4000-8000-000000002001/form-responses",
       "POST /v1/patients/30000000-0000-4000-8000-000000002001/consents",
       "POST /v1/patients/30000000-0000-4000-8000-000000002001/consents",
       "POST /v1/encounters",
-      "POST /v1/encounters/30000000-0000-4000-8000-000000008001/clinical-notes/drafts",
-      "POST /v1/clinical-notes/30000000-0000-4000-8000-000000009001/sign",
+      "PATCH /v1/encounters/30000000-0000-4000-8000-000000008001",
+      "POST /v1/encounters/30000000-0000-4000-8000-000000008001/sign-note",
       "POST /v1/encounters/30000000-0000-4000-8000-000000008001/prescriptions",
       "POST /v1/prescriptions/30000000-0000-4000-8000-000000010001/sign",
-      "POST /v1/clinical-notes/30000000-0000-4000-8000-000000009001/amendments",
-      "POST /v1/consents/30000000-0000-4000-8000-000000007002/revoke",
-      "GET /v1/patients/30000000-0000-4000-8000-000000002001/ai-audio-readiness?encounterId=30000000-0000-4000-8000-000000008001",
-      "POST /v1/patients/30000000-0000-4000-8000-000000002002/intake-responses",
+      "POST /v1/encounters/30000000-0000-4000-8000-000000008001/amend-note",
+      "POST /v1/patients/30000000-0000-4000-8000-000000002001/consents/30000000-0000-4000-8000-000000007002/revoke",
+      "GET /v1/patients/30000000-0000-4000-8000-000000002001/consents",
+      "POST /v1/patients/30000000-0000-4000-8000-000000002002/form-responses",
       "GET /v1/patients/30000000-0000-4000-8000-000000002002/prep-summary?appointmentId=30000000-0000-4000-8000-000000003002",
       "POST /v1/encounters"
     ]

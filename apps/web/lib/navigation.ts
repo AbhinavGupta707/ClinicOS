@@ -118,7 +118,7 @@ export const SURFACES: SurfaceRegistration[] = [
     icon: ClipboardPenLine,
     id: "intake",
     label: "Intake",
-    requiredApis: ["POST /v1/patients/{patientId}/intake-responses"],
+    requiredApis: ["POST /v1/patients/{patientId}/form-responses"],
     roles: ["owner", "doctor", "assistant"]
   },
   {
@@ -131,7 +131,7 @@ export const SURFACES: SurfaceRegistration[] = [
     label: "Consent",
     requiredApis: [
       "POST /v1/patients/{patientId}/consents",
-      "POST /v1/patients/{patientId}/consents/{purpose}/revoke"
+      "POST /v1/patients/{patientId}/consents/{consentId}/revoke"
     ],
     roles: ["owner", "doctor", "assistant"]
   },
@@ -156,9 +156,9 @@ export const SURFACES: SurfaceRegistration[] = [
     label: "Encounter",
     requiredApis: [
       "POST /v1/encounters/{encounterId}/start",
-      "PATCH /v1/encounters/{encounterId}/clinical-note-draft",
-      "POST /v1/encounters/{encounterId}/clinical-note/sign",
-      "POST /v1/encounters/{encounterId}/prescription/sign"
+      "PATCH /v1/encounters/{encounterId}",
+      "POST /v1/encounters/{encounterId}/sign-note",
+      "POST /v1/prescriptions/{prescriptionId}/sign"
     ],
     roles: ["owner", "doctor", "assistant"]
   },

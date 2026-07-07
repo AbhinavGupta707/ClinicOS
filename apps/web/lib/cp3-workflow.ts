@@ -10,8 +10,8 @@ export type IntakeStatus = "completed" | "not_started";
 
 export type ConsentPurpose =
   | "ai_audio_capture"
-  | "photo_xray_storage"
-  | "treatment"
+  | "photo_capture"
+  | "treatment_registration"
   | "whatsapp_communication";
 
 export type ConsentStatus = "granted" | "not_recorded" | "revoked";
@@ -35,7 +35,7 @@ export interface TimelineItem {
   id: string;
   kind:
     | "clinical_note.amended"
-    | "clinical_note.drafted"
+    | "clinical_note.draft_created"
     | "clinical_note.signed"
     | "consent.created"
     | "consent.revoked"
@@ -61,6 +61,7 @@ export interface IntakeResponse {
     actorRole: ClinicRole;
     capturedBy: string;
   };
+  templateId?: string;
   status: IntakeStatus;
 }
 
@@ -205,6 +206,7 @@ export interface IntakeSubmitInput {
   fields: IntakeResponse["fields"];
   mode: IntakeMode;
   patientId: string;
+  templateId?: string;
 }
 
 export interface ConsentCaptureInput {
@@ -216,6 +218,7 @@ export interface ConsentCaptureInput {
 
 export interface ConsentRevokeInput {
   actorRole: ClinicRole;
+  consentId?: string;
   patientId: string;
   purpose: ConsentPurpose;
   reason: string;
@@ -247,6 +250,7 @@ export interface PrescriptionDraftInput {
 
 export interface PrescriptionSignInput {
   encounterId: string;
+  prescriptionId: string;
   roles: ClinicRole[];
   signerName: string;
 }
@@ -267,21 +271,22 @@ interface EndpointFailure {
 
 export const CP3_REQUIRED_ENDPOINTS = [
   "GET /v1/clinical-workflows/cp3?date=",
-  "POST /v1/patients/{patientId}/intake-responses",
+  "POST /v1/patients/{patientId}/form-responses",
   "POST /v1/patients/{patientId}/consents",
-  "POST /v1/patients/{patientId}/consents/{purpose}/revoke",
+  "POST /v1/patients/{patientId}/consents/{consentId}/revoke",
+  "GET /v1/patients/{patientId}/prep-summary",
   "POST /v1/encounters/{encounterId}/start",
-  "PATCH /v1/encounters/{encounterId}/clinical-note-draft",
-  "POST /v1/encounters/{encounterId}/clinical-note/sign",
-  "POST /v1/encounters/{encounterId}/clinical-note/amend",
-  "PATCH /v1/encounters/{encounterId}/prescription-draft",
-  "POST /v1/encounters/{encounterId}/prescription/sign"
+  "PATCH /v1/encounters/{encounterId}",
+  "POST /v1/encounters/{encounterId}/sign-note",
+  "POST /v1/encounters/{encounterId}/amend-note",
+  "POST /v1/encounters/{encounterId}/prescriptions",
+  "POST /v1/prescriptions/{prescriptionId}/sign"
 ] as const;
 
 export const CONSENT_LABELS: Record<ConsentPurpose, string> = {
   ai_audio_capture: "AI/audio capture",
-  photo_xray_storage: "Photo/X-ray storage",
-  treatment: "Treatment",
+  photo_capture: "Photo capture",
+  treatment_registration: "Treatment registration",
   whatsapp_communication: "WhatsApp communication"
 };
 
@@ -297,8 +302,8 @@ export const ENCOUNTER_STATUS_LABELS: Record<EncounterStatus, string> = {
 
 const FIXTURE_ENVIRONMENTS = new Set(["development", "dev", "local", "test"]);
 const CONSENT_PURPOSES: ConsentPurpose[] = [
-  "treatment",
-  "photo_xray_storage",
+  "treatment_registration",
+  "photo_capture",
   "whatsapp_communication",
   "ai_audio_capture"
 ];
@@ -375,8 +380,8 @@ export function createFixtureCp3WorkflowData(today = getTodayInputValue()): Cp3W
     },
     consents: createConsentSet({
       ai_audio_capture: "granted",
-      photo_xray_storage: "granted",
-      treatment: "granted",
+      photo_capture: "granted",
+      treatment_registration: "granted",
       whatsapp_communication: "granted"
     }),
     displayName: "Riya Synthetic",
@@ -395,6 +400,7 @@ export function createFixtureCp3WorkflowData(today = getTodayInputValue()): Cp3W
         actorRole: "assistant",
         capturedBy: "assistant fixture user"
       },
+      templateId: "returningMedicalHistoryTemplate",
       status: "completed"
     },
     kind: "returning",
@@ -442,8 +448,8 @@ export function createFixtureCp3WorkflowData(today = getTodayInputValue()): Cp3W
     },
     consents: createConsentSet({
       ai_audio_capture: "not_recorded",
-      photo_xray_storage: "not_recorded",
-      treatment: "not_recorded",
+      photo_capture: "not_recorded",
+      treatment_registration: "not_recorded",
       whatsapp_communication: "not_recorded"
     }),
     displayName: "Ira Synthetic",
@@ -457,6 +463,7 @@ export function createFixtureCp3WorkflowData(today = getTodayInputValue()): Cp3W
       },
       id: "newPatientIntake",
       mode: "digital",
+      templateId: "newPatientIntakeTemplate",
       status: "not_started"
     },
     kind: "new",
@@ -565,21 +572,53 @@ export async function loadCp3Workflow(
 }
 
 export async function submitLiveIntake(input: IntakeSubmitInput, signal?: AbortSignal) {
+  if (!input.templateId) {
+    throw new Error("Live intake submission requires a templateId from the CP3 workflow loader.");
+  }
+
   return postEndpoint(
-    `/v1/patients/${encodeURIComponent(input.patientId)}/intake-responses`,
-    input,
+    `/v1/patients/${encodeURIComponent(input.patientId)}/form-responses`,
+    {
+      templateId: input.templateId,
+      source: input.mode,
+      responses: input.fields,
+      medicalHistorySnapshot: {
+        allergies: input.fields.allergies,
+        currentMedications: input.fields.currentMedications,
+        medicalConditions: input.fields.medicalConditions
+      },
+      provenance: {
+        kind: input.mode === "assistant_paper_card" ? "manual_entry" : "patient_message",
+        capturedBy: input.actorName,
+        actorRole: input.actorRole
+      }
+    },
     signal
   );
 }
 
 export async function captureLiveConsent(input: ConsentCaptureInput, signal?: AbortSignal) {
-  return postEndpoint(`/v1/patients/${encodeURIComponent(input.patientId)}/consents`, input, signal);
+  return postEndpoint(
+    `/v1/patients/${encodeURIComponent(input.patientId)}/consents`,
+    {
+      purpose: input.purpose,
+      templateCode: `${input.purpose}-v1`,
+      templateVersion: 1,
+      captureMethod: input.method === "digital_signature" ? "digital_patient" : "clinic_staff",
+      provenance: { kind: "manual_entry", actorRole: input.actorRole }
+    },
+    signal
+  );
 }
 
 export async function revokeLiveConsent(input: ConsentRevokeInput, signal?: AbortSignal) {
+  if (!input.consentId) {
+    throw new Error("Live consent revocation requires a consentId from the CP3 workflow loader.");
+  }
+
   return postEndpoint(
-    `/v1/patients/${encodeURIComponent(input.patientId)}/consents/${input.purpose}/revoke`,
-    input,
+    `/v1/patients/${encodeURIComponent(input.patientId)}/consents/${input.consentId}/revoke`,
+    { reason: input.reason },
     signal
   );
 }
@@ -590,8 +629,8 @@ export async function startLiveEncounter(encounterId: string, signal?: AbortSign
 
 export async function saveLiveNoteDraft(input: NoteDraftInput, signal?: AbortSignal) {
   return patchEndpoint(
-    `/v1/encounters/${encodeURIComponent(input.encounterId)}/clinical-note-draft`,
-    { sections: input.sections },
+    `/v1/encounters/${encodeURIComponent(input.encounterId)}`,
+    { content: input.sections, readyForSign: true },
     signal
   );
 }
@@ -600,7 +639,7 @@ export async function signLiveNote(input: NoteSignInput, signal?: AbortSignal) {
   assertCanSign(input.roles);
 
   return postEndpoint(
-    `/v1/encounters/${encodeURIComponent(input.encounterId)}/clinical-note/sign`,
+    `/v1/encounters/${encodeURIComponent(input.encounterId)}/sign-note`,
     { signerName: input.signerName },
     signal
   );
@@ -610,10 +649,10 @@ export async function amendLiveNote(input: NoteAmendInput, signal?: AbortSignal)
   assertCanSign(input.roles);
 
   return postEndpoint(
-    `/v1/encounters/${encodeURIComponent(input.encounterId)}/clinical-note/amend`,
+    `/v1/encounters/${encodeURIComponent(input.encounterId)}/amend-note`,
     {
       amendmentReason: input.amendmentReason,
-      sections: input.sections,
+      content: input.sections,
       signerName: input.signerName
     },
     signal
@@ -624,9 +663,16 @@ export async function saveLivePrescriptionDraft(
   input: PrescriptionDraftInput,
   signal?: AbortSignal
 ) {
-  return patchEndpoint(
-    `/v1/encounters/${encodeURIComponent(input.encounterId)}/prescription-draft`,
-    { items: input.items },
+  return postEndpoint(
+    `/v1/encounters/${encodeURIComponent(input.encounterId)}/prescriptions`,
+    {
+      medications: input.items.map((item) => ({
+        name: item.medicine,
+        frequency: item.frequency,
+        duration: item.duration,
+        instructions: item.notes
+      }))
+    },
     signal
   );
 }
@@ -635,7 +681,7 @@ export async function signLivePrescription(input: PrescriptionSignInput, signal?
   assertCanSign(input.roles);
 
   return postEndpoint(
-    `/v1/encounters/${encodeURIComponent(input.encounterId)}/prescription/sign`,
+    `/v1/prescriptions/${encodeURIComponent(input.prescriptionId)}/sign`,
     { signerName: input.signerName },
     signal
   );
@@ -772,7 +818,7 @@ export function applyFixtureSaveNoteDraft(data: Cp3WorkflowData, input: NoteDraf
       ...patient,
       timeline: prependTimeline(
         patient.timeline,
-        "clinical_note.drafted",
+        "clinical_note.draft_created",
         "Clinical note draft ready",
         "Draft sections saved for doctor sign-off.",
         draftedAt

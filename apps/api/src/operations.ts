@@ -309,6 +309,95 @@ export async function getPatientTimeline(
   return ok({ timeline, items: timeline });
 }
 
+export async function getPatientPrepSummary(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  input: { appointmentId?: UUID | null }
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  authorize(context, { permission: "clinical.note.read" });
+  const scope = scopeFrom(context);
+  const patient = await dependencies.repository.findPatientById(scope, patientId);
+
+  if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
+
+  let appointment: AppointmentRecord | null = null;
+  if (input.appointmentId) {
+    appointment = await dependencies.repository.findAppointmentById(scope, input.appointmentId);
+    if (!appointment) throw notFound("Appointment not found.", { appointment_id: input.appointmentId });
+    if (appointment.patientId !== patientId) {
+      throw validation("Appointment does not belong to the requested patient.", {
+        appointment_id: appointment.id,
+        patient_id: patientId
+      });
+    }
+  }
+
+  const [timelineItems, intakeSubmissions, consents, enforcementState] = await Promise.all([
+    dependencies.repository.findPatientTimeline(scope, patientId),
+    dependencies.repository.listPatientIntakeFormSubmissions(scope, patientId),
+    dependencies.repository.listPatientConsents(scope, patientId),
+    dependencies.repository.getConsentEnforcementState(scope, patientId)
+  ]);
+  const timeline = timelineItems.map(toPublicPatientTimelineItem);
+  const latestIntake = intakeSubmissions[0] ?? null;
+  const priorClinicalTimeline = timeline.filter((item) =>
+    ["clinical_note", "prescription", "appointment"].includes(item.type)
+  );
+  const prepSummary = {
+    patient: {
+      id: patient.id,
+      fullName: patient.fullName,
+      phone: patient.phone,
+      dateOfBirth: patient.dateOfBirth,
+      gender: patient.gender
+    },
+    appointment: appointment
+      ? {
+          id: appointment.id,
+          status: appointment.status,
+          startAt: appointment.startAt,
+          endAt: appointment.endAt,
+          providerUserId: appointment.providerUserId,
+          reason: appointment.reason
+        }
+      : null,
+    generatedAt: new Date().toISOString(),
+    latestIntakeResponse: latestIntake,
+    consentEnforcementState: enforcementState,
+    activeConsentPurposes: consents
+      .filter((consent) => consent.status === "active")
+      .map((consent) => consent.purpose)
+      .sort(),
+    timelineHighlights: timeline.slice(0, 10),
+    priorClinicalTimeline,
+    medicalHistoryChangePromptRequired: latestIntake
+      ? Object.keys(latestIntake.medicalHistorySnapshot).length === 0
+      : true,
+    dataCoverage: {
+      dentalMedia: "deferred_to_checkpoint_4",
+      treatmentPlans: "deferred_to_checkpoint_5",
+      labCases: "deferred_to_checkpoint_7",
+      invoicesAndPayments: "deferred_to_checkpoint_5"
+    }
+  };
+
+  await audit(context, dependencies, "clinical_prep.viewed", {
+    patientId,
+    resourceType: "patient",
+    resourceId: patientId,
+    metadata: {
+      appointmentId: appointment?.id ?? null,
+      latestIntakeResponseId: latestIntake?.id ?? null,
+      timelineHighlights: timeline.length
+    }
+  });
+
+  return ok({ prepSummary, summary: prepSummary });
+}
+
 export async function listLeads(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
@@ -733,6 +822,16 @@ export async function listPatientConsents(
 
   const consents = await dependencies.repository.listPatientConsents(scope, patientId);
   const enforcementState = await dependencies.repository.getConsentEnforcementState(scope, patientId);
+
+  await audit(context, dependencies, "consent.enforcement.checked", {
+    patientId,
+    resourceType: "consent",
+    resourceId: patientId,
+    metadata: {
+      activePurposes: enforcementState.activePurposes,
+      revokedPurposes: enforcementState.revokedPurposes
+    }
+  });
 
   return ok({ consents, enforcementState });
 }

@@ -8,8 +8,10 @@ import {
   createEncounter,
   createEncounterPrescription,
   createPatientConsent,
+  getPatientPrepSummary,
   InMemoryAuditSink,
   listIntakeFormTemplates,
+  listPatientConsents,
   LocalFixtureClinicOperationsRepository,
   LocalFixtureIdentityRepository,
   revokePatientConsent,
@@ -73,6 +75,13 @@ test("CP3 operations enforce consent state, note immutability, and doctor-only p
   });
   assert.equal(intake.status, 201);
 
+  const prepSummary = await getPatientPrepSummary(doctor, dependencies, patientId, {
+    appointmentId: null
+  });
+  assert.equal(prepSummary.status, 200);
+  assert.equal(prepSummary.body.prepSummary.patient.id, patientId);
+  assert.equal(prepSummary.body.prepSummary.latestIntakeResponse?.id, intake.body.formResponse.id);
+
   const consent = await createPatientConsent(assistant, dependencies, patientId, {
     purpose: "ai_audio_capture",
     templateCode: "ai-audio-v1",
@@ -81,6 +90,9 @@ test("CP3 operations enforce consent state, note immutability, and doctor-only p
     provenance: { kind: "manual_entry" }
   });
   assert.equal(consent.body.enforcementState.aiAudioCaptureAllowed, true);
+
+  const consentReadiness = await listPatientConsents(assistant, dependencies, patientId);
+  assert.equal(consentReadiness.body.enforcementState.aiAudioCaptureAllowed, true);
 
   const revoked = await revokePatientConsent(
     assistant,
@@ -178,6 +190,8 @@ test("CP3 operations enforce consent state, note immutability, and doctor-only p
   assert.ok(
     operationsRepository.outboxEvents.some((event) => event.eventType === "prescription.signed")
   );
+  assert.ok(auditSink.events.some((event) => event.action === "clinical_prep.viewed"));
+  assert.ok(auditSink.events.some((event) => event.action === "consent.enforcement.checked"));
   assert.ok(auditSink.events.some((event) => event.action === "prescription.draft_created"));
 });
 

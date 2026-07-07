@@ -69,15 +69,16 @@ mode the workflow is available through `/surface/clinical` and the canonical `/s
 route, and currently checks the CP3 API boundary at:
 
 - `GET /v1/clinical-workflows/cp3?date=`
-- `POST /v1/patients/{patientId}/intake-responses`
+- `POST /v1/patients/{patientId}/form-responses`
 - `POST /v1/patients/{patientId}/consents`
-- `POST /v1/patients/{patientId}/consents/{purpose}/revoke`
+- `POST /v1/patients/{patientId}/consents/{consentId}/revoke`
+- `GET /v1/patients/{patientId}/prep-summary`
 - `POST /v1/encounters/{encounterId}/start`
-- `PATCH /v1/encounters/{encounterId}/clinical-note-draft`
-- `POST /v1/encounters/{encounterId}/clinical-note/sign`
-- `POST /v1/encounters/{encounterId}/clinical-note/amend`
-- `PATCH /v1/encounters/{encounterId}/prescription-draft`
-- `POST /v1/encounters/{encounterId}/prescription/sign`
+- `PATCH /v1/encounters/{encounterId}`
+- `POST /v1/encounters/{encounterId}/sign-note`
+- `POST /v1/encounters/{encounterId}/amend-note`
+- `POST /v1/encounters/{encounterId}/prescriptions`
+- `POST /v1/prescriptions/{prescriptionId}/sign`
 
 ## `/me` contract expectation
 

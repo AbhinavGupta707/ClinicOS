@@ -152,6 +152,12 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "consent.enforcement.checked": {
+    category: "privacy",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
   "encounter.created": {
     category: "clinical",
     riskLevel: "high",
@@ -171,6 +177,12 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     requiresPatientId: true
   },
   "clinical_note.draft_created": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "clinical_prep.viewed": {
     category: "clinical",
     riskLevel: "high",
     phiInvolved: true,

@@ -94,8 +94,8 @@ const SURFACE_TO_MODE = new Map(WORKFLOW_MODES.map((item) => [item.surfaceId, it
 const cp3WorkflowSurfaceIds = new Set(WORKFLOW_MODES.map((item) => item.surfaceId));
 
 const CONSENT_PURPOSES: ConsentPurpose[] = [
-  "treatment",
-  "photo_xray_storage",
+  "treatment_registration",
+  "photo_capture",
   "whatsapp_communication",
   "ai_audio_capture"
 ];
@@ -240,7 +240,8 @@ export function ClinicalWorkflow({
         actorRole,
         fields: intakeFields,
         mode: intakeMode,
-        patientId: selectedPatient.id
+        patientId: selectedPatient.id,
+        templateId: selectedPatient.intake.templateId
       };
 
       if (data.source === "cp3_fixture") {
@@ -305,8 +306,10 @@ export function ClinicalWorkflow({
     setActionBusy(`revoke-${purpose}`);
 
     try {
+      const consent = selectedPatient.consents.find((item) => item.purpose === purpose);
       const input = {
         actorRole,
+        consentId: consent?.id,
         patientId: selectedPatient.id,
         purpose,
         reason: revokeReason
@@ -496,6 +499,7 @@ export function ClinicalWorkflow({
     try {
       const input = {
         encounterId: selectedEncounter.id,
+        prescriptionId: selectedEncounter.prescription.id,
         roles: profile.roles,
         signerName: profile.user.displayName
       };

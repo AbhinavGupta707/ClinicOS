@@ -44,6 +44,7 @@ import {
   getMorningDashboard,
   getEncounter,
   getPatient,
+  getPatientPrepSummary,
   getPatientTimeline,
   listAppointmentTypes,
   listAppointments,
@@ -317,6 +318,20 @@ async function routeOperationsRequest(input: {
       operationsContext,
       dependencies,
       pathUuid(timelineMatch[1], "patientId")
+    );
+  }
+
+  const prepSummaryMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/prep-summary$/);
+  if (prepSummaryMatch && input.request.method === "GET") {
+    return getPatientPrepSummary(
+      operationsContext,
+      dependencies,
+      pathUuid(prepSummaryMatch[1], "patientId"),
+      {
+        appointmentId: url.searchParams.get("appointmentId")
+          ? pathUuid(url.searchParams.get("appointmentId") ?? "", "appointmentId")
+          : null
+      }
     );
   }
 

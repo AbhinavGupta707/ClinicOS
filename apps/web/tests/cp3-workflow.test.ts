@@ -37,7 +37,7 @@ describe("CP3 frontend workflow", () => {
       expect.arrayContaining(["patient-profile", "intake", "consent", "returning-prep", "encounter"])
     );
     expect(getSurface("encounter").requiredApis).toContain(
-      "POST /v1/encounters/{encounterId}/clinical-note/sign"
+      "POST /v1/encounters/{encounterId}/sign-note"
     );
   });
 
@@ -187,6 +187,7 @@ describe("CP3 frontend workflow", () => {
     expect(() =>
       applyFixtureSignPrescription(drafted, {
         encounterId,
+        prescriptionId: "returningPrescription",
         roles: ["assistant"],
         signerName: "assistant fixture user"
       })
@@ -194,6 +195,7 @@ describe("CP3 frontend workflow", () => {
 
     const signed = applyFixtureSignPrescription(drafted, {
       encounterId,
+      prescriptionId: "returningPrescription",
       roles: ["doctor"],
       signerName: "doctor fixture user"
     });

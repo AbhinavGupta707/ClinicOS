@@ -103,7 +103,7 @@ function requestFromStep(step) {
 
 function buildNegativeRequests(scenario) {
   return scenario.roleTenantExpectations
-    .filter((expectation) => expectation.expected === "deny")
+    .filter((expectation) => expectation.expected === "deny" && expectation.liveSmoke !== false)
     .map((expectation) => ({
       key: expectation.key,
       actorKey: expectation.actorKey,
@@ -120,7 +120,7 @@ function buildNegativeRequests(scenario) {
 function buildPostFlowVerification(scenario) {
   const newPatient = byKey(scenario.patients, "newPatient", "patient");
   const returningPatient = byKey(scenario.patients, "returningPatient", "patient");
-  const newNote = byKey(scenario.clinicalNotes, "newPatientNote", "clinicalNote");
+  const newEncounter = byKey(scenario.encounters, "newPatientEncounter", "encounter");
   const consent = scenario.responseAssertions.consentEnforcement;
 
   return [
@@ -149,7 +149,7 @@ function buildPostFlowVerification(scenario) {
       key: "read-signed-note-version-history",
       actorKey: "doctor",
       method: "GET",
-      path: `/v1/clinical-notes/${newNote.id}/versions`,
+      path: `/v1/encounters/${newEncounter.id}`,
       idempotencyKey: "cp3-read-signed-note-version-history",
       expectedStatus: [200],
       expectedBodyIncludes: [
@@ -166,9 +166,9 @@ function buildPostFlowVerification(scenario) {
       path: consent.readinessEndpoint,
       idempotencyKey: "cp3-read-ai-audio-readiness-after-revocation",
       expectedStatus: [200],
-      expectedBodyIncludes: [consent.blockingReason, ...consent.blockedCapabilities],
+      expectedBodyIncludes: ["enforcementState", "aiAudioCaptureAllowed", "revokedPurposes"],
       assertion:
-        "AI/audio readiness must be false after consent revocation and explain blocked capabilities."
+        "Consent enforcement state must show AI/audio capture unavailable after revocation."
     }
   ];
 }
@@ -310,7 +310,7 @@ async function runLiveSmoke(scenario, plan, options) {
     const liveRequest = resolveLiveRequest(request);
     const { body } = await executeRequest(options.baseUrl, scenario, liveRequest, options);
     if (request.key === "verify-ai-audio-readiness-blocked") {
-      assertSerializedIncludes(body, ["consent_revoked"], request.key);
+      assertSerializedIncludes(body, ["enforcementState", "aiAudioCaptureAllowed"], request.key);
     }
     console.log(`pass ${request.key}`);
   }

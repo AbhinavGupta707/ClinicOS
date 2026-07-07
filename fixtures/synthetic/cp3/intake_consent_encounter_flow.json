@@ -507,7 +507,7 @@
         "key": "submit-new-patient-digital-intake",
         "actorKey": "assistant",
         "method": "POST",
-        "path": "/v1/patients/30000000-0000-4000-8000-000000002001/intake-responses",
+        "path": "/v1/patients/30000000-0000-4000-8000-000000002001/form-responses",
         "idempotencyKey": "cp3-submit-new-patient-digital-intake",
         "expectedStatus": 201,
         "expectedEvents": ["form_response.submitted"],
@@ -651,10 +651,10 @@
       {
         "key": "draft-new-patient-note-as-assistant",
         "actorKey": "assistant",
-        "method": "POST",
-        "path": "/v1/encounters/30000000-0000-4000-8000-000000008001/clinical-notes/drafts",
+        "method": "PATCH",
+        "path": "/v1/encounters/30000000-0000-4000-8000-000000008001",
         "idempotencyKey": "cp3-draft-new-patient-note-as-assistant",
-        "expectedStatus": 201,
+        "expectedStatus": 200,
         "expectedEvents": ["clinical_note.draft_created"],
         "expectedAudit": [
           {
@@ -674,7 +674,8 @@
           "noteId": "30000000-0000-4000-8000-000000009001",
           "versionId": "30000000-0000-4000-8000-000000009101",
           "status": "ready_for_sign",
-          "sections": {
+          "readyForSign": true,
+          "content": {
             "history": "Synthetic intake reviewed.",
             "examination": "Synthetic examination recorded.",
             "diagnosis": "Synthetic reversible sensitivity diagnosis.",
@@ -687,7 +688,7 @@
         "key": "sign-new-patient-note-as-doctor",
         "actorKey": "doctor",
         "method": "POST",
-        "path": "/v1/clinical-notes/30000000-0000-4000-8000-000000009001/sign",
+        "path": "/v1/encounters/30000000-0000-4000-8000-000000008001/sign-note",
         "idempotencyKey": "cp3-sign-new-patient-note-as-doctor",
         "expectedStatus": 200,
         "expectedEvents": ["clinical_note.signed"],
@@ -781,9 +782,9 @@
         "key": "amend-signed-note-as-doctor",
         "actorKey": "doctor",
         "method": "POST",
-        "path": "/v1/clinical-notes/30000000-0000-4000-8000-000000009001/amendments",
+        "path": "/v1/encounters/30000000-0000-4000-8000-000000008001/amend-note",
         "idempotencyKey": "cp3-amend-signed-note-as-doctor",
-        "expectedStatus": 201,
+        "expectedStatus": 200,
         "expectedEvents": ["clinical_note.amended"],
         "expectedAudit": [
           {
@@ -805,7 +806,7 @@
           "amendmentReason": "Synthetic correction to clarify treatment-performed wording.",
           "signedAt": "2026-07-07T12:12:00+05:30",
           "preservesPreviousSignedHash": "sha256:cp3-new-patient-note-v1-synthetic",
-          "sections": {
+          "content": {
             "treatmentPerformed": "Synthetic consultation completed; amendment records wording clarification."
           }
         }
@@ -814,7 +815,7 @@
         "key": "revoke-new-patient-ai-audio-consent",
         "actorKey": "assistant",
         "method": "POST",
-        "path": "/v1/consents/30000000-0000-4000-8000-000000007002/revoke",
+        "path": "/v1/patients/30000000-0000-4000-8000-000000002001/consents/30000000-0000-4000-8000-000000007002/revoke",
         "idempotencyKey": "cp3-revoke-new-patient-ai-audio-consent",
         "expectedStatus": 200,
         "expectedEvents": ["consent.revoked"],
@@ -842,7 +843,7 @@
         "key": "verify-ai-audio-readiness-blocked",
         "actorKey": "assistant",
         "method": "GET",
-        "path": "/v1/patients/30000000-0000-4000-8000-000000002001/ai-audio-readiness?encounterId=30000000-0000-4000-8000-000000008001",
+        "path": "/v1/patients/30000000-0000-4000-8000-000000002001/consents",
         "idempotencyKey": "cp3-verify-ai-audio-readiness-blocked",
         "expectedStatus": 200,
         "expectedEvents": [],
@@ -860,7 +861,7 @@
         "key": "submit-returning-patient-paper-card-intake",
         "actorKey": "assistant",
         "method": "POST",
-        "path": "/v1/patients/30000000-0000-4000-8000-000000002002/intake-responses",
+        "path": "/v1/patients/30000000-0000-4000-8000-000000002002/form-responses",
         "idempotencyKey": "cp3-submit-returning-paper-card-intake",
         "expectedStatus": 201,
         "expectedEvents": ["form_response.submitted"],
@@ -955,7 +956,7 @@
     {
       "key": "assistant-can-submit-intake",
       "actorKey": "assistant",
-      "operation": "POST /v1/patients/{patientId}/intake-responses",
+      "operation": "POST /v1/patients/{patientId}/form-responses",
       "targetTenantId": "30000000-0000-4000-8000-000000000001",
       "targetClinicId": "30000000-0000-4000-8000-000000000101",
       "requiredPermissions": ["patient.intake.write"],
@@ -964,19 +965,19 @@
     {
       "key": "assistant-can-draft-clinical-note",
       "actorKey": "assistant",
-      "operation": "POST /v1/encounters/{encounterId}/clinical-notes/drafts",
+      "operation": "PATCH /v1/encounters/{encounterId}",
       "targetTenantId": "30000000-0000-4000-8000-000000000001",
       "targetClinicId": "30000000-0000-4000-8000-000000000101",
-      "requiredPermissions": ["clinical_note.draft"],
+      "requiredPermissions": ["clinical.note.write"],
       "expected": "allow"
     },
     {
       "key": "doctor-can-sign-clinical-note",
       "actorKey": "doctor",
-      "operation": "POST /v1/clinical-notes/{noteId}/sign",
+      "operation": "POST /v1/encounters/{encounterId}/sign-note",
       "targetTenantId": "30000000-0000-4000-8000-000000000001",
       "targetClinicId": "30000000-0000-4000-8000-000000000101",
-      "requiredPermissions": ["clinical_note.sign"],
+      "requiredPermissions": ["clinical.note.sign"],
       "expected": "allow"
     },
     {
@@ -991,14 +992,14 @@
     {
       "key": "assistant-cannot-sign-clinical-note",
       "actorKey": "assistant",
-      "operation": "POST /v1/clinical-notes/{noteId}/sign",
+      "operation": "POST /v1/encounters/{encounterId}/sign-note",
       "targetTenantId": "30000000-0000-4000-8000-000000000001",
       "targetClinicId": "30000000-0000-4000-8000-000000000101",
-      "requiredPermissions": ["clinical_note.sign"],
+      "requiredPermissions": ["clinical.note.sign"],
       "expected": "deny",
       "expectedReason": "missing_permission",
       "method": "POST",
-      "path": "/v1/clinical-notes/30000000-0000-4000-8000-000000009001/sign",
+      "path": "/v1/encounters/30000000-0000-4000-8000-000000008001/sign-note",
       "expectedStatus": [403],
       "requestBody": {
         "versionId": "30000000-0000-4000-8000-000000009101",
@@ -1050,17 +1051,17 @@
     {
       "key": "signed-note-version-cannot-be-overwritten",
       "actorKey": "doctor",
-      "operation": "PUT /v1/clinical-notes/{noteId}/versions/{versionId}",
+      "operation": "PATCH /v1/encounters/{encounterId}",
       "targetTenantId": "30000000-0000-4000-8000-000000000001",
       "targetClinicId": "30000000-0000-4000-8000-000000000101",
-      "requiredPermissions": ["clinical_note.write"],
+      "requiredPermissions": ["clinical.note.write"],
       "expected": "deny",
       "expectedReason": "immutable_signed_artifact",
-      "method": "PUT",
-      "path": "/v1/clinical-notes/30000000-0000-4000-8000-000000009001/versions/30000000-0000-4000-8000-000000009101",
+      "method": "PATCH",
+      "path": "/v1/encounters/30000000-0000-4000-8000-000000008001",
       "expectedStatus": [409, 422],
       "requestBody": {
-        "sections": {
+        "content": {
           "diagnosis": "Synthetic overwritten diagnosis attempt must not persist."
         }
       }
@@ -1074,6 +1075,7 @@
       "requiredPermissions": ["audio_capture.start"],
       "expected": "deny",
       "expectedReason": "consent_revoked",
+      "liveSmoke": false,
       "method": "POST",
       "path": "/v1/encounters/30000000-0000-4000-8000-000000008001/audio-captures",
       "expectedStatus": [403, 409, 422],
@@ -1112,7 +1114,7 @@
       "patientId": "30000000-0000-4000-8000-000000002001",
       "consentRecordId": "30000000-0000-4000-8000-000000007002",
       "purpose": "AI_AUDIO_CAPTURE",
-      "readinessEndpoint": "/v1/patients/30000000-0000-4000-8000-000000002001/ai-audio-readiness?encounterId=30000000-0000-4000-8000-000000008001",
+      "readinessEndpoint": "/v1/patients/30000000-0000-4000-8000-000000002001/consents",
       "readyBeforeRevocation": true,
       "readyAfterRevocation": false,
       "blockedCapabilities": ["audio_capture", "transcription", "ai_draft"],
