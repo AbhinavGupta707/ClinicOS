@@ -24,7 +24,18 @@ export const DOMAIN_EVENT_TYPES = [
   "queue.entry_updated",
   "task.created",
   "task.status_changed",
+  "task.completed",
   "task.due",
+  "recall.rule_created",
+  "recall.due",
+  "recall.sent",
+  "recall.action_recorded",
+  "recall.completed",
+  "sop_template.created",
+  "sop_schedule.created",
+  "sop_run.created",
+  "sop_run.updated",
+  "sop_run.completed",
   "form_response.submitted",
   "consent.created",
   "consent.revoked",
@@ -155,6 +166,36 @@ export const CP5_EVENT_TYPES = [
   ...CP5_PAYMENT_EVENT_TYPES
 ] as const;
 
+export const CP6_TASK_EVENT_TYPES = [
+  "task.created",
+  "task.status_changed",
+  "task.completed",
+  "task.due"
+] as const;
+
+export const CP6_RECALL_EVENT_TYPES = [
+  "recall.rule_created",
+  "recall.due",
+  "recall.sent",
+  "recall.action_recorded",
+  "recall.completed"
+] as const;
+
+export const CP6_SOP_EVENT_TYPES = [
+  "sop_template.created",
+  "sop_schedule.created",
+  "sop_run.created",
+  "sop_run.updated",
+  "sop_run.completed"
+] as const;
+
+export const CP6_EVENT_TYPES = [
+  ...CP5_EVENT_TYPES,
+  ...CP6_TASK_EVENT_TYPES,
+  ...CP6_RECALL_EVENT_TYPES,
+  ...CP6_SOP_EVENT_TYPES
+] as const;
+
 export type Cp2LeadEventType = (typeof CP2_LEAD_EVENT_TYPES)[number];
 export type Cp2PatientEventType = (typeof CP2_PATIENT_EVENT_TYPES)[number];
 export type Cp2AppointmentEventType = (typeof CP2_APPOINTMENT_EVENT_TYPES)[number];
@@ -169,6 +210,10 @@ export type Cp4EventType = (typeof CP4_EVENT_TYPES)[number];
 export type Cp5BillingEventType = (typeof CP5_BILLING_EVENT_TYPES)[number];
 export type Cp5PaymentEventType = (typeof CP5_PAYMENT_EVENT_TYPES)[number];
 export type Cp5EventType = (typeof CP5_EVENT_TYPES)[number];
+export type Cp6TaskEventType = (typeof CP6_TASK_EVENT_TYPES)[number];
+export type Cp6RecallEventType = (typeof CP6_RECALL_EVENT_TYPES)[number];
+export type Cp6SopEventType = (typeof CP6_SOP_EVENT_TYPES)[number];
+export type Cp6EventType = (typeof CP6_EVENT_TYPES)[number];
 
 export type EventSourceKind =
   | "external_system"
@@ -199,6 +244,11 @@ export interface DomainEventAggregate {
     | "appointment"
     | "queue_entry"
     | "task"
+    | "recall_rule"
+    | "recall"
+    | "sop_template"
+    | "sop_schedule"
+    | "sop_run"
     | "attribution_touch"
     | "form_response"
     | "consent"
@@ -279,6 +329,10 @@ export function isCp4EventType(value: string): value is Cp4EventType {
 
 export function isCp5EventType(value: string): value is Cp5EventType {
   return (CP5_EVENT_TYPES as readonly string[]).includes(value);
+}
+
+export function isCp6EventType(value: string): value is Cp6EventType {
+  return (CP6_EVENT_TYPES as readonly string[]).includes(value);
 }
 
 export function createDomainEventEnvelope<

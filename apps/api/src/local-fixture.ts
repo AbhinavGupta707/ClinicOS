@@ -23,30 +23,47 @@ import {
   type CreatePaymentRequestInput,
   type CreatePrescriptionInput,
   type CreateProcedurePerformedInput,
+  type CreateRecallRuleInput,
   type CreateReceiptInput,
+  type CreateSopScheduleInput,
+  type CreateSopTemplateInput,
   type CreateTreatmentPlanInput,
   type CreateTaskInput,
   type CompleteMediaUploadInput,
   type DashboardDataSet,
   type DentalFindingMutationResult,
+  type GenerateDueContinuityInput,
+  type GenerateDueContinuityResult,
+  type GenerateDueSopRunsInput,
+  type GenerateDueSopRunsResult,
   type IdentityAccessSnapshot,
   type IdentityRepository,
   type LeadSearchFilter,
   type OutboxEventInput,
   type PatientSearchFilter,
+  type RecallSearchFilter,
   type RepositoryScope,
   type RecordPaymentTransactionInput,
+  type RecordRecallActionInput,
   type RevokeConsentInput,
   type SaveClinicalNoteDraftInput,
   type SignClinicalNoteResult,
+  type SopRunSearchFilter,
+  type TaskSearchFilter,
   type UpdateDentalFindingRepositoryInput,
+  type UpdateSopRunInput,
+  type UpdateTaskInput,
   type UpdateTreatmentPlanInput,
   type UpdatePatientInput
 } from "@clinic-os/db";
 import {
+  addDaysIso,
   assertInvoiceReceiptable,
   assertMinorCurrencyAmount,
   assertPositiveMinorCurrencyAmount,
+  assertSopRunCompletion,
+  assertTaskCompletionEvidence,
+  assertTaskTransition,
   assertDentalFindingUpdateReason,
   assertClinicalNoteCanBeAmended,
   assertClinicalNoteCanBeSigned,
@@ -56,6 +73,10 @@ import {
   assertTreatmentPlanMutable,
   assertValidDentalFinding,
   buildDentalChartSnapshotState,
+  buildPaymentFollowUpKey,
+  buildPostOpFollowUpKey,
+  buildRecallGenerationKey,
+  buildSopRunGenerationKey,
   calculateBillingLineTotals,
   calculateInvoicePaymentStatus,
   buildConsentEnforcementState,
@@ -99,8 +120,19 @@ import {
   type ProviderScheduleRecord,
   type QueueEntryRecord,
   type QueueStatus,
+  type RecallRecord,
+  type RecallRuleRecord,
   type ReceiptPaymentAllocation,
   type ReceiptRecord,
+  type SopRunDetail,
+  type SopRunItemRecord,
+  type SopRunItemStatus,
+  type SopRunRecord,
+  type SopRunStatus,
+  type SopScheduleRecord,
+  type SopTemplateDetail,
+  type SopTemplateItemRecord,
+  type SopTemplateRecord,
   type TaskRecord,
   type TreatmentPlanDetail,
   type TreatmentPlanEstimateItemRecord,
@@ -239,6 +271,13 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly appointments: AppointmentRecord[] = [];
   readonly queueEntries: QueueEntryRecord[] = [];
   readonly tasks: TaskRecord[] = [];
+  readonly recallRules: RecallRuleRecord[] = [];
+  readonly recalls: RecallRecord[] = [];
+  readonly sopTemplates: SopTemplateRecord[] = [];
+  readonly sopTemplateItems: SopTemplateItemRecord[] = [];
+  readonly sopSchedules: SopScheduleRecord[] = [];
+  readonly sopRuns: SopRunRecord[] = [];
+  readonly sopRunItems: SopRunItemRecord[] = [];
   readonly timelineItems: PatientTimelineItem[] = [
     {
       id: uuid(),
@@ -740,7 +779,544 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return queueEntry;
   }
 
+  async listTasks(scope: RepositoryScope, filter: TaskSearchFilter = {}): Promise<TaskRecord[]> {
+    return this.tasks
+      .filter((task) => matchesScope(task, scope))
+      .filter((task) => {
+        if (filter.status && task.status !== filter.status) return false;
+        if (filter.patientId && task.patientId !== filter.patientId) return false;
+        if (filter.assignedToUserId && task.assignedToUserId !== filter.assignedToUserId)
+          return false;
+        if (filter.sourceWorkflow && task.sourceWorkflow !== filter.sourceWorkflow) return false;
+        if (filter.dueDate && !task.dueAt?.startsWith(filter.dueDate)) return false;
+        if (filter.dueBefore && (!task.dueAt || task.dueAt > filter.dueBefore)) return false;
+        return true;
+      })
+      .sort((left, right) => taskSortKey(left).localeCompare(taskSortKey(right)))
+      .slice(0, filter.limit ?? 100);
+  }
+
+  async findTaskById(scope: RepositoryScope, taskId: UUID): Promise<TaskRecord | null> {
+    return this.tasks.find((task) => matchesScope(task, scope) && task.id === taskId) ?? null;
+  }
+
   async createTask(scope: RepositoryScope, input: CreateTaskInput): Promise<TaskRecord> {
+    return this.insertTask(scope, input);
+  }
+
+  async updateTask(
+    scope: RepositoryScope,
+    taskId: UUID,
+    input: UpdateTaskInput
+  ): Promise<TaskRecord | null> {
+    const task = await this.findTaskById(scope, taskId);
+    if (!task) return null;
+    const nextStatus = input.status ?? task.status;
+    assertTaskTransition(task.status, nextStatus);
+    const completionEvidence =
+      input.completionEvidence ?? (nextStatus === "done" ? task.completionEvidence : {});
+    const completedAt = nextStatus === "done" ? task.completedAt ?? new Date().toISOString() : null;
+    const completedByUserId =
+      nextStatus === "done" ? task.completedByUserId ?? scope.actorUserId : null;
+    assertTaskCompletionEvidence({
+      status: nextStatus,
+      evidence: completionEvidence,
+      completedAt,
+      completedByUserId
+    });
+
+    Object.assign(task, {
+      status: nextStatus,
+      title: input.title ?? task.title,
+      description: input.description === undefined ? task.description : input.description,
+      priority: input.priority ?? task.priority,
+      dueAt: input.dueAt === undefined ? task.dueAt : input.dueAt,
+      assignedToUserId:
+        input.assignedToUserId === undefined ? task.assignedToUserId : input.assignedToUserId,
+      assignedByUserId:
+        input.assignedToUserId === undefined || input.assignedToUserId === task.assignedToUserId
+          ? task.assignedByUserId
+          : scope.actorUserId,
+      completedByUserId,
+      completedAt,
+      completionEvidence,
+      cancelledReason: input.cancelledReason ?? task.cancelledReason,
+      updatedByUserId: scope.actorUserId,
+      statusChangedAt: nextStatus === task.status ? task.statusChangedAt : new Date().toISOString(),
+      updatedAt: new Date().toISOString()
+    });
+    if (task.patientId) {
+      this.timelineItems.push(
+        timeline(
+          scope,
+          task.patientId,
+          nextStatus === "done" ? "task_completed" : "task_status_changed",
+          "tasks",
+          task.id,
+          nextStatus === "done" ? "Task completed" : "Task status changed",
+          { status: nextStatus, taskType: task.taskType }
+        )
+      );
+    }
+    return task;
+  }
+
+  async createRecallRule(
+    scope: RepositoryScope,
+    input: CreateRecallRuleInput
+  ): Promise<RecallRuleRecord> {
+    const now = new Date().toISOString();
+    const rule: RecallRuleRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      code: input.code,
+      title: input.title,
+      status: "active",
+      anchor: input.anchor ?? "procedure_completed",
+      offsetDays: input.offsetDays,
+      procedureCategory: input.procedureCategory ?? null,
+      pricebookProcedureId: input.pricebookProcedureId ?? null,
+      defaultTaskTitle: input.defaultTaskTitle ?? input.title,
+      defaultTaskPriority: input.defaultTaskPriority ?? "normal",
+      createdByUserId: scope.actorUserId,
+      updatedByUserId: scope.actorUserId,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.recallRules.push(rule);
+    return rule;
+  }
+
+  async listRecalls(scope: RepositoryScope, filter: RecallSearchFilter = {}): Promise<RecallRecord[]> {
+    return this.recalls
+      .filter((recall) => matchesScope(recall, scope))
+      .filter((recall) => {
+        if (filter.status && recall.status !== filter.status) return false;
+        if (filter.patientId && recall.patientId !== filter.patientId) return false;
+        if (filter.dueBefore && recall.dueAt > filter.dueBefore) return false;
+        return true;
+      })
+      .sort((left, right) => left.dueAt.localeCompare(right.dueAt))
+      .slice(0, filter.limit ?? 100);
+  }
+
+  async recordRecallAction(
+    scope: RepositoryScope,
+    recallId: UUID,
+    input: RecordRecallActionInput
+  ): Promise<RecallRecord | null> {
+    const recall = this.recalls.find((candidate) => matchesScope(candidate, scope) && candidate.id === recallId);
+    if (!recall) return null;
+    const statusByAction = {
+      manual_contact_requested: "contact_requested",
+      manual_contacted: "contacted",
+      appointment_booked: "booked",
+      completed: "completed",
+      skipped: "skipped",
+      cancelled: "cancelled"
+    } as const;
+    const evidence = {
+      actionType: input.actionType,
+      method: input.method ?? null,
+      notes: input.notes ?? null,
+      providerConfirmationReceived: false,
+      ...(input.evidence ?? {})
+    };
+    Object.assign(recall, {
+      status: statusByAction[input.actionType],
+      appointmentId: input.appointmentId ?? recall.appointmentId,
+      actionEvidence: evidence,
+      lastActionAt: new Date().toISOString(),
+      updatedByUserId: scope.actorUserId,
+      updatedAt: new Date().toISOString()
+    });
+    if (recall.taskId && ["booked", "completed", "skipped"].includes(recall.status)) {
+      await this.updateTask(scope, recall.taskId, {
+        status: "done",
+        completionEvidence: evidence
+      });
+    }
+    this.timelineItems.push(
+      timeline(
+        scope,
+        recall.patientId,
+        "recall_action_recorded",
+        "recalls",
+        recall.id,
+        "Recall action recorded",
+        { status: recall.status, actionType: input.actionType }
+      )
+    );
+    return recall;
+  }
+
+  async generateDueContinuityTasks(
+    scope: RepositoryScope,
+    input: GenerateDueContinuityInput
+  ): Promise<GenerateDueContinuityResult> {
+    const asOfMs = new Date(input.asOf).getTime();
+    const recallTasksCreated: TaskRecord[] = [];
+    const followUpTasksCreated: TaskRecord[] = [];
+    const recallsCreated: RecallRecord[] = [];
+    const skippedExistingKeys: string[] = [];
+    const rules = this.recallRules.filter((rule) => matchesScope(rule, scope) && rule.status === "active");
+
+    for (const rule of rules) {
+      for (const procedure of this.proceduresPerformed.filter(
+        (candidate) => matchesScope(candidate, scope) && candidate.status === "completed"
+      )) {
+        const pricebookProcedure = this.pricebookProcedures.find(
+          (candidate) => candidate.id === procedure.pricebookProcedureId
+        );
+        if (rule.pricebookProcedureId && rule.pricebookProcedureId !== procedure.pricebookProcedureId)
+          continue;
+        if (rule.procedureCategory && rule.procedureCategory !== pricebookProcedure?.category) continue;
+        const dueAt = addDaysIso(procedure.performedAt, rule.offsetDays);
+        if (new Date(dueAt).getTime() > asOfMs) continue;
+        const key = buildRecallGenerationKey({
+          recallRuleId: rule.id,
+          sourceProcedurePerformedId: procedure.id,
+          patientId: procedure.patientId,
+          dueAt
+        });
+        const existingRecall = this.recalls.find(
+          (recall) =>
+            matchesScope(recall, scope) &&
+            recall.recallRuleId === rule.id &&
+            recall.sourceProcedurePerformedId === procedure.id
+        );
+        if (existingRecall || this.tasks.some((task) => matchesScope(task, scope) && task.idempotencyKey === key)) {
+          skippedExistingKeys.push(key);
+          continue;
+        }
+        const now = new Date().toISOString();
+        const recall: RecallRecord = {
+          id: uuid(),
+          tenantId: scope.tenantId,
+          clinicId: scope.clinicId,
+          recallRuleId: rule.id,
+          patientId: procedure.patientId,
+          sourceProcedurePerformedId: procedure.id,
+          sourceInvoiceId: null,
+          taskId: null,
+          appointmentId: null,
+          status: "due",
+          dueAt,
+          lastActionAt: null,
+          actionEvidence: {},
+          createdByUserId: scope.actorUserId,
+          updatedByUserId: scope.actorUserId,
+          createdAt: now,
+          updatedAt: now
+        };
+        this.recalls.push(recall);
+        recallsCreated.push(recall);
+        const task = this.insertTask(scope, {
+          patientId: procedure.patientId,
+          encounterId: procedure.encounterId,
+          treatmentPlanId: procedure.treatmentPlanId,
+          procedurePerformedId: procedure.id,
+          taskType: "recall",
+          sourceWorkflow: "recall_generation",
+          sourceRecordType: "recall",
+          sourceRecordId: recall.id,
+          title: rule.defaultTaskTitle,
+          description: `Recall generated from ${rule.title}.`,
+          priority: rule.defaultTaskPriority,
+          dueAt,
+          idempotencyKey: key
+        });
+        recall.taskId = task.id;
+        recall.updatedAt = new Date().toISOString();
+        recallTasksCreated.push(task);
+        this.timelineItems.push(
+          timeline(scope, recall.patientId, "recall_due", "recalls", recall.id, "Recall due", {
+            recallRuleId: rule.id,
+            taskId: task.id
+          })
+        );
+      }
+    }
+
+    for (const procedure of this.proceduresPerformed.filter(
+      (candidate) => matchesScope(candidate, scope) && candidate.status === "completed"
+    )) {
+      const dueAt = addDaysIso(procedure.performedAt, 1);
+      if (new Date(dueAt).getTime() > asOfMs) continue;
+      const key = buildPostOpFollowUpKey(procedure.id);
+      if (this.tasks.some((task) => matchesScope(task, scope) && task.idempotencyKey === key)) {
+        skippedExistingKeys.push(key);
+        continue;
+      }
+      followUpTasksCreated.push(
+        this.insertTask(scope, {
+          patientId: procedure.patientId,
+          encounterId: procedure.encounterId,
+          treatmentPlanId: procedure.treatmentPlanId,
+          procedurePerformedId: procedure.id,
+          taskType: "post_op_follow_up",
+          sourceWorkflow: "post_op_follow_up",
+          sourceRecordType: "procedure_performed_record",
+          sourceRecordId: procedure.id,
+          title: "Post-op follow-up",
+          description: "Manual patient follow-up after completed procedure. Record contact evidence after staff action.",
+          priority: "normal",
+          dueAt,
+          idempotencyKey: key
+        })
+      );
+    }
+
+    for (const invoice of this.invoices.filter(
+      (candidate) =>
+        matchesScope(candidate, scope) &&
+        candidate.status === "issued" &&
+        candidate.balanceMinor > 0 &&
+        candidate.dueAt !== null &&
+        candidate.dueAt <= input.asOf &&
+        ["unpaid", "payment_requested", "partially_paid", "reconciliation_required"].includes(candidate.paymentStatus)
+    )) {
+      const key = buildPaymentFollowUpKey(invoice.id);
+      if (this.tasks.some((task) => matchesScope(task, scope) && task.idempotencyKey === key)) {
+        skippedExistingKeys.push(key);
+        continue;
+      }
+      followUpTasksCreated.push(
+        this.insertTask(scope, {
+          patientId: invoice.patientId,
+          invoiceId: invoice.id,
+          treatmentPlanId: invoice.treatmentPlanId,
+          taskType: "payment_follow_up",
+          sourceWorkflow: "payment_follow_up",
+          sourceRecordType: "invoice",
+          sourceRecordId: invoice.id,
+          title: "Payment follow-up",
+          description: "Manual follow-up for invoice balance due. Payment state changes require verified provider or manual payment evidence.",
+          priority: "high",
+          dueAt: invoice.dueAt,
+          idempotencyKey: key
+        })
+      );
+    }
+
+    return { recallTasksCreated, followUpTasksCreated, recallsCreated, skippedExistingKeys };
+  }
+
+  async createSopTemplate(scope: RepositoryScope, input: CreateSopTemplateInput): Promise<SopTemplateDetail> {
+    const now = new Date().toISOString();
+    const template: SopTemplateRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      code: input.code,
+      title: input.title,
+      description: input.description ?? null,
+      status: "active",
+      createdByUserId: scope.actorUserId,
+      updatedByUserId: scope.actorUserId,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.sopTemplates.push(template);
+    const items = input.items.map((item, index): SopTemplateItemRecord => {
+      const record = {
+        id: uuid(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        templateId: template.id,
+        itemIndex: index + 1,
+        title: item.title,
+        instructions: item.instructions ?? null,
+        evidenceRequired: item.evidenceRequired ?? false,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.sopTemplateItems.push(record);
+      return record;
+    });
+    return { template, items };
+  }
+
+  async createSopSchedule(
+    scope: RepositoryScope,
+    input: CreateSopScheduleInput
+  ): Promise<SopScheduleRecord | null> {
+    const template = this.sopTemplates.find(
+      (candidate) => matchesScope(candidate, scope) && candidate.id === input.templateId && candidate.status === "active"
+    );
+    if (!template) return null;
+    const now = new Date().toISOString();
+    const schedule: SopScheduleRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      templateId: template.id,
+      title: input.title,
+      status: "active",
+      recurrenceType: input.recurrenceType,
+      intervalDays: input.intervalDays ?? null,
+      dayOfWeek: input.dayOfWeek ?? null,
+      dayOfMonth: input.dayOfMonth ?? null,
+      dueTime: input.dueTime,
+      timezone: input.timezone ?? "Asia/Kolkata",
+      startsOn: input.startsOn,
+      endsOn: input.endsOn ?? null,
+      assignedToUserId: input.assignedToUserId ?? null,
+      defaultTaskPriority: input.defaultTaskPriority ?? "normal",
+      createdByUserId: scope.actorUserId,
+      updatedByUserId: scope.actorUserId,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.sopSchedules.push(schedule);
+    return schedule;
+  }
+
+  async generateDueSopRuns(
+    scope: RepositoryScope,
+    input: GenerateDueSopRunsInput
+  ): Promise<GenerateDueSopRunsResult> {
+    const runsCreated: SopRunDetail[] = [];
+    const skippedExistingKeys: string[] = [];
+    const asOf = new Date(input.asOf);
+
+    for (const schedule of this.sopSchedules.filter(
+      (candidate) => matchesScope(candidate, scope) && candidate.status === "active"
+    )) {
+      const dueAt = sopDueAtForAsOf(schedule, asOf);
+      if (!dueAt || new Date(dueAt).getTime() > asOf.getTime()) continue;
+      const key = buildSopRunGenerationKey(schedule.id, dueAt);
+      if (this.sopRuns.some((run) => matchesScope(run, scope) && run.generatedFromKey === key)) {
+        skippedExistingKeys.push(key);
+        continue;
+      }
+      const now = new Date().toISOString();
+      const run: SopRunRecord = {
+        id: uuid(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        templateId: schedule.templateId,
+        scheduleId: schedule.id,
+        taskId: null,
+        dueAt,
+        status: "due",
+        assignedToUserId: schedule.assignedToUserId,
+        startedByUserId: null,
+        startedAt: null,
+        completedByUserId: null,
+        completedAt: null,
+        completionEvidence: {},
+        generatedFromKey: key,
+        createdAt: now,
+        updatedAt: now
+      };
+      this.sopRuns.push(run);
+      const templateItems = this.sopTemplateItems
+        .filter((item) => matchesScope(item, scope) && item.templateId === schedule.templateId)
+        .sort((left, right) => left.itemIndex - right.itemIndex);
+      for (const item of templateItems) {
+        this.sopRunItems.push({
+          id: uuid(),
+          tenantId: scope.tenantId,
+          clinicId: scope.clinicId,
+          sopRunId: run.id,
+          templateItemId: item.id,
+          itemIndex: item.itemIndex,
+          title: item.title,
+          instructions: item.instructions,
+          evidenceRequired: item.evidenceRequired,
+          status: "pending",
+          evidence: {},
+          completedByUserId: null,
+          completedAt: null,
+          createdAt: now,
+          updatedAt: now
+        });
+      }
+      const task = this.insertTask(scope, {
+        taskType: "sop",
+        sourceWorkflow: "sop_run",
+        sourceRecordType: "sop_run",
+        sourceRecordId: run.id,
+        title: schedule.title,
+        description: "Recurring SOP checklist run.",
+        priority: schedule.defaultTaskPriority,
+        dueAt,
+        assignedToUserId: schedule.assignedToUserId,
+        idempotencyKey: key
+      });
+      run.taskId = task.id;
+      const detail = this.sopRunDetail(scope, run.id);
+      if (detail) runsCreated.push(detail);
+    }
+
+    return { runsCreated, skippedExistingKeys };
+  }
+
+  async listSopRuns(scope: RepositoryScope, filter: SopRunSearchFilter = {}): Promise<SopRunDetail[]> {
+    return this.sopRuns
+      .filter((run) => matchesScope(run, scope))
+      .filter((run) => {
+        if (filter.status && run.status !== filter.status) return false;
+        if (filter.date && !run.dueAt.startsWith(filter.date)) return false;
+        if (filter.dueBefore && run.dueAt > filter.dueBefore) return false;
+        return true;
+      })
+      .sort((left, right) => left.dueAt.localeCompare(right.dueAt))
+      .slice(0, filter.limit ?? 100)
+      .map((run) => this.sopRunDetail(scope, run.id))
+      .filter((detail): detail is SopRunDetail => detail !== null);
+  }
+
+  async updateSopRun(
+    scope: RepositoryScope,
+    sopRunId: UUID,
+    input: UpdateSopRunInput
+  ): Promise<SopRunDetail | null> {
+    const run = this.sopRuns.find((candidate) => matchesScope(candidate, scope) && candidate.id === sopRunId);
+    if (!run) return null;
+    for (const itemInput of input.items ?? []) {
+      const item = this.sopRunItems.find(
+        (candidate) => matchesScope(candidate, scope) && candidate.id === itemInput.itemId && candidate.sopRunId === run.id
+      );
+      if (!item) continue;
+      Object.assign(item, {
+        status: itemInput.status,
+        evidence: itemInput.evidence ?? item.evidence,
+        completedByUserId: itemInput.status === "done" ? scope.actorUserId : null,
+        completedAt: itemInput.status === "done" ? new Date().toISOString() : null,
+        updatedAt: new Date().toISOString()
+      });
+    }
+    Object.assign(run, {
+      status: input.status ?? run.status,
+      startedByUserId:
+        input.status === "in_progress" && !run.startedByUserId ? scope.actorUserId : run.startedByUserId,
+      startedAt: input.status === "in_progress" && !run.startedAt ? new Date().toISOString() : run.startedAt,
+      completedByUserId: input.status === "completed" ? scope.actorUserId : null,
+      completedAt: input.status === "completed" ? new Date().toISOString() : null,
+      completionEvidence: input.completionEvidence ?? run.completionEvidence,
+      updatedAt: new Date().toISOString()
+    });
+    const detail = this.sopRunDetail(scope, run.id);
+    if (detail) assertSopRunCompletion(detail);
+    if (run.status === "completed" && run.taskId) {
+      await this.updateTask(scope, run.taskId, {
+        status: "done",
+        completionEvidence: run.completionEvidence
+      });
+    }
+    return detail;
+  }
+
+  private insertTask(scope: RepositoryScope, input: CreateTaskInput): TaskRecord {
+    if (input.idempotencyKey) {
+      const existing = this.tasks.find(
+        (task) => matchesScope(task, scope) && task.idempotencyKey === input.idempotencyKey
+      );
+      if (existing) return existing;
+    }
     const now = new Date().toISOString();
     const task: TaskRecord = {
       id: uuid(),
@@ -749,17 +1325,54 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       patientId: input.patientId ?? null,
       leadId: input.leadId ?? null,
       appointmentId: input.appointmentId ?? null,
+      invoiceId: input.invoiceId ?? null,
+      encounterId: input.encounterId ?? null,
+      treatmentPlanId: input.treatmentPlanId ?? null,
+      procedurePerformedId: input.procedurePerformedId ?? null,
       taskType: input.taskType,
+      sourceWorkflow: input.sourceWorkflow ?? "manual",
+      sourceRecordType: input.sourceRecordType ?? null,
+      sourceRecordId: input.sourceRecordId ?? null,
       title: input.title,
+      description: input.description ?? null,
+      priority: input.priority ?? "normal",
       status: input.status ?? "open",
       dueAt: input.dueAt ?? null,
       assignedToUserId: input.assignedToUserId ?? null,
+      assignedByUserId: input.assignedToUserId ? scope.actorUserId : null,
+      completedByUserId: null,
+      completedAt: null,
+      completionEvidence: {},
+      cancelledReason: null,
+      idempotencyKey: input.idempotencyKey ?? null,
+      createdByUserId: scope.actorUserId,
+      updatedByUserId: scope.actorUserId,
+      statusChangedAt: now,
       createdAt: now,
       updatedAt: now
     };
 
     this.tasks.push(task);
+    if (task.patientId) {
+      this.timelineItems.push(
+        timeline(scope, task.patientId, "task_created", "tasks", task.id, "Task created", {
+          taskType: task.taskType,
+          sourceWorkflow: task.sourceWorkflow
+        })
+      );
+    }
     return task;
+  }
+
+  private sopRunDetail(scope: RepositoryScope, sopRunId: UUID): SopRunDetail | null {
+    const run = this.sopRuns.find((candidate) => matchesScope(candidate, scope) && candidate.id === sopRunId);
+    if (!run) return null;
+    return {
+      run,
+      items: this.sopRunItems
+        .filter((item) => matchesScope(item, scope) && item.sopRunId === run.id)
+        .sort((left, right) => left.itemIndex - right.itemIndex)
+    };
   }
 
   async createAttributionTouch(
@@ -2533,6 +3146,36 @@ function uuidOrNull(value: string | null | undefined): UUID | null {
 
 function matchesScope(record: { tenantId: UUID; clinicId: UUID }, scope: RepositoryScope): boolean {
   return record.tenantId === scope.tenantId && record.clinicId === scope.clinicId;
+}
+
+function taskSortKey(task: TaskRecord): string {
+  const priorityRank = { urgent: "1", high: "2", normal: "3", low: "4" }[task.priority];
+  return `${priorityRank}:${task.dueAt ?? "9999-12-31T23:59:59.999Z"}:${task.updatedAt}`;
+}
+
+function sopDueAtForAsOf(schedule: SopScheduleRecord, asOf: Date): string | null {
+  const asOfDate = asOf.toISOString().slice(0, 10);
+  if (asOfDate < schedule.startsOn) return null;
+  if (schedule.endsOn && asOfDate > schedule.endsOn) return null;
+
+  const dayMatches =
+    schedule.recurrenceType === "daily" ||
+    (schedule.recurrenceType === "weekly" && asOf.getUTCDay() === schedule.dayOfWeek) ||
+    (schedule.recurrenceType === "monthly" && asOf.getUTCDate() === schedule.dayOfMonth) ||
+    (schedule.recurrenceType === "interval_days" &&
+      schedule.intervalDays !== null &&
+      daysBetween(schedule.startsOn, asOfDate) % schedule.intervalDays === 0);
+  if (!dayMatches) return null;
+
+  const dueAt = new Date(`${asOfDate}T${schedule.dueTime.replace(/Z$/, "")}Z`);
+  if (Number.isNaN(dueAt.getTime())) return null;
+  return dueAt.toISOString();
+}
+
+function daysBetween(startDate: string, endDate: string): number {
+  const start = new Date(`${startDate}T00:00:00.000Z`).getTime();
+  const end = new Date(`${endDate}T00:00:00.000Z`).getTime();
+  return Math.floor((end - start) / 86_400_000);
 }
 
 function timeline(

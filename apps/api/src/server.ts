@@ -38,6 +38,8 @@ import {
   convertLeadToAppointment,
   createAppointment,
   createEncounter,
+  createTask,
+  createRecallRule,
   createDentalChartSnapshot,
   createEncounterDentalFinding,
   createEncounterProcedurePerformed,
@@ -54,6 +56,10 @@ import {
   createPatient,
   createPatientConsent,
   createPatientTreatmentPlan,
+  createSopSchedule,
+  createSopTemplate,
+  generateDueContinuityTasks,
+  generateDueSopRuns,
   getMorningDashboard,
   getEncounter,
   getInvoice,
@@ -73,6 +79,9 @@ import {
   listPatients,
   listProviderSchedules,
   listQueue,
+  listRecalls,
+  listSopRuns,
+  listTasks,
   markAppointmentNoShow,
   matchLeadToPatient,
   revokePatientConsent,
@@ -85,9 +94,12 @@ import {
   signPrescription,
   startEncounter,
   submitPatientIntakeForm,
+  recordRecallAction,
   updateDentalFinding,
   updateAppointment,
   updateLeadStatus,
+  updateSopRun,
+  updateTask,
   updateTreatmentPlan,
   updatePatient,
   updateQueueEntry,
@@ -703,6 +715,72 @@ async function routeOperationsRequest(input: {
       operationsContext,
       dependencies,
       url.searchParams.get("date") ?? todayIsoDate()
+    );
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/tasks") {
+    return listTasks(operationsContext, dependencies, url.searchParams);
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/tasks") {
+    return createTask(operationsContext, dependencies, body);
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/tasks/generate-due") {
+    return generateDueContinuityTasks(operationsContext, dependencies, body);
+  }
+
+  const taskMatch = pathname.match(/^\/v1\/tasks\/([^/]+)$/);
+  if (taskMatch && input.request.method === "PATCH") {
+    return updateTask(
+      operationsContext,
+      dependencies,
+      pathUuid(taskMatch[1], "taskId"),
+      body
+    );
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/recall-rules") {
+    return createRecallRule(operationsContext, dependencies, body);
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/recalls") {
+    return listRecalls(operationsContext, dependencies, url.searchParams);
+  }
+
+  const recallActionMatch = pathname.match(/^\/v1\/recalls\/([^/]+)\/actions$/);
+  if (recallActionMatch && input.request.method === "POST") {
+    return recordRecallAction(
+      operationsContext,
+      dependencies,
+      pathUuid(recallActionMatch[1], "recallId"),
+      body
+    );
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/sop-templates") {
+    return createSopTemplate(operationsContext, dependencies, body);
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/sop-schedules") {
+    return createSopSchedule(operationsContext, dependencies, body);
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/sop-runs") {
+    return listSopRuns(operationsContext, dependencies, url.searchParams);
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/sop-runs/generate-due") {
+    return generateDueSopRuns(operationsContext, dependencies, body);
+  }
+
+  const sopRunMatch = pathname.match(/^\/v1\/sop-runs\/([^/]+)$/);
+  if (sopRunMatch && input.request.method === "PATCH") {
+    return updateSopRun(
+      operationsContext,
+      dependencies,
+      pathUuid(sopRunMatch[1], "sopRunId"),
+      body
     );
   }
 

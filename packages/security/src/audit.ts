@@ -398,10 +398,76 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: false
   },
+  "task.completed": {
+    category: "administration",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
   "task.due": {
     category: "administration",
     riskLevel: "low",
     phiInvolved: true,
+    requiresPatientId: false
+  },
+  "recall.rule_created": {
+    category: "administration",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "recall.due": {
+    category: "clinical",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "recall.sent": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "recall.action_recorded": {
+    category: "clinical",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "recall.completed": {
+    category: "clinical",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "sop_template.created": {
+    category: "administration",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "sop_schedule.created": {
+    category: "administration",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "sop_run.created": {
+    category: "administration",
+    riskLevel: "low",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "sop_run.updated": {
+    category: "administration",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "sop_run.completed": {
+    category: "administration",
+    riskLevel: "medium",
+    phiInvolved: false,
     requiresPatientId: false
   }
 } as const;

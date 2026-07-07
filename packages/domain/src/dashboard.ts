@@ -1,33 +1,7 @@
 import type { AppointmentRecord, AppointmentStatus, QueueEntryRecord } from "./appointment.ts";
 import type { UUID } from "./ids.ts";
 import type { LeadRecord } from "./lead.ts";
-
-export type TaskStatus = "open" | "in_progress" | "done" | "cancelled";
-export type TaskType =
-  | "confirmation"
-  | "missed_call"
-  | "whatsapp_request"
-  | "follow_up"
-  | "recall"
-  | "payment_due"
-  | "lab_case"
-  | "sop";
-
-export interface TaskRecord {
-  id: UUID;
-  tenantId: UUID;
-  clinicId: UUID;
-  patientId: UUID | null;
-  leadId: UUID | null;
-  appointmentId: UUID | null;
-  taskType: TaskType;
-  title: string;
-  status: TaskStatus;
-  dueAt: string | null;
-  assignedToUserId: UUID | null;
-  createdAt: string;
-  updatedAt: string;
-}
+import type { TaskRecord } from "./continuity.ts";
 
 export interface MorningDashboardReadModel {
   date: string;

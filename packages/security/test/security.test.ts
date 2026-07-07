@@ -118,6 +118,33 @@ test("CP5 provider audit classifications separate config health from invoice pay
   assert.equal(classifyAuditAction("payment.reconciliation_required").category, "billing");
 });
 
+test("CP6 continuity audit classifications separate patient-linked recalls from clinic SOPs", () => {
+  for (const action of ["recall.due", "recall.sent", "recall.action_recorded", "recall.completed"] as const) {
+    const classification = classifyAuditAction(action);
+    assert.equal(classification.phiInvolved, true, `${action} should involve patient recall evidence`);
+    assert.equal(classification.requiresPatientId, true, `${action} should require patientId`);
+  }
+
+  for (const action of ["sop_template.created", "sop_schedule.created", "sop_run.created", "sop_run.completed"] as const) {
+    const classification = classifyAuditAction(action);
+    assert.equal(classification.phiInvolved, false, `${action} should be clinic operational evidence`);
+    assert.equal(classification.requiresPatientId, false, `${action} should not require patientId`);
+  }
+
+  assert.equal(classifyAuditAction("task.completed").phiInvolved, true);
+  assert.equal(classifyAuditAction("recall.sent").riskLevel, "high");
+  assert.throws(
+    () =>
+      createAuditEvent({
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000101",
+        actor: { type: "user", id: "10000000-0000-4000-8000-000000001003" },
+        action: "recall.due"
+      }),
+    /requires patientId/
+  );
+});
+
 test("CP3 audit classifications cover intake consent encounter note prescription and timeline actions", () => {
   for (const action of [
     "patient.timeline.viewed",

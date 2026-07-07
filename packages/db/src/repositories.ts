@@ -51,10 +51,23 @@ import type {
   ProviderScheduleRecord,
   QueueEntryRecord,
   QueueStatus,
+  RecallActionType,
+  RecallRecord,
+  RecallRuleAnchor,
+  RecallRuleRecord,
+  RecallStatus,
   ReceiptRecord,
   RecordPaymentTransactionInput,
   RoleAssignment,
+  SopRecurrenceType,
+  SopRunDetail,
+  SopRunItemStatus,
+  SopRunStatus,
+  SopScheduleRecord,
+  SopTemplateDetail,
   TaskRecord,
+  TaskPriority,
+  TaskSourceWorkflow,
   TaskStatus,
   TaskType,
   Tenant,
@@ -167,11 +180,131 @@ export interface CreateTaskInput {
   patientId?: UUID | null;
   leadId?: UUID | null;
   appointmentId?: UUID | null;
+  invoiceId?: UUID | null;
+  encounterId?: UUID | null;
+  treatmentPlanId?: UUID | null;
+  procedurePerformedId?: UUID | null;
   taskType: TaskType;
+  sourceWorkflow?: TaskSourceWorkflow;
+  sourceRecordType?: string | null;
+  sourceRecordId?: UUID | null;
   title: string;
+  description?: string | null;
+  priority?: TaskPriority;
   status?: TaskStatus;
   dueAt?: string | null;
   assignedToUserId?: UUID | null;
+  idempotencyKey?: string | null;
+}
+
+export interface TaskSearchFilter {
+  status?: TaskStatus | null;
+  dueDate?: string | null;
+  dueBefore?: string | null;
+  assignedToUserId?: UUID | null;
+  patientId?: UUID | null;
+  sourceWorkflow?: TaskSourceWorkflow | null;
+  limit?: number | null;
+}
+
+export interface UpdateTaskInput {
+  status?: TaskStatus;
+  assignedToUserId?: UUID | null;
+  priority?: TaskPriority;
+  dueAt?: string | null;
+  title?: string;
+  description?: string | null;
+  completionEvidence?: Record<string, unknown>;
+  cancelledReason?: string | null;
+}
+
+export interface CreateRecallRuleInput {
+  code: string;
+  title: string;
+  anchor?: RecallRuleAnchor;
+  offsetDays: number;
+  procedureCategory?: string | null;
+  pricebookProcedureId?: UUID | null;
+  defaultTaskTitle?: string | null;
+  defaultTaskPriority?: TaskPriority;
+}
+
+export interface RecallSearchFilter {
+  status?: RecallStatus | null;
+  dueBefore?: string | null;
+  patientId?: UUID | null;
+  limit?: number | null;
+}
+
+export interface RecordRecallActionInput {
+  actionType: RecallActionType;
+  method?: string | null;
+  appointmentId?: UUID | null;
+  evidence?: Record<string, unknown>;
+  notes?: string | null;
+}
+
+export interface GenerateDueContinuityInput {
+  asOf: string;
+}
+
+export interface GenerateDueContinuityResult {
+  recallTasksCreated: TaskRecord[];
+  followUpTasksCreated: TaskRecord[];
+  recallsCreated: RecallRecord[];
+  skippedExistingKeys: string[];
+}
+
+export interface CreateSopTemplateInput {
+  code: string;
+  title: string;
+  description?: string | null;
+  items: {
+    title: string;
+    instructions?: string | null;
+    evidenceRequired?: boolean;
+  }[];
+}
+
+export interface CreateSopScheduleInput {
+  templateId: UUID;
+  title: string;
+  recurrenceType: SopRecurrenceType;
+  intervalDays?: number | null;
+  dayOfWeek?: number | null;
+  dayOfMonth?: number | null;
+  dueTime: string;
+  timezone?: string | null;
+  startsOn: string;
+  endsOn?: string | null;
+  assignedToUserId?: UUID | null;
+  defaultTaskPriority?: TaskPriority;
+}
+
+export interface SopRunSearchFilter {
+  date?: string | null;
+  status?: SopRunStatus | null;
+  dueBefore?: string | null;
+  limit?: number | null;
+}
+
+export interface UpdateSopRunInput {
+  status?: SopRunStatus;
+  completionEvidence?: Record<string, unknown>;
+  items?: {
+    itemId: UUID;
+    status: SopRunItemStatus;
+    evidence?: Record<string, unknown>;
+  }[];
+}
+
+export interface GenerateDueSopRunsInput {
+  asOf: string;
+}
+
+export interface GenerateDueSopRunsResult {
+  runsCreated: SopRunDetail[];
+  skippedExistingKeys: string[];
 }
 
 export interface CreateAttributionTouchInput {
@@ -403,7 +536,29 @@ export interface ClinicOperationsRepository {
   listQueueEntries(scope: RepositoryScope, date: string): Promise<QueueEntryRecord[]>;
   updateQueueEntry(scope: RepositoryScope, queueEntryId: UUID, status: QueueStatus): Promise<QueueEntryRecord | null>;
 
+  listTasks(scope: RepositoryScope, filter?: TaskSearchFilter): Promise<TaskRecord[]>;
+  findTaskById(scope: RepositoryScope, taskId: UUID): Promise<TaskRecord | null>;
   createTask(scope: RepositoryScope, input: CreateTaskInput): Promise<TaskRecord>;
+  updateTask(scope: RepositoryScope, taskId: UUID, input: UpdateTaskInput): Promise<TaskRecord | null>;
+  createRecallRule(scope: RepositoryScope, input: CreateRecallRuleInput): Promise<RecallRuleRecord>;
+  listRecalls(scope: RepositoryScope, filter?: RecallSearchFilter): Promise<RecallRecord[]>;
+  recordRecallAction(
+    scope: RepositoryScope,
+    recallId: UUID,
+    input: RecordRecallActionInput
+  ): Promise<RecallRecord | null>;
+  generateDueContinuityTasks(
+    scope: RepositoryScope,
+    input: GenerateDueContinuityInput
+  ): Promise<GenerateDueContinuityResult>;
+  createSopTemplate(scope: RepositoryScope, input: CreateSopTemplateInput): Promise<SopTemplateDetail>;
+  createSopSchedule(scope: RepositoryScope, input: CreateSopScheduleInput): Promise<SopScheduleRecord | null>;
+  generateDueSopRuns(
+    scope: RepositoryScope,
+    input: GenerateDueSopRunsInput
+  ): Promise<GenerateDueSopRunsResult>;
+  listSopRuns(scope: RepositoryScope, filter?: SopRunSearchFilter): Promise<SopRunDetail[]>;
+  updateSopRun(scope: RepositoryScope, sopRunId: UUID, input: UpdateSopRunInput): Promise<SopRunDetail | null>;
   createAttributionTouch(
     scope: RepositoryScope,
     input: CreateAttributionTouchInput

@@ -13,6 +13,9 @@ test("accountant role cannot read clinical PHI by default", () => {
   assert.equal(roleGrantsPermission("accountant", "dental.chart.read"), false);
   assert.equal(roleGrantsPermission("accountant", "media.read"), false);
   assert.equal(roleGrantsPermission("accountant", "patient.phi.read"), false);
+  assert.equal(roleGrantsPermission("accountant", "task.manage"), false);
+  assert.equal(roleGrantsPermission("accountant", "recall.manage"), false);
+  assert.equal(roleGrantsPermission("accountant", "sop.manage"), false);
 });
 
 test("doctor can sign clinical records and assistant cannot", () => {
@@ -41,6 +44,9 @@ test("accountant and auditor cannot mutate CP3 clinical or PHI records", () => {
 test("role expansion deduplicates permissions", () => {
   const permissions = permissionsForRoles(["assistant", "receptionist"]);
   assert.equal(permissions.includes("schedule.write"), true);
+  assert.equal(permissions.includes("task.manage"), true);
+  assert.equal(permissions.includes("recall.manage"), true);
+  assert.equal(permissions.includes("sop.manage"), true);
   assert.equal(new Set(permissions).size, permissions.length);
 });
 
@@ -48,6 +54,8 @@ test("clinical permission classifier covers PHI-sensitive permissions", () => {
   assert.equal(isClinicalPermission("patient.phi.read"), true);
   assert.equal(isClinicalPermission("dental.chart.read"), true);
   assert.equal(isClinicalPermission("prescription.write"), true);
+  assert.equal(isClinicalPermission("task.manage"), true);
+  assert.equal(isClinicalPermission("recall.manage"), true);
   assert.equal(isClinicalPermission("billing.export"), false);
   assert.ok(DEFAULT_ROLE_PERMISSION_GRANTS.owner_admin.length > DEFAULT_ROLE_PERMISSION_GRANTS.assistant.length);
 });
