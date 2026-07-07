@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after verified Checkpoint 4 promotion via merge commit `248496a`.
+- Branch: `main` after verified Checkpoint 4 promotion via merge commit `248496a`; Checkpoint 5 launch packet is being prepared from base `1e6e3cb`.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -24,6 +24,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Imaging/QA: `019f3a35-4418-7e93-91f6-7beffa65ac55`, `/Users/abhinavgupta/.codex/worktrees/9cf9/ClinicOS`.
 - CP1 worker lanes were real Codex-managed worktrees under `.codex/worktrees`.
 - A project-scoped worktree thread test succeeded: `target.type = "project"`, `projectId = "/Users/abhinavgupta/Desktop/ClinicOS"`, and `environment.type = "worktree"` made the worker visible under the `ClinicOS` project in the Codex sidebar.
+- Checkpoint 5 must start visible project-scoped worktree lanes from the committed CP5 launch packet and integrate into `codex/integration/checkpoint-5` before promotion to `main`.
 
 ## Non-Negotiable Product Posture
 

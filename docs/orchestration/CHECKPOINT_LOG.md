@@ -31,6 +31,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 2 - Lead/patient/appointment/day-start | Complete  |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
 | 3 - Intake/consent/encounter/notes     | Complete  |       `6fe2cbc` |     `eb68abd` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-3`. Master integration aligned live CP3 routes, consent enforcement, prep summary, QA fixtures, web selectors, browser smoke, and security/audit coverage.                                         |
 | 4 - Dental charting/media/imaging      | Complete  |       `c7b222c` |     `248496a` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4` and promoted to `main`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                     |
+| 5 - Treatment/checkout/payments         | Launching |       `1e6e3cb` |       pending | CP5 launch packet added from verified CP4 `main`; visible project-scoped lanes will cover billing domain, payment provider, checkout UX, and clinical output QA.                                                                                                                |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -173,3 +174,15 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - External imaging-link route family remains a deferred whole workflow; CP4 durable media routes cover upload, completion, listing, and mediated signed access.
   - Bulk multi-tooth chart patching is deferred; CP4 supports complete one-finding-per-row create/update/history/snapshot behavior.
   - Temporary UI was checked for safety and responsive invariants rather than final visual polish.
+
+## Checkpoint 5 Launch - 2026-07-07
+
+- Launch packet: `docs/orchestration/CHECKPOINT_05_TREATMENT_CHECKOUT_PAYMENTS.md`.
+- Base commit before launch packet: `1e6e3cb`.
+- Credential/input preflight: `.secrets/orchestration.env` is present; payment provider variables and Razorpay key/secret/webhook secret names are present; `RAZORPAY_WEBHOOK_URL` is empty, so live hosted webhook registration is deferred until deployment owns an HTTPS callback.
+- Integration branch rule: CP5 lane commits merge first into `codex/integration/checkpoint-5`; promote to `main` only after full code, live local, browser/user, payment security, and docs gates pass.
+- Visible project-scoped lanes planned:
+  - Billing Domain.
+  - Payment Provider.
+  - Checkout UX.
+  - Clinical Output QA.
