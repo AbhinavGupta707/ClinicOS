@@ -45,7 +45,7 @@ describe("role-aware navigation", () => {
 
   it("reports active versus registered unavailable surfaces", () => {
     expect(summarizeSurfaceAccess(["assistant"])).toMatchObject({
-      activeCount: 15,
+      activeCount: 18,
       registeredCount: expect.any(Number),
       unavailableCount: expect.any(Number)
     });
@@ -148,5 +148,28 @@ describe("role-aware navigation", () => {
     expect(resolveSurfaceId("provider-health")).toBe("integrations");
     expect(resolveSurfaceId("dead-letter-replay")).toBe("event-replay");
     expect(resolveSurfaceId("imports")).toBe("migration-review");
+  });
+
+  it("activates CP8 AI review surfaces without exposing them to accounting", () => {
+    const assistantActive = getVisibleSurfaces(["assistant"])
+      .filter((surface) => surface.availability === "active")
+      .map((surface) => surface.id);
+    const doctorActive = getVisibleSurfaces(["doctor"])
+      .filter((surface) => surface.availability === "active")
+      .map((surface) => surface.id);
+    const accountantVisible = getVisibleSurfaces(["accountant"]).map((surface) => surface.id);
+
+    expect(assistantActive).toEqual(
+      expect.arrayContaining(["note-drafts", "chart-drafts", "action-proposals"])
+    );
+    expect(doctorActive).toEqual(
+      expect.arrayContaining(["note-drafts", "chart-drafts", "action-proposals"])
+    );
+    expect(accountantVisible).not.toContain("note-drafts");
+    expect(accountantVisible).not.toContain("chart-drafts");
+    expect(accountantVisible).not.toContain("action-proposals");
+    expect(resolveSurfaceId("ai-scribe")).toBe("note-drafts");
+    expect(resolveSurfaceId("chart-review")).toBe("chart-drafts");
+    expect(resolveSurfaceId("proposal-inbox")).toBe("action-proposals");
   });
 });
