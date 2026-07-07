@@ -34,7 +34,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 5 - Treatment/checkout/payments         | Complete  |       `d3d341f` |     `d679a78` | CP5 visible project-scoped lanes merged into `codex/integration/checkpoint-5`, promoted to `main`, and followed by closeout docs commit `6f9fe1c`.                                                                                                           |
 | 6 - Continuity/operations/owner dashboard | Complete  |       `6f9fe1c` |     `08ddab9` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`, verified, documented, promoted to `main`, and post-promotion format gate repaired.                                                                 |
 | 7 - Live integrations/migration hardening | Complete |       `e7139c4` |     `92fb2b9` | CP7 visible project-scoped lanes merged into `codex/integration/checkpoint-7`, master integration reconciled live provider health/dead-letter/migration contracts, and verified branch was promoted to `main`.                         |
-| 8 - Mobile capture and AI scribe/action proposals | Complete |       `983cca5` |     `f967144` | CP8 visible project-scoped lanes merged into `codex/integration/checkpoint-8`. Master integration reconciled AI safety route contracts, consent blocking semantics, review-role browser gates, and fixture/live evidence boundaries before promotion. |
+| 8 - Mobile capture and AI scribe/action proposals | Complete |       `983cca5` |     `8ac2dae` | CP8 visible project-scoped lanes merged into `codex/integration/checkpoint-8` and promoted to `main`. Master integration reconciled AI safety route contracts, consent blocking semantics, review-role browser gates, and fixture/live evidence boundaries. |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -363,6 +363,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 
 - Integration branch: `codex/integration/checkpoint-8`.
 - Verified integration patch commit: `f967144`.
+- Main promotion merge commit: `8ac2dae`.
 - Merge order:
   - AI Backend commit `4b00076` merged first with migration, domain, repository, API, security, and simulator AI provider contracts.
   - Mobile Capture commit `ea8a6a2` merged second with Expo capture shell, durable CP4 media upload queue contract, secure cache abstractions, and audio-consent disabled state.

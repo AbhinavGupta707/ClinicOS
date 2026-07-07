@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `codex/integration/checkpoint-8` after verified CP8 integration patch `f967144`; promote to `main` after CP8 evidence docs are committed, then launch Checkpoint 9 from updated `main`.
+- Branch: `main` after CP8 promotion merge commit `8ac2dae`; launch Checkpoint 9 from updated `main`.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -48,7 +48,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Review UX: `019f3cb8-6e4e-73d3-9754-9cbd5aa583d9`, `/Users/abhinavgupta/.codex/worktrees/fc5f/ClinicOS`.
   - AI Safety/QA: `019f3cb8-a9ea-79b2-9edd-d44513a60668`, `/Users/abhinavgupta/.codex/worktrees/25b2/ClinicOS`.
   - Superseded duplicate Mobile Capture thread `019f3cab-83a6-7d42-8813-7829e961a04f` from base `f562a8e` was archived and must not be integrated.
-- Checkpoint 8 is verified on `codex/integration/checkpoint-8` at `f967144`. It is ready for documented promotion to `main` once CP8 closeout docs are committed.
+- Checkpoint 8 is verified and promoted to `main` via merge commit `8ac2dae`; verified integration patch commit is `f967144`.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture
