@@ -28,12 +28,12 @@ Doctor and assistant users can chart tooth-level dental findings, maintain denta
 
 ## Lanes
 
-| Lane              | Pending Worktree ID | Thread ID | Worktree | Ownership |
-| ----------------- | ------------------- | --------- | -------- | --------- |
-| Media Backend     | pending             | pending   | pending  | Media metadata, upload-url/complete-upload, signed URL mediation, storage abstraction/simulator, audit, permission tests, object-key privacy |
-| Dental Domain     | pending             | pending   | pending  | Tooth numbering, dental findings, chart snapshots/history, treatment references, events, DB migration, domain/repository/API contracts |
-| Dental/Media UX   | pending             | pending   | pending  | Odontogram, tooth detail panel, finding editor/history, media gallery/comparison, role-aware clinical surface, browser smoke |
-| Imaging/QA        | pending             | pending   | pending  | X-ray coexistence fixtures, DICOM/external-link metadata fixtures, acceptance tests, E2E smoke plan, QA docs |
+| Lane              | Pending Worktree ID                                | Thread ID                              | Worktree                                             | Ownership |
+| ----------------- | -------------------------------------------------- | -------------------------------------- | ---------------------------------------------------- | --------- |
+| Media Backend     | `local:026917af-501e-4550-adf0-518da69f4bc1`      | `019f3a34-a5d9-78c1-a12c-25ce24bc9426` | `/Users/abhinavgupta/.codex/worktrees/7725/ClinicOS` | Media metadata, upload-url/complete-upload, signed URL mediation, storage abstraction/simulator, audit, permission tests, object-key privacy |
+| Dental Domain     | `local:cc0a9c3a-6ecb-46b9-88bf-b49bfaff9dad`      | `019f3a34-d36e-7680-b3cd-1ad47240f656` | `/Users/abhinavgupta/.codex/worktrees/d4aa/ClinicOS` | Tooth numbering, dental findings, chart snapshots/history, treatment references, events, DB migration, domain/repository/API contracts |
+| Dental/Media UX   | `local:1e9a0c2e-a7e4-46eb-825b-04e504f9d8b3`      | `019f3a35-0fd0-73e3-a35b-5c33f236a270` | `/Users/abhinavgupta/.codex/worktrees/16fc/ClinicOS` | Odontogram, tooth detail panel, finding editor/history, media gallery/comparison, role-aware clinical surface, browser smoke |
+| Imaging/QA        | `local:823af464-3b7b-4088-ae6c-881114572251`      | `019f3a35-4418-7e93-91f6-7beffa65ac55` | `/Users/abhinavgupta/.codex/worktrees/9cf9/ClinicOS` | X-ray coexistence fixtures, DICOM/external-link metadata fixtures, acceptance tests, E2E smoke plan, QA docs |
 
 ## Shared-File Policy
 

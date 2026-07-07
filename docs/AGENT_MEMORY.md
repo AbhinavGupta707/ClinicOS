@@ -16,7 +16,11 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Security/Compliance: `019f39f6-c6ef-7691-af95-ef4be605d978`, `/Users/abhinavgupta/.codex/worktrees/4436/ClinicOS`.
   - Doctor/Assistant UX: `019f39f7-0632-7800-9d41-f55b44f38dd0`, `/Users/abhinavgupta/.codex/worktrees/75ee/ClinicOS`.
   - QA/Fixtures: `019f39f7-54bd-72e1-a812-dd0fda503d06`, `/Users/abhinavgupta/.codex/worktrees/08d3/ClinicOS`.
-- Checkpoint 4 is active with planned visible project-scoped lanes: Media Backend, Dental Domain, Dental/Media UX, and Imaging/QA. Record pending worktree IDs, resolved thread IDs, and worktree paths in the checkpoint log immediately after launch.
+- Checkpoint 4 is active with visible project-scoped lanes:
+  - Media Backend: `019f3a34-a5d9-78c1-a12c-25ce24bc9426`, `/Users/abhinavgupta/.codex/worktrees/7725/ClinicOS`.
+  - Dental Domain: `019f3a34-d36e-7680-b3cd-1ad47240f656`, `/Users/abhinavgupta/.codex/worktrees/d4aa/ClinicOS`.
+  - Dental/Media UX: `019f3a35-0fd0-73e3-a35b-5c33f236a270`, `/Users/abhinavgupta/.codex/worktrees/16fc/ClinicOS`.
+  - Imaging/QA: `019f3a35-4418-7e93-91f6-7beffa65ac55`, `/Users/abhinavgupta/.codex/worktrees/9cf9/ClinicOS`.
 - CP1 worker lanes were real Codex-managed worktrees under `.codex/worktrees`.
 - A project-scoped worktree thread test succeeded: `target.type = "project"`, `projectId = "/Users/abhinavgupta/Desktop/ClinicOS"`, and `environment.type = "worktree"` made the worker visible under the `ClinicOS` project in the Codex sidebar.
 

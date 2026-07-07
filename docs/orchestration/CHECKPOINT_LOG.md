@@ -30,7 +30,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 1 - Production platform foundation     | Complete  |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
 | 2 - Lead/patient/appointment/day-start | Complete  |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
 | 3 - Intake/consent/encounter/notes     | Complete  |       `6fe2cbc` |     `eb68abd` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-3`. Master integration aligned live CP3 routes, consent enforcement, prep summary, QA fixtures, web selectors, browser smoke, and security/audit coverage.                                         |
-| 4 - Dental charting/media/imaging      | Active    |       `c7b222c` |       pending | CP4 launch packet created for media backend, dental domain, dental/media UX, and imaging/QA lanes. Visible project-scoped worktree thread IDs will be recorded after launch.                                                                                                     |
+| 4 - Dental charting/media/imaging      | Active    |       `c7b222c` |       pending | CP4 visible project-scoped worktree lanes launched and active for media backend, dental domain, dental/media UX, and imaging/QA.                                                                                                                                                 |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -144,8 +144,8 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Launch packet: `docs/orchestration/CHECKPOINT_04_DENTAL_CHART_MEDIA.md`.
 - Base commit before launch packet: `c7b222c`.
 - Integration branch rule: CP4 lane commits merge first into `codex/integration/checkpoint-4`; promote to `main` only after full code, live local, browser/user, and media security gates pass.
-- Visible project-scoped lanes to launch:
-  - Media Backend: pending.
-  - Dental Domain: pending.
-  - Dental/Media UX: pending.
-  - Imaging/QA: pending.
+- Visible project-scoped lanes:
+  - Media Backend: pending `local:026917af-501e-4550-adf0-518da69f4bc1`, thread `019f3a34-a5d9-78c1-a12c-25ce24bc9426`, worktree `/Users/abhinavgupta/.codex/worktrees/7725/ClinicOS`.
+  - Dental Domain: pending `local:cc0a9c3a-6ecb-46b9-88bf-b49bfaff9dad`, thread `019f3a34-d36e-7680-b3cd-1ad47240f656`, worktree `/Users/abhinavgupta/.codex/worktrees/d4aa/ClinicOS`.
+  - Dental/Media UX: pending `local:1e9a0c2e-a7e4-46eb-825b-04e504f9d8b3`, thread `019f3a35-0fd0-73e3-a35b-5c33f236a270`, worktree `/Users/abhinavgupta/.codex/worktrees/16fc/ClinicOS`.
+  - Imaging/QA: pending `local:823af464-3b7b-4088-ae6c-881114572251`, thread `019f3a35-4418-7e93-91f6-7beffa65ac55`, worktree `/Users/abhinavgupta/.codex/worktrees/9cf9/ClinicOS`.
