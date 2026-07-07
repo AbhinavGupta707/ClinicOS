@@ -157,3 +157,143 @@ test("authorization scopes role permissions to the requested clinic", () => {
     "missing_permission"
   );
 });
+
+test("CP3 authorization lets assistants draft but not sign clinical artifacts", () => {
+  const assistantContext = contextForRole("assistant");
+  const doctorContext = contextForRole("doctor", "10000000-0000-4000-8000-000000001002");
+
+  assert.equal(
+    authorize(assistantContext, {
+      tenantId: "10000000-0000-4000-8000-000000000001",
+      clinicId: "10000000-0000-4000-8000-000000000101",
+      permission: "clinical.note.write"
+    }).allowed,
+    true
+  );
+  assert.equal(
+    authorize(assistantContext, {
+      tenantId: "10000000-0000-4000-8000-000000000001",
+      clinicId: "10000000-0000-4000-8000-000000000101",
+      permission: "prescription.write"
+    }).allowed,
+    true
+  );
+  assert.equal(
+    authorize(assistantContext, {
+      tenantId: "10000000-0000-4000-8000-000000000001",
+      clinicId: "10000000-0000-4000-8000-000000000101",
+      permission: "clinical.note.sign"
+    }).reason,
+    "missing_permission"
+  );
+  assert.equal(
+    authorize(assistantContext, {
+      tenantId: "10000000-0000-4000-8000-000000000001",
+      clinicId: "10000000-0000-4000-8000-000000000101",
+      permission: "prescription.sign"
+    }).reason,
+    "missing_permission"
+  );
+
+  assert.equal(
+    authorize(doctorContext, {
+      tenantId: "10000000-0000-4000-8000-000000000001",
+      clinicId: "10000000-0000-4000-8000-000000000101",
+      permission: "clinical.note.sign"
+    }).allowed,
+    true
+  );
+  assert.equal(
+    authorize(doctorContext, {
+      tenantId: "10000000-0000-4000-8000-000000000001",
+      clinicId: "10000000-0000-4000-8000-000000000101",
+      permission: "prescription.sign"
+    }).allowed,
+    true
+  );
+});
+
+test("CP3 authorization denies accountant auditor and wrong-tenant clinical mutations", () => {
+  for (const role of ["accountant", "auditor"] as const) {
+    const scopedContext = contextForRole(role);
+
+    for (const permission of [
+      "patient.write",
+      "intake.write",
+      "clinical.note.write",
+      "prescription.write",
+      "clinical.note.sign",
+      "prescription.sign"
+    ] as const) {
+      assert.equal(
+        authorize(scopedContext, {
+          tenantId: "10000000-0000-4000-8000-000000000001",
+          clinicId: "10000000-0000-4000-8000-000000000101",
+          permission
+        }).reason,
+        "missing_permission"
+      );
+    }
+  }
+
+  const doctorContext = contextForRole("doctor", "10000000-0000-4000-8000-000000001002");
+
+  for (const permission of [
+    "intake.write",
+    "clinical.note.write",
+    "prescription.write",
+    "clinical.note.sign",
+    "prescription.sign"
+  ] as const) {
+    assert.equal(
+      authorize(doctorContext, {
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000101",
+        permission,
+        resourceTenantId: "20000000-0000-4000-8000-000000000001"
+      }).reason,
+      "tenant_mismatch"
+    );
+  }
+
+  assert.equal(
+    authorize(doctorContext, {
+      tenantId: "10000000-0000-4000-8000-000000000001",
+      clinicId: "10000000-0000-4000-8000-000000000101",
+      permission: "prescription.sign",
+      resourceClinicId: "10000000-0000-4000-8000-000000000202"
+    }).reason,
+    "clinic_mismatch"
+  );
+});
+
+function contextForRole(roleSlug: "assistant" | "doctor" | "accountant" | "auditor", userId = context.user.id) {
+  return buildAccessContext({
+    principal,
+    tenant: context.tenant,
+    user: { ...context.user, id: userId },
+    memberships: [
+      {
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        userId,
+        status: "active"
+      }
+    ],
+    clinicAssignments: [
+      {
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000101",
+        userId,
+        status: "active"
+      }
+    ],
+    roleAssignments: [
+      {
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000101",
+        userId,
+        roleSlug
+      }
+    ]
+  });
+}

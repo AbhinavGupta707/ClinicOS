@@ -1,0 +1,1162 @@
+{
+  "schemaVersion": "clinic-os.cp3.qa-fixture.v1",
+  "fixtureUse": {
+    "name": "Checkpoint 3 intake, consent, encounter, note, and prescription QA scenario",
+    "localOnly": true,
+    "syntheticOnly": true,
+    "productionUseDenied": true,
+    "allowedEnvironments": ["local", "development", "test", "ci"],
+    "notes": "Deterministic local/test fixture. Do not seed this into production or present it as clinic data."
+  },
+  "sourceReferences": [
+    "docs/orchestration/CHECKPOINT_03_INTAKE_CONSENT_ENCOUNTER.md",
+    "clinic_os_specs_v2/18_IMPLEMENTATION_PLAN_CLINIC_OS_DENTAL.md#slice-2-patient-profile-timeline-intake-and-consent",
+    "clinic_os_specs_v2/18_IMPLEMENTATION_PLAN_CLINIC_OS_DENTAL.md#slice-3-encounter-and-doctor-prep",
+    "clinic_os_specs_v2/18_IMPLEMENTATION_PLAN_CLINIC_OS_DENTAL.md#slice-6-prescriptions-and-instructions",
+    "clinic_os_specs_v2/20_ORCHESTRATION_CHECKPOINT_PLAN.md#checkpoint-3-intake-consent-encounter-and-clinical-notes"
+  ],
+  "clock": {
+    "businessDate": "2026-07-07",
+    "fixedNow": "2026-07-07T10:00:00+05:30",
+    "timezone": "Asia/Kolkata"
+  },
+  "tenants": [
+    {
+      "key": "primary",
+      "id": "30000000-0000-4000-8000-000000000001",
+      "slug": "cp3-sunrise-dental",
+      "displayName": "CP3 Sunrise Dental Synthetic Tenant"
+    },
+    {
+      "key": "wrongTenant",
+      "id": "30000000-0000-4000-8000-000000000002",
+      "slug": "cp3-monsoon-dental",
+      "displayName": "CP3 Monsoon Dental Synthetic Tenant"
+    }
+  ],
+  "clinics": [
+    {
+      "key": "primaryClinic",
+      "id": "30000000-0000-4000-8000-000000000101",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "slug": "indiranagar-cp3",
+      "displayName": "CP3 Synthetic Indiranagar Dental",
+      "timezone": "Asia/Kolkata"
+    },
+    {
+      "key": "wrongTenantClinic",
+      "id": "30000000-0000-4000-8000-000000000201",
+      "tenantId": "30000000-0000-4000-8000-000000000002",
+      "slug": "koramangala-cp3",
+      "displayName": "CP3 Synthetic Koramangala Dental",
+      "timezone": "Asia/Kolkata"
+    }
+  ],
+  "actors": [
+    {
+      "key": "owner",
+      "id": "30000000-0000-4000-8000-000000001001",
+      "displayName": "Dr Kavya Owner Synthetic",
+      "email": "cp3.owner@example.test",
+      "roleSlug": "owner_admin",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "clinicId": "30000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "doctor",
+      "id": "30000000-0000-4000-8000-000000001002",
+      "displayName": "Dr Neel Doctor Synthetic",
+      "email": "cp3.doctor@example.test",
+      "roleSlug": "doctor",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "clinicId": "30000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "assistant",
+      "id": "30000000-0000-4000-8000-000000001003",
+      "displayName": "Mira Assistant Synthetic",
+      "email": "cp3.assistant@example.test",
+      "roleSlug": "assistant",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "clinicId": "30000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "receptionist",
+      "id": "30000000-0000-4000-8000-000000001004",
+      "displayName": "Rohan Reception Synthetic",
+      "email": "cp3.reception@example.test",
+      "roleSlug": "receptionist",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "clinicId": "30000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "accountant",
+      "id": "30000000-0000-4000-8000-000000001005",
+      "displayName": "Ishaan Accounts Synthetic",
+      "email": "cp3.accounts@example.test",
+      "roleSlug": "accountant",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "clinicId": "30000000-0000-4000-8000-000000000101"
+    },
+    {
+      "key": "wrongTenantAssistant",
+      "id": "30000000-0000-4000-8000-000000001006",
+      "displayName": "Tara Other Assistant Synthetic",
+      "email": "cp3.other.assistant@example.test",
+      "roleSlug": "assistant",
+      "tenantId": "30000000-0000-4000-8000-000000000002",
+      "clinicId": "30000000-0000-4000-8000-000000000201"
+    }
+  ],
+  "patients": [
+    {
+      "key": "newPatient",
+      "id": "30000000-0000-4000-8000-000000002001",
+      "externalId": "CP3-PAT-NEW-001",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "clinicId": "30000000-0000-4000-8000-000000000101",
+      "fullName": "Anya Synthetic",
+      "phone": "+919930001001",
+      "email": "anya.synthetic@example.test",
+      "dateOfBirth": "1994-04-18",
+      "gender": "female",
+      "patientClassification": "new",
+      "existsBeforeFlow": true,
+      "timelineSeed": [
+        {
+          "type": "patient.created",
+          "occurredAt": "2026-07-07T09:20:00+05:30",
+          "summary": "Synthetic new patient created by the CP2 lead-to-appointment workflow."
+        },
+        {
+          "type": "appointment.confirmed",
+          "occurredAt": "2026-07-07T09:28:00+05:30",
+          "summary": "Synthetic appointment confirmed before CP3 clinical flow."
+        },
+        {
+          "type": "patient.checked_in",
+          "occurredAt": "2026-07-07T09:50:00+05:30",
+          "summary": "Synthetic patient checked in and ready for intake."
+        }
+      ]
+    },
+    {
+      "key": "returningPatient",
+      "id": "30000000-0000-4000-8000-000000002002",
+      "externalId": "CP3-PAT-RETURNING-001",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "clinicId": "30000000-0000-4000-8000-000000000101",
+      "fullName": "Dev Synthetic",
+      "phone": "+919930001002",
+      "email": "dev.synthetic@example.test",
+      "dateOfBirth": "1987-11-09",
+      "gender": "male",
+      "patientClassification": "returning",
+      "existsBeforeFlow": true,
+      "timelineSeed": [
+        {
+          "type": "patient.created",
+          "occurredAt": "2026-05-11T10:00:00+05:30",
+          "summary": "Synthetic returning patient created during prior visit."
+        },
+        {
+          "type": "clinical_note.signed",
+          "occurredAt": "2026-06-18T12:20:00+05:30",
+          "summary": "Prior synthetic visit note signed for doctor prep context."
+        },
+        {
+          "type": "prescription.signed",
+          "occurredAt": "2026-06-18T12:25:00+05:30",
+          "summary": "Prior synthetic prescription signed for medication-history context."
+        }
+      ],
+      "returningPrepSeed": {
+        "lastVisitDate": "2026-06-18",
+        "priorVisitSummary": "Synthetic prior scaling visit, no unresolved procedure from CP3 fixture.",
+        "medicalHistoryChangePromptRequired": true,
+        "openTreatmentPlans": [],
+        "pendingDues": [],
+        "pendingLabCases": [],
+        "recallContext": "Synthetic six-month recall not yet due."
+      }
+    }
+  ],
+  "appointments": [
+    {
+      "key": "newPatientAppointment",
+      "id": "30000000-0000-4000-8000-000000003001",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "clinicId": "30000000-0000-4000-8000-000000000101",
+      "patientId": "30000000-0000-4000-8000-000000002001",
+      "providerActorKey": "doctor",
+      "scheduledStart": "2026-07-07T10:15:00+05:30",
+      "scheduledEnd": "2026-07-07T10:45:00+05:30",
+      "chair": "Chair 1",
+      "statusSequence": ["booked", "confirmed", "checked_in", "encounter_started", "closed"]
+    },
+    {
+      "key": "returningPatientAppointment",
+      "id": "30000000-0000-4000-8000-000000003002",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "clinicId": "30000000-0000-4000-8000-000000000101",
+      "patientId": "30000000-0000-4000-8000-000000002002",
+      "providerActorKey": "doctor",
+      "scheduledStart": "2026-07-07T11:15:00+05:30",
+      "scheduledEnd": "2026-07-07T11:45:00+05:30",
+      "chair": "Chair 2",
+      "statusSequence": ["booked", "confirmed", "checked_in", "encounter_started"]
+    }
+  ],
+  "intakeTemplates": [
+    {
+      "key": "newPatientDigitalIntake",
+      "id": "30000000-0000-4000-8000-000000004001",
+      "name": "CP3 New Patient Digital Intake",
+      "mode": "digital_self_entry",
+      "version": 1,
+      "requiredSections": ["chief_complaint", "medical_history", "allergies", "medications"]
+    },
+    {
+      "key": "paperCardMedicalHistory",
+      "id": "30000000-0000-4000-8000-000000004002",
+      "name": "CP3 Assistant Paper Card Entry",
+      "mode": "assistant_entered_paper_card",
+      "version": 1,
+      "requiredSections": ["chief_complaint", "medical_history_change", "provenance"]
+    }
+  ],
+  "intakeResponses": [
+    {
+      "key": "newPatientDigitalIntakeResponse",
+      "id": "30000000-0000-4000-8000-000000005001",
+      "templateId": "30000000-0000-4000-8000-000000004001",
+      "patientId": "30000000-0000-4000-8000-000000002001",
+      "appointmentId": "30000000-0000-4000-8000-000000003001",
+      "submittedByActorKey": "assistant",
+      "submittedAt": "2026-07-07T10:02:00+05:30",
+      "mode": "digital_self_entry",
+      "status": "submitted",
+      "answers": {
+        "chiefComplaint": "Synthetic sensitivity during cold drinks for two days.",
+        "medicalHistory": "Synthetic history: no condition selected in fixture.",
+        "allergies": "No known synthetic allergy recorded.",
+        "medications": "No current synthetic medication recorded."
+      },
+      "provenance": {
+        "source": "patient_device",
+        "enteredBy": "patient",
+        "reviewRequired": true
+      }
+    },
+    {
+      "key": "returningPaperCardUpdate",
+      "id": "30000000-0000-4000-8000-000000005002",
+      "templateId": "30000000-0000-4000-8000-000000004002",
+      "patientId": "30000000-0000-4000-8000-000000002002",
+      "appointmentId": "30000000-0000-4000-8000-000000003002",
+      "submittedByActorKey": "assistant",
+      "submittedAt": "2026-07-07T10:54:00+05:30",
+      "mode": "assistant_entered_paper_card",
+      "status": "submitted",
+      "answers": {
+        "chiefComplaint": "Synthetic follow-up sensitivity note from paper card.",
+        "medicalHistoryChange": "Synthetic patient marked no medical-history change.",
+        "sourceCardCaptured": "paper_card_reviewed_without_upload_in_cp3"
+      },
+      "provenance": {
+        "source": "paper_card",
+        "enteredBy": "assistant",
+        "patientAttestedAt": "2026-07-07T10:53:00+05:30",
+        "paperCardRetainedByClinic": true
+      }
+    }
+  ],
+  "consentPolicies": [
+    {
+      "key": "treatmentConsent",
+      "id": "30000000-0000-4000-8000-000000006001",
+      "purpose": "TREATMENT",
+      "version": 1,
+      "requiresActiveConsentBefore": ["encounter.start", "clinical_note.sign"],
+      "revocationEffect": "blocks_future_treatment_workflows_until_recaptured"
+    },
+    {
+      "key": "aiAudioConsent",
+      "id": "30000000-0000-4000-8000-000000006002",
+      "purpose": "AI_AUDIO_CAPTURE",
+      "version": 1,
+      "requiresActiveConsentBefore": [
+        "audio_capture.start",
+        "transcription.start",
+        "ai_draft.create"
+      ],
+      "revocationEffect": "blocks_future_ai_audio_processing"
+    }
+  ],
+  "consentRecords": [
+    {
+      "key": "newPatientTreatmentConsent",
+      "id": "30000000-0000-4000-8000-000000007001",
+      "policyId": "30000000-0000-4000-8000-000000006001",
+      "patientId": "30000000-0000-4000-8000-000000002001",
+      "purpose": "TREATMENT",
+      "status": "active",
+      "capturedByActorKey": "assistant",
+      "capturedAt": "2026-07-07T10:05:00+05:30",
+      "captureMethod": "digital_signature",
+      "provenance": {
+        "witnessActorKey": "assistant",
+        "language": "en-IN",
+        "deviceLabel": "local-test-tablet"
+      }
+    },
+    {
+      "key": "newPatientAiAudioConsent",
+      "id": "30000000-0000-4000-8000-000000007002",
+      "policyId": "30000000-0000-4000-8000-000000006002",
+      "patientId": "30000000-0000-4000-8000-000000002001",
+      "purpose": "AI_AUDIO_CAPTURE",
+      "status": "revoked",
+      "capturedByActorKey": "assistant",
+      "capturedAt": "2026-07-07T10:06:00+05:30",
+      "captureMethod": "digital_signature",
+      "revokedByActorKey": "assistant",
+      "revokedAt": "2026-07-07T12:45:00+05:30",
+      "revocationReason": "Synthetic patient withdrew AI/audio permission after signed note.",
+      "provenance": {
+        "witnessActorKey": "assistant",
+        "language": "en-IN",
+        "deviceLabel": "local-test-tablet"
+      }
+    },
+    {
+      "key": "returningPatientTreatmentConsent",
+      "id": "30000000-0000-4000-8000-000000007003",
+      "policyId": "30000000-0000-4000-8000-000000006001",
+      "patientId": "30000000-0000-4000-8000-000000002002",
+      "purpose": "TREATMENT",
+      "status": "active",
+      "capturedByActorKey": "assistant",
+      "capturedAt": "2026-06-18T10:05:00+05:30",
+      "captureMethod": "paper_signed",
+      "provenance": {
+        "witnessActorKey": "assistant",
+        "language": "en-IN",
+        "source": "prior_visit_seed"
+      }
+    }
+  ],
+  "encounters": [
+    {
+      "key": "newPatientEncounter",
+      "id": "30000000-0000-4000-8000-000000008001",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "clinicId": "30000000-0000-4000-8000-000000000101",
+      "patientId": "30000000-0000-4000-8000-000000002001",
+      "appointmentId": "30000000-0000-4000-8000-000000003001",
+      "providerActorKey": "doctor",
+      "startedAt": "2026-07-07T10:12:00+05:30",
+      "status": "amended",
+      "lifecycle": [
+        "scheduled",
+        "checked_in",
+        "encounter_started",
+        "drafting",
+        "ready_for_sign",
+        "signed",
+        "amended",
+        "closed"
+      ],
+      "requiredBeforeStart": ["submitted_intake", "active_treatment_consent"],
+      "clinicalReadiness": {
+        "intakeComplete": true,
+        "treatmentConsentActive": true,
+        "aiAudioCaptureReadyBeforeRevocation": true,
+        "aiAudioCaptureReadyAfterRevocation": false
+      }
+    },
+    {
+      "key": "returningPatientEncounter",
+      "id": "30000000-0000-4000-8000-000000008002",
+      "tenantId": "30000000-0000-4000-8000-000000000001",
+      "clinicId": "30000000-0000-4000-8000-000000000101",
+      "patientId": "30000000-0000-4000-8000-000000002002",
+      "appointmentId": "30000000-0000-4000-8000-000000003002",
+      "providerActorKey": "doctor",
+      "startedAt": "2026-07-07T11:10:00+05:30",
+      "status": "encounter_started",
+      "lifecycle": ["scheduled", "checked_in", "prep_reviewed", "encounter_started"],
+      "requiredBeforeStart": ["prep_summary_reviewed", "active_treatment_consent"]
+    }
+  ],
+  "clinicalNotes": [
+    {
+      "key": "newPatientNote",
+      "id": "30000000-0000-4000-8000-000000009001",
+      "encounterId": "30000000-0000-4000-8000-000000008001",
+      "patientId": "30000000-0000-4000-8000-000000002001",
+      "status": "amended",
+      "versions": [
+        {
+          "key": "newPatientNoteSignedV1",
+          "id": "30000000-0000-4000-8000-000000009101",
+          "version": 1,
+          "status": "signed",
+          "draftedByActorKey": "assistant",
+          "signedByActorKey": "doctor",
+          "signedAt": "2026-07-07T10:28:00+05:30",
+          "immutable": true,
+          "signedHash": "sha256:cp3-new-patient-note-v1-synthetic",
+          "sections": {
+            "history": "Synthetic intake reviewed.",
+            "examination": "Synthetic examination recorded.",
+            "diagnosis": "Synthetic reversible sensitivity diagnosis.",
+            "treatmentPlan": "Synthetic hygiene advice and review plan.",
+            "treatmentPerformed": "Synthetic consultation completed."
+          }
+        },
+        {
+          "key": "newPatientNoteAmendedV2",
+          "id": "30000000-0000-4000-8000-000000009102",
+          "version": 2,
+          "status": "signed",
+          "draftedByActorKey": "doctor",
+          "signedByActorKey": "doctor",
+          "signedAt": "2026-07-07T12:12:00+05:30",
+          "immutable": true,
+          "amendmentOfVersionId": "30000000-0000-4000-8000-000000009101",
+          "amendmentReason": "Synthetic correction to clarify treatment-performed wording.",
+          "preservesPreviousSignedHash": "sha256:cp3-new-patient-note-v1-synthetic",
+          "signedHash": "sha256:cp3-new-patient-note-v2-synthetic",
+          "sections": {
+            "history": "Synthetic intake reviewed.",
+            "examination": "Synthetic examination recorded.",
+            "diagnosis": "Synthetic reversible sensitivity diagnosis.",
+            "treatmentPlan": "Synthetic hygiene advice and review plan.",
+            "treatmentPerformed": "Synthetic consultation completed; amendment records wording clarification."
+          }
+        }
+      ]
+    },
+    {
+      "key": "returningPatientNote",
+      "id": "30000000-0000-4000-8000-000000009002",
+      "encounterId": "30000000-0000-4000-8000-000000008002",
+      "patientId": "30000000-0000-4000-8000-000000002002",
+      "status": "drafting",
+      "versions": [
+        {
+          "key": "returningPatientNoteDraftV1",
+          "id": "30000000-0000-4000-8000-000000009201",
+          "version": 1,
+          "status": "draft",
+          "draftedByActorKey": "doctor",
+          "immutable": false,
+          "sections": {
+            "history": "Synthetic returning prep reviewed.",
+            "examination": "Synthetic examination pending doctor completion."
+          }
+        }
+      ]
+    }
+  ],
+  "prescriptions": [
+    {
+      "key": "newPatientPrescription",
+      "id": "30000000-0000-4000-8000-000000010001",
+      "encounterId": "30000000-0000-4000-8000-000000008001",
+      "patientId": "30000000-0000-4000-8000-000000002001",
+      "status": "signed",
+      "createdByActorKey": "doctor",
+      "createdAt": "2026-07-07T10:30:00+05:30",
+      "signedByActorKey": "doctor",
+      "signedAt": "2026-07-07T10:31:00+05:30",
+      "signedHash": "sha256:cp3-new-patient-prescription-synthetic",
+      "items": [
+        {
+          "medicationName": "Fixture analgesic 400 mg",
+          "dose": "1 tablet",
+          "route": "oral",
+          "frequency": "twice_daily",
+          "durationDays": 3,
+          "instructions": "Synthetic medication instruction for local QA only."
+        }
+      ]
+    }
+  ],
+  "flow": {
+    "name": "new patient intake -> consent -> encounter -> signed note/prescription -> amendment, plus returning patient prep -> encounter",
+    "actorSequence": [
+      "assistant",
+      "assistant",
+      "assistant",
+      "doctor",
+      "assistant",
+      "doctor",
+      "doctor",
+      "doctor",
+      "doctor",
+      "assistant",
+      "assistant",
+      "assistant",
+      "doctor",
+      "doctor"
+    ],
+    "steps": [
+      {
+        "key": "submit-new-patient-digital-intake",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/patients/30000000-0000-4000-8000-000000002001/form-responses",
+        "idempotencyKey": "cp3-submit-new-patient-digital-intake",
+        "expectedStatus": 201,
+        "expectedEvents": ["form_response.submitted"],
+        "expectedAudit": [
+          {
+            "action": "form_response.submitted",
+            "phiFields": ["chiefComplaint", "medicalHistory", "allergies", "medications"],
+            "resourceType": "form_response",
+            "resourceId": "30000000-0000-4000-8000-000000005001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "30000000-0000-4000-8000-000000002001",
+            "entryType": "form_response.submitted"
+          }
+        ],
+        "requestBody": {
+          "responseId": "30000000-0000-4000-8000-000000005001",
+          "templateId": "30000000-0000-4000-8000-000000004001",
+          "appointmentId": "30000000-0000-4000-8000-000000003001",
+          "mode": "digital_self_entry",
+          "submittedAt": "2026-07-07T10:02:00+05:30",
+          "answers": {
+            "chiefComplaint": "Synthetic sensitivity during cold drinks for two days.",
+            "medicalHistory": "Synthetic history: no condition selected in fixture.",
+            "allergies": "No known synthetic allergy recorded.",
+            "medications": "No current synthetic medication recorded."
+          },
+          "provenance": {
+            "source": "patient_device",
+            "enteredBy": "patient",
+            "reviewRequired": true
+          }
+        }
+      },
+      {
+        "key": "capture-new-patient-treatment-consent",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/patients/30000000-0000-4000-8000-000000002001/consents",
+        "idempotencyKey": "cp3-capture-new-patient-treatment-consent",
+        "expectedStatus": 201,
+        "expectedEvents": ["consent.created"],
+        "expectedAudit": [
+          {
+            "action": "consent.created",
+            "phiFields": ["patientId", "purpose", "captureMethod"],
+            "resourceType": "consent",
+            "resourceId": "30000000-0000-4000-8000-000000007001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "30000000-0000-4000-8000-000000002001",
+            "entryType": "consent.created"
+          }
+        ],
+        "requestBody": {
+          "consentId": "30000000-0000-4000-8000-000000007001",
+          "policyId": "30000000-0000-4000-8000-000000006001",
+          "purpose": "TREATMENT",
+          "captureMethod": "digital_signature",
+          "capturedAt": "2026-07-07T10:05:00+05:30",
+          "provenance": {
+            "witnessActorId": "30000000-0000-4000-8000-000000001003",
+            "language": "en-IN",
+            "deviceLabel": "local-test-tablet"
+          }
+        }
+      },
+      {
+        "key": "capture-new-patient-ai-audio-consent",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/patients/30000000-0000-4000-8000-000000002001/consents",
+        "idempotencyKey": "cp3-capture-new-patient-ai-audio-consent",
+        "expectedStatus": 201,
+        "expectedEvents": ["consent.created"],
+        "expectedAudit": [
+          {
+            "action": "consent.created",
+            "phiFields": ["patientId", "purpose", "captureMethod"],
+            "resourceType": "consent",
+            "resourceId": "30000000-0000-4000-8000-000000007002"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "30000000-0000-4000-8000-000000002001",
+            "entryType": "consent.created"
+          }
+        ],
+        "requestBody": {
+          "consentId": "30000000-0000-4000-8000-000000007002",
+          "policyId": "30000000-0000-4000-8000-000000006002",
+          "purpose": "AI_AUDIO_CAPTURE",
+          "captureMethod": "digital_signature",
+          "capturedAt": "2026-07-07T10:06:00+05:30",
+          "provenance": {
+            "witnessActorId": "30000000-0000-4000-8000-000000001003",
+            "language": "en-IN",
+            "deviceLabel": "local-test-tablet"
+          }
+        }
+      },
+      {
+        "key": "start-new-patient-encounter",
+        "actorKey": "doctor",
+        "method": "POST",
+        "path": "/v1/encounters",
+        "idempotencyKey": "cp3-start-new-patient-encounter",
+        "expectedStatus": 201,
+        "expectedEvents": ["encounter.started"],
+        "expectedAudit": [
+          {
+            "action": "encounter.started",
+            "phiFields": ["patientId", "appointmentId", "chiefComplaint"],
+            "resourceType": "encounter",
+            "resourceId": "30000000-0000-4000-8000-000000008001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "30000000-0000-4000-8000-000000002001",
+            "entryType": "encounter.started"
+          }
+        ],
+        "requestBody": {
+          "encounterId": "30000000-0000-4000-8000-000000008001",
+          "patientId": "30000000-0000-4000-8000-000000002001",
+          "appointmentId": "30000000-0000-4000-8000-000000003001",
+          "providerActorId": "30000000-0000-4000-8000-000000001002",
+          "startedAt": "2026-07-07T10:12:00+05:30",
+          "requiredEvidence": {
+            "intakeResponseId": "30000000-0000-4000-8000-000000005001",
+            "treatmentConsentId": "30000000-0000-4000-8000-000000007001"
+          }
+        }
+      },
+      {
+        "key": "draft-new-patient-note-as-assistant",
+        "actorKey": "assistant",
+        "method": "PATCH",
+        "path": "/v1/encounters/30000000-0000-4000-8000-000000008001",
+        "idempotencyKey": "cp3-draft-new-patient-note-as-assistant",
+        "expectedStatus": 200,
+        "expectedEvents": ["clinical_note.draft_created"],
+        "expectedAudit": [
+          {
+            "action": "clinical_note.draft_created",
+            "phiFields": ["patientId", "history", "diagnosis"],
+            "resourceType": "clinical_note",
+            "resourceId": "30000000-0000-4000-8000-000000009001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "30000000-0000-4000-8000-000000002001",
+            "entryType": "clinical_note.draft_created"
+          }
+        ],
+        "requestBody": {
+          "noteId": "30000000-0000-4000-8000-000000009001",
+          "versionId": "30000000-0000-4000-8000-000000009101",
+          "status": "ready_for_sign",
+          "readyForSign": true,
+          "content": {
+            "history": "Synthetic intake reviewed.",
+            "examination": "Synthetic examination recorded.",
+            "diagnosis": "Synthetic reversible sensitivity diagnosis.",
+            "treatmentPlan": "Synthetic hygiene advice and review plan.",
+            "treatmentPerformed": "Synthetic consultation completed."
+          }
+        }
+      },
+      {
+        "key": "sign-new-patient-note-as-doctor",
+        "actorKey": "doctor",
+        "method": "POST",
+        "path": "/v1/encounters/30000000-0000-4000-8000-000000008001/sign-note",
+        "idempotencyKey": "cp3-sign-new-patient-note-as-doctor",
+        "expectedStatus": 200,
+        "expectedEvents": ["clinical_note.signed"],
+        "expectedAudit": [
+          {
+            "action": "clinical_note.signed",
+            "phiFields": ["patientId", "diagnosis", "treatmentPerformed"],
+            "resourceType": "clinical_note",
+            "resourceId": "30000000-0000-4000-8000-000000009001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "30000000-0000-4000-8000-000000002001",
+            "entryType": "clinical_note.signed"
+          }
+        ],
+        "requestBody": {
+          "versionId": "30000000-0000-4000-8000-000000009101",
+          "signedAt": "2026-07-07T10:28:00+05:30",
+          "attestation": "I reviewed and sign this synthetic clinical note.",
+          "expectedSignedHash": "sha256:cp3-new-patient-note-v1-synthetic"
+        }
+      },
+      {
+        "key": "create-new-patient-prescription-as-doctor",
+        "actorKey": "doctor",
+        "method": "POST",
+        "path": "/v1/encounters/30000000-0000-4000-8000-000000008001/prescriptions",
+        "idempotencyKey": "cp3-create-new-patient-prescription-as-doctor",
+        "expectedStatus": 201,
+        "expectedEvents": ["prescription.draft_created"],
+        "expectedAudit": [
+          {
+            "action": "prescription.draft_created",
+            "phiFields": ["patientId", "medicationName"],
+            "resourceType": "prescription",
+            "resourceId": "30000000-0000-4000-8000-000000010001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "30000000-0000-4000-8000-000000002001",
+            "entryType": "prescription.draft_created"
+          }
+        ],
+        "requestBody": {
+          "prescriptionId": "30000000-0000-4000-8000-000000010001",
+          "patientId": "30000000-0000-4000-8000-000000002001",
+          "items": [
+            {
+              "medicationName": "Fixture analgesic 400 mg",
+              "dose": "1 tablet",
+              "route": "oral",
+              "frequency": "twice_daily",
+              "durationDays": 3,
+              "instructions": "Synthetic medication instruction for local QA only."
+            }
+          ]
+        }
+      },
+      {
+        "key": "sign-new-patient-prescription-as-doctor",
+        "actorKey": "doctor",
+        "method": "POST",
+        "path": "/v1/prescriptions/30000000-0000-4000-8000-000000010001/sign",
+        "idempotencyKey": "cp3-sign-new-patient-prescription-as-doctor",
+        "expectedStatus": 200,
+        "expectedEvents": ["prescription.signed"],
+        "expectedAudit": [
+          {
+            "action": "prescription.signed",
+            "phiFields": ["patientId", "medicationName"],
+            "resourceType": "prescription",
+            "resourceId": "30000000-0000-4000-8000-000000010001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "30000000-0000-4000-8000-000000002001",
+            "entryType": "prescription.signed"
+          }
+        ],
+        "requestBody": {
+          "signedAt": "2026-07-07T10:31:00+05:30",
+          "attestation": "I reviewed and sign this synthetic prescription.",
+          "expectedSignedHash": "sha256:cp3-new-patient-prescription-synthetic"
+        }
+      },
+      {
+        "key": "amend-signed-note-as-doctor",
+        "actorKey": "doctor",
+        "method": "POST",
+        "path": "/v1/encounters/30000000-0000-4000-8000-000000008001/amend-note",
+        "idempotencyKey": "cp3-amend-signed-note-as-doctor",
+        "expectedStatus": 200,
+        "expectedEvents": ["clinical_note.amended"],
+        "expectedAudit": [
+          {
+            "action": "clinical_note.amended",
+            "phiFields": ["patientId", "amendmentReason", "treatmentPerformed"],
+            "resourceType": "clinical_note",
+            "resourceId": "30000000-0000-4000-8000-000000009001"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "30000000-0000-4000-8000-000000002001",
+            "entryType": "clinical_note.amended"
+          }
+        ],
+        "requestBody": {
+          "newVersionId": "30000000-0000-4000-8000-000000009102",
+          "amendmentOfVersionId": "30000000-0000-4000-8000-000000009101",
+          "amendmentReason": "Synthetic correction to clarify treatment-performed wording.",
+          "signedAt": "2026-07-07T12:12:00+05:30",
+          "preservesPreviousSignedHash": "sha256:cp3-new-patient-note-v1-synthetic",
+          "content": {
+            "treatmentPerformed": "Synthetic consultation completed; amendment records wording clarification."
+          }
+        }
+      },
+      {
+        "key": "revoke-new-patient-ai-audio-consent",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/patients/30000000-0000-4000-8000-000000002001/consents/30000000-0000-4000-8000-000000007002/revoke",
+        "idempotencyKey": "cp3-revoke-new-patient-ai-audio-consent",
+        "expectedStatus": 200,
+        "expectedEvents": ["consent.revoked"],
+        "expectedAudit": [
+          {
+            "action": "consent.revoked",
+            "phiFields": ["patientId", "purpose", "revocationReason"],
+            "resourceType": "consent",
+            "resourceId": "30000000-0000-4000-8000-000000007002"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "30000000-0000-4000-8000-000000002001",
+            "entryType": "consent.revoked"
+          }
+        ],
+        "requestBody": {
+          "revokedAt": "2026-07-07T12:45:00+05:30",
+          "revocationReason": "Synthetic patient withdrew AI/audio permission after signed note.",
+          "requestedBy": "patient"
+        }
+      },
+      {
+        "key": "verify-ai-audio-readiness-blocked",
+        "actorKey": "assistant",
+        "method": "GET",
+        "path": "/v1/patients/30000000-0000-4000-8000-000000002001/consents",
+        "idempotencyKey": "cp3-verify-ai-audio-readiness-blocked",
+        "expectedStatus": 200,
+        "expectedEvents": [],
+        "expectedAudit": [
+          {
+            "action": "consent.enforcement.checked",
+            "phiFields": ["patientId", "purpose"],
+            "resourceType": "consent",
+            "resourceId": "30000000-0000-4000-8000-000000007002"
+          }
+        ],
+        "timelineExpectations": []
+      },
+      {
+        "key": "submit-returning-patient-paper-card-intake",
+        "actorKey": "assistant",
+        "method": "POST",
+        "path": "/v1/patients/30000000-0000-4000-8000-000000002002/form-responses",
+        "idempotencyKey": "cp3-submit-returning-paper-card-intake",
+        "expectedStatus": 201,
+        "expectedEvents": ["form_response.submitted"],
+        "expectedAudit": [
+          {
+            "action": "form_response.submitted",
+            "phiFields": ["chiefComplaint", "medicalHistoryChange", "sourceCardCaptured"],
+            "resourceType": "form_response",
+            "resourceId": "30000000-0000-4000-8000-000000005002"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "30000000-0000-4000-8000-000000002002",
+            "entryType": "form_response.submitted"
+          }
+        ],
+        "requestBody": {
+          "responseId": "30000000-0000-4000-8000-000000005002",
+          "templateId": "30000000-0000-4000-8000-000000004002",
+          "appointmentId": "30000000-0000-4000-8000-000000003002",
+          "mode": "assistant_entered_paper_card",
+          "submittedAt": "2026-07-07T10:54:00+05:30",
+          "answers": {
+            "chiefComplaint": "Synthetic follow-up sensitivity note from paper card.",
+            "medicalHistoryChange": "Synthetic patient marked no medical-history change.",
+            "sourceCardCaptured": "paper_card_reviewed_without_upload_in_cp3"
+          },
+          "provenance": {
+            "source": "paper_card",
+            "enteredBy": "assistant",
+            "patientAttestedAt": "2026-07-07T10:53:00+05:30",
+            "paperCardRetainedByClinic": true
+          }
+        }
+      },
+      {
+        "key": "read-returning-patient-prep-summary",
+        "actorKey": "doctor",
+        "method": "GET",
+        "path": "/v1/patients/30000000-0000-4000-8000-000000002002/prep-summary?appointmentId=30000000-0000-4000-8000-000000003002",
+        "idempotencyKey": "cp3-read-returning-patient-prep-summary",
+        "expectedStatus": 200,
+        "expectedEvents": [],
+        "expectedAudit": [
+          {
+            "action": "clinical_prep.viewed",
+            "phiFields": ["patientId", "priorVisitSummary", "medicalHistoryChangePromptRequired"],
+            "resourceType": "patient",
+            "resourceId": "30000000-0000-4000-8000-000000002002"
+          }
+        ],
+        "timelineExpectations": []
+      },
+      {
+        "key": "start-returning-patient-encounter",
+        "actorKey": "doctor",
+        "method": "POST",
+        "path": "/v1/encounters",
+        "idempotencyKey": "cp3-start-returning-patient-encounter",
+        "expectedStatus": 201,
+        "expectedEvents": ["encounter.started"],
+        "expectedAudit": [
+          {
+            "action": "encounter.started",
+            "phiFields": ["patientId", "appointmentId", "priorVisitSummary"],
+            "resourceType": "encounter",
+            "resourceId": "30000000-0000-4000-8000-000000008002"
+          }
+        ],
+        "timelineExpectations": [
+          {
+            "patientId": "30000000-0000-4000-8000-000000002002",
+            "entryType": "encounter.started"
+          }
+        ],
+        "requestBody": {
+          "encounterId": "30000000-0000-4000-8000-000000008002",
+          "patientId": "30000000-0000-4000-8000-000000002002",
+          "appointmentId": "30000000-0000-4000-8000-000000003002",
+          "providerActorId": "30000000-0000-4000-8000-000000001002",
+          "startedAt": "2026-07-07T11:10:00+05:30",
+          "requiredEvidence": {
+            "prepSummaryViewed": true,
+            "treatmentConsentId": "30000000-0000-4000-8000-000000007003"
+          }
+        }
+      }
+    ]
+  },
+  "roleTenantExpectations": [
+    {
+      "key": "assistant-can-submit-intake",
+      "actorKey": "assistant",
+      "operation": "POST /v1/patients/{patientId}/form-responses",
+      "targetTenantId": "30000000-0000-4000-8000-000000000001",
+      "targetClinicId": "30000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["patient.intake.write"],
+      "expected": "allow"
+    },
+    {
+      "key": "assistant-can-draft-clinical-note",
+      "actorKey": "assistant",
+      "operation": "PATCH /v1/encounters/{encounterId}",
+      "targetTenantId": "30000000-0000-4000-8000-000000000001",
+      "targetClinicId": "30000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["clinical.note.write"],
+      "expected": "allow"
+    },
+    {
+      "key": "doctor-can-sign-clinical-note",
+      "actorKey": "doctor",
+      "operation": "POST /v1/encounters/{encounterId}/sign-note",
+      "targetTenantId": "30000000-0000-4000-8000-000000000001",
+      "targetClinicId": "30000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["clinical.note.sign"],
+      "expected": "allow"
+    },
+    {
+      "key": "doctor-can-sign-prescription",
+      "actorKey": "doctor",
+      "operation": "POST /v1/prescriptions/{prescriptionId}/sign",
+      "targetTenantId": "30000000-0000-4000-8000-000000000001",
+      "targetClinicId": "30000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["prescription.sign"],
+      "expected": "allow"
+    },
+    {
+      "key": "assistant-cannot-sign-clinical-note",
+      "actorKey": "assistant",
+      "operation": "POST /v1/encounters/{encounterId}/sign-note",
+      "targetTenantId": "30000000-0000-4000-8000-000000000001",
+      "targetClinicId": "30000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["clinical.note.sign"],
+      "expected": "deny",
+      "expectedReason": "missing_permission",
+      "method": "POST",
+      "path": "/v1/encounters/30000000-0000-4000-8000-000000008001/sign-note",
+      "expectedStatus": [403],
+      "requestBody": {
+        "versionId": "30000000-0000-4000-8000-000000009101",
+        "attestation": "Assistant attempted synthetic sign-off and must be denied."
+      }
+    },
+    {
+      "key": "assistant-cannot-sign-prescription",
+      "actorKey": "assistant",
+      "operation": "POST /v1/prescriptions/{prescriptionId}/sign",
+      "targetTenantId": "30000000-0000-4000-8000-000000000001",
+      "targetClinicId": "30000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["prescription.sign"],
+      "expected": "deny",
+      "expectedReason": "missing_permission",
+      "method": "POST",
+      "path": "/v1/prescriptions/30000000-0000-4000-8000-000000010001/sign",
+      "expectedStatus": [403],
+      "requestBody": {
+        "attestation": "Assistant attempted synthetic prescription sign-off and must be denied."
+      }
+    },
+    {
+      "key": "accountant-cannot-read-clinical-encounter",
+      "actorKey": "accountant",
+      "operation": "GET /v1/encounters/{encounterId}",
+      "targetTenantId": "30000000-0000-4000-8000-000000000001",
+      "targetClinicId": "30000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["clinical_context.read"],
+      "expected": "deny",
+      "expectedReason": "missing_permission",
+      "method": "GET",
+      "path": "/v1/encounters/30000000-0000-4000-8000-000000008001",
+      "expectedStatus": [403]
+    },
+    {
+      "key": "wrong-tenant-assistant-cannot-read-primary-prep",
+      "actorKey": "wrongTenantAssistant",
+      "operation": "GET /v1/patients/{patientId}/prep-summary",
+      "targetTenantId": "30000000-0000-4000-8000-000000000001",
+      "targetClinicId": "30000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["clinical_context.read"],
+      "expected": "deny",
+      "expectedReason": "tenant_mismatch",
+      "method": "GET",
+      "path": "/v1/patients/30000000-0000-4000-8000-000000002001/prep-summary?appointmentId=30000000-0000-4000-8000-000000003001",
+      "expectedStatus": [403, 404]
+    },
+    {
+      "key": "signed-note-version-cannot-be-overwritten",
+      "actorKey": "doctor",
+      "operation": "PATCH /v1/encounters/{encounterId}",
+      "targetTenantId": "30000000-0000-4000-8000-000000000001",
+      "targetClinicId": "30000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["clinical.note.write"],
+      "expected": "deny",
+      "expectedReason": "immutable_signed_artifact",
+      "method": "PATCH",
+      "path": "/v1/encounters/30000000-0000-4000-8000-000000008001",
+      "expectedStatus": [409, 422],
+      "requestBody": {
+        "content": {
+          "diagnosis": "Synthetic overwritten diagnosis attempt must not persist."
+        }
+      }
+    },
+    {
+      "key": "ai-audio-capture-denied-after-consent-revocation",
+      "actorKey": "assistant",
+      "operation": "POST /v1/encounters/{encounterId}/audio-captures",
+      "targetTenantId": "30000000-0000-4000-8000-000000000001",
+      "targetClinicId": "30000000-0000-4000-8000-000000000101",
+      "requiredPermissions": ["audio_capture.start"],
+      "expected": "deny",
+      "expectedReason": "consent_revoked",
+      "liveSmoke": false,
+      "method": "POST",
+      "path": "/v1/encounters/30000000-0000-4000-8000-000000008001/audio-captures",
+      "expectedStatus": [403, 409, 422],
+      "requestBody": {
+        "patientId": "30000000-0000-4000-8000-000000002001",
+        "purpose": "AI_AUDIO_CAPTURE"
+      }
+    }
+  ],
+  "responseAssertions": {
+    "timeline": {
+      "newPatientMustInclude": [
+        "form_response.submitted",
+        "consent.created",
+        "encounter.started",
+        "clinical_note.draft_created",
+        "clinical_note.signed",
+        "prescription.draft_created",
+        "prescription.signed",
+        "clinical_note.amended",
+        "consent.revoked"
+      ],
+      "returningPatientMustInclude": ["form_response.submitted", "encounter.started"],
+      "sensitiveViewsAndMutationsRequireAudit": true
+    },
+    "signedNoteImmutability": {
+      "noteId": "30000000-0000-4000-8000-000000009001",
+      "signedVersionId": "30000000-0000-4000-8000-000000009101",
+      "amendedVersionId": "30000000-0000-4000-8000-000000009102",
+      "overwriteDeniedByExpectationKey": "signed-note-version-cannot-be-overwritten",
+      "amendmentRequiresReason": true,
+      "previousSignedHashMustBePreserved": true,
+      "signedVersionsAreImmutable": true
+    },
+    "consentEnforcement": {
+      "patientId": "30000000-0000-4000-8000-000000002001",
+      "consentRecordId": "30000000-0000-4000-8000-000000007002",
+      "purpose": "AI_AUDIO_CAPTURE",
+      "readinessEndpoint": "/v1/patients/30000000-0000-4000-8000-000000002001/consents",
+      "readyBeforeRevocation": true,
+      "readyAfterRevocation": false,
+      "blockedCapabilities": ["audio_capture", "transcription", "ai_draft"],
+      "blockingReason": "consent_revoked",
+      "futureCaptureDeniedByExpectationKey": "ai-audio-capture-denied-after-consent-revocation"
+    },
+    "returningPrep": {
+      "mustIncludePriorSignedNote": true,
+      "mustIncludeMedicalHistoryChangePrompt": true,
+      "mustNotExposeWrongTenantHistory": true
+    }
+  },
+  "e2eSelectorContract": {
+    "route": "/surface/clinical?scenario=cp3-intake-consent-encounter",
+    "requiredTestIds": [
+      "cp3-clinical-workspace",
+      "cp3-patient-profile-newPatient",
+      "cp3-new-patient-intake-form",
+      "cp3-submit-new-patient-intake",
+      "cp3-intake-status-newPatient",
+      "cp3-consent-treatment-toggle",
+      "cp3-consent-ai-audio-toggle",
+      "cp3-save-new-patient-consents",
+      "cp3-start-encounter-newPatient",
+      "cp3-note-draft-editor",
+      "cp3-save-note-draft-newPatientEncounter",
+      "cp3-sign-note-newPatientEncounter",
+      "cp3-note-status-newPatientEncounter",
+      "cp3-create-prescription-newPatientEncounter",
+      "cp3-sign-prescription-newPatientPrescription",
+      "cp3-amend-note-newPatientNote",
+      "cp3-amendment-reason-newPatientNote",
+      "cp3-submit-amendment-newPatientNote",
+      "cp3-note-version-timeline-newPatientNote",
+      "cp3-revoke-ai-audio-consent-newPatient",
+      "cp3-ai-audio-readiness-newPatient",
+      "cp3-doctor-prep-returningPatient",
+      "cp3-submit-returning-paper-card-intake",
+      "cp3-start-encounter-returningPatient",
+      "cp3-note-sign-denied",
+      "cp3-prescription-sign-denied",
+      "cp3-clinical-access-denied"
+    ]
+  }
+}

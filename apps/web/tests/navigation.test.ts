@@ -5,6 +5,8 @@ import {
   getPrimarySurfaceId,
   getSurface,
   getVisibleSurfaces,
+  hasSurface,
+  resolveSurfaceId,
   summarizeSurfaceAccess
 } from "@/lib/navigation";
 
@@ -43,9 +45,27 @@ describe("role-aware navigation", () => {
 
   it("reports active versus registered unavailable surfaces", () => {
     expect(summarizeSurfaceAccess(["assistant"])).toMatchObject({
-      activeCount: 4,
+      activeCount: 9,
       registeredCount: expect.any(Number),
       unavailableCount: expect.any(Number)
     });
+  });
+
+  it("activates CP3 clinical workflow surfaces without exposing them to accounting", () => {
+    const assistantActive = getVisibleSurfaces(["assistant"])
+      .filter((surface) => surface.availability === "active")
+      .map((surface) => surface.id);
+    const accountantVisible = getVisibleSurfaces(["accountant"]).map((surface) => surface.id);
+
+    expect(assistantActive).toEqual(
+      expect.arrayContaining(["patient-profile", "intake", "consent", "returning-prep", "encounter"])
+    );
+    expect(accountantVisible).not.toContain("encounter");
+    expect(accountantVisible).not.toContain("patient-profile");
+  });
+
+  it("resolves the QA clinical route alias to the CP3 encounter workflow", () => {
+    expect(hasSurface("clinical")).toBe(true);
+    expect(resolveSurfaceId("clinical")).toBe("encounter");
   });
 });

@@ -5,13 +5,20 @@ import type {
   AppointmentTypeRecord,
   AttributionTouchRecord,
   ChairOrRoomRecord,
+  ClinicalNoteVersionRecord,
   Clinic,
   ClinicAssignment,
   ClinicUser,
+  ConsentEnforcementState,
+  ConsentRecord,
+  EncounterRecord,
+  IntakeFormSubmissionRecord,
+  IntakeFormTemplateRecord,
   LeadRecord,
   PatientGender,
   PatientRecord,
   PatientTimelineItem,
+  PrescriptionRecord,
   ProviderScheduleRecord,
   QueueEntryRecord,
   QueueStatus,
@@ -21,16 +28,30 @@ import type {
   TenantMembership,
   UUID
 } from "@clinic-os/domain";
-import { normalizePhone } from "@clinic-os/domain";
+import {
+  assertClinicalNoteCanBeAmended,
+  assertClinicalNoteCanBeSigned,
+  assertPrescriptionCanBeSigned,
+  buildConsentEnforcementState,
+  normalizeClinicalNoteContent,
+  normalizePhone
+} from "@clinic-os/domain";
 import { buildSetLocalRlsStatements } from "./rls.ts";
 import type {
   AppointmentConflictFilter,
   AppointmentSearchFilter,
+  AmendClinicalNoteInput,
+  AmendClinicalNoteResult,
   ClinicOperationsRepository,
   CreateAppointmentInput,
   CreateAttributionTouchInput,
+  CreateConsentInput,
+  CreateEncounterInput,
+  CreateIntakeFormSubmissionInput,
+  CreateIntakeFormTemplateInput,
   CreateLeadInput,
   CreatePatientInput,
+  CreatePrescriptionInput,
   CreateTaskInput,
   DashboardDataSet,
   IdentityAccessSnapshot,
@@ -39,6 +60,9 @@ import type {
   OutboxEventInput,
   PatientSearchFilter,
   RepositoryScope,
+  RevokeConsentInput,
+  SaveClinicalNoteDraftInput,
+  SignClinicalNoteResult,
   UpdatePatientInput
 } from "./repositories.ts";
 
@@ -1254,6 +1278,674 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
+  async listIntakeFormTemplates(scope: RepositoryScope): Promise<IntakeFormTemplateRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<IntakeFormTemplateRow>(
+        `
+          select *
+          from form_templates
+          where tenant_id = $1 and clinic_id = $2 and active = true
+          order by code, version desc
+        `,
+        [scope.tenantId, scope.clinicId]
+      );
+      return result.rows.map(mapIntakeFormTemplateRow);
+    });
+  }
+
+  async findIntakeFormTemplateById(
+    scope: RepositoryScope,
+    templateId: UUID
+  ): Promise<IntakeFormTemplateRecord | null> {
+    return this.#withRls(scope, async (client) =>
+      this.#findIntakeFormTemplateByIdInTransaction(client, scope, templateId)
+    );
+  }
+
+  async createIntakeFormTemplate(
+    scope: RepositoryScope,
+    input: CreateIntakeFormTemplateInput
+  ): Promise<IntakeFormTemplateRecord> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<IntakeFormTemplateRow>(
+        `
+          insert into form_templates (
+            tenant_id,
+            clinic_id,
+            code,
+            display_name,
+            form_type,
+            version,
+            schema,
+            active,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.code,
+          input.displayName,
+          input.formType,
+          input.version,
+          JSON.stringify(input.schema),
+          input.active ?? true,
+          scope.actorUserId
+        ]
+      );
+
+      return mapIntakeFormTemplateRow(result.rows[0]);
+    });
+  }
+
+  async createIntakeFormSubmission(
+    scope: RepositoryScope,
+    input: CreateIntakeFormSubmissionInput
+  ): Promise<IntakeFormSubmissionRecord> {
+    return this.#withRls(scope, async (client) => {
+      const template = await this.#findIntakeFormTemplateByIdInTransaction(
+        client,
+        scope,
+        input.templateId
+      );
+
+      if (!template) {
+        throw new Error("Intake form template not found.");
+      }
+
+      const result = await client.query<IntakeFormSubmissionRow>(
+        `
+          insert into form_responses (
+            tenant_id,
+            clinic_id,
+            patient_id,
+            template_id,
+            template_version,
+            source,
+            responses,
+            medical_history_snapshot,
+            provenance,
+            submitted_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8::jsonb, $9::jsonb, $10)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.patientId,
+          input.templateId,
+          template.version,
+          input.source,
+          JSON.stringify(input.responses),
+          JSON.stringify(input.medicalHistorySnapshot ?? {}),
+          JSON.stringify(input.provenance ?? {}),
+          scope.actorUserId
+        ]
+      );
+      const submission = mapIntakeFormSubmissionRow(result.rows[0]);
+
+      await this.#appendTimeline(client, scope, {
+        patientId: input.patientId,
+        itemType: "form_response_submitted",
+        sourceTable: "form_responses",
+        sourceId: submission.id,
+        title: "Intake submitted",
+        summary:
+          input.source === "assistant_paper_card"
+            ? "Assistant-entered paper intake"
+            : "Digital intake form submitted",
+        metadata: { templateId: input.templateId, templateVersion: template.version, source: input.source }
+      });
+
+      return submission;
+    });
+  }
+
+  async listPatientIntakeFormSubmissions(
+    scope: RepositoryScope,
+    patientId: UUID
+  ): Promise<IntakeFormSubmissionRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<IntakeFormSubmissionRow>(
+        `
+          select *
+          from form_responses
+          where tenant_id = $1 and clinic_id = $2 and patient_id = $3
+          order by submitted_at desc
+        `,
+        [scope.tenantId, scope.clinicId, patientId]
+      );
+      return result.rows.map(mapIntakeFormSubmissionRow);
+    });
+  }
+
+  async listPatientConsents(scope: RepositoryScope, patientId: UUID): Promise<ConsentRecord[]> {
+    return this.#withRls(scope, async (client) =>
+      this.#listPatientConsentsInTransaction(client, scope, patientId)
+    );
+  }
+
+  async createConsent(scope: RepositoryScope, input: CreateConsentInput): Promise<ConsentRecord> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<ConsentRow>(
+        `
+          insert into consents (
+            tenant_id,
+            clinic_id,
+            patient_id,
+            purpose,
+            template_code,
+            template_version,
+            capture_method,
+            granted_by_name,
+            relationship_to_patient,
+            evidence,
+            provenance,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, $11::jsonb, $12)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.patientId,
+          input.purpose,
+          input.templateCode,
+          input.templateVersion,
+          input.captureMethod,
+          input.grantedByName ?? null,
+          input.relationshipToPatient ?? null,
+          JSON.stringify(input.evidence ?? {}),
+          JSON.stringify(input.provenance ?? {}),
+          scope.actorUserId
+        ]
+      );
+      const consent = mapConsentRow(result.rows[0]);
+
+      await this.#appendTimeline(client, scope, {
+        patientId: consent.patientId,
+        itemType: "consent_created",
+        sourceTable: "consents",
+        sourceId: consent.id,
+        title: "Consent recorded",
+        summary: consent.purpose.replaceAll("_", " "),
+        metadata: { purpose: consent.purpose, captureMethod: consent.captureMethod }
+      });
+
+      return consent;
+    });
+  }
+
+  async revokeConsent(
+    scope: RepositoryScope,
+    consentId: UUID,
+    input: RevokeConsentInput
+  ): Promise<ConsentRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<ConsentRow>(
+        `
+          update consents
+          set
+            status = 'revoked',
+            revoked_by_user_id = $4,
+            revoked_at = now(),
+            revocation_reason = $5
+          where tenant_id = $1 and clinic_id = $2 and id = $3 and status = 'active'
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, consentId, scope.actorUserId, input.revocationReason]
+      );
+      const consent = result.rows[0] ? mapConsentRow(result.rows[0]) : null;
+
+      if (consent) {
+        await this.#appendTimeline(client, scope, {
+          patientId: consent.patientId,
+          itemType: "consent_revoked",
+          sourceTable: "consents",
+          sourceId: consent.id,
+          title: "Consent revoked",
+          summary: consent.purpose.replaceAll("_", " "),
+          metadata: { purpose: consent.purpose, reason: input.revocationReason }
+        });
+      }
+
+      return consent;
+    });
+  }
+
+  async getConsentEnforcementState(
+    scope: RepositoryScope,
+    patientId: UUID
+  ): Promise<ConsentEnforcementState> {
+    const consents = await this.listPatientConsents(scope, patientId);
+    return buildConsentEnforcementState(patientId, consents);
+  }
+
+  async createEncounter(scope: RepositoryScope, input: CreateEncounterInput): Promise<EncounterRecord> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<EncounterRow>(
+        `
+          insert into encounters (
+            tenant_id,
+            clinic_id,
+            patient_id,
+            appointment_id,
+            provider_user_id,
+            reason,
+            medical_history_snapshot,
+            created_by_user_id,
+            updated_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $8)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.patientId,
+          input.appointmentId ?? null,
+          input.providerUserId,
+          input.reason ?? null,
+          JSON.stringify(input.medicalHistorySnapshot ?? {}),
+          scope.actorUserId
+        ]
+      );
+      const encounter = mapEncounterRow(result.rows[0]);
+
+      await this.#appendEncounterStatusHistory(client, scope, encounter, null, "encounter_created");
+      await this.#appendTimeline(client, scope, {
+        patientId: encounter.patientId,
+        itemType: "encounter_created",
+        sourceTable: "encounters",
+        sourceId: encounter.id,
+        title: "Encounter created",
+        summary: encounter.reason,
+        metadata: { appointmentId: encounter.appointmentId, providerUserId: encounter.providerUserId }
+      });
+
+      return encounter;
+    });
+  }
+
+  async findEncounterById(scope: RepositoryScope, encounterId: UUID): Promise<EncounterRecord | null> {
+    return this.#withRls(scope, async (client) =>
+      this.#findEncounterByIdInTransaction(client, scope, encounterId)
+    );
+  }
+
+  async transitionEncounter(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    status: EncounterRecord["status"],
+    reason?: string | null
+  ): Promise<EncounterRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const existing = await this.#findEncounterByIdInTransaction(client, scope, encounterId);
+      if (!existing) return null;
+
+      const result = await client.query<EncounterRow>(
+        `
+          update encounters
+          set
+            status = $4,
+            started_at = case when $4 = 'drafting' and started_at is null then now() else started_at end,
+            closed_at = case when $4 = 'closed' and closed_at is null then now() else closed_at end,
+            updated_by_user_id = $5
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, encounterId, status, scope.actorUserId]
+      );
+      const encounter = mapEncounterRow(result.rows[0]);
+
+      await this.#appendEncounterStatusHistory(client, scope, encounter, existing.status, reason ?? null);
+
+      if (status === "drafting" && existing.status === "scheduled") {
+        await this.#appendTimeline(client, scope, {
+          patientId: encounter.patientId,
+          itemType: "encounter_started",
+          sourceTable: "encounters",
+          sourceId: encounter.id,
+          title: "Encounter started",
+          summary: encounter.reason,
+          metadata: { appointmentId: encounter.appointmentId, providerUserId: encounter.providerUserId }
+        });
+      }
+
+      return encounter;
+    });
+  }
+
+  async saveClinicalNoteDraft(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    input: SaveClinicalNoteDraftInput
+  ): Promise<ClinicalNoteVersionRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const encounter = await this.#findEncounterByIdInTransaction(client, scope, encounterId);
+      if (!encounter || ["signed", "amended", "closed", "cancelled"].includes(encounter.status)) {
+        return null;
+      }
+
+      const content = normalizeClinicalNoteContent(input.content);
+      const existingDraft = await this.#findLatestClinicalNoteVersionInTransaction(
+        client,
+        scope,
+        encounterId,
+        "draft"
+      );
+      let note: ClinicalNoteVersionRecord;
+
+      if (existingDraft) {
+        const result = await client.query<ClinicalNoteVersionRow>(
+          `
+            update clinical_note_versions
+            set content = $4::jsonb
+            where tenant_id = $1 and clinic_id = $2 and id = $3
+            returning *
+          `,
+          [scope.tenantId, scope.clinicId, existingDraft.id, JSON.stringify(content)]
+        );
+        note = mapClinicalNoteVersionRow(result.rows[0]);
+      } else {
+        const versionNumber = await this.#nextClinicalNoteVersionNumber(client, scope, encounterId);
+        const result = await client.query<ClinicalNoteVersionRow>(
+          `
+            insert into clinical_note_versions (
+              tenant_id,
+              clinic_id,
+              encounter_id,
+              patient_id,
+              version_number,
+              content,
+              created_by_user_id
+            )
+            values ($1, $2, $3, $4, $5, $6::jsonb, $7)
+            returning *
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            encounter.id,
+            encounter.patientId,
+            versionNumber,
+            JSON.stringify(content),
+            scope.actorUserId
+          ]
+        );
+        note = mapClinicalNoteVersionRow(result.rows[0]);
+        await this.#appendTimeline(client, scope, {
+          patientId: note.patientId,
+          itemType: "clinical_note_draft_created",
+          sourceTable: "clinical_note_versions",
+          sourceId: note.id,
+          title: "Clinical note drafted",
+          summary: `Version ${note.versionNumber}`,
+          metadata: { encounterId: note.encounterId, readyForSign: input.readyForSign === true }
+        });
+      }
+
+      const status = input.readyForSign ? "ready_for_sign" : "drafting";
+      await client.query(
+        `
+          update encounters
+          set status = $4, updated_by_user_id = $5
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+        `,
+        [scope.tenantId, scope.clinicId, encounterId, status, scope.actorUserId]
+      );
+
+      return note;
+    });
+  }
+
+  async listClinicalNoteVersions(
+    scope: RepositoryScope,
+    encounterId: UUID
+  ): Promise<ClinicalNoteVersionRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<ClinicalNoteVersionRow>(
+        `
+          select *
+          from clinical_note_versions
+          where tenant_id = $1 and clinic_id = $2 and encounter_id = $3
+          order by version_number desc
+        `,
+        [scope.tenantId, scope.clinicId, encounterId]
+      );
+      return result.rows.map(mapClinicalNoteVersionRow);
+    });
+  }
+
+  async signClinicalNote(
+    scope: RepositoryScope,
+    encounterId: UUID
+  ): Promise<SignClinicalNoteResult | null> {
+    return this.#withRls(scope, async (client) => {
+      const encounter = await this.#findEncounterByIdInTransaction(client, scope, encounterId);
+      if (!encounter) return null;
+      const draft = await this.#findLatestClinicalNoteVersionInTransaction(
+        client,
+        scope,
+        encounterId,
+        "draft"
+      );
+      if (!draft) return null;
+
+      assertClinicalNoteCanBeSigned(draft);
+
+      const noteResult = await client.query<ClinicalNoteVersionRow>(
+        `
+          update clinical_note_versions
+          set status = 'signed', signed_by_user_id = $4, signed_at = now()
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, draft.id, scope.actorUserId]
+      );
+      const note = mapClinicalNoteVersionRow(noteResult.rows[0]);
+      const encounterResult = await client.query<EncounterRow>(
+        `
+          update encounters
+          set status = 'signed', updated_by_user_id = $4
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, encounter.id, scope.actorUserId]
+      );
+      const updatedEncounter = mapEncounterRow(encounterResult.rows[0]);
+
+      await this.#appendEncounterStatusHistory(client, scope, updatedEncounter, encounter.status, "clinical_note_signed");
+      await this.#appendTimeline(client, scope, {
+        patientId: note.patientId,
+        itemType: "clinical_note_signed",
+        sourceTable: "clinical_note_versions",
+        sourceId: note.id,
+        title: "Clinical note signed",
+        summary: `Version ${note.versionNumber}`,
+        metadata: { encounterId: note.encounterId, signedByUserId: note.signedByUserId }
+      });
+
+      return { encounter: updatedEncounter, note };
+    });
+  }
+
+  async amendClinicalNote(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    input: AmendClinicalNoteInput
+  ): Promise<AmendClinicalNoteResult | null> {
+    return this.#withRls(scope, async (client) => {
+      const encounter = await this.#findEncounterByIdInTransaction(client, scope, encounterId);
+      if (!encounter) return null;
+      const latestSigned = await this.#findLatestSignedClinicalNoteVersionInTransaction(
+        client,
+        scope,
+        encounterId
+      );
+      if (!latestSigned) return null;
+
+      assertClinicalNoteCanBeAmended(latestSigned);
+
+      const versionNumber = await this.#nextClinicalNoteVersionNumber(client, scope, encounterId);
+      const noteResult = await client.query<ClinicalNoteVersionRow>(
+        `
+          insert into clinical_note_versions (
+            tenant_id,
+            clinic_id,
+            encounter_id,
+            patient_id,
+            version_number,
+            status,
+            content,
+            amendment_reason,
+            amended_from_version_id,
+            signed_by_user_id,
+            signed_at,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, 'amended', $6::jsonb, $7, $8, $9, now(), $9)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          encounter.id,
+          encounter.patientId,
+          versionNumber,
+          JSON.stringify(normalizeClinicalNoteContent(input.content)),
+          input.amendmentReason,
+          latestSigned.id,
+          scope.actorUserId
+        ]
+      );
+      const note = mapClinicalNoteVersionRow(noteResult.rows[0]);
+      const encounterResult = await client.query<EncounterRow>(
+        `
+          update encounters
+          set status = 'amended', updated_by_user_id = $4
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, encounter.id, scope.actorUserId]
+      );
+      const updatedEncounter = mapEncounterRow(encounterResult.rows[0]);
+
+      await this.#appendEncounterStatusHistory(client, scope, updatedEncounter, encounter.status, "clinical_note_amended");
+      await this.#appendTimeline(client, scope, {
+        patientId: note.patientId,
+        itemType: "clinical_note_amended",
+        sourceTable: "clinical_note_versions",
+        sourceId: note.id,
+        title: "Clinical note amended",
+        summary: input.amendmentReason,
+        metadata: {
+          encounterId: note.encounterId,
+          amendedFromVersionId: latestSigned.id,
+          versionNumber: note.versionNumber
+        }
+      });
+
+      return { encounter: updatedEncounter, note, amendedFrom: latestSigned };
+    });
+  }
+
+  async createPrescription(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    input: CreatePrescriptionInput
+  ): Promise<PrescriptionRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const encounter = await this.#findEncounterByIdInTransaction(client, scope, encounterId);
+      if (!encounter) return null;
+      const result = await client.query<PrescriptionRow>(
+        `
+          insert into prescriptions (
+            tenant_id,
+            clinic_id,
+            encounter_id,
+            patient_id,
+            medications,
+            notes,
+            created_by_user_id
+          )
+          values ($1, $2, $3, $4, $5::jsonb, $6, $7)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          encounter.id,
+          encounter.patientId,
+          JSON.stringify(input.medications),
+          input.notes ?? null,
+          scope.actorUserId
+        ]
+      );
+      const prescription = mapPrescriptionRow(result.rows[0]);
+
+      await this.#appendTimeline(client, scope, {
+        patientId: prescription.patientId,
+        itemType: "prescription_draft_created",
+        sourceTable: "prescriptions",
+        sourceId: prescription.id,
+        title: "Prescription drafted",
+        summary: `${prescription.medications.length} medication(s)`,
+        metadata: { encounterId: prescription.encounterId, status: prescription.status }
+      });
+
+      return prescription;
+    });
+  }
+
+  async findPrescriptionById(
+    scope: RepositoryScope,
+    prescriptionId: UUID
+  ): Promise<PrescriptionRecord | null> {
+    return this.#withRls(scope, async (client) =>
+      this.#findPrescriptionByIdInTransaction(client, scope, prescriptionId)
+    );
+  }
+
+  async signPrescription(
+    scope: RepositoryScope,
+    prescriptionId: UUID
+  ): Promise<PrescriptionRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const existing = await this.#findPrescriptionByIdInTransaction(client, scope, prescriptionId);
+      if (!existing) return null;
+
+      assertPrescriptionCanBeSigned(existing);
+
+      const result = await client.query<PrescriptionRow>(
+        `
+          update prescriptions
+          set status = 'signed', signed_by_user_id = $4, signed_at = now()
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, prescriptionId, scope.actorUserId]
+      );
+      const prescription = mapPrescriptionRow(result.rows[0]);
+
+      await this.#appendTimeline(client, scope, {
+        patientId: prescription.patientId,
+        itemType: "prescription_signed",
+        sourceTable: "prescriptions",
+        sourceId: prescription.id,
+        title: "Prescription signed",
+        summary: `${prescription.medications.length} medication(s)`,
+        metadata: { encounterId: prescription.encounterId, signedByUserId: prescription.signedByUserId }
+      });
+
+      return prescription;
+    });
+  }
+
   async #withRls<T>(
     scope: RepositoryScope,
     callback: (client: SqlQueryClient) => Promise<T>
@@ -1317,6 +2009,159 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       [scope.tenantId, scope.clinicId, appointmentId]
     );
     return result.rows[0] ? mapAppointmentRow(result.rows[0]) : null;
+  }
+
+  async #findIntakeFormTemplateByIdInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    templateId: UUID
+  ): Promise<IntakeFormTemplateRecord | null> {
+    const result = await client.query<IntakeFormTemplateRow>(
+      `
+        select *
+        from form_templates
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, templateId]
+    );
+    return result.rows[0] ? mapIntakeFormTemplateRow(result.rows[0]) : null;
+  }
+
+  async #listPatientConsentsInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    patientId: UUID
+  ): Promise<ConsentRecord[]> {
+    const result = await client.query<ConsentRow>(
+      `
+        select *
+        from consents
+        where tenant_id = $1 and clinic_id = $2 and patient_id = $3
+        order by created_at desc
+      `,
+      [scope.tenantId, scope.clinicId, patientId]
+    );
+    return result.rows.map(mapConsentRow);
+  }
+
+  async #findEncounterByIdInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    encounterId: UUID
+  ): Promise<EncounterRecord | null> {
+    const result = await client.query<EncounterRow>(
+      `
+        select *
+        from encounters
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, encounterId]
+    );
+    return result.rows[0] ? mapEncounterRow(result.rows[0]) : null;
+  }
+
+  async #findLatestClinicalNoteVersionInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    encounterId: UUID,
+    status: ClinicalNoteVersionRecord["status"]
+  ): Promise<ClinicalNoteVersionRecord | null> {
+    const result = await client.query<ClinicalNoteVersionRow>(
+      `
+        select *
+        from clinical_note_versions
+        where tenant_id = $1 and clinic_id = $2 and encounter_id = $3 and status = $4
+        order by version_number desc
+        limit 1
+      `,
+      [scope.tenantId, scope.clinicId, encounterId, status]
+    );
+    return result.rows[0] ? mapClinicalNoteVersionRow(result.rows[0]) : null;
+  }
+
+  async #findLatestSignedClinicalNoteVersionInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    encounterId: UUID
+  ): Promise<ClinicalNoteVersionRecord | null> {
+    const result = await client.query<ClinicalNoteVersionRow>(
+      `
+        select *
+        from clinical_note_versions
+        where tenant_id = $1
+          and clinic_id = $2
+          and encounter_id = $3
+          and status in ('signed', 'amended')
+        order by version_number desc
+        limit 1
+      `,
+      [scope.tenantId, scope.clinicId, encounterId]
+    );
+    return result.rows[0] ? mapClinicalNoteVersionRow(result.rows[0]) : null;
+  }
+
+  async #nextClinicalNoteVersionNumber(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    encounterId: UUID
+  ): Promise<number> {
+    const result = await client.query<{ next_version: number }>(
+      `
+        select coalesce(max(version_number), 0) + 1 as next_version
+        from clinical_note_versions
+        where tenant_id = $1 and clinic_id = $2 and encounter_id = $3
+      `,
+      [scope.tenantId, scope.clinicId, encounterId]
+    );
+    return Number(result.rows[0]?.next_version ?? 1);
+  }
+
+  async #findPrescriptionByIdInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    prescriptionId: UUID
+  ): Promise<PrescriptionRecord | null> {
+    const result = await client.query<PrescriptionRow>(
+      `
+        select *
+        from prescriptions
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, prescriptionId]
+    );
+    return result.rows[0] ? mapPrescriptionRow(result.rows[0]) : null;
+  }
+
+  async #appendEncounterStatusHistory(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    encounter: EncounterRecord,
+    fromStatus: EncounterRecord["status"] | null,
+    reason: string | null
+  ): Promise<void> {
+    await client.query(
+      `
+        insert into encounter_status_history (
+          tenant_id,
+          clinic_id,
+          encounter_id,
+          from_status,
+          to_status,
+          changed_by_user_id,
+          reason
+        )
+        values ($1, $2, $3, $4, $5, $6, $7)
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        encounter.id,
+        fromStatus,
+        encounter.status,
+        scope.actorUserId,
+        reason
+      ]
+    );
   }
 
   async #appendTimeline(
@@ -1547,6 +2392,104 @@ interface AttributionTouchRow {
   metadata: Record<string, unknown>;
 }
 
+interface IntakeFormTemplateRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  code: string;
+  display_name: string;
+  form_type: IntakeFormTemplateRecord["formType"];
+  version: number;
+  schema: Record<string, unknown>;
+  active: boolean;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface IntakeFormSubmissionRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  patient_id: UUID;
+  template_id: UUID;
+  template_version: number;
+  source: IntakeFormSubmissionRecord["source"];
+  responses: Record<string, unknown>;
+  medical_history_snapshot: Record<string, unknown>;
+  provenance: Record<string, unknown>;
+  submitted_by_user_id: UUID;
+  submitted_at: Date | string;
+}
+
+interface ConsentRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  patient_id: UUID;
+  purpose: ConsentRecord["purpose"];
+  status: ConsentRecord["status"];
+  template_code: string;
+  template_version: number;
+  capture_method: ConsentRecord["captureMethod"];
+  granted_by_name: string | null;
+  relationship_to_patient: string | null;
+  evidence: Record<string, unknown>;
+  provenance: Record<string, unknown>;
+  created_by_user_id: UUID;
+  created_at: Date | string;
+  revoked_by_user_id: UUID | null;
+  revoked_at: Date | string | null;
+  revocation_reason: string | null;
+}
+
+interface EncounterRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  patient_id: UUID;
+  appointment_id: UUID | null;
+  provider_user_id: UUID;
+  status: EncounterRecord["status"];
+  reason: string | null;
+  medical_history_snapshot: Record<string, unknown>;
+  started_at: Date | string | null;
+  closed_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface ClinicalNoteVersionRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  encounter_id: UUID;
+  patient_id: UUID;
+  version_number: number;
+  status: ClinicalNoteVersionRecord["status"];
+  content: ClinicalNoteVersionRecord["content"];
+  amendment_reason: string | null;
+  amended_from_version_id: UUID | null;
+  signed_by_user_id: UUID | null;
+  signed_at: Date | string | null;
+  created_by_user_id: UUID;
+  created_at: Date | string;
+}
+
+interface PrescriptionRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  encounter_id: UUID;
+  patient_id: UUID;
+  status: PrescriptionRecord["status"];
+  medications: PrescriptionRecord["medications"];
+  notes: string | null;
+  created_by_user_id: UUID;
+  created_at: Date | string;
+  signed_by_user_id: UUID | null;
+  signed_at: Date | string | null;
+}
+
 function mapPatientRow(row: PatientRow): PatientRecord {
   return {
     id: row.id,
@@ -1707,6 +2650,116 @@ function mapAttributionTouchRow(row: AttributionTouchRow): AttributionTouchRecor
     touchType: row.touch_type,
     occurredAt: toIso(row.occurred_at),
     metadata: row.metadata
+  };
+}
+
+function mapIntakeFormTemplateRow(row: IntakeFormTemplateRow): IntakeFormTemplateRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    code: row.code,
+    displayName: row.display_name,
+    formType: row.form_type,
+    version: row.version,
+    schema: row.schema,
+    active: row.active,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapIntakeFormSubmissionRow(row: IntakeFormSubmissionRow): IntakeFormSubmissionRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    patientId: row.patient_id,
+    templateId: row.template_id,
+    templateVersion: row.template_version,
+    source: row.source,
+    responses: row.responses,
+    medicalHistorySnapshot: row.medical_history_snapshot,
+    provenance: row.provenance,
+    submittedByUserId: row.submitted_by_user_id,
+    submittedAt: toIso(row.submitted_at)
+  };
+}
+
+function mapConsentRow(row: ConsentRow): ConsentRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    patientId: row.patient_id,
+    purpose: row.purpose,
+    status: row.status,
+    templateCode: row.template_code,
+    templateVersion: row.template_version,
+    captureMethod: row.capture_method,
+    grantedByName: row.granted_by_name,
+    relationshipToPatient: row.relationship_to_patient,
+    evidence: row.evidence,
+    provenance: row.provenance,
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at),
+    revokedByUserId: row.revoked_by_user_id,
+    revokedAt: row.revoked_at ? toIso(row.revoked_at) : null,
+    revocationReason: row.revocation_reason
+  };
+}
+
+function mapEncounterRow(row: EncounterRow): EncounterRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    patientId: row.patient_id,
+    appointmentId: row.appointment_id,
+    providerUserId: row.provider_user_id,
+    status: row.status,
+    reason: row.reason,
+    medicalHistorySnapshot: row.medical_history_snapshot,
+    startedAt: row.started_at ? toIso(row.started_at) : null,
+    closedAt: row.closed_at ? toIso(row.closed_at) : null,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapClinicalNoteVersionRow(row: ClinicalNoteVersionRow): ClinicalNoteVersionRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    encounterId: row.encounter_id,
+    patientId: row.patient_id,
+    versionNumber: row.version_number,
+    status: row.status,
+    content: row.content,
+    amendmentReason: row.amendment_reason,
+    amendedFromVersionId: row.amended_from_version_id,
+    signedByUserId: row.signed_by_user_id,
+    signedAt: row.signed_at ? toIso(row.signed_at) : null,
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at)
+  };
+}
+
+function mapPrescriptionRow(row: PrescriptionRow): PrescriptionRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    encounterId: row.encounter_id,
+    patientId: row.patient_id,
+    status: row.status,
+    medications: row.medications,
+    notes: row.notes,
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at),
+    signedByUserId: row.signed_by_user_id,
+    signedAt: row.signed_at ? toIso(row.signed_at) : null
   };
 }
 

@@ -5,13 +5,27 @@ import type {
   AppointmentTypeRecord,
   AttributionTouchRecord,
   ChairOrRoomRecord,
+  ClinicalNoteContent,
+  ClinicalNoteVersionRecord,
   Clinic,
   ClinicAssignment,
   ClinicUser,
+  ConsentCaptureMethod,
+  ConsentEnforcementState,
+  ConsentPurpose,
+  ConsentRecord,
   DomainEventType,
+  EncounterRecord,
+  EncounterStatus,
+  IntakeFormTemplateRecord,
+  IntakeFormType,
+  IntakeFormSubmissionRecord,
+  IntakeSubmissionSource,
   PatientRecord,
   PatientSource,
   PatientTimelineItem,
+  PrescriptionMedication,
+  PrescriptionRecord,
   ProviderScheduleRecord,
   QueueEntryRecord,
   QueueStatus,
@@ -159,6 +173,74 @@ export interface OutboxEventInput {
   occurredAt: string;
 }
 
+export interface CreateIntakeFormTemplateInput {
+  code: string;
+  displayName: string;
+  formType: IntakeFormType;
+  version: number;
+  schema: Record<string, unknown>;
+  active?: boolean;
+}
+
+export interface CreateIntakeFormSubmissionInput {
+  patientId: UUID;
+  templateId: UUID;
+  source: IntakeSubmissionSource;
+  responses: Record<string, unknown>;
+  medicalHistorySnapshot?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
+}
+
+export interface CreateConsentInput {
+  patientId: UUID;
+  purpose: ConsentPurpose;
+  templateCode: string;
+  templateVersion: number;
+  captureMethod: ConsentCaptureMethod;
+  grantedByName?: string | null;
+  relationshipToPatient?: string | null;
+  evidence?: Record<string, unknown>;
+  provenance?: Record<string, unknown>;
+}
+
+export interface RevokeConsentInput {
+  revocationReason: string;
+}
+
+export interface CreateEncounterInput {
+  patientId: UUID;
+  appointmentId?: UUID | null;
+  providerUserId: UUID;
+  reason?: string | null;
+  medicalHistorySnapshot?: Record<string, unknown>;
+}
+
+export interface SaveClinicalNoteDraftInput {
+  content: ClinicalNoteContent;
+  readyForSign?: boolean;
+}
+
+export interface AmendClinicalNoteInput {
+  content: ClinicalNoteContent;
+  amendmentReason: string;
+}
+
+export interface CreatePrescriptionInput {
+  medications: PrescriptionMedication[];
+  notes?: string | null;
+}
+
+export interface SignClinicalNoteResult {
+  encounter: EncounterRecord;
+  note: ClinicalNoteVersionRecord;
+}
+
+export interface AmendClinicalNoteResult {
+  encounter: EncounterRecord;
+  note: ClinicalNoteVersionRecord;
+  amendedFrom: ClinicalNoteVersionRecord;
+}
+
 export interface DashboardDataSet {
   appointments: AppointmentRecord[];
   leads: LeadRecord[];
@@ -212,4 +294,65 @@ export interface ClinicOperationsRepository {
   ): Promise<AttributionTouchRecord>;
   appendOutboxEvent(scope: RepositoryScope, event: OutboxEventInput): Promise<void>;
   loadDashboardData(scope: RepositoryScope, date: string): Promise<DashboardDataSet>;
+
+  listIntakeFormTemplates(scope: RepositoryScope): Promise<IntakeFormTemplateRecord[]>;
+  findIntakeFormTemplateById(
+    scope: RepositoryScope,
+    templateId: UUID
+  ): Promise<IntakeFormTemplateRecord | null>;
+  createIntakeFormTemplate(
+    scope: RepositoryScope,
+    input: CreateIntakeFormTemplateInput
+  ): Promise<IntakeFormTemplateRecord>;
+  createIntakeFormSubmission(
+    scope: RepositoryScope,
+    input: CreateIntakeFormSubmissionInput
+  ): Promise<IntakeFormSubmissionRecord>;
+  listPatientIntakeFormSubmissions(
+    scope: RepositoryScope,
+    patientId: UUID
+  ): Promise<IntakeFormSubmissionRecord[]>;
+
+  listPatientConsents(scope: RepositoryScope, patientId: UUID): Promise<ConsentRecord[]>;
+  createConsent(scope: RepositoryScope, input: CreateConsentInput): Promise<ConsentRecord>;
+  revokeConsent(scope: RepositoryScope, consentId: UUID, input: RevokeConsentInput): Promise<ConsentRecord | null>;
+  getConsentEnforcementState(
+    scope: RepositoryScope,
+    patientId: UUID
+  ): Promise<ConsentEnforcementState>;
+
+  createEncounter(scope: RepositoryScope, input: CreateEncounterInput): Promise<EncounterRecord>;
+  findEncounterById(scope: RepositoryScope, encounterId: UUID): Promise<EncounterRecord | null>;
+  transitionEncounter(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    status: EncounterStatus,
+    reason?: string | null
+  ): Promise<EncounterRecord | null>;
+  saveClinicalNoteDraft(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    input: SaveClinicalNoteDraftInput
+  ): Promise<ClinicalNoteVersionRecord | null>;
+  listClinicalNoteVersions(
+    scope: RepositoryScope,
+    encounterId: UUID
+  ): Promise<ClinicalNoteVersionRecord[]>;
+  signClinicalNote(scope: RepositoryScope, encounterId: UUID): Promise<SignClinicalNoteResult | null>;
+  amendClinicalNote(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    input: AmendClinicalNoteInput
+  ): Promise<AmendClinicalNoteResult | null>;
+
+  createPrescription(
+    scope: RepositoryScope,
+    encounterId: UUID,
+    input: CreatePrescriptionInput
+  ): Promise<PrescriptionRecord | null>;
+  findPrescriptionById(
+    scope: RepositoryScope,
+    prescriptionId: UUID
+  ): Promise<PrescriptionRecord | null>;
+  signPrescription(scope: RepositoryScope, prescriptionId: UUID): Promise<PrescriptionRecord | null>;
 }

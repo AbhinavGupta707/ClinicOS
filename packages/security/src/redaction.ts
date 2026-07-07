@@ -7,12 +7,27 @@ const SENSITIVE_KEY_PATTERNS = [
   /mobile/i,
   /^email$/i,
   /abha/i,
+  /intake/i,
+  /form.*response/i,
+  /chief.*complaint/i,
+  /symptom/i,
+  /medical.*history/i,
   /clinical.*note/i,
+  /observations?/i,
+  /examination/i,
+  /investigation/i,
   /transcript/i,
   /raw.*audio/i,
   /diagnosis/i,
+  /treatment.*plan/i,
+  /treatment.*performed/i,
   /prescription/i,
-  /allerg/i
+  /medication/i,
+  /dosage/i,
+  /instruction/i,
+  /allerg/i,
+  /signature/i,
+  /guardian/i
 ];
 
 const PHONE_PATTERN = /(\+?\d[\d -]{7,}\d)/g;

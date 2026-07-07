@@ -52,6 +52,34 @@ live mode the workflow calls the CP2 API boundary:
 - `POST /v1/appointments/{appointmentId}/confirm`
 - `POST /v1/appointments/{appointmentId}/check-in`
 
+Checkpoint 3 adds a local-only clinical workflow fixture for doctor/assistant browser smoke before
+the CP3 backend lane is merged:
+
+```sh
+NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_USE_CP3_WORKFLOW_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_ENV=local \
+NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=doctor \
+npm run dev --workspace apps/web
+```
+
+The CP3 fixture uses explicitly synthetic, non-PHI patient profile, timeline, intake, consent,
+encounter, clinical note, and prescription records behind `apps/web/lib/cp3-workflow.ts`. In live
+mode the workflow is available through `/surface/clinical` and the canonical `/surface/encounter`
+route, and currently checks the CP3 API boundary at:
+
+- `GET /v1/clinical-workflows/cp3?date=`
+- `POST /v1/patients/{patientId}/form-responses`
+- `POST /v1/patients/{patientId}/consents`
+- `POST /v1/patients/{patientId}/consents/{consentId}/revoke`
+- `GET /v1/patients/{patientId}/prep-summary`
+- `POST /v1/encounters/{encounterId}/start`
+- `PATCH /v1/encounters/{encounterId}`
+- `POST /v1/encounters/{encounterId}/sign-note`
+- `POST /v1/encounters/{encounterId}/amend-note`
+- `POST /v1/encounters/{encounterId}/prescriptions`
+- `POST /v1/prescriptions/{prescriptionId}/sign`
+
 ## `/me` contract expectation
 
 Until `packages/api-contracts` owns generated types, the web shell keeps a local mirror in `apps/web/lib/me.ts`. The expected shape is:

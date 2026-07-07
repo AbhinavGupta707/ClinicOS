@@ -10,6 +10,7 @@ import {
   createLead,
   createPatient,
   getMorningDashboard,
+  getPatientTimeline,
   InMemoryAuditSink,
   LocalFixtureClinicOperationsRepository,
   LocalFixtureIdentityRepository,
@@ -139,6 +140,29 @@ test("creating a patient from a source lead matches the lead before conversion",
   });
   assert.equal(appointmentResponse.status, 201);
   assert.equal(appointmentResponse.body.appointment.patientId, patientResponse.body.patient.id);
+});
+
+test("patient timeline reads are audited with CP3-specific PHI access classification", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const auditSink = new InMemoryAuditSink();
+  const dependencies = { repository, auditSink };
+  const assistant = await operationsContext("seed-assistant");
+
+  const timelineResponse = await getPatientTimeline(
+    assistant,
+    dependencies,
+    CHECKPOINT1_SEED_IDS.patients.rheaSynthetic
+  );
+
+  assert.equal(timelineResponse.status, 200);
+  assert.ok(timelineResponse.body.timeline.length > 0);
+  assert.ok(
+    auditSink.events.some(
+      (event) =>
+        event.action === "patient.timeline.viewed" &&
+        event.patientId === CHECKPOINT1_SEED_IDS.patients.rheaSynthetic
+    )
+  );
 });
 
 async function operationsContext(subject) {

@@ -15,10 +15,23 @@ test("accountant role cannot read clinical PHI by default", () => {
 });
 
 test("doctor can sign clinical records and assistant cannot", () => {
+  assert.equal(roleGrantsPermission("assistant", "clinical.note.write"), true);
+  assert.equal(roleGrantsPermission("assistant", "prescription.write"), true);
   assert.equal(roleGrantsPermission("doctor", "clinical.note.sign"), true);
   assert.equal(roleGrantsPermission("doctor", "prescription.sign"), true);
   assert.equal(roleGrantsPermission("assistant", "clinical.note.sign"), false);
   assert.equal(roleGrantsPermission("assistant", "prescription.sign"), false);
+});
+
+test("accountant and auditor cannot mutate CP3 clinical or PHI records", () => {
+  for (const role of ["accountant", "auditor"] as const) {
+    assert.equal(roleGrantsPermission(role, "patient.write"), false);
+    assert.equal(roleGrantsPermission(role, "intake.write"), false);
+    assert.equal(roleGrantsPermission(role, "clinical.note.write"), false);
+    assert.equal(roleGrantsPermission(role, "prescription.write"), false);
+    assert.equal(roleGrantsPermission(role, "clinical.note.sign"), false);
+    assert.equal(roleGrantsPermission(role, "prescription.sign"), false);
+  }
 });
 
 test("role expansion deduplicates permissions", () => {
@@ -29,6 +42,7 @@ test("role expansion deduplicates permissions", () => {
 
 test("clinical permission classifier covers PHI-sensitive permissions", () => {
   assert.equal(isClinicalPermission("patient.phi.read"), true);
+  assert.equal(isClinicalPermission("prescription.write"), true);
   assert.equal(isClinicalPermission("billing.export"), false);
   assert.ok(DEFAULT_ROLE_PERMISSION_GRANTS.owner_admin.length > DEFAULT_ROLE_PERMISSION_GRANTS.assistant.length);
 });

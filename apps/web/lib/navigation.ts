@@ -1,8 +1,10 @@
 import {
   CalendarDays,
   ClipboardCheck,
+  ClipboardPenLine,
   CreditCard,
   FileText,
+  FileSignature,
   HeartPulse,
   Home,
   Inbox,
@@ -12,7 +14,7 @@ import {
   LucideIcon,
   PackageCheck,
   ShieldCheck,
-  Stethoscope,
+  UserRoundCheck,
   UsersRound,
   Wrench
 } from "lucide-react";
@@ -98,16 +100,65 @@ export const SURFACES: SurfaceRegistration[] = [
     roles: ["owner", "doctor", "assistant", "receptionist"]
   },
   {
-    availability: "registered_unavailable",
+    availability: "active",
+    checkpoint: 3,
+    description: "Patient clinical profile, timeline, consent readiness, and visit context.",
+    href: "/surface/patient-profile",
+    icon: UsersRound,
+    id: "patient-profile",
+    label: "Patient profile",
+    requiredApis: ["GET /v1/clinical-workflows/cp3?date="],
+    roles: ["owner", "doctor", "assistant"]
+  },
+  {
+    availability: "active",
+    checkpoint: 3,
+    description: "Digital intake and assistant-entered paper history card capture.",
+    href: "/surface/intake",
+    icon: ClipboardPenLine,
+    id: "intake",
+    label: "Intake",
+    requiredApis: ["POST /v1/patients/{patientId}/form-responses"],
+    roles: ["owner", "doctor", "assistant"]
+  },
+  {
+    availability: "active",
+    checkpoint: 3,
+    description: "Consent capture, revocation, and AI/audio readiness enforcement state.",
+    href: "/surface/consent",
+    icon: ShieldCheck,
+    id: "consent",
+    label: "Consent",
+    requiredApis: [
+      "POST /v1/patients/{patientId}/consents",
+      "POST /v1/patients/{patientId}/consents/{consentId}/revoke"
+    ],
+    roles: ["owner", "doctor", "assistant"]
+  },
+  {
+    availability: "active",
+    checkpoint: 3,
+    description: "Returning-patient prep summary before the clinical visit starts.",
+    href: "/surface/returning-prep",
+    icon: UserRoundCheck,
+    id: "returning-prep",
+    label: "Patient prep",
+    requiredApis: ["GET /v1/clinical-workflows/cp3?date="],
+    roles: ["owner", "doctor", "assistant"]
+  },
+  {
+    availability: "active",
     checkpoint: 3,
     description: "Encounter prep, note drafting, prescriptions, and clinical sign-off.",
     href: "/surface/encounter",
-    icon: Stethoscope,
+    icon: FileSignature,
     id: "encounter",
     label: "Encounter",
     requiredApis: [
-      "GET /v1/encounters/{encounterId}",
-      "POST /v1/encounters/{encounterId}/sign-note"
+      "POST /v1/encounters/{encounterId}/start",
+      "PATCH /v1/encounters/{encounterId}",
+      "POST /v1/encounters/{encounterId}/sign-note",
+      "POST /v1/prescriptions/{prescriptionId}/sign"
     ],
     roles: ["owner", "doctor", "assistant"]
   },
@@ -227,7 +278,10 @@ export const SURFACES: SurfaceRegistration[] = [
 ];
 
 const SURFACE_BY_ID = new Map(SURFACES.map((surface) => [surface.id, surface]));
-const SURFACE_ALIASES = new Map<string, string>([["day-start", "today"]]);
+const SURFACE_ALIASES = new Map<string, string>([
+  ["clinical", "encounter"],
+  ["day-start", "today"]
+]);
 
 export function hasSurface(surfaceId: string) {
   return SURFACE_BY_ID.has(resolveSurfaceId(surfaceId));

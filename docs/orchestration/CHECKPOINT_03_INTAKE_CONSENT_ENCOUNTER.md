@@ -78,3 +78,69 @@ Clinic staff can route new and returning patients into a clinical visit, capture
 - Prescription signing is doctor-only.
 - Timeline, audit, and outbox evidence exist for PHI-changing actions.
 - Full code checks, live local API smoke, and browser/user checks are recorded before merge.
+
+## Integration Closeout
+
+- Integration branch: `codex/integration/checkpoint-3`.
+- Verified code commit: `eb68abd`.
+- Merge order:
+  - Clinical Backend: worker `393e738`, integration merge `f1e6fa2`.
+  - Security/Compliance: worker `c8146ee`, integration merge `4adc0d7`.
+  - Doctor/Assistant UX: worker `62dd85d`, integration merge `f4af47e`.
+  - QA/Fixtures: worker `4c2453a`, integration merge `60414f9`.
+  - Master integration patch: `eb68abd`.
+- Master integration aligned the CP3 live boundary around canonical routes:
+  - `POST /v1/patients/{patientId}/form-responses`
+  - `POST /v1/patients/{patientId}/consents`
+  - `GET /v1/patients/{patientId}/consents`
+  - `POST /v1/patients/{patientId}/consents/{consentId}/revoke`
+  - `GET /v1/patients/{patientId}/prep-summary`
+  - `POST /v1/encounters`
+  - `POST /v1/encounters/{encounterId}/start`
+  - `PATCH /v1/encounters/{encounterId}`
+  - `POST /v1/encounters/{encounterId}/sign-note`
+  - `POST /v1/encounters/{encounterId}/amend-note`
+  - `POST /v1/encounters/{encounterId}/prescriptions`
+  - `POST /v1/prescriptions/{prescriptionId}/sign`
+
+## Verification Evidence
+
+- Fixture and contract checks:
+  - `node scripts/validate-cp3-fixtures.mjs`
+  - `node --test tests/acceptance/*.test.mjs`
+  - `node scripts/cp3-contract-smoke.mjs --dry-run`
+- Focused package checks:
+  - `npm --workspace @clinic-os/auth test`
+  - `npm --workspace @clinic-os/domain test`
+  - `npm --workspace @clinic-os/db test`
+  - `npm --workspace @clinic-os/api-contracts test`
+  - `npm --workspace @clinic-os/security test`
+  - `npm --workspace @clinic-os/web test`
+  - `npm --workspace @clinic-os/web run typecheck`
+  - `npm --workspace @clinic-os/web run lint`
+- Live local API smoke:
+  - `npm --workspace @clinic-os/api test` passed outside the sandbox with no skips.
+  - Covered intake, consent create/revoke, consent enforcement, encounter start, note draft/sign/amend, prescription draft/sign, doctor-only signing, signed-note overwrite denial, audit evidence, and outbox evidence.
+- Root checks:
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run test`
+  - `npm run build`
+  - `npm run security:secrets`
+  - `npm run security:audit` high-severity gate
+  - `git diff --check`
+- Browser/user checks:
+  - Doctor workflow and mobile overflow: `CLINICOS_CP3_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000 npx playwright test apps/web/tests/checkpoint-3-clinical-workflow.spec.ts`.
+  - Accountant denial: `CLINICOS_CP3_ROLE_DENIAL_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3001 npx playwright test apps/web/tests/checkpoint-3-clinical-workflow.spec.ts --grep "clinical role denial"`.
+  - Mirrored root workflow/mobile: `CLINICOS_CP3_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000 npx playwright test tests/e2e/checkpoint-3-clinical-flow.spec.ts --grep "clinical workflow smoke"`.
+  - Mirrored root denial: `CLINICOS_CP3_ROLE_DENIAL_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3001 npx playwright test tests/e2e/checkpoint-3-clinical-flow.spec.ts --grep "clinical role denial"`.
+- Screenshots:
+  - Desktop: `/private/tmp/clinicos-cp3-web-doctor-desktop.png`.
+  - Mobile 390px: `/private/tmp/clinicos-cp3-web-mobile-390.png`.
+
+## Accepted Gaps
+
+- The CP3 audit read API is not implemented; audit append/classification and PHI redaction are verified by backend/security tests.
+- AI/audio capture is deferred. CP3 implements and verifies consent enforcement state so later audio/AI workflows can block correctly.
+- `npm audit --audit-level=high` passes. Moderate advisories remain in transitive Next/PostCSS, Temporal/protobufjs, and Expo/xcode/uuid paths and should be revisited in a dependency hardening pass.
+- The CP3 fixture contract smoke live mode expects a deterministic fixture-loaded environment. The local API fixture intentionally generates runtime IDs, so local runtime-ID evidence comes from `apps/api/test/cp3-clinical.test.ts`.

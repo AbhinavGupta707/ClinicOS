@@ -21,6 +21,44 @@ test("audit classifications mark sensitive access", () => {
   assert.equal(classification.category, "phi_access");
 });
 
+test("CP3 audit classifications cover intake consent encounter note prescription and timeline actions", () => {
+  for (const action of [
+    "patient.timeline.viewed",
+    "form_response.submitted",
+    "consent.created",
+    "consent.revoked",
+    "consent.enforcement.checked",
+    "encounter.created",
+    "encounter.started",
+    "encounter.completed",
+    "clinical_prep.viewed",
+    "clinical_note.draft_created",
+    "clinical_note.signed",
+    "clinical_note.amended",
+    "prescription.draft_created",
+    "prescription.signed"
+  ] as const) {
+    const classification = classifyAuditAction(action);
+    assert.equal(classification.phiInvolved, true, `${action} should involve PHI`);
+    assert.equal(classification.requiresPatientId, true, `${action} should require patientId`);
+  }
+
+  assert.equal(classifyAuditAction("consent.revoked").category, "privacy");
+  assert.equal(classifyAuditAction("consent.revoked").riskLevel, "critical");
+  assert.equal(classifyAuditAction("clinical_note.amended").riskLevel, "critical");
+
+  assert.throws(
+    () =>
+      createAuditEvent({
+        tenantId: "10000000-0000-4000-8000-000000000001",
+        clinicId: "10000000-0000-4000-8000-000000000002",
+        actor: { type: "user", id: "10000000-0000-4000-8000-000000001001" },
+        action: "consent.revoked"
+      }),
+    /requires patientId/
+  );
+});
+
 test("checkpoint 2 workflow audit actions are PHI-linked where patient state changes", () => {
   for (const action of [
     "appointment.created",
@@ -80,4 +118,35 @@ test("PHI redaction masks nested patient and free-text identifiers", () => {
   assert.equal(redacted.patient.email, "[REDACTED]");
   assert.match(redacted.message, /\*+3210/);
   assert.match(redacted.message, /r\*\*\*@example\.test/);
+});
+
+test("PHI redaction covers CP3 intake consent clinical note prescription and audio payloads", () => {
+  const redacted = redactPhi({
+    formResponse: {
+      chiefComplaint: "Pain near molar, call +91 98765 43210",
+      medicalHistory: "Diabetes and penicillin allergy"
+    },
+    consentSignature: "Rhea Synthetic",
+    encounter: {
+      clinicalNote: "Patient reports swelling.",
+      observations: "Swelling lower left quadrant",
+      treatmentPlan: "RCT discussion",
+      treatmentPerformed: "Temporary restoration"
+    },
+    prescriptionItems: [{ medicationName: "Amoxicillin", dosage: "500mg" }],
+    audio: {
+      transcript: "Patient says rhea.synthetic@example.test",
+      rawAudioUrl: "s3://private/audio.wav"
+    }
+  });
+
+  assert.equal(redacted.formResponse, "[REDACTED]");
+  assert.equal(redacted.consentSignature, "[REDACTED]");
+  assert.equal(redacted.encounter.clinicalNote, "[REDACTED]");
+  assert.equal(redacted.encounter.observations, "[REDACTED]");
+  assert.equal(redacted.encounter.treatmentPlan, "[REDACTED]");
+  assert.equal(redacted.encounter.treatmentPerformed, "[REDACTED]");
+  assert.equal(redacted.prescriptionItems, "[REDACTED]");
+  assert.equal(redacted.audio.transcript, "[REDACTED]");
+  assert.equal(redacted.audio.rawAudioUrl, "[REDACTED]");
 });

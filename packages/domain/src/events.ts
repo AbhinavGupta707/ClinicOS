@@ -24,7 +24,19 @@ export const DOMAIN_EVENT_TYPES = [
   "queue.entry_updated",
   "task.created",
   "task.status_changed",
-  "task.due"
+  "task.due",
+  "form_response.submitted",
+  "consent.created",
+  "consent.revoked",
+  "encounter.created",
+  "encounter.started",
+  "encounter.completed",
+  "clinical_note.draft_created",
+  "clinical_note.signed",
+  "clinical_note.amended",
+  "prescription.draft_created",
+  "prescription.signed",
+  "patient.timeline_item.created"
 ] as const;
 
 export type DomainEventType = (typeof DOMAIN_EVENT_TYPES)[number];
@@ -61,11 +73,41 @@ export const CP2_EVENT_TYPES = [
   ...CP2_DASHBOARD_TASK_EVENT_TYPES
 ] as const;
 
+export const CP3_INTAKE_CONSENT_EVENT_TYPES = [
+  "form_response.submitted",
+  "consent.created",
+  "consent.revoked"
+] as const;
+
+export const CP3_CLINICAL_EVENT_TYPES = [
+  "encounter.created",
+  "encounter.started",
+  "encounter.completed",
+  "clinical_note.draft_created",
+  "clinical_note.signed",
+  "clinical_note.amended",
+  "prescription.draft_created",
+  "prescription.signed"
+] as const;
+
+export const CP3_TIMELINE_EVENT_TYPES = ["patient.timeline_item.created"] as const;
+
+export const CP3_EVENT_TYPES = [
+  ...CP2_EVENT_TYPES,
+  ...CP3_INTAKE_CONSENT_EVENT_TYPES,
+  ...CP3_CLINICAL_EVENT_TYPES,
+  ...CP3_TIMELINE_EVENT_TYPES
+] as const;
+
 export type Cp2LeadEventType = (typeof CP2_LEAD_EVENT_TYPES)[number];
 export type Cp2PatientEventType = (typeof CP2_PATIENT_EVENT_TYPES)[number];
 export type Cp2AppointmentEventType = (typeof CP2_APPOINTMENT_EVENT_TYPES)[number];
 export type Cp2DashboardTaskEventType = (typeof CP2_DASHBOARD_TASK_EVENT_TYPES)[number];
 export type Cp2EventType = (typeof CP2_EVENT_TYPES)[number];
+export type Cp3IntakeConsentEventType = (typeof CP3_INTAKE_CONSENT_EVENT_TYPES)[number];
+export type Cp3ClinicalEventType = (typeof CP3_CLINICAL_EVENT_TYPES)[number];
+export type Cp3TimelineEventType = (typeof CP3_TIMELINE_EVENT_TYPES)[number];
+export type Cp3EventType = (typeof CP3_EVENT_TYPES)[number];
 
 export type EventSourceKind =
   | "external_system"
@@ -90,7 +132,19 @@ export interface EventProvenanceSource {
 }
 
 export interface DomainEventAggregate {
-  type: "lead" | "patient" | "appointment" | "queue_entry" | "task" | "attribution_touch";
+  type:
+    | "lead"
+    | "patient"
+    | "appointment"
+    | "queue_entry"
+    | "task"
+    | "attribution_touch"
+    | "form_response"
+    | "consent"
+    | "encounter"
+    | "clinical_note"
+    | "prescription"
+    | "patient_timeline_item";
   id: UUID | string;
 }
 
@@ -137,6 +191,10 @@ export function isDomainEventType(value: string): value is DomainEventType {
 
 export function isCp2EventType(value: string): value is Cp2EventType {
   return (CP2_EVENT_TYPES as readonly string[]).includes(value);
+}
+
+export function isCp3EventType(value: string): value is Cp3EventType {
+  return (CP3_EVENT_TYPES as readonly string[]).includes(value);
 }
 
 export function createDomainEventEnvelope<

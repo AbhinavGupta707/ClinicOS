@@ -12,6 +12,14 @@ const checkpoint2Migration = readFileSync(
   resolve(import.meta.dirname, "../migrations/0002_lead_patient_appointment_day_start.sql"),
   "utf8"
 );
+const checkpoint3Migration = readFileSync(
+  resolve(import.meta.dirname, "../migrations/0003_intake_consent_encounter_clinical.sql"),
+  "utf8"
+);
+const checkpoint1Seed = readFileSync(
+  resolve(import.meta.dirname, "../seeds/checkpoint1_identity_auth.sql"),
+  "utf8"
+);
 
 test("migration enables RLS for first PHI and audit tables", () => {
   assert.match(migration, /alter table patients enable row level security/i);
@@ -102,4 +110,52 @@ test("checkpoint 2 migration protects appointment provider and chair conflicts a
   assert.match(checkpoint2Migration, /appointments_provider_no_overlap exclude using gist/i);
   assert.match(checkpoint2Migration, /appointments_chair_no_overlap exclude using gist/i);
   assert.match(checkpoint2Migration, /status in \('requested', 'booked', 'confirmed', 'checked_in', 'in_consult'\)/i);
+});
+
+test("checkpoint 3 migration includes intake consent encounter note and prescription tables", () => {
+  for (const table of [
+    "form_templates",
+    "form_responses",
+    "consents",
+    "encounters",
+    "encounter_status_history",
+    "clinical_note_versions",
+    "prescriptions"
+  ]) {
+    assert.match(checkpoint3Migration, new RegExp(`create table if not exists ${table}`, "i"));
+  }
+
+  assert.match(checkpoint3Migration, /form_response_submitted/i);
+  assert.match(checkpoint3Migration, /consent_revoked/i);
+  assert.match(checkpoint3Migration, /clinical_note_signed/i);
+});
+
+test("checkpoint 3 migration enforces RLS and signed clinical artifact immutability", () => {
+  for (const table of [
+    "form_templates",
+    "form_responses",
+    "consents",
+    "encounters",
+    "clinical_note_versions",
+    "prescriptions"
+  ]) {
+    assert.match(checkpoint3Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
+    assert.match(checkpoint3Migration, new RegExp(`${table}_tenant_clinic_isolation`, "i"));
+  }
+
+  assert.match(checkpoint3Migration, /prevent_signed_clinical_note_mutation/i);
+  assert.match(checkpoint3Migration, /signed clinical note versions are immutable/i);
+  assert.match(checkpoint3Migration, /prevent_signed_prescription_mutation/i);
+  assert.match(checkpoint3Migration, /signed prescriptions are immutable/i);
+  assert.match(checkpoint3Migration, /consents_active_purpose_unique_idx/i);
+});
+
+test("identity seed keeps prescription draft and sign permissions separated for CP3 roles", () => {
+  assert.match(checkpoint1Seed, /\('prescription\.write', 'Write prescriptions'/i);
+  assert.match(checkpoint1Seed, /\('assistant', 'prescription\.write'\)/i);
+  assert.doesNotMatch(checkpoint1Seed, /\('assistant', 'prescription\.sign'\)/i);
+  assert.match(checkpoint1Seed, /\('doctor', 'prescription\.write'\)/i);
+  assert.match(checkpoint1Seed, /\('doctor', 'prescription\.sign'\)/i);
+  assert.doesNotMatch(checkpoint1Seed, /\('accountant', 'prescription\.write'\)/i);
+  assert.doesNotMatch(checkpoint1Seed, /\('auditor', 'prescription\.write'\)/i);
 });
