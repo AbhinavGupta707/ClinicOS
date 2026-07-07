@@ -228,6 +228,7 @@ export type Cp5WorkflowProblemCode =
   | "AUTH_REQUIRED"
   | "CONTRACT_MISMATCH"
   | "CP5_ENDPOINT_NOT_REGISTERED"
+  | "CP5_READ_MODEL_DEFERRED"
   | "NETWORK_UNAVAILABLE"
   | "SERVER_ERROR"
   | "UNKNOWN";
@@ -268,6 +269,7 @@ export interface ProcedurePerformedInput {
   encounterId: string;
   patientId: string;
   treatmentPlanId: string;
+  treatmentPlanEstimateItemId: string;
 }
 
 export interface InvoiceCreateInput {
@@ -323,7 +325,6 @@ interface EndpointFailure {
 }
 
 export const CP5_REQUIRED_ENDPOINTS = [
-  "GET /v1/clinical-workflows/cp5?date=",
   "GET /v1/pricebook/procedures",
   "POST /v1/patients/{patientId}/treatment-plans",
   "PATCH /v1/treatment-plans/{treatmentPlanId}",
@@ -599,48 +600,42 @@ export async function loadCp5Workflow(
     };
   }
 
-  try {
-    const workflow = await fetchEndpoint("/v1/clinical-workflows/cp5", { date: today }, signal);
-    const normalized = normalizeCp5WorkflowPayload(workflow.payload, today, workflow.requestId);
-
-    if ("code" in normalized) {
-      return {
-        problem: normalized,
-        status: "unavailable"
-      };
-    }
-
-    return {
-      data: normalized,
-      status: "ready"
-    };
-  } catch (error) {
-    if (error instanceof DOMException && error.name === "AbortError") {
-      throw error;
-    }
-
-    if (isEndpointFailure(error)) {
-      const problem = classifyCp5EndpointFailures([error]);
-
-      return {
-        problem,
-        status: problem.code === "AUTH_REQUIRED" ? "unauthenticated" : "unavailable"
-      };
-    }
-
-    return {
-      problem: {
-        code: "NETWORK_UNAVAILABLE",
-        detail: error instanceof Error ? error.message : undefined,
-        endpoints: CP5_REQUIRED_ENDPOINTS.map((endpoint) => ({
-          endpoint,
-          message: "The endpoint could not be reached from the web app."
-        })),
-        message: "The CP5 checkout workflow API could not be reached."
-      },
-      status: "unavailable"
-    };
+  if (signal?.aborted) {
+    throw new DOMException("Aborted", "AbortError");
   }
+
+  return {
+    problem: {
+      code: "CP5_READ_MODEL_DEFERRED",
+      endpoints: CP5_REQUIRED_ENDPOINTS.map((endpoint) => ({
+        endpoint,
+        message: "Granular CP5 write/read endpoint in the live route family."
+      })),
+      message:
+        "The live CP5 aggregate read model is deferred; enable the local fixture for the temporary checkout surface or use the granular CP5 API routes."
+    },
+    status: "unavailable"
+  };
+}
+
+function toApiTreatmentPlanPhase(phase: {
+  items: Array<{
+    amountCents: number;
+    procedureId: string;
+    quantity: number;
+    toothNumber?: string;
+  }>;
+  name: string;
+}) {
+  return {
+    items: phase.items.map((item) => ({
+      pricebookProcedureId: item.procedureId,
+      quantity: item.quantity,
+      toothNumber: item.toothNumber ?? null,
+      unitPriceMinor: item.amountCents
+    })),
+    title: phase.name
+  };
 }
 
 export async function createLiveTreatmentPlan(
@@ -663,7 +658,12 @@ export async function createLiveTreatmentPlan(
 ) {
   return postEndpoint(
     `/v1/patients/${encodeURIComponent(patientId)}/treatment-plans`,
-    input,
+    {
+      encounterId: input.encounterId,
+      phases: input.phases.map(toApiTreatmentPlanPhase),
+      status: "presented",
+      title: input.title
+    },
     signal
   );
 }
@@ -676,7 +676,14 @@ export async function updateLiveTreatmentPlan(
   },
   signal?: AbortSignal
 ) {
-  return patchEndpoint(`/v1/treatment-plans/${encodeURIComponent(treatmentPlanId)}`, input, signal);
+  return patchEndpoint(
+    `/v1/treatment-plans/${encodeURIComponent(treatmentPlanId)}`,
+    {
+      phases: input.phases.map(toApiTreatmentPlanPhase),
+      title: input.title
+    },
+    signal
+  );
 }
 
 export async function acceptLiveTreatmentPlan(
@@ -686,8 +693,11 @@ export async function acceptLiveTreatmentPlan(
   return postEndpoint(
     `/v1/treatment-plans/${encodeURIComponent(input.treatmentPlanId)}/accept`,
     {
-      acceptedBy: input.acceptedBy,
-      acceptanceMethod: input.acceptanceMethod
+      acceptedByName: input.acceptedBy,
+      acceptanceEvidence: {
+        acceptanceMethod: input.acceptanceMethod,
+        capturedBy: input.acceptedBy
+      }
     },
     signal
   );
@@ -697,8 +707,12 @@ export async function recordLiveProcedure(input: ProcedurePerformedInput, signal
   return postEndpoint(
     `/v1/encounters/${encodeURIComponent(input.encounterId)}/procedures`,
     {
-      actorName: input.actorName,
-      patientId: input.patientId,
+      provenance: {
+        actorName: input.actorName,
+        patientId: input.patientId,
+        source: "checkout_surface"
+      },
+      treatmentPlanEstimateItemId: input.treatmentPlanEstimateItemId,
       treatmentPlanId: input.treatmentPlanId
     },
     signal
@@ -726,8 +740,8 @@ export async function createLivePaymentRequest(input: PaymentRequestInput, signa
   return postEndpoint(
     `/v1/invoices/${encodeURIComponent(input.invoiceId)}/payment-requests`,
     {
-      amountCents: input.amountCents,
-      channel: input.channel
+      amountMinor: input.amountCents,
+      requestType: input.channel === "dynamic_qr" ? "invoice_qr" : "payment_link"
     },
     signal
   );
@@ -737,8 +751,12 @@ export async function recordLiveManualPayment(input: ManualPaymentInput, signal?
   return postEndpoint(
     `/v1/invoices/${encodeURIComponent(input.invoiceId)}/manual-payments`,
     {
-      actorName: input.actorName,
-      amountCents: input.amountCents,
+      amountMinor: input.amountCents,
+      currency: "INR",
+      evidence: {
+        actorName: input.actorName,
+        source: "checkout_surface"
+      },
       method: input.method,
       reason: input.reason,
       reference: input.reference
@@ -751,7 +769,7 @@ export async function createLiveReceipt(input: ReceiptCreateInput, signal?: Abor
   return postEndpoint(
     `/v1/invoices/${encodeURIComponent(input.invoiceId)}/receipts`,
     {
-      actorName: input.actorName
+      paymentTransactionIds: []
     },
     signal
   );
@@ -1254,7 +1272,7 @@ function paymentRequestDetailForState(state: PaymentRequestState) {
   }
 }
 
-function normalizeCp5WorkflowPayload(
+export function normalizeCp5WorkflowPayload(
   payload: unknown,
   today: string,
   requestId?: string
@@ -1470,10 +1488,6 @@ function readErrorMessage(payload: unknown) {
     readString(payload, ["message", "detail", "error_description"]) ??
     (error ? readString(error, ["message", "detail", "error_description"]) : null)
   );
-}
-
-function isEndpointFailure(error: unknown): error is EndpointFailure {
-  return isRecord(error) && typeof error.message === "string" && typeof error.endpoint === "string";
 }
 
 function timelineItem(

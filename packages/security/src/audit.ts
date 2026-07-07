@@ -230,6 +230,18 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "instruction.print_requested": {
+    category: "clinical",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "instruction.send_requested": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
   "media.viewed": {
     category: "phi_access",
     riskLevel: "high",

@@ -22,6 +22,7 @@ export const PERMISSIONS = [
   "dental.chart.snapshot",
   "prescription.write",
   "prescription.sign",
+  "patient_instruction.write",
   "media.read",
   "media.write",
   "billing.read",
@@ -78,6 +79,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "dental.chart.snapshot",
     "prescription.write",
     "prescription.sign",
+    "patient_instruction.write",
     "media.read",
     "media.write",
     "billing.read",
@@ -107,6 +109,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "dental.chart.snapshot",
     "prescription.write",
     "prescription.sign",
+    "patient_instruction.write",
     "media.read",
     "media.write",
     "billing.read",
@@ -130,6 +133,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "dental.chart.write",
     "dental.chart.snapshot",
     "prescription.write",
+    "patient_instruction.write",
     "media.read",
     "media.write",
     "billing.read",
@@ -147,6 +151,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "queue.manage",
     "billing.read",
     "billing.write",
+    "patient_instruction.write",
     "message.read",
     "message.write",
     "task.manage"
@@ -202,6 +207,7 @@ export function isClinicalPermission(permission: PermissionKey): boolean {
     permission.startsWith("clinical.") ||
     permission.startsWith("dental.") ||
     permission.startsWith("prescription.") ||
+    permission.startsWith("patient_instruction.") ||
     permission === "media.read" ||
     permission === "media.write" ||
     permission === "patient.phi.read"

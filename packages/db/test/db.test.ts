@@ -175,7 +175,8 @@ test("checkpoint 5 migration includes billing catalog plan invoice payment and r
     "invoice_items",
     "payment_requests",
     "payment_transactions",
-    "receipts"
+    "receipts",
+    "patient_instruction_requests"
   ]) {
     assert.match(checkpoint5Migration, new RegExp(`create table if not exists ${table}`, "i"));
   }
@@ -186,7 +187,9 @@ test("checkpoint 5 migration includes billing catalog plan invoice payment and r
     "procedure_completed",
     "invoice_created",
     "payment_recorded",
-    "receipt_generated"
+    "receipt_generated",
+    "instruction_print_requested",
+    "instruction_send_requested"
   ]) {
     assert.match(checkpoint5Migration, new RegExp(`'${itemType}'`, "i"));
   }
@@ -203,7 +206,8 @@ test("checkpoint 5 migration enforces RLS and tenant-clinic scope on billing tab
     "invoice_items",
     "payment_requests",
     "payment_transactions",
-    "receipts"
+    "receipts",
+    "patient_instruction_requests"
   ]) {
     assert.match(checkpoint5Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
     assert.match(checkpoint5Migration, new RegExp(`alter table ${table} force row level security`, "i"));
@@ -235,6 +239,17 @@ test("checkpoint 5 migration requires verified payment evidence before receipts"
   );
   assert.match(checkpoint5Migration, /payment_transactions_idempotency_unique_idx/i);
   assert.match(checkpoint5Migration, /foreign key \(tenant_id, receipt_id\) references receipts/i);
+});
+
+test("checkpoint 5 migration records patient instructions without fake delivery confirmation", () => {
+  assert.match(checkpoint5Migration, /create table if not exists patient_instruction_requests/i);
+  assert.match(checkpoint5Migration, /patient_instruction_requests_no_fake_delivery_check/i);
+  assert.match(checkpoint5Migration, /provider_confirmation_received = false/i);
+  assert.match(checkpoint5Migration, /delivered_at is null/i);
+  assert.match(checkpoint5Migration, /read_at is null/i);
+  assert.match(checkpoint5Migration, /\('patient_instruction\.write', 'Write patient instructions'/i);
+  assert.match(checkpoint5Migration, /\('receptionist', 'patient_instruction\.write'\)/i);
+  assert.doesNotMatch(checkpoint5Migration, /\('accountant', 'patient_instruction\.write'\)/i);
 });
 
 test("checkpoint 5 grants accountants billing access without clinical chart permissions", () => {

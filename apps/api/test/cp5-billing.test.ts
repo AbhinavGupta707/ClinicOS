@@ -9,6 +9,7 @@ import {
   createEncounterProcedurePerformed,
   createInvoice,
   createInvoiceReceipt,
+  createPatientInstruction,
   createPatientTreatmentPlan,
   getInvoice,
   getPatientDentalChart,
@@ -222,6 +223,71 @@ test("CP5 accountant billing access excludes clinical PHI workflows and wrong te
     () => getInvoice(wrongTenantAccountantContext(), dependencies, invoice.body.invoice.id),
     (error) => error instanceof Error && "status" in error && error.status === 404
   );
+});
+
+test("CP5 patient instructions create print/send-request evidence without fake delivery", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const auditSink = new InMemoryAuditSink();
+  const dependencies: OperationsDependencies = { repository, auditSink };
+  const assistant = await operationsContext("seed-assistant");
+  const receptionist = await operationsContext("seed-receptionist");
+  const accountant = await operationsContext("seed-accountant");
+
+  const printInstruction = await createPatientInstruction(assistant, dependencies, patientId, {
+    channel: "print",
+    templateId: "post-restoration-care",
+    title: "Post restoration care",
+    body: "Clinic-approved post restoration instructions."
+  });
+  assert.equal(printInstruction.status, 201);
+  assert.equal(printInstruction.body.instruction.status, "ready_for_print");
+  assert.ok(printInstruction.body.instruction.printJobId);
+  assert.equal(printInstruction.body.instruction.outboxEventId, null);
+  assert.equal(printInstruction.body.instruction.providerConfirmationReceived, false);
+  assert.equal(printInstruction.body.instruction.deliveredAt, null);
+  assert.equal(printInstruction.body.instruction.readAt, null);
+
+  const whatsappInstruction = await createPatientInstruction(receptionist, dependencies, patientId, {
+    channel: "whatsapp",
+    templateId: "six-month-recall"
+  });
+  assert.equal(whatsappInstruction.status, 202);
+  assert.equal(whatsappInstruction.body.instruction.status, "send_requested");
+  assert.equal(whatsappInstruction.body.instruction.printJobId, null);
+  assert.ok(whatsappInstruction.body.instruction.outboxEventId);
+  assert.equal(whatsappInstruction.body.instruction.providerConfirmationReceived, false);
+  assert.equal(whatsappInstruction.body.instruction.deliveredAt, null);
+  assert.equal(whatsappInstruction.body.instruction.readAt, null);
+
+  await assert.rejects(
+    () =>
+      createPatientInstruction(accountant, dependencies, patientId, {
+        channel: "print",
+        templateId: "accountant-forbidden"
+      }),
+    /missing_permission/
+  );
+  await assert.rejects(
+    () =>
+      createPatientInstruction(wrongTenantAccountantContext(), dependencies, patientId, {
+        channel: "print",
+        templateId: "wrong-tenant"
+      }),
+    /missing_permission/
+  );
+
+  assert.ok(
+    repository.timelineItems.some((item) => item.itemType === "instruction_print_requested")
+  );
+  assert.ok(repository.timelineItems.some((item) => item.itemType === "instruction_send_requested"));
+  assert.ok(
+    repository.outboxEvents.some((event) => event.eventType === "instruction.print_requested")
+  );
+  assert.ok(
+    repository.outboxEvents.some((event) => event.eventType === "instruction.send_requested")
+  );
+  assert.ok(auditSink.events.some((event) => event.action === "instruction.print_requested"));
+  assert.ok(auditSink.events.some((event) => event.action === "instruction.send_requested"));
 });
 
 async function prepareIssuedInvoice(

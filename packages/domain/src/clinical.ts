@@ -202,6 +202,33 @@ export interface PrescriptionRecord {
   signedAt: string | null;
 }
 
+export const PATIENT_INSTRUCTION_CHANNELS = ["print", "whatsapp"] as const;
+export type PatientInstructionChannel = (typeof PATIENT_INSTRUCTION_CHANNELS)[number];
+
+export const PATIENT_INSTRUCTION_STATUSES = ["ready_for_print", "send_requested"] as const;
+export type PatientInstructionStatus = (typeof PATIENT_INSTRUCTION_STATUSES)[number];
+
+export interface PatientInstructionRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  patientId: UUID;
+  channel: PatientInstructionChannel;
+  templateId: string;
+  title: string;
+  body: string;
+  status: PatientInstructionStatus;
+  renderedAt: string;
+  printJobId: string | null;
+  outboxEventId: UUID | null;
+  providerConfirmationReceived: boolean;
+  providerDeliveryConfirmedAt: string | null;
+  deliveredAt: string | null;
+  readAt: string | null;
+  createdByUserId: UUID;
+  createdAt: string;
+}
+
 const ENCOUNTER_TRANSITIONS: Readonly<Record<EncounterStatus, readonly EncounterStatus[]>> = {
   scheduled: ["drafting", "cancelled"],
   drafting: ["ready_for_sign", "signed", "cancelled"],
@@ -230,6 +257,10 @@ export function isConsentCaptureMethod(value: string): value is ConsentCaptureMe
 
 export function isEncounterStatus(value: string): value is EncounterStatus {
   return (ENCOUNTER_STATUSES as readonly string[]).includes(value);
+}
+
+export function isPatientInstructionChannel(value: string): value is PatientInstructionChannel {
+  return (PATIENT_INSTRUCTION_CHANNELS as readonly string[]).includes(value);
 }
 
 export function assertEncounterTransition(from: EncounterStatus, to: EncounterStatus): void {

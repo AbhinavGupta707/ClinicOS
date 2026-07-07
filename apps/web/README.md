@@ -130,12 +130,12 @@ smoke should use `NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=accountant`; that view shows bi
 without default clinical PHI, prescriptions, or instruction content.
 
 In live mode the workflow is available through `/surface/checkout`, `/surface/accounting`, and the
-aliases `/surface/billing` and `/surface/payments`. Until the CP5 backend contract is merged, the
-web loader assumes an aggregate read route:
+aliases `/surface/billing` and `/surface/payments`. The temporary checkout UI intentionally uses
+the local synthetic fixture as its read model until a production aggregate CP5 read endpoint is
+implemented as a complete workflow. In non-fixture live mode the loader returns
+`CP5_READ_MODEL_DEFERRED` rather than calling a stale or partial aggregate route.
 
-- `GET /v1/clinical-workflows/cp5?date=`
-
-The web action helpers and tests pin the documented CP5 route family:
+The web action helpers and tests pin the implemented granular CP5 route family:
 
 - `GET /v1/pricebook/procedures`
 - `POST /v1/patients/{patientId}/treatment-plans`
@@ -147,6 +147,7 @@ The web action helpers and tests pin the documented CP5 route family:
 - `POST /v1/invoices/{invoiceId}/payment-requests`
 - `POST /v1/invoices/{invoiceId}/manual-payments`
 - `POST /v1/invoices/{invoiceId}/receipts`
+- `POST /v1/encounters/{encounterId}/prescriptions`
 - `POST /v1/prescriptions/{prescriptionId}/sign`
 - `POST /v1/patients/{patientId}/instructions`
 

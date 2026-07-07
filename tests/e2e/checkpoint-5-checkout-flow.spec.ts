@@ -45,7 +45,7 @@ test.describe("Checkpoint 5 checkout workflow smoke", () => {
     await expect(page.getByTestId("cp5-instructions")).toContainText("print ready");
     await page.getByTestId("cp5-request-instruction-send").click();
     await expect(page.getByTestId("cp5-instructions")).toContainText("provider unavailable");
-    await expect(page.getByTestId("cp5-instructions")).not.toContainText(/delivered|read/i);
+    await expect(page.getByTestId("cp5-instructions")).not.toContainText(/\b(delivered|read)\b/i);
     await expect(page.getByTestId("cp5-timeline")).toContainText("receipt.generated");
 
     await page.screenshot({

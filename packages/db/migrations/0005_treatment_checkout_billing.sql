@@ -5,7 +5,8 @@ insert into permissions (key, display_name, category, description, phi_involved)
 values
   ('billing.read', 'Read billing', 'billing', 'Read invoices, dues, payment requests, payment state, and receipts.', false),
   ('billing.write', 'Write billing', 'billing', 'Create invoices, payment requests, payment records, and receipts.', false),
-  ('billing.export', 'Export billing', 'billing', 'Export billing and payment reports.', false)
+  ('billing.export', 'Export billing', 'billing', 'Export billing and payment reports.', false),
+  ('patient_instruction.write', 'Write patient instructions', 'clinical', 'Create patient instruction print and send-request evidence.', true)
 on conflict (key) do update set
   display_name = excluded.display_name,
   category = excluded.category,
@@ -20,16 +21,21 @@ join (
     ('owner_admin', 'billing.read'),
     ('owner_admin', 'billing.write'),
     ('owner_admin', 'billing.export'),
+    ('owner_admin', 'patient_instruction.write'),
     ('doctor', 'billing.read'),
+    ('doctor', 'patient_instruction.write'),
     ('assistant', 'billing.read'),
+    ('assistant', 'patient_instruction.write'),
     ('receptionist', 'billing.read'),
     ('receptionist', 'billing.write'),
+    ('receptionist', 'patient_instruction.write'),
     ('accountant', 'billing.read'),
     ('accountant', 'billing.write'),
     ('accountant', 'billing.export'),
     ('platform_admin', 'billing.read'),
     ('platform_admin', 'billing.write'),
-    ('platform_admin', 'billing.export')
+    ('platform_admin', 'billing.export'),
+    ('platform_admin', 'patient_instruction.write')
 ) grants(role_slug, permission_key) on roles.slug = grants.role_slug
 on conflict do nothing;
 
@@ -62,6 +68,8 @@ alter table patient_timeline_items
       'media_uploaded',
       'prescription_draft_created',
       'prescription_signed',
+      'instruction_print_requested',
+      'instruction_send_requested',
       'treatment_plan_created',
       'treatment_plan_accepted',
       'procedure_completed',
@@ -546,6 +554,45 @@ alter table payment_transactions
   add constraint payment_transactions_receipt_fk
   foreign key (tenant_id, receipt_id) references receipts(tenant_id, id) on delete set null;
 
+create table if not exists patient_instruction_requests (
+  id uuid primary key default gen_random_uuid(),
+  tenant_id uuid not null references tenants(id) on delete restrict,
+  clinic_id uuid not null,
+  patient_id uuid not null,
+  channel text not null check (channel in ('print', 'whatsapp')),
+  template_id text not null check (length(trim(template_id)) > 0),
+  title text not null check (length(trim(title)) > 0),
+  body text not null check (length(trim(body)) > 0),
+  status text not null check (status in ('ready_for_print', 'send_requested')),
+  rendered_at timestamptz not null,
+  print_job_id text,
+  outbox_event_id uuid,
+  provider_confirmation_received boolean not null default false,
+  provider_delivery_confirmed_at timestamptz,
+  delivered_at timestamptz,
+  read_at timestamptz,
+  created_by_user_id uuid not null references users(id) on delete restrict,
+  created_at timestamptz not null default now(),
+  unique (tenant_id, id),
+  constraint patient_instruction_requests_clinic_tenant_fk
+    foreign key (tenant_id, clinic_id) references clinics(tenant_id, id) on delete restrict,
+  constraint patient_instruction_requests_patient_fk
+    foreign key (tenant_id, patient_id) references patients(tenant_id, id) on delete restrict,
+  constraint patient_instruction_requests_channel_status_check check (
+    (channel = 'print' and status = 'ready_for_print' and print_job_id is not null and outbox_event_id is null)
+    or (channel = 'whatsapp' and status = 'send_requested' and print_job_id is null and outbox_event_id is not null)
+  ),
+  constraint patient_instruction_requests_no_fake_delivery_check check (
+    provider_confirmation_received = false
+    and provider_delivery_confirmed_at is null
+    and delivered_at is null
+    and read_at is null
+  )
+);
+
+create index if not exists patient_instruction_requests_patient_idx
+  on patient_instruction_requests(tenant_id, clinic_id, patient_id, created_at desc);
+
 alter table pricebook_procedures enable row level security;
 alter table pricebook_procedures force row level security;
 drop policy if exists pricebook_procedures_tenant_clinic_isolation on pricebook_procedures;
@@ -616,6 +663,13 @@ create policy receipts_tenant_clinic_isolation on receipts
   using (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id())
   with check (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id());
 
+alter table patient_instruction_requests enable row level security;
+alter table patient_instruction_requests force row level security;
+drop policy if exists patient_instruction_requests_tenant_clinic_isolation on patient_instruction_requests;
+create policy patient_instruction_requests_tenant_clinic_isolation on patient_instruction_requests
+  using (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id())
+  with check (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id());
+
 comment on table pricebook_procedures is 'Clinic-scoped dental procedure catalog with INR minor-unit pricing and tax defaults.';
 comment on table treatment_plans is 'Patient treatment plan aggregate with acceptance state and estimate totals.';
 comment on table treatment_plan_phases is 'Sequenced phases for treatment plans.';
@@ -626,3 +680,4 @@ comment on table invoice_items is 'Invoice lines derived from performed procedur
 comment on table payment_requests is 'Provider/manual payment request contract records owned by the payment provider lane.';
 comment on table payment_transactions is 'Verified provider or audited manual payment evidence for invoice reconciliation.';
 comment on table receipts is 'Receipts generated from settled unreceipted payment transactions.';
+comment on table patient_instruction_requests is 'Patient instruction print/send-request evidence without fake provider delivery confirmation.';

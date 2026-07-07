@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import type {
   AppointmentConflict,
   AppointmentRecord,
@@ -33,6 +34,7 @@ import type {
   PaymentRequestRecord,
   PaymentTransactionRecord,
   PatientGender,
+  PatientInstructionRecord,
   PatientRecord,
   PatientTimelineItem,
   PricebookProcedureRecord,
@@ -95,6 +97,7 @@ import type {
   CreateLeadInput,
   CreateMediaUploadReservationInput,
   CreatePatientInput,
+  CreatePatientInstructionInput,
   CreatePrescriptionInput,
   CreateTaskInput,
   DashboardDataSet,
@@ -2016,6 +2019,76 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       });
 
       return prescription;
+    });
+  }
+
+  async createPatientInstruction(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreatePatientInstructionInput
+  ): Promise<PatientInstructionRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const patient = await this.#findPatientByIdInTransaction(client, scope, patientId);
+      if (!patient) return null;
+
+      const now = new Date().toISOString();
+      const status = input.channel === "print" ? "ready_for_print" : "send_requested";
+      const printJobId = input.channel === "print" ? `print_${randomUUID()}` : null;
+      const outboxEventId = input.channel === "whatsapp" ? (input.outboxEventId ?? (randomUUID() as UUID)) : null;
+      const result = await client.query<PatientInstructionRow>(
+        `
+          insert into patient_instruction_requests (
+            tenant_id,
+            clinic_id,
+            patient_id,
+            channel,
+            template_id,
+            title,
+            body,
+            status,
+            rendered_at,
+            print_job_id,
+            outbox_event_id,
+            created_by_user_id,
+            created_at
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9::timestamptz, $10, $11, $12, $9::timestamptz)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          patientId,
+          input.channel,
+          input.templateId.trim(),
+          input.title?.trim() || "Post-care instructions",
+          input.body?.trim() ||
+            "Follow the clinic-approved post-care instructions. Contact the clinic if symptoms worsen.",
+          status,
+          now,
+          printJobId,
+          outboxEventId,
+          scope.actorUserId
+        ]
+      );
+      const instruction = mapPatientInstructionRow(result.rows[0]);
+      await this.#appendTimeline(client, scope, {
+        patientId,
+        itemType: input.channel === "print" ? "instruction_print_requested" : "instruction_send_requested",
+        sourceTable: "patient_instruction_requests",
+        sourceId: instruction.id,
+        title: input.channel === "print" ? "Instruction print requested" : "Instruction send requested",
+        summary: instruction.templateId,
+        metadata: {
+          instructionId: instruction.id,
+          templateId: instruction.templateId,
+          channel: instruction.channel,
+          outboxEventId: instruction.outboxEventId,
+          providerConfirmationReceived: false
+        }
+      });
+
+      return instruction;
     });
   }
 
@@ -4346,6 +4419,27 @@ interface PrescriptionRow {
   signed_at: Date | string | null;
 }
 
+interface PatientInstructionRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  patient_id: UUID;
+  channel: PatientInstructionRecord["channel"];
+  template_id: string;
+  title: string;
+  body: string;
+  status: PatientInstructionRecord["status"];
+  rendered_at: Date | string;
+  print_job_id: string | null;
+  outbox_event_id: UUID | null;
+  provider_confirmation_received: boolean;
+  provider_delivery_confirmed_at: Date | string | null;
+  delivered_at: Date | string | null;
+  read_at: Date | string | null;
+  created_by_user_id: UUID;
+  created_at: Date | string;
+}
+
 interface MediaUploadReservationRow {
   id: UUID;
   tenant_id: UUID;
@@ -4953,6 +5047,31 @@ function mapPrescriptionRow(row: PrescriptionRow): PrescriptionRecord {
     createdAt: toIso(row.created_at),
     signedByUserId: row.signed_by_user_id,
     signedAt: row.signed_at ? toIso(row.signed_at) : null
+  };
+}
+
+function mapPatientInstructionRow(row: PatientInstructionRow): PatientInstructionRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    patientId: row.patient_id,
+    channel: row.channel,
+    templateId: row.template_id,
+    title: row.title,
+    body: row.body,
+    status: row.status,
+    renderedAt: toIso(row.rendered_at),
+    printJobId: row.print_job_id,
+    outboxEventId: row.outbox_event_id,
+    providerConfirmationReceived: row.provider_confirmation_received,
+    providerDeliveryConfirmedAt: row.provider_delivery_confirmed_at
+      ? toIso(row.provider_delivery_confirmed_at)
+      : null,
+    deliveredAt: row.delivered_at ? toIso(row.delivered_at) : null,
+    readAt: row.read_at ? toIso(row.read_at) : null,
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at)
   };
 }
 

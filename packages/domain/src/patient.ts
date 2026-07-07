@@ -78,6 +78,8 @@ export type PatientTimelineItemType =
   | "receipt_generated"
   | "prescription_draft_created"
   | "prescription_signed"
+  | "instruction_print_requested"
+  | "instruction_send_requested"
   | "media_uploaded"
   | "invoice_created"
   | "payment_requested"

@@ -50,6 +50,7 @@ import {
   createSignedMediaAccess,
   createInvoicePaymentRequest,
   createPatientDentalFinding,
+  createPatientInstruction,
   createPatient,
   createPatientConsent,
   createPatientTreatmentPlan,
@@ -810,6 +811,16 @@ async function routeOperationsRequest(input: {
       operationsContext,
       dependencies,
       pathUuid(prescriptionSignMatch[1], "prescriptionId")
+    );
+  }
+
+  const patientInstructionMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/instructions$/);
+  if (patientInstructionMatch && input.request.method === "POST") {
+    return createPatientInstruction(
+      operationsContext,
+      dependencies,
+      pathUuid(patientInstructionMatch[1], "patientId"),
+      body
     );
   }
 

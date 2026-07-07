@@ -48,6 +48,8 @@ export const DOMAIN_EVENT_TYPES = [
   "receipt.generated",
   "prescription.draft_created",
   "prescription.signed",
+  "instruction.print_requested",
+  "instruction.send_requested",
   "media.upload_requested",
   "media.upload_completed",
   "invoice.created",
@@ -133,7 +135,9 @@ export const CP5_BILLING_EVENT_TYPES = [
   "treatment_plan.accepted",
   "procedure.completed",
   "invoice.created",
-  "receipt.generated"
+  "receipt.generated",
+  "instruction.print_requested",
+  "instruction.send_requested"
 ] as const;
 
 export const CP5_PAYMENT_EVENT_TYPES = [

@@ -16,6 +16,7 @@ import type {
   CreateIntakeFormTemplateInput,
   CreateLeadInput,
   CreatePatientInput,
+  CreatePatientInstructionInput,
   CreateProcedurePerformedInput,
   CreatePrescriptionInput,
   CreateReceiptInput,
@@ -49,6 +50,7 @@ import {
   isEncounterStatus,
   isIntakeFormType,
   isIntakeSubmissionSource,
+  isPatientInstructionChannel,
   isMediaScanStatus,
   isMediaType,
   isTreatmentPlanStatus,
@@ -80,6 +82,7 @@ import {
   type PaymentRequestType,
   type PaymentTransactionRecord,
   type PatientTimelineItem as DomainPatientTimelineItem,
+  type PatientInstructionRecord,
   type PatientSource,
   type PricebookProcedureRecord,
   type PrescriptionMedication,
@@ -1768,6 +1771,60 @@ export async function signPrescription(
   return ok({ prescription });
 }
 
+export async function createPatientInstruction(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient_instruction.write" });
+  const input = parseCreatePatientInstruction(body);
+  const outboxEventId = input.channel === "whatsapp" ? (randomUUID() as UUID) : null;
+  const instruction = await dependencies.repository.createPatientInstruction(
+    scopeFrom(context),
+    patientId,
+    {
+      ...input,
+      outboxEventId
+    }
+  );
+  if (!instruction) throw notFound("Patient not found.", { patient_id: patientId });
+
+  const eventType =
+    instruction.channel === "print" ? "instruction.print_requested" : "instruction.send_requested";
+  const payload = {
+    instructionId: instruction.id,
+    patientId,
+    templateId: instruction.templateId,
+    channel: instruction.channel,
+    status: instruction.status,
+    printJobId: instruction.printJobId,
+    outboxEventId: instruction.outboxEventId,
+    providerConfirmationReceived: false,
+    providerDeliveryConfirmedAt: null,
+    deliveredAt: null,
+    readAt: null
+  };
+
+  await audit(context, dependencies, eventType, {
+    patientId,
+    resourceType: "patient_instruction",
+    resourceId: instruction.id,
+    metadata: payload
+  });
+  await appendOutbox(context, dependencies, {
+    eventType,
+    aggregateType: "patient_instruction",
+    aggregateId: instruction.id,
+    patientId,
+    payload
+  });
+
+  const responseBody = { instruction: publicPatientInstruction(instruction) };
+  return instruction.channel === "whatsapp" ? accepted(responseBody) : created(responseBody);
+}
+
 export async function getPatientDentalChart(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
@@ -2894,6 +2951,7 @@ type PublicTimelineItemType =
   | "treatment_plan"
   | "procedure"
   | "prescription"
+  | "instruction"
   | "media"
   | "invoice"
   | "payment"
@@ -2969,6 +3027,9 @@ function publicTimelineItemType(
     case "prescription_draft_created":
     case "prescription_signed":
       return "prescription";
+    case "instruction_print_requested":
+    case "instruction_send_requested":
+      return "instruction";
     case "media_uploaded":
       return "media";
     case "invoice_created":
@@ -3045,6 +3106,10 @@ function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): Dom
       return "prescription.draft_created";
     case "prescription_signed":
       return "prescription.signed";
+    case "instruction_print_requested":
+      return "instruction.print_requested";
+    case "instruction_send_requested":
+      return "instruction.send_requested";
     case "media_uploaded":
       return "media.upload_completed";
     case "invoice_created":
@@ -3250,6 +3315,21 @@ function parseCreatePrescription(body: unknown): CreatePrescriptionInput {
   return {
     medications: parsePrescriptionMedications(input.medications),
     notes: optionalNullableString(input.notes, "notes")
+  };
+}
+
+function parseCreatePatientInstruction(body: unknown): CreatePatientInstructionInput {
+  const input = objectBody(body);
+  const channel = requiredString(input.channel ?? "print", "channel");
+  if (!isPatientInstructionChannel(channel)) {
+    throw validation("channel must be print or whatsapp.", { field: "channel" });
+  }
+
+  return {
+    channel,
+    templateId: requiredString(input.templateId, "templateId"),
+    title: optionalNullableString(input.title, "title"),
+    body: optionalNullableString(input.body, "body")
   };
 }
 
@@ -4318,6 +4398,26 @@ function publicPaymentTransaction(payment: PaymentTransactionRecord) {
   };
 }
 
+function publicPatientInstruction(instruction: PatientInstructionRecord) {
+  return {
+    id: instruction.id,
+    patientId: instruction.patientId,
+    channel: instruction.channel,
+    templateId: instruction.templateId,
+    title: instruction.title,
+    body: instruction.body,
+    status: instruction.status,
+    renderedAt: instruction.renderedAt,
+    printJobId: instruction.printJobId,
+    outboxEventId: instruction.outboxEventId,
+    providerConfirmationReceived: instruction.providerConfirmationReceived,
+    providerDeliveryConfirmedAt: instruction.providerDeliveryConfirmedAt,
+    deliveredAt: instruction.deliveredAt,
+    readAt: instruction.readAt,
+    createdAt: instruction.createdAt
+  };
+}
+
 function publicReceipt<T extends {
   id: UUID;
   invoiceId: UUID;
@@ -4537,6 +4637,10 @@ function ok<T>(body: T): ApiSuccess<T> {
 
 function created<T>(body: T): ApiSuccess<T> {
   return { status: 201, body };
+}
+
+function accepted<T>(body: T): ApiSuccess<T> {
+  return { status: 202, body };
 }
 
 function notFound(message: string, details: Record<string, unknown>): ApiError {

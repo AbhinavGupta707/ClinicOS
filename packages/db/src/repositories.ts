@@ -41,6 +41,7 @@ import type {
   PaymentTransactionRecord,
   MediaUploadReservationRecord,
   PatientRecord,
+  PatientInstructionRecord,
   PatientSource,
   PatientTimelineItem,
   PricebookProcedureRecord,
@@ -253,6 +254,14 @@ export interface AmendClinicalNoteInput {
 export interface CreatePrescriptionInput {
   medications: PrescriptionMedication[];
   notes?: string | null;
+}
+
+export interface CreatePatientInstructionInput {
+  channel: PatientInstructionRecord["channel"];
+  templateId: string;
+  title?: string | null;
+  body?: string | null;
+  outboxEventId?: UUID | null;
 }
 
 export interface CreateMediaUploadReservationInput {
@@ -468,6 +477,11 @@ export interface ClinicOperationsRepository {
     prescriptionId: UUID
   ): Promise<PrescriptionRecord | null>;
   signPrescription(scope: RepositoryScope, prescriptionId: UUID): Promise<PrescriptionRecord | null>;
+  createPatientInstruction(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreatePatientInstructionInput
+  ): Promise<PatientInstructionRecord | null>;
 
   createMediaUploadReservation(
     scope: RepositoryScope,

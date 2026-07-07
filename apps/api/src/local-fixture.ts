@@ -19,6 +19,7 @@ import {
   type CreateLeadInput,
   type CreateMediaUploadReservationInput,
   type CreatePatientInput,
+  type CreatePatientInstructionInput,
   type CreatePaymentRequestInput,
   type CreatePrescriptionInput,
   type CreateProcedurePerformedInput,
@@ -90,6 +91,7 @@ import {
   type PaymentRequestRecord,
   type PaymentTransactionRecord,
   type PatientRecord,
+  type PatientInstructionRecord,
   type PatientTimelineItem,
   type PricebookProcedureRecord,
   type PrescriptionRecord,
@@ -276,6 +278,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly encounters: EncounterRecord[] = [];
   readonly clinicalNoteVersions: ClinicalNoteVersionRecord[] = [];
   readonly prescriptions: PrescriptionRecord[] = [];
+  readonly patientInstructions: PatientInstructionRecord[] = [];
   readonly mediaUploadReservations: MediaUploadReservationRecord[] = [];
   readonly mediaAssets: MediaAssetRecord[] = [];
   readonly dentalCharts: DentalChartRecord[] = [
@@ -1273,6 +1276,58 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       )
     );
     return prescription;
+  }
+
+  async createPatientInstruction(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreatePatientInstructionInput
+  ): Promise<PatientInstructionRecord | null> {
+    const patient = await this.findPatientById(scope, patientId);
+    if (!patient) return null;
+
+    const now = new Date().toISOString();
+    const instruction: PatientInstructionRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId,
+      channel: input.channel,
+      templateId: input.templateId.trim(),
+      title: input.title?.trim() || "Post-care instructions",
+      body:
+        input.body?.trim() ||
+        "Follow the clinic-approved post-care instructions. Contact the clinic if symptoms worsen.",
+      status: input.channel === "print" ? "ready_for_print" : "send_requested",
+      renderedAt: now,
+      printJobId: input.channel === "print" ? `print_${uuid()}` : null,
+      outboxEventId: input.channel === "whatsapp" ? (input.outboxEventId ?? uuid()) : null,
+      providerConfirmationReceived: false,
+      providerDeliveryConfirmedAt: null,
+      deliveredAt: null,
+      readAt: null,
+      createdByUserId: scope.actorUserId,
+      createdAt: now
+    };
+    this.patientInstructions.push(instruction);
+    this.timelineItems.push(
+      timeline(
+        scope,
+        patientId,
+        input.channel === "print" ? "instruction_print_requested" : "instruction_send_requested",
+        "patient_instruction_requests",
+        instruction.id,
+        input.channel === "print" ? "Instruction print requested" : "Instruction send requested",
+        {
+          instructionId: instruction.id,
+          templateId: instruction.templateId,
+          channel: instruction.channel,
+          outboxEventId: instruction.outboxEventId,
+          providerConfirmationReceived: false
+        }
+      )
+    );
+    return instruction;
   }
 
   async createMediaUploadReservation(

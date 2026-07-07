@@ -336,10 +336,24 @@ export function CheckoutWorkflow({ profile }: CheckoutWorkflowProps) {
     setActionBusy("record-procedure");
     setActionMessage(null);
 
+    const treatmentPlanEstimateItemId = getNextProcedureEstimateItemId(
+      selectedPlan,
+      data.proceduresPerformed
+    );
+    if (!treatmentPlanEstimateItemId) {
+      setActionBusy(null);
+      setActionMessage({
+        text: "All accepted estimate items already have completed procedure evidence.",
+        tone: "error"
+      });
+      return;
+    }
+
     const input = {
       actorName: profile.user.displayName,
       encounterId: selectedEncounter.id,
       patientId: selectedPatient.id,
+      treatmentPlanEstimateItemId,
       treatmentPlanId: selectedPlan.id
     };
 
@@ -1702,6 +1716,20 @@ function addEstimateItemToPlan(
     ),
     status: "draft"
   };
+}
+
+function getNextProcedureEstimateItemId(
+  plan: TreatmentPlan,
+  proceduresPerformed: Cp5WorkflowData["proceduresPerformed"]
+) {
+  const completedSourceIds = new Set(
+    proceduresPerformed.map((procedure) => procedure.sourcePlanItemId)
+  );
+  const nextItem = plan.phases
+    .flatMap((phase) => phase.items)
+    .find((item) => !completedSourceIds.has(item.id));
+
+  return nextItem?.id ?? null;
 }
 
 function patientLabel(patient: Cp5WorkflowData["patients"][number], accountingOnly: boolean) {

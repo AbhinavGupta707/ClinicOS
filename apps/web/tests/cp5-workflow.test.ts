@@ -17,6 +17,7 @@ import {
   createLiveTreatmentPlan,
   getInvoicePaidAmountCents,
   getOutstandingAmountCents,
+  loadCp5Workflow,
   readLiveInvoice,
   recordLiveManualPayment,
   recordLiveProcedure,
@@ -36,6 +37,7 @@ describe("CP5 checkout workflow", () => {
       actorName: "doctor fixture user",
       encounterId: "cp5SyntheticEncounter",
       patientId: "cp5SyntheticPatient",
+      treatmentPlanEstimateItemId: "cp5PlanItemConsult",
       treatmentPlanId: "cp5TreatmentPlanAccepted"
     });
     const invoiceData = applyFixtureCreateInvoice(procedureData, {
@@ -65,6 +67,7 @@ describe("CP5 checkout workflow", () => {
       actorName: "doctor fixture user",
       encounterId: "cp5SyntheticEncounter",
       patientId: "cp5SyntheticPatient",
+      treatmentPlanEstimateItemId: "cp5PlanItemConsult",
       treatmentPlanId: "cp5TreatmentPlanAccepted"
     });
     const invoiceData = applyFixtureCreateInvoice(procedureData, {
@@ -147,6 +150,18 @@ describe("CP5 checkout workflow", () => {
     ).toMatchObject({
       code: "CP5_ENDPOINT_NOT_REGISTERED",
       message: "One or more CP5 checkout endpoints are not registered in this environment."
+    });
+  });
+
+  it("returns an honest unavailable state while the live aggregate read model is deferred", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CLINIC_OS_USE_CP5_WORKFLOW_FIXTURE", "false");
+    vi.stubEnv("NEXT_PUBLIC_CLINIC_OS_ENV", "production");
+
+    const state = await loadCp5Workflow();
+
+    expect(state.status).toBe("unavailable");
+    expect("problem" in state ? state.problem : null).toMatchObject({
+      code: "CP5_READ_MODEL_DEFERRED"
     });
   });
 
@@ -238,6 +253,7 @@ describe("CP5 checkout workflow", () => {
       actorName: "doctor fixture user",
       encounterId: "encounter-1",
       patientId: "patient-1",
+      treatmentPlanEstimateItemId: "estimate-item-1",
       treatmentPlanId: "plan-1"
     });
     await createLiveInvoice({
@@ -288,11 +304,53 @@ describe("CP5 checkout workflow", () => {
 
     const manualBody = JSON.parse(fetchMock.mock.calls[7]?.[1]?.body as string);
     expect(manualBody).toMatchObject({
-      actorName: "accountant fixture user",
-      amountCents: 50000,
+      amountMinor: 50000,
+      currency: "INR",
+      evidence: {
+        actorName: "accountant fixture user",
+        source: "checkout_surface"
+      },
       method: "upi",
       reason: "Front desk manual payment evidence.",
       reference: "UPI-LIVE-ROUTE"
+    });
+
+    const treatmentPlanBody = JSON.parse(fetchMock.mock.calls[0]?.[1]?.body as string);
+    expect(treatmentPlanBody).toMatchObject({
+      phases: [
+        {
+          items: [
+            {
+              pricebookProcedureId: "procedure-code-1",
+              quantity: 1,
+              unitPriceMinor: 50000
+            }
+          ],
+          title: "Phase 1"
+        }
+      ],
+      status: "presented"
+    });
+
+    const acceptanceBody = JSON.parse(fetchMock.mock.calls[2]?.[1]?.body as string);
+    expect(acceptanceBody).toMatchObject({
+      acceptedByName: "doctor fixture user",
+      acceptanceEvidence: {
+        acceptanceMethod: "chairside_confirmation",
+        capturedBy: "doctor fixture user"
+      }
+    });
+
+    const procedureBody = JSON.parse(fetchMock.mock.calls[3]?.[1]?.body as string);
+    expect(procedureBody).toMatchObject({
+      treatmentPlanEstimateItemId: "estimate-item-1",
+      treatmentPlanId: "plan-1"
+    });
+
+    const paymentRequestBody = JSON.parse(fetchMock.mock.calls[6]?.[1]?.body as string);
+    expect(paymentRequestBody).toMatchObject({
+      amountMinor: 50000,
+      requestType: "payment_link"
     });
   });
 });

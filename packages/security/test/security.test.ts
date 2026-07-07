@@ -133,7 +133,9 @@ test("CP3 audit classifications cover intake consent encounter note prescription
     "clinical_note.signed",
     "clinical_note.amended",
     "prescription.draft_created",
-    "prescription.signed"
+    "prescription.signed",
+    "instruction.print_requested",
+    "instruction.send_requested"
   ] as const) {
     const classification = classifyAuditAction(action);
     assert.equal(classification.phiInvolved, true, `${action} should involve PHI`);
