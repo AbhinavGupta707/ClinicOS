@@ -15,6 +15,7 @@ export * from "./operations.ts";
 export * from "./patient.ts";
 export * from "./payments.ts";
 export * from "./permissions.ts";
+export * from "./privacy.ts";
 export * from "./provider-events.ts";
 export * from "./source-attribution.ts";
 export * from "./tenancy.ts";

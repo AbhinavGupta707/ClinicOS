@@ -41,7 +41,9 @@ import {
   commitMigrationBatch,
   convertLeadToAppointment,
   createAppointment,
+  createBreakGlassAccessRequest,
   createCorrectiveAction,
+  createDeletionRequest,
   createEncounter,
   createTask,
   createRecallRule,
@@ -69,13 +71,17 @@ import {
   createPatientInstruction,
   createPatient,
   createPatientConsent,
+  createPatientRecordExport,
   createPatientTreatmentPlan,
   createSopSchedule,
   createSopTemplate,
   generateDueContinuityTasks,
   generateDueSopRuns,
   generateAiScribeDrafts,
+  listAuditReviewEvents,
+  listBreakGlassAccessRequests,
   listDeadLetterEvents,
+  listDeletionRequests,
   listEncounterAiScribeSessions,
   getMorningDashboard,
   getAiScribeSession,
@@ -106,6 +112,7 @@ import {
   listMigrationBatchRows,
   listPatientMediaAssets,
   listPatientConsents,
+  listPatientRecordExports,
   listPatients,
   listProviderHealth,
   listProviderSchedules,
@@ -119,11 +126,15 @@ import {
   receiveMediaUploadContent,
   recordInvoiceManualPayment,
   recordAiScribeReviewDecision,
+  reviewAuditEvent,
+  reviewBreakGlassAccessRequest,
+  reviewDeletionRequest,
   requestMediaUploadUrl,
   replayDeadLetterEvent,
   resolveMigrationBatchRow,
   processPaymentWebhook,
   rollbackMigrationBatch,
+  runRetentionJob,
   deleteAiScribeRetainedPayloads,
   saveEncounterClinicalNoteDraft,
   signEncounterClinicalNote,
@@ -443,6 +454,81 @@ async function routeOperationsRequest(input: {
     });
   }
 
+  if (input.request.method === "GET" && pathname === "/v1/audit-events") {
+    return listAuditReviewEvents(operationsContext, dependencies, {
+      patientId: url.searchParams.get("patientId"),
+      action: url.searchParams.get("action"),
+      category: url.searchParams.get("category"),
+      riskLevel: url.searchParams.get("riskLevel"),
+      limit: url.searchParams.get("limit")
+    });
+  }
+
+  const auditReviewMatch = pathname.match(/^\/v1\/audit-events\/([^/]+)\/reviews$/);
+  if (auditReviewMatch && input.request.method === "POST") {
+    return reviewAuditEvent(
+      operationsContext,
+      dependencies,
+      pathUuid(auditReviewMatch[1], "auditEventId"),
+      body
+    );
+  }
+
+  if (pathname === "/v1/privacy/deletion-requests") {
+    if (input.request.method === "GET") {
+      return listDeletionRequests(operationsContext, dependencies, {
+        patientId: url.searchParams.get("patientId"),
+        status: url.searchParams.get("status"),
+        limit: url.searchParams.get("limit")
+      });
+    }
+    if (input.request.method === "POST") {
+      return createDeletionRequest(operationsContext, dependencies, body);
+    }
+  }
+
+  const deletionReviewMatch = pathname.match(
+    /^\/v1\/privacy\/deletion-requests\/([^/]+)\/review$/
+  );
+  if (deletionReviewMatch && input.request.method === "POST") {
+    return reviewDeletionRequest(
+      operationsContext,
+      dependencies,
+      pathUuid(deletionReviewMatch[1], "deletionRequestId"),
+      body
+    );
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/privacy/retention-runs") {
+    return runRetentionJob(operationsContext, dependencies, body);
+  }
+
+  if (pathname === "/v1/break-glass/access-requests") {
+    if (input.request.method === "GET") {
+      return listBreakGlassAccessRequests(operationsContext, dependencies, {
+        patientId: url.searchParams.get("patientId"),
+        status: url.searchParams.get("status"),
+        requestedByUserId: url.searchParams.get("requestedByUserId"),
+        limit: url.searchParams.get("limit")
+      });
+    }
+    if (input.request.method === "POST") {
+      return createBreakGlassAccessRequest(operationsContext, dependencies, body);
+    }
+  }
+
+  const breakGlassReviewMatch = pathname.match(
+    /^\/v1\/break-glass\/access-requests\/([^/]+)\/review$/
+  );
+  if (breakGlassReviewMatch && input.request.method === "POST") {
+    return reviewBreakGlassAccessRequest(
+      operationsContext,
+      dependencies,
+      pathUuid(breakGlassReviewMatch[1], "breakGlassAccessId"),
+      body
+    );
+  }
+
   const deadLetterReplayMatch = pathname.match(/^\/v1\/dead-letter-events\/([^/]+)\/replay$/);
   if (deadLetterReplayMatch && input.request.method === "POST") {
     return replayDeadLetterEvent(
@@ -535,6 +621,20 @@ async function routeOperationsRequest(input: {
       dependencies,
       pathUuid(timelineMatch[1], "patientId")
     );
+  }
+
+  const recordExportsMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/record-exports$/);
+  if (recordExportsMatch) {
+    const patientId = pathUuid(recordExportsMatch[1], "patientId");
+    if (input.request.method === "GET") {
+      return listPatientRecordExports(operationsContext, dependencies, patientId, {
+        status: url.searchParams.get("status"),
+        limit: url.searchParams.get("limit")
+      });
+    }
+    if (input.request.method === "POST") {
+      return createPatientRecordExport(operationsContext, dependencies, patientId, body);
+    }
   }
 
   const prepSummaryMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/prep-summary$/);

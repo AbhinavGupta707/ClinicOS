@@ -7,10 +7,13 @@ export const PERMISSIONS = [
   "integration.manage",
   "migration.manage",
   "audit.read",
+  "audit.review",
   "patient.read",
   "patient.write",
   "patient.export",
   "patient.phi.read",
+  "privacy.request",
+  "retention.manage",
   "schedule.read",
   "schedule.write",
   "queue.manage",
@@ -72,10 +75,13 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "integration.manage",
     "migration.manage",
     "audit.read",
+    "audit.review",
     "patient.read",
     "patient.write",
     "patient.export",
     "patient.phi.read",
+    "privacy.request",
+    "retention.manage",
     "schedule.read",
     "schedule.write",
     "queue.manage",
@@ -196,7 +202,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "corrective_action.manage"
   ],
   accountant: ["billing.read", "billing.write", "billing.export", "analytics.read"],
-  auditor: ["audit.read", "analytics.read"],
+  auditor: ["audit.read", "audit.review", "analytics.read"],
   platform_admin: ALL_PERMISSIONS
 } satisfies Record<ClinicRoleSlug, readonly PermissionKey[]>;
 
@@ -253,6 +259,10 @@ export function isClinicalPermission(permission: PermissionKey): boolean {
     permission === "migration.manage" ||
     permission === "media.read" ||
     permission === "media.write" ||
+    permission === "patient.export" ||
+    permission === "privacy.request" ||
+    permission === "retention.manage" ||
+    permission === "audit.review" ||
     permission === "patient.phi.read"
   );
 }

@@ -105,6 +105,14 @@ export const DOMAIN_EVENT_TYPES = [
   "ai.action_proposal.created",
   "ai.review_decision.recorded",
   "ai.retention.deleted",
+  "audit_event.reviewed",
+  "patient.record_export.requested",
+  "patient.record_export.completed",
+  "deletion_request.created",
+  "deletion_request.reviewed",
+  "retention.run.completed",
+  "break_glass.requested",
+  "break_glass.reviewed",
   "patient.timeline_item.created"
 ] as const;
 
@@ -295,6 +303,22 @@ export const CP8_AI_EVENT_TYPES = [
 
 export const CP8_EVENT_TYPES = [...CP7_EVENT_TYPES, ...CP8_AI_EVENT_TYPES] as const;
 
+export const CP9_PRIVACY_SECURITY_EVENT_TYPES = [
+  "audit_event.reviewed",
+  "patient.record_export.requested",
+  "patient.record_export.completed",
+  "deletion_request.created",
+  "deletion_request.reviewed",
+  "retention.run.completed",
+  "break_glass.requested",
+  "break_glass.reviewed"
+] as const;
+
+export const CP9_EVENT_TYPES = [
+  ...CP8_EVENT_TYPES,
+  ...CP9_PRIVACY_SECURITY_EVENT_TYPES
+] as const;
+
 export type Cp2LeadEventType = (typeof CP2_LEAD_EVENT_TYPES)[number];
 export type Cp2PatientEventType = (typeof CP2_PATIENT_EVENT_TYPES)[number];
 export type Cp2AppointmentEventType = (typeof CP2_APPOINTMENT_EVENT_TYPES)[number];
@@ -321,6 +345,8 @@ export type Cp7IntegrationEventType = (typeof CP7_INTEGRATION_EVENT_TYPES)[numbe
 export type Cp7EventType = (typeof CP7_EVENT_TYPES)[number];
 export type Cp8AiEventType = (typeof CP8_AI_EVENT_TYPES)[number];
 export type Cp8EventType = (typeof CP8_EVENT_TYPES)[number];
+export type Cp9PrivacySecurityEventType = (typeof CP9_PRIVACY_SECURITY_EVENT_TYPES)[number];
+export type Cp9EventType = (typeof CP9_EVENT_TYPES)[number];
 
 export type EventSourceKind =
   | "external_system"
@@ -398,6 +424,11 @@ export interface DomainEventAggregate {
     | "ai_draft_output"
     | "ai_action_proposal"
     | "ai_review_decision"
+    | "audit_event"
+    | "data_export"
+    | "deletion_request"
+    | "retention_run"
+    | "break_glass_access"
     | "patient_timeline_item";
   id: UUID | string;
 }

@@ -62,3 +62,19 @@ CP6 adds an aggregate owner analytics read model:
 - The route requires `analytics.read`; owner/admin and accountant-style analytics roles are allowed, assistant roles are denied.
 - The response is aggregate-only and must not include patient names, phone numbers, clinical notes, or medical-history payloads.
 - Production runtime reads existing durable CP2-CP5 tables now and marks CP6 lab/inventory/event tables as schema dependencies until those migrations land. Local/dev fixture mode adds explicit synthetic CP6 continuity rows through the repository contract only.
+
+## Checkpoint 9 Security And Privacy Contract
+
+CP9 adds clinic-scoped security/privacy operations:
+
+- `GET /v1/audit-events` lists reviewable audit events with PHI-redacted metadata; filters include `patientId`, `action`, `category`, `riskLevel`, and `limit`.
+- `POST /v1/audit-events/{auditEventId}/reviews` appends audit review evidence. It does not mutate the original audit event.
+- `POST /v1/patients/{patientId}/record-exports` creates a JSON patient record export with configured sections, a safety manifest, digest, and redacted privacy audit trail.
+- `GET /v1/patients/{patientId}/record-exports` lists export records without returning the payload by default.
+- `POST/GET /v1/privacy/deletion-requests` creates and lists privacy/deletion requests. Request scope explicitly marks clinical and audit records as `not_deleted`.
+- `POST /v1/privacy/deletion-requests/{requestId}/review` records owner/admin review decisions.
+- `POST /v1/privacy/retention-runs` runs conservative dry-run or execute retention jobs. CP9 only deletes eligible transient AI transcript payloads and records protected clinical/audit skips.
+- `POST/GET /v1/break-glass/access-requests` creates and lists reasoned, scoped, time-bound break-glass requests.
+- `POST /v1/break-glass/access-requests/{requestId}/review` approves, denies, or revokes break-glass access. Approval is time-bounded and never grants permanent access.
+
+Patient record exports must not expose storage object keys, bucket paths, raw provider payloads, or unrelated tenant data. Break-glass requests require a specific reason, at least one access category, and an expiry no more than eight hours out. Retention jobs are auditable and conservative by design.
