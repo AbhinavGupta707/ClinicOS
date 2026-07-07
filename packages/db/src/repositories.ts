@@ -14,7 +14,12 @@ import type {
   ConsentEnforcementState,
   ConsentPurpose,
   ConsentRecord,
+  CreateDentalFindingInput,
   DomainEventType,
+  DentalChartSnapshotRecord,
+  DentalChartView,
+  DentalFindingHistoryRecord,
+  DentalFindingRecord,
   EncounterRecord,
   EncounterStatus,
   IntakeFormTemplateRecord,
@@ -230,6 +235,33 @@ export interface CreatePrescriptionInput {
   notes?: string | null;
 }
 
+export interface CreateDentalChartSnapshotInput {
+  encounterId?: UUID | null;
+  reason?: string | null;
+  provenance?: Record<string, unknown>;
+}
+
+export interface UpdateDentalFindingRepositoryInput {
+  encounterId?: UUID | null;
+  toothNumber?: string;
+  surface?: string | null;
+  findingType?: DentalFindingRecord["findingType"];
+  severity?: string | null;
+  status?: DentalFindingRecord["status"];
+  reviewStatus?: DentalFindingRecord["reviewStatus"];
+  source?: DentalFindingRecord["source"];
+  confidence?: number | null;
+  notes?: string | null;
+  provenance?: Record<string, unknown>;
+  treatmentReference?: Record<string, unknown>;
+  changeReason: string;
+}
+
+export interface DentalFindingMutationResult {
+  finding: DentalFindingRecord;
+  history: DentalFindingHistoryRecord;
+}
+
 export interface SignClinicalNoteResult {
   encounter: EncounterRecord;
   note: ClinicalNoteVersionRecord;
@@ -355,4 +387,25 @@ export interface ClinicOperationsRepository {
     prescriptionId: UUID
   ): Promise<PrescriptionRecord | null>;
   signPrescription(scope: RepositoryScope, prescriptionId: UUID): Promise<PrescriptionRecord | null>;
+
+  getDentalChart(scope: RepositoryScope, patientId: UUID): Promise<DentalChartView | null>;
+  createDentalFinding(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreateDentalFindingInput
+  ): Promise<DentalFindingMutationResult | null>;
+  updateDentalFinding(
+    scope: RepositoryScope,
+    findingId: UUID,
+    input: UpdateDentalFindingRepositoryInput
+  ): Promise<DentalFindingMutationResult | null>;
+  listDentalFindingHistory(
+    scope: RepositoryScope,
+    findingId: UUID
+  ): Promise<DentalFindingHistoryRecord[]>;
+  createDentalChartSnapshot(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: CreateDentalChartSnapshotInput
+  ): Promise<DentalChartSnapshotRecord | null>;
 }

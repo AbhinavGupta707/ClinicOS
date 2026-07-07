@@ -17,6 +17,9 @@ export const PERMISSIONS = [
   "clinical.note.read",
   "clinical.note.write",
   "clinical.note.sign",
+  "dental.chart.read",
+  "dental.chart.write",
+  "dental.chart.snapshot",
   "prescription.write",
   "prescription.sign",
   "media.read",
@@ -70,6 +73,9 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "clinical.note.read",
     "clinical.note.write",
     "clinical.note.sign",
+    "dental.chart.read",
+    "dental.chart.write",
+    "dental.chart.snapshot",
     "prescription.write",
     "prescription.sign",
     "media.read",
@@ -96,6 +102,9 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "clinical.note.read",
     "clinical.note.write",
     "clinical.note.sign",
+    "dental.chart.read",
+    "dental.chart.write",
+    "dental.chart.snapshot",
     "prescription.write",
     "prescription.sign",
     "media.read",
@@ -117,6 +126,9 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "intake.write",
     "clinical.note.read",
     "clinical.note.write",
+    "dental.chart.read",
+    "dental.chart.write",
+    "dental.chart.snapshot",
     "prescription.write",
     "media.read",
     "media.write",
@@ -188,6 +200,7 @@ export function normalizePermissionList(values: readonly string[]): PermissionKe
 export function isClinicalPermission(permission: PermissionKey): boolean {
   return (
     permission.startsWith("clinical.") ||
+    permission.startsWith("dental.") ||
     permission.startsWith("prescription.") ||
     permission === "media.read" ||
     permission === "media.write" ||
