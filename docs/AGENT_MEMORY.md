@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `codex/integration/checkpoint-9` at verified CP9 integration head `ea13a97`; promote CP9 to `main` before launching Checkpoint 10.
+- Branch: `main` after CP9 promotion merge `131300b`; launch Checkpoint 10 from this baseline.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -54,7 +54,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - FHIR/ABDM: `019f3cec-83b6-7383-81f5-e14f267d2392`, `/Users/abhinavgupta/.codex/worktrees/1238/ClinicOS`.
   - Infrastructure/Ops: `019f3cec-d3a3-7a71-ba13-ab7ceaf09f69`, `/Users/abhinavgupta/.codex/worktrees/7e8c/ClinicOS`.
   - Performance/QA: `019f3ced-1911-78e1-9301-ce5df9e8e934`, `/Users/abhinavgupta/.codex/worktrees/1091/ClinicOS`.
-- Checkpoint 9 is verified on `codex/integration/checkpoint-9` at `ea13a97`. Security/Privacy, FHIR/ABDM, Infrastructure/Ops, and Performance/QA lanes were merged in dependency order. Full gates passed: `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`. CP9 browser smoke passed for owner compliance desktop/mobile and platform-support unavailable shells.
+- Checkpoint 9 is verified on `codex/integration/checkpoint-9` at `ea13a97` and promoted to `main` via `131300b`. Security/Privacy, FHIR/ABDM, Infrastructure/Ops, and Performance/QA lanes were merged in dependency order. Full gates passed: `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`. Post-promotion checks passed: `git diff --check` and `npm run check`. CP9 browser smoke passed for owner compliance desktop/mobile and platform-support unavailable shells.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture

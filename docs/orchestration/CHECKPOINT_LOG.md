@@ -35,7 +35,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 6 - Continuity/operations/owner dashboard         | Complete |       `6f9fe1c` |     `08ddab9` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`, verified, documented, promoted to `main`, and post-promotion format gate repaired.                                                                                                              |
 | 7 - Live integrations/migration hardening         | Complete |       `e7139c4` |     `92fb2b9` | CP7 visible project-scoped lanes merged into `codex/integration/checkpoint-7`, master integration reconciled live provider health/dead-letter/migration contracts, and verified branch was promoted to `main`.                                                                 |
 | 8 - Mobile capture and AI scribe/action proposals | Complete |       `983cca5` |     `8ac2dae` | CP8 visible project-scoped lanes merged into `codex/integration/checkpoint-8` and promoted to `main`. Master integration reconciled AI safety route contracts, consent blocking semantics, review-role browser gates, and fixture/live evidence boundaries.                    |
-| 9 - Interoperability/security/ops hardening       | Verified |       `0dc9f91` |     `ea13a97` | CP9 visible project-scoped lanes merged into `codex/integration/checkpoint-9`; master integration reconciled Security route contracts, FHIR projection-only evidence, restore/load fixtures, and CP9 registered-unavailable browser smoke.                                     |
+| 9 - Interoperability/security/ops hardening       | Complete |       `0dc9f91` |     `131300b` | CP9 visible project-scoped lanes merged into `codex/integration/checkpoint-9` and promoted to `main`; master integration reconciled Security route contracts, FHIR projection-only evidence, restore/load fixtures, and CP9 registered-unavailable browser smoke.              |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -407,6 +407,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 
 - Integration branch: `codex/integration/checkpoint-9`.
 - Verified integration head: `ea13a97`.
+- Main promotion merge commit: `131300b`.
 - Merge order:
   - Security/Privacy commit `5689952` merged first as `b24fccd`.
   - FHIR/ABDM commit `23ccc4b` merged second as `efdcf9e`.
@@ -422,6 +423,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Targeted checks passed: `npm --workspace @clinic-os/domain test`, `npm --workspace @clinic-os/security test`, `npm --workspace @clinic-os/db test`, `npm --workspace @clinic-os/api test`, `npm --workspace @clinic-os/api run typecheck`, `npm --workspace @clinic-os/fhir test`, `npm --workspace @clinic-os/fhir run lint`, `npm --workspace @clinic-os/fhir run build`, `npm --workspace @clinic-os/config test`, `npm --workspace @clinic-os/observability test`, `node scripts/cp9-restore-drill.test.mjs`, and `node scripts/check-cp9-terraform-profile.mjs`.
 - CP9 evidence checks passed: `node scripts/validate-cp9-fixtures.mjs`, `node scripts/cp9-contract-smoke.mjs --dry-run`, `node scripts/cp9-load-smoke.mjs --dry-run`, `node --test tests/acceptance/cp9-fixture-contract.test.mjs tests/acceptance/cp9-fhir-fixture-contract.test.mjs`, and `node scripts/cp9-restore-drill.mjs --dry-run --evidence-out /tmp/clinicos-cp9-restore-drill-integration.json`.
 - Full repository gates passed: `git diff --check`, `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`.
+- Post-promotion checks on `main` passed: `git diff --check` and `npm run check`.
 - Browser/user smoke passed:
   - Owner compliance unavailable shell and 390px mobile no-overflow: `CLINICOS_CP9_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3109 NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=owner npx playwright test tests/e2e/checkpoint-9-performance-qa-flow.spec.ts`.
   - Platform-support unavailable shell: `CLINICOS_CP9_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3109 NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=platform_admin npx playwright test tests/e2e/checkpoint-9-performance-qa-flow.spec.ts`.

@@ -72,6 +72,7 @@ Security/Privacy -> FHIR/ABDM -> Infrastructure/Ops -> Performance/QA -> master 
 ## Integration Verification
 
 - Verified integration head: `ea13a97` on `codex/integration/checkpoint-9`.
+- Main promotion merge commit: `131300b`.
 - Merge order:
   - Security/Privacy `5689952` -> merge `b24fccd`.
   - FHIR/ABDM `23ccc4b` -> merge `efdcf9e`.
@@ -89,6 +90,7 @@ Security/Privacy -> FHIR/ABDM -> Infrastructure/Ops -> Performance/QA -> master 
 ### Verification Evidence
 
 - Full repository gates passed: `git diff --check`, `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`.
+- Post-promotion checks on `main` passed: `git diff --check` and `npm run check`.
 - Targeted package checks passed: domain, security, db, api, fhir, config, and observability tests/builds.
 - CP9 smoke and fixture checks passed: `node scripts/validate-cp9-fixtures.mjs`, `node scripts/cp9-contract-smoke.mjs --dry-run`, `node scripts/cp9-load-smoke.mjs --dry-run`, `node --test tests/acceptance/cp9-fixture-contract.test.mjs tests/acceptance/cp9-fhir-fixture-contract.test.mjs`, `node scripts/check-cp9-terraform-profile.mjs`, and `node scripts/cp9-restore-drill.mjs --dry-run --evidence-out /tmp/clinicos-cp9-restore-drill-integration.json`.
 - Browser smoke passed for the registered-unavailable CP9 shells:
