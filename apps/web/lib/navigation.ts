@@ -45,7 +45,8 @@ export const SURFACES: SurfaceRegistration[] = [
   {
     availability: "active",
     checkpoint: 2,
-    description: "Assistant day-start dashboard with leads, appointments, confirmations, and queue.",
+    description:
+      "Assistant day-start dashboard with leads, appointments, confirmations, and queue.",
     href: "/",
     icon: Home,
     id: "today",
@@ -226,13 +227,18 @@ export const SURFACES: SurfaceRegistration[] = [
 ];
 
 const SURFACE_BY_ID = new Map(SURFACES.map((surface) => [surface.id, surface]));
+const SURFACE_ALIASES = new Map<string, string>([["day-start", "today"]]);
 
 export function hasSurface(surfaceId: string) {
-  return SURFACE_BY_ID.has(surfaceId);
+  return SURFACE_BY_ID.has(resolveSurfaceId(surfaceId));
 }
 
 export function getSurface(surfaceId: string) {
-  return SURFACE_BY_ID.get(surfaceId) ?? SURFACE_BY_ID.get("today")!;
+  return SURFACE_BY_ID.get(resolveSurfaceId(surfaceId)) ?? SURFACE_BY_ID.get("today")!;
+}
+
+export function resolveSurfaceId(surfaceId: string) {
+  return SURFACE_ALIASES.get(surfaceId) ?? surfaceId;
 }
 
 export function canAccessSurface(surface: SurfaceRegistration, roles: ClinicRole[]) {

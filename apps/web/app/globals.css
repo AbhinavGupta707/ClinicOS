@@ -760,6 +760,15 @@ textarea {
   grid-template-columns: repeat(6, minmax(0, 1fr));
 }
 
+.dashboard-flags {
+  color: var(--ink-soft);
+  display: flex;
+  flex-wrap: wrap;
+  font-size: 0.9rem;
+  font-weight: 800;
+  gap: 8px;
+}
+
 .workflow-metric {
   background: var(--paper);
   border: 1px solid var(--border);

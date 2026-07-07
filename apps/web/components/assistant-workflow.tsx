@@ -138,9 +138,10 @@ export function AssistantWorkflow({
     startAt: `${getTodayInputValue()}T15:00`
   });
 
-  const mode = isCp2WorkflowSurface(activeSurfaceId)
-    ? (activeSurfaceId as WorkflowMode)
-    : "today";
+  const mode = isCp2WorkflowSurface(activeSurfaceId) ? (activeSurfaceId as WorkflowMode) : "today";
+  const canCreatePatients = profile.roles.some((role) =>
+    ["owner", "doctor", "assistant", "receptionist"].includes(role)
+  );
 
   const reloadWorkflow = () => {
     const controller = new AbortController();
@@ -491,7 +492,13 @@ export function AssistantWorkflow({
           </p>
         </div>
         <div className="hero-status" aria-label="Workflow API mode">
-          <span className={data?.source === "cp2_fixture" ? "status-dot status-dot--warn" : "status-dot status-dot--ok"} />
+          <span
+            className={
+              data?.source === "cp2_fixture"
+                ? "status-dot status-dot--warn"
+                : "status-dot status-dot--ok"
+            }
+          />
           <span>{data?.source === "cp2_fixture" ? "Local fixture" : "Live boundary"}</span>
         </div>
       </section>
@@ -524,7 +531,9 @@ export function AssistantWorkflow({
                 <AlertCircle size={18} aria-hidden="true" />
               )}
               <div>
-                <strong>{actionMessage.tone === "error" ? "Action failed" : "Workflow update"}</strong>
+                <strong>
+                  {actionMessage.tone === "error" ? "Action failed" : "Workflow update"}
+                </strong>
                 <span>{actionMessage.text}</span>
               </div>
             </section>
@@ -546,6 +555,7 @@ export function AssistantWorkflow({
             <LeadInboxPanel
               actionBusy={actionBusy}
               bookingForm={bookingForm}
+              canCreatePatients={canCreatePatients}
               data={loadState.data}
               duplicateSuggestions={selectedLeadSuggestions}
               leadForm={leadForm}
@@ -555,7 +565,10 @@ export function AssistantWorkflow({
               onCreateFromLead={handleCreateFromLead}
               onLeadFilterChange={setLeadFilter}
               onMatchLead={handleMatchLead}
-              onSelectLead={setSelectedLeadId}
+              onSelectLead={(leadId) => {
+                setSelectedLeadId(leadId);
+                setSelectedPatientId(null);
+              }}
               onSelectPatient={setSelectedPatientId}
               onLeadFormChange={setLeadForm}
               selectedLead={selectedLead}
@@ -576,6 +589,7 @@ export function AssistantWorkflow({
           {mode === "patients" ? (
             <PatientsPanel
               actionBusy={actionBusy}
+              canCreatePatients={canCreatePatients}
               data={loadState.data}
               duplicateSuggestions={duplicateSuggestions}
               onCreatePatient={handleCreatePatient}
@@ -593,13 +607,7 @@ export function AssistantWorkflow({
   );
 }
 
-export function AttributionBadge({
-  detail,
-  source
-}: {
-  detail?: string;
-  source: WorkflowSource;
-}) {
+export function AttributionBadge({ detail, source }: { detail?: string; source: WorkflowSource }) {
   return (
     <span className="source-badge" title={detail}>
       {SOURCE_LABELS[source]}
@@ -618,7 +626,7 @@ export function DuplicateSuggestionList({
 }) {
   if (suggestions.length === 0) {
     return (
-      <div className="empty-inline">
+      <div className="empty-inline" data-testid="cp2-no-duplicate-suggestions">
         <Search size={16} aria-hidden="true" />
         <span>No duplicate suggestions for the current name or phone.</span>
       </div>
@@ -640,6 +648,7 @@ export function DuplicateSuggestionList({
           <button
             aria-pressed={selected}
             className={selected ? "duplicate-item duplicate-item--selected" : "duplicate-item"}
+            data-testid={`cp2-duplicate-suggestion-${suggestion.patient.id}`}
             key={`${suggestion.patient.id}-${suggestion.matchedOn}`}
             onClick={() => onSelect(suggestion.patient.id)}
             type="button"
@@ -647,7 +656,11 @@ export function DuplicateSuggestionList({
             {content}
           </button>
         ) : (
-          <div className="duplicate-item" key={`${suggestion.patient.id}-${suggestion.matchedOn}`}>
+          <div
+            className="duplicate-item"
+            data-testid={`cp2-duplicate-suggestion-${suggestion.patient.id}`}
+            key={`${suggestion.patient.id}-${suggestion.matchedOn}`}
+          >
             {content}
           </div>
         );
@@ -701,18 +714,37 @@ function DashboardPanel({
   setActiveSurfaceId: (surfaceId: string) => void;
 }) {
   const summary = summarizeDashboard(data);
-  const pendingLeads = data.leads.filter((lead) => ["new", "pending", "matched"].includes(lead.status));
+  const pendingLeads = data.leads.filter((lead) =>
+    ["new", "pending", "matched"].includes(lead.status)
+  );
 
   return (
     <>
-      <section className="dashboard-metrics" aria-label="Morning dashboard summary">
+      <section
+        className="dashboard-metrics"
+        aria-label="Morning dashboard summary"
+        data-testid="cp2-morning-dashboard"
+      >
         <Metric label="Today" value={summary.bookedToday} sublabel="active appointments" />
         <Metric label="Unconfirmed" value={summary.unconfirmed} sublabel="needs confirmation" />
         <Metric label="Lead tasks" value={summary.leadTasks} sublabel="new, pending, matched" />
-        <Metric label="Queue" value={summary.queueWaiting} sublabel="waiting or called" />
+        <Metric
+          label="Queue"
+          value={summary.queueWaiting}
+          sublabel="waiting or called"
+          valueTestId="cp2-dashboard-queue-waiting-count"
+        />
         <Metric label="New patients" value={summary.newPatientsToday} sublabel="on today's book" />
-        <Metric label="Returning" value={summary.returningPatientsToday} sublabel="on today's book" />
+        <Metric
+          label="Returning"
+          value={summary.returningPatientsToday}
+          sublabel="on today's book"
+        />
       </section>
+      <div className="dashboard-flags" data-testid="cp2-dashboard-new-returning-flags">
+        <span>{summary.newPatientsToday} new</span>
+        <span>{summary.returningPatientsToday} returning</span>
+      </div>
 
       <div className="workflow-grid workflow-grid--dashboard">
         <section className="work-panel" aria-labelledby="today-appointments-title">
@@ -738,7 +770,11 @@ function DashboardPanel({
           />
         </section>
 
-        <section className="work-panel" aria-labelledby="lead-tasks-title">
+        <section
+          className="work-panel"
+          aria-labelledby="lead-tasks-title"
+          data-testid="cp2-lead-inbox"
+        >
           <div className="panel-heading">
             <div>
               <h2 id="lead-tasks-title">Lead tasks</h2>
@@ -755,7 +791,11 @@ function DashboardPanel({
           </div>
           <div className="workflow-list">
             {pendingLeads.map((lead) => (
-              <LeadRow key={lead.id} lead={lead} onSelect={() => setActiveSurfaceId("lead-inbox")} />
+              <LeadRow
+                key={lead.id}
+                lead={lead}
+                onSelect={() => setActiveSurfaceId("lead-inbox")}
+              />
             ))}
           </div>
         </section>
@@ -767,6 +807,7 @@ function DashboardPanel({
 function LeadInboxPanel({
   actionBusy,
   bookingForm,
+  canCreatePatients,
   data,
   duplicateSuggestions,
   leadFilter,
@@ -791,6 +832,7 @@ function LeadInboxPanel({
     providerName: string;
     startAt: string;
   };
+  canCreatePatients: boolean;
   data: Cp2WorkflowData;
   duplicateSuggestions: DuplicateSuggestion[];
   leadFilter: LeadStatus | "all";
@@ -815,10 +857,22 @@ function LeadInboxPanel({
 }) {
   const leads =
     leadFilter === "all" ? data.leads : data.leads.filter((lead) => lead.status === leadFilter);
+  const patientIdForMatch =
+    selectedPatientId ??
+    selectedLead?.matchedPatientId ??
+    duplicateSuggestions[0]?.patient.id ??
+    null;
+  const matchedPatient = patientIdForMatch
+    ? (data.patients.find((patient) => patient.id === patientIdForMatch) ?? null)
+    : null;
 
   return (
     <div className="workflow-grid workflow-grid--split">
-      <section className="work-panel" aria-labelledby="lead-inbox-title">
+      <section
+        className="work-panel"
+        aria-labelledby="lead-inbox-title"
+        data-testid="cp2-lead-inbox"
+      >
         <div className="panel-heading">
           <div>
             <h2 id="lead-inbox-title">Lead inbox</h2>
@@ -927,34 +981,50 @@ function LeadInboxPanel({
             </div>
 
             <AttributionLine attribution={selectedLead.attribution} />
+            {matchedPatient ? <PatientRow patient={matchedPatient} /> : null}
 
             <div className="subsection">
               <h3>Duplicate suggestions</h3>
               <DuplicateSuggestionList
                 onSelect={onSelectPatient}
-                selectedPatientId={selectedPatientId ?? selectedLead.matchedPatientId}
+                selectedPatientId={
+                  selectedPatientId ?? selectedLead.matchedPatientId ?? patientIdForMatch
+                }
                 suggestions={duplicateSuggestions}
               />
               <div className="action-row">
-                {selectedPatientId ? (
+                {canCreatePatients && patientIdForMatch ? (
                   <Button
                     disabled={actionBusy === `match-${selectedLead.id}`}
-                    onClick={() => onMatchLead(selectedLead, selectedPatientId)}
+                    data-testid={
+                      selectedLead.id === "whatsappReturningLead"
+                        ? "cp2-match-returning-patient"
+                        : `cp2-match-${selectedLead.id}`
+                    }
+                    onClick={() => onMatchLead(selectedLead, patientIdForMatch)}
                     size="sm"
                     variant="secondary"
                   >
                     Match selected patient
                   </Button>
                 ) : null}
-                <Button
-                  disabled={actionBusy === `lead-create-${selectedLead.id}`}
-                  icon={<UserPlus size={16} />}
-                  onClick={() => onCreateFromLead(selectedLead)}
-                  size="sm"
-                  variant="primary"
-                >
-                  Create patient shell
-                </Button>
+                {canCreatePatients ? (
+                  <Button
+                    data-testid="cp2-create-patient-from-lead"
+                    disabled={actionBusy === `lead-create-${selectedLead.id}`}
+                    icon={<UserPlus size={16} />}
+                    onClick={() => onCreateFromLead(selectedLead)}
+                    size="sm"
+                    variant="primary"
+                  >
+                    Create patient shell
+                  </Button>
+                ) : (
+                  <div className="empty-inline" data-testid="cp2-patient-create-denied">
+                    <AlertCircle size={16} aria-hidden="true" />
+                    <span>Patient creation requires patient write access.</span>
+                  </div>
+                )}
               </div>
             </div>
 
@@ -983,14 +1053,18 @@ function LeadInboxPanel({
                 <input
                   type="datetime-local"
                   value={bookingForm.startAt}
-                  onChange={(event) => setBookingForm({ ...bookingForm, startAt: event.target.value })}
+                  onChange={(event) =>
+                    setBookingForm({ ...bookingForm, startAt: event.target.value })
+                  }
                 />
               </label>
               <label>
                 <span>Chair</span>
                 <input
                   value={bookingForm.chair}
-                  onChange={(event) => setBookingForm({ ...bookingForm, chair: event.target.value })}
+                  onChange={(event) =>
+                    setBookingForm({ ...bookingForm, chair: event.target.value })
+                  }
                 />
               </label>
               <label>
@@ -1010,6 +1084,7 @@ function LeadInboxPanel({
               </label>
               <Button
                 className="form-submit"
+                data-testid="cp2-convert-lead-to-appointment"
                 disabled={actionBusy === `book-${selectedLead.id}`}
                 icon={<CalendarDays size={16} />}
                 type="submit"
@@ -1038,6 +1113,8 @@ function AppointmentsPanel({
   onCheckIn: (appointment: AppointmentSummary) => void;
   onConfirm: (appointment: AppointmentSummary) => void;
 }) {
+  const summary = summarizeDashboard(data);
+
   return (
     <div className="workflow-grid workflow-grid--split">
       <section className="work-panel" aria-labelledby="appointments-title">
@@ -1063,9 +1140,24 @@ function AppointmentsPanel({
           </div>
         </div>
         <div className="workflow-list">
+          <div className="queue-entry">
+            <div>
+              <strong data-testid="cp2-dashboard-queue-waiting-count">
+                {summary.queueWaiting}
+              </strong>
+              <span data-testid="cp2-dashboard-new-returning-flags">
+                {summary.newPatientsToday} new · {summary.returningPatientsToday} returning
+              </span>
+            </div>
+            <span className="state-pill state-pill--waiting">Dashboard</span>
+          </div>
           {data.queue.length > 0 ? (
             data.queue.map((entry) => (
-              <div className="queue-entry" key={entry.id}>
+              <div
+                className="queue-entry"
+                data-testid={`cp2-queue-entry-${entry.appointmentId}`}
+                key={entry.id}
+              >
                 <div>
                   <strong>{entry.patientName}</strong>
                   <span>
@@ -1089,6 +1181,7 @@ function AppointmentsPanel({
 
 function PatientsPanel({
   actionBusy,
+  canCreatePatients,
   data,
   duplicateSuggestions,
   onCreatePatient,
@@ -1098,6 +1191,7 @@ function PatientsPanel({
   selectedPatientId
 }: {
   actionBusy: string | null;
+  canCreatePatients: boolean;
   data: Cp2WorkflowData;
   duplicateSuggestions: DuplicateSuggestion[];
   onCreatePatient: (event: FormEvent<HTMLFormElement>) => void;
@@ -1115,53 +1209,62 @@ function PatientsPanel({
             <p>Name, phone, duplicate suggestions, and source capture are required.</p>
           </div>
         </div>
-        <form className="form-grid" onSubmit={onCreatePatient}>
-          <label>
-            <span>Name</span>
-            <input
-              autoComplete="off"
-              value={patientForm.displayName}
-              onChange={(event) =>
-                onPatientFormChange({ ...patientForm, displayName: event.target.value })
-              }
-            />
-          </label>
-          <label>
-            <span>Phone</span>
-            <input
-              autoComplete="off"
-              value={patientForm.phone}
-              onChange={(event) => onPatientFormChange({ ...patientForm, phone: event.target.value })}
-            />
-          </label>
-          <label>
-            <span>Source</span>
-            <select
-              value={patientForm.source}
-              onChange={(event) =>
-                onPatientFormChange({
-                  ...patientForm,
-                  source: event.target.value as WorkflowSource
-                })
-              }
+        {canCreatePatients ? (
+          <form className="form-grid" onSubmit={onCreatePatient}>
+            <label>
+              <span>Name</span>
+              <input
+                autoComplete="off"
+                value={patientForm.displayName}
+                onChange={(event) =>
+                  onPatientFormChange({ ...patientForm, displayName: event.target.value })
+                }
+              />
+            </label>
+            <label>
+              <span>Phone</span>
+              <input
+                autoComplete="off"
+                value={patientForm.phone}
+                onChange={(event) =>
+                  onPatientFormChange({ ...patientForm, phone: event.target.value })
+                }
+              />
+            </label>
+            <label>
+              <span>Source</span>
+              <select
+                value={patientForm.source}
+                onChange={(event) =>
+                  onPatientFormChange({
+                    ...patientForm,
+                    source: event.target.value as WorkflowSource
+                  })
+                }
+              >
+                {SOURCE_OPTIONS.map((source) => (
+                  <option key={source} value={source}>
+                    {sourceLabel(source)}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <Button
+              className="form-submit"
+              disabled={actionBusy === "create-patient"}
+              icon={<UserPlus size={16} />}
+              type="submit"
+              variant="primary"
             >
-              {SOURCE_OPTIONS.map((source) => (
-                <option key={source} value={source}>
-                  {sourceLabel(source)}
-                </option>
-              ))}
-            </select>
-          </label>
-          <Button
-            className="form-submit"
-            disabled={actionBusy === "create-patient"}
-            icon={<UserPlus size={16} />}
-            type="submit"
-            variant="primary"
-          >
-            Create patient
-          </Button>
-        </form>
+              Create patient
+            </Button>
+          </form>
+        ) : (
+          <div className="empty-inline" data-testid="cp2-patient-create-denied">
+            <AlertCircle size={16} aria-hidden="true" />
+            <span>Patient creation requires patient write access.</span>
+          </div>
+        )}
 
         <div className="subsection">
           <h3>Duplicate suggestions</h3>
@@ -1218,12 +1321,15 @@ function AppointmentList({
             </span>
             <div className="meta-line">
               <AttributionBadge source={appointment.source} />
-              <span>{APPOINTMENT_STATUS_LABELS[appointment.status]}</span>
+              <span data-testid={`cp2-appointment-status-${appointment.id}`}>
+                {APPOINTMENT_STATUS_LABELS[appointment.status]}
+              </span>
               <span>{CONFIRMATION_LABELS[appointment.confirmationState]}</span>
             </div>
           </div>
           <div className="action-row appointment-row__actions">
             <Button
+              data-testid={`cp2-confirm-appointment-${appointment.id}`}
               disabled={
                 appointment.confirmationState === "confirmed" ||
                 actionBusy === `confirm-${appointment.id}`
@@ -1235,9 +1341,9 @@ function AppointmentList({
               Confirm
             </Button>
             <Button
+              data-testid={`cp2-check-in-${appointment.id}`}
               disabled={
-                appointment.status === "checked_in" ||
-                actionBusy === `check-in-${appointment.id}`
+                appointment.status === "checked_in" || actionBusy === `check-in-${appointment.id}`
               }
               onClick={() => onCheckIn(appointment)}
               size="sm"
@@ -1265,6 +1371,7 @@ function LeadRow({
     <button
       aria-pressed={active}
       className={active ? "lead-row lead-row--active" : "lead-row"}
+      data-testid={`cp2-lead-card-${lead.id}`}
       onClick={onSelect}
       type="button"
     >
@@ -1273,7 +1380,7 @@ function LeadRow({
         <span>{lead.messageSnippet}</span>
         <div className="meta-line">
           <AttributionBadge detail={lead.attribution.detail} source={lead.attribution.source} />
-          <span>{LEAD_STATUS_LABELS[lead.status]}</span>
+          <span data-testid={`cp2-lead-status-${lead.id}`}>{LEAD_STATUS_LABELS[lead.status]}</span>
           {lead.deliveryStatus ? <span>{lead.deliveryStatus}</span> : null}
           <span>{lead.slaMinutesRemaining} min SLA</span>
         </div>
@@ -1286,7 +1393,7 @@ function PatientRow({ patient }: { patient: PatientSummary }) {
   const firstAttribution = patient.attribution[0];
 
   return (
-    <div className="patient-row">
+    <div className="patient-row" data-testid={`cp2-patient-chip-${patient.id}`}>
       <div>
         <strong>{patient.displayName}</strong>
         <span>
@@ -1315,16 +1422,18 @@ function AttributionLine({ attribution }: { attribution: LeadSummary["attributio
 function Metric({
   label,
   sublabel,
-  value
+  value,
+  valueTestId
 }: {
   label: string;
   sublabel: string;
   value: number;
+  valueTestId?: string;
 }) {
   return (
     <div className="workflow-metric">
       <span>{label}</span>
-      <strong>{value}</strong>
+      <strong data-testid={valueTestId}>{value}</strong>
       <small>{sublabel}</small>
     </div>
   );
@@ -1370,7 +1479,11 @@ function WorkflowUnavailable({
         </div>
         {problem.endpoints.length > 0
           ? problem.endpoints.map((endpoint) => (
-              <div className="endpoint-row" key={`${endpoint.endpoint}-${endpoint.status ?? "x"}`} role="row">
+              <div
+                className="endpoint-row"
+                key={`${endpoint.endpoint}-${endpoint.status ?? "x"}`}
+                role="row"
+              >
                 <span role="cell">{endpoint.endpoint}</span>
                 <span role="cell">
                   {endpoint.status ? `${endpoint.status}: ${endpoint.message}` : endpoint.message}

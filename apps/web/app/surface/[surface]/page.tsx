@@ -1,7 +1,7 @@
 import { notFound } from "next/navigation";
 
 import { ClinicShell } from "@/components/clinic-shell";
-import { hasSurface } from "@/lib/navigation";
+import { hasSurface, resolveSurfaceId } from "@/lib/navigation";
 
 export default async function SurfacePage({ params }: { params: Promise<{ surface: string }> }) {
   const { surface } = await params;
@@ -10,5 +10,5 @@ export default async function SurfacePage({ params }: { params: Promise<{ surfac
     notFound();
   }
 
-  return <ClinicShell initialSurfaceId={surface} />;
+  return <ClinicShell initialSurfaceId={resolveSurfaceId(surface)} />;
 }

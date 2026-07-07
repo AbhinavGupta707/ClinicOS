@@ -26,6 +26,7 @@ const LOCAL_DEV_CLINIC_ID = "10000000-0000-4000-8000-000000000101";
 const LOCAL_DEV_DOCTOR_USER_ID = "10000000-0000-4000-8000-000000001002";
 const LOCAL_DEV_APPOINTMENT_TYPE_ID = "10000000-0000-4000-8000-000000003001";
 const LOCAL_DEV_CHAIR_ID = "10000000-0000-4000-8000-000000004001";
+const FIXED_FIXTURE_SERVICE_DATE = "2026-07-07";
 
 function parseArgs(argv) {
   const options = {
@@ -193,6 +194,7 @@ function stripScopeFields(body) {
 
 function replaceRuntimeIds(path, state) {
   return path
+    .replaceAll(FIXED_FIXTURE_SERVICE_DATE, state.serviceDate ?? FIXED_FIXTURE_SERVICE_DATE)
     .replaceAll(
       "20000000-0000-4000-8000-000000003001",
       state.returningLeadId ?? "20000000-0000-4000-8000-000000003001"
@@ -214,8 +216,35 @@ function replaceRuntimeIds(path, state) {
 function adaptBodyForLiveLocal(request, body, state) {
   if (body === undefined) return undefined;
 
+  if (request.key === "capture-whatsapp-returning-lead") {
+    return stripScopeFields({
+      ...body,
+      displayName: "Rhea Synthetic",
+      primaryContact: "+919876543210",
+      sourceDetail: {
+        ...body.sourceDetail,
+        patientName: "Rhea Synthetic",
+        localFixtureAdapted: true
+      }
+    });
+  }
+
+  if (request.key === "capture-google-lead") {
+    return stripScopeFields({
+      ...body,
+      displayName: state.newPatientName,
+      primaryContact: state.newPatientPhone,
+      sourceDetail: {
+        ...body.sourceDetail,
+        patientName: state.newPatientName,
+        localFixtureAdapted: true,
+        runId: state.runId
+      }
+    });
+  }
+
   if (request.key === "match-whatsapp-returning-lead") {
-    const patientId = state.returningPatientId ?? body.selectedPatientId;
+    const patientId = state.returningPatientId;
     assert.ok(patientId, "Returning lead capture did not expose a patient match suggestion.");
     return { patientId };
   }
@@ -229,13 +258,13 @@ function adaptBodyForLiveLocal(request, body, state) {
 
   if (request.key === "create-patient-from-lead") {
     return stripScopeFields({
-      fullName: body.fullName,
-      phone: body.phone,
-      email: body.email,
+      fullName: state.newPatientName ?? body.fullName,
+      phone: state.newPatientPhone ?? body.phone,
+      email: state.newPatientEmail ?? body.email,
       dateOfBirth: body.dateOfBirth,
       gender: body.gender,
       source: body.source,
-      sourceDetail: body.sourceAttribution ?? {},
+      sourceDetail: { ...(body.sourceAttribution ?? {}), runId: state.runId },
       leadId: state.googleLeadId
     });
   }
@@ -244,13 +273,15 @@ function adaptBodyForLiveLocal(request, body, state) {
     request.key === "convert-lead-to-appointment" ||
     request.key === "deny-doctor-book-appointment"
   ) {
+    const scheduledStart = state.appointmentStartAt ?? body.scheduledStart;
+    const scheduledEnd = state.appointmentEndAt ?? body.scheduledEnd;
     return stripScopeFields({
       patientId: state.newPatientId ?? body.patientId,
       providerUserId: LOCAL_DEV_DOCTOR_USER_ID,
       appointmentTypeId: LOCAL_DEV_APPOINTMENT_TYPE_ID,
       chairId: LOCAL_DEV_CHAIR_ID,
-      startAt: body.scheduledStart,
-      endAt: body.scheduledEnd,
+      startAt: scheduledStart,
+      endAt: scheduledEnd,
       source: body.sourceAttribution?.source ?? "manual",
       status: "booked"
     });
@@ -310,6 +341,7 @@ function headersForRequest(scenario, request, options) {
     assert.ok(subject, `No local dev subject mapping for ${actor.key}`);
     return {
       ...headers,
+      "X-Clinic-OS-Dev-Subject": subject,
       "X-ClinicOS-Dev-Subject": subject,
       "X-ClinicOS-Fixture-Actor": actor.key,
       "X-ClinicOS-Fixture-Role": actor.roleSlug
@@ -461,7 +493,7 @@ function assertStepResponse(step, body, state) {
   }
 
   if (step.key === "create-patient-from-lead") {
-    assertSerializedIncludes(body, ["Ira Synthetic", "+919900001002"], step.key);
+    assertSerializedIncludes(body, [state.newPatientName, state.newPatientPhone], step.key);
   }
 
   if (step.key === "convert-lead-to-appointment") {
@@ -480,12 +512,16 @@ function assertStepResponse(step, body, state) {
 function updateRuntimeStateFromResponse(request, body, state) {
   if (request.key === "capture-whatsapp-returning-lead") {
     state.returningLeadId = body?.lead?.id;
-    state.returningPatientId = body?.patientMatchSuggestions?.[0]?.patientId;
+    state.returningPatientId =
+      body?.patientMatchSuggestions?.[0]?.patientId ??
+      body?.patientMatchSuggestions?.[0]?.patient?.id;
   }
 
   if (request.key === "capture-google-lead") {
     state.googleLeadId = body?.lead?.id;
-    state.googlePatientId = body?.patientMatchSuggestions?.[0]?.patientId;
+    state.googlePatientId =
+      body?.patientMatchSuggestions?.[0]?.patientId ??
+      body?.patientMatchSuggestions?.[0]?.patient?.id;
   }
 
   if (request.key === "create-patient-from-lead") {
@@ -555,7 +591,21 @@ function printDryRun(plan) {
 
 async function runLiveSmoke(scenario, plan, options) {
   assert.ok(options.baseUrl, "Set --base-url or CLINICOS_CP2_API_BASE_URL for live smoke.");
-  const state = {};
+  const runId = String(Date.now()).slice(-10);
+  const serviceDate = new Date().toISOString().slice(0, 10);
+  const slotMinuteOfDay = 8 * 60 + (Number(runId.slice(-5)) % (10 * 60));
+  const appointmentStart = new Date(`${serviceDate}T00:00:00.000Z`);
+  appointmentStart.setUTCMinutes(slotMinuteOfDay);
+  const appointmentEnd = new Date(appointmentStart.getTime() + 30 * 60 * 1000);
+  const state = {
+    runId,
+    serviceDate,
+    appointmentStartAt: appointmentStart.toISOString(),
+    appointmentEndAt: appointmentEnd.toISOString(),
+    newPatientName: `Naya ${runId}`,
+    newPatientPhone: `+91${runId}`,
+    newPatientEmail: `naya.${runId}@example.test`
+  };
 
   for (const request of plan.flowRequests) {
     const liveRequest = resolveLiveRequest(request, options, state);

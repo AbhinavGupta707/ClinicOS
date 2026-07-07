@@ -25,6 +25,8 @@ export const PATIENT_GENDERS = ["female", "male", "other", "unknown"] as const;
 export type PatientGender = (typeof PATIENT_GENDERS)[number];
 
 export const PATIENT_TIMELINE_ITEM_TYPES = [
+  "patient",
+  "attribution",
   "lead",
   "appointment",
   "queue",
@@ -137,7 +139,18 @@ export function parsePatientSearchRequest(
   return parseWithIssues(input, (record, issues) => {
     ensureAllowedKeys(
       record,
-      ["tenantId", "clinicId", "actor", "correlationId", "requestId", "query", "phone", "source", "includeInactive", "limit"],
+      [
+        "tenantId",
+        "clinicId",
+        "actor",
+        "correlationId",
+        "requestId",
+        "query",
+        "phone",
+        "source",
+        "includeInactive",
+        "limit"
+      ],
       "$",
       issues
     );
@@ -149,19 +162,37 @@ export function parsePatientSearchRequest(
 
     addOptional(request, "query", optionalString(record, "query", "$", issues));
     addOptional(request, "phone", optionalString(record, "phone", "$", issues, { phone: true }));
-    addOptional(request, "source", optionalEnum(record, "source", "$", [
-      "whatsapp",
-      "call",
-      "walk_in",
-      "practo",
-      "google",
-      "referral",
-      "manual",
-      "manual_import",
-      "external_system"
-    ] as const, issues));
-    addOptional(request, "includeInactive", optionalBoolean(record, "includeInactive", "$", issues));
-    addOptional(request, "limit", optionalNumber(record, "limit", "$", issues, { integer: true, min: 1, max: 100 }));
+    addOptional(
+      request,
+      "source",
+      optionalEnum(
+        record,
+        "source",
+        "$",
+        [
+          "whatsapp",
+          "call",
+          "walk_in",
+          "practo",
+          "google",
+          "referral",
+          "manual",
+          "manual_import",
+          "external_system"
+        ] as const,
+        issues
+      )
+    );
+    addOptional(
+      request,
+      "includeInactive",
+      optionalBoolean(record, "includeInactive", "$", issues)
+    );
+    addOptional(
+      request,
+      "limit",
+      optionalNumber(record, "limit", "$", issues, { integer: true, min: 1, max: 100 })
+    );
 
     if (!request.query && !request.phone && !request.source) {
       issues.push({
@@ -219,13 +250,23 @@ export function parsePatientCreateRequest(
       "dateOfBirth",
       optionalString(patientRecord, "dateOfBirth", "$.patient", issues, { dateOnly: true })
     );
-    addOptional(patient, "externalPatientRef", optionalString(patientRecord, "externalPatientRef", "$.patient", issues));
+    addOptional(
+      patient,
+      "externalPatientRef",
+      optionalString(patientRecord, "externalPatientRef", "$.patient", issues)
+    );
     addOptional(
       patient,
       "duplicateCandidateIds",
-      optionalStringArray(patientRecord, "duplicateCandidateIds", "$.patient", issues, { uuid: true })
+      optionalStringArray(patientRecord, "duplicateCandidateIds", "$.patient", issues, {
+        uuid: true
+      })
     );
-    addOptional(patient, "metadata", optionalRecord(patientRecord, "metadata", "$.patient", issues));
+    addOptional(
+      patient,
+      "metadata",
+      optionalRecord(patientRecord, "metadata", "$.patient", issues)
+    );
 
     return {
       ...context,
@@ -264,7 +305,16 @@ export function parsePatientUpdateRequest(
       issues
     );
 
-    if (!hasAnyOwnField(patchRecord, ["fullName", "phone", "email", "dateOfBirth", "gender", "metadata"])) {
+    if (
+      !hasAnyOwnField(patchRecord, [
+        "fullName",
+        "phone",
+        "email",
+        "dateOfBirth",
+        "gender",
+        "metadata"
+      ])
+    ) {
       issues.push({ path: "$.patch", message: "Patch must include at least one patient field." });
     }
 
@@ -273,7 +323,11 @@ export function parsePatientUpdateRequest(
     addNullableString(patch, "phone", patchRecord, "$.patch", issues, { phone: true });
     addNullableString(patch, "email", patchRecord, "$.patch", issues);
     addNullableString(patch, "dateOfBirth", patchRecord, "$.patch", issues, { dateOnly: true });
-    addOptional(patch, "gender", optionalEnum(patchRecord, "gender", "$.patch", PATIENT_GENDERS, issues));
+    addOptional(
+      patch,
+      "gender",
+      optionalEnum(patchRecord, "gender", "$.patch", PATIENT_GENDERS, issues)
+    );
     addOptional(patch, "metadata", optionalRecord(patchRecord, "metadata", "$.patch", issues));
 
     return {
@@ -314,8 +368,16 @@ export function parsePatientTimelineRequest(
     };
 
     addOptional(request, "cursor", optionalString(record, "cursor", "$", issues));
-    addOptional(request, "limit", optionalNumber(record, "limit", "$", issues, { integer: true, min: 1, max: 100 }));
-    addOptional(request, "includeSensitive", optionalBoolean(record, "includeSensitive", "$", issues));
+    addOptional(
+      request,
+      "limit",
+      optionalNumber(record, "limit", "$", issues, { integer: true, min: 1, max: 100 })
+    );
+    addOptional(
+      request,
+      "includeSensitive",
+      optionalBoolean(record, "includeSensitive", "$", issues)
+    );
     addOptional(
       request,
       "itemTypes",

@@ -1,9 +1,5 @@
 import { randomUUID } from "node:crypto";
-import {
-  assertAuthorized,
-  type AccessContext,
-  type AuthorizationRequest
-} from "@clinic-os/auth";
+import { assertAuthorized, type AccessContext, type AuthorizationRequest } from "@clinic-os/auth";
 import type {
   ClinicOperationsRepository,
   CreateAppointmentInput,
@@ -27,11 +23,16 @@ import {
   type LeadIntent,
   type LeadSource,
   type LeadStatus,
+  type PatientTimelineItem as DomainPatientTimelineItem,
   type PatientSource,
   type QueueStatus,
   type UUID
 } from "@clinic-os/domain";
-import { createAuditEvent, type AuditEventRecord, type KnownAuditAction } from "@clinic-os/security";
+import {
+  createAuditEvent,
+  type AuditEventRecord,
+  type KnownAuditAction
+} from "@clinic-os/security";
 import { ApiError } from "./errors.ts";
 
 export interface OperationsRequestContext {
@@ -76,12 +77,14 @@ const LEAD_SOURCES = new Set<LeadSource>([
   "referral",
   "recall_campaign"
 ]);
-const PATIENT_SOURCES = new Set<PatientSource>([
-  ...LEAD_SOURCES,
-  "imported",
-  "external_system"
+const PATIENT_SOURCES = new Set<PatientSource>([...LEAD_SOURCES, "imported", "external_system"]);
+const QUEUE_STATUSES = new Set<QueueStatus>([
+  "waiting",
+  "called",
+  "in_consult",
+  "completed",
+  "cancelled"
 ]);
-const QUEUE_STATUSES = new Set<QueueStatus>(["waiting", "called", "in_consult", "completed", "cancelled"]);
 
 export async function listPatients(
   context: OperationsRequestContext,
@@ -108,7 +111,9 @@ export async function createPatient(
   assertPatientCreateMinimum(input);
 
   const scope = scopeFrom(context);
-  const sourceLead = input.leadId ? await dependencies.repository.findLeadById(scope, input.leadId) : null;
+  const sourceLead = input.leadId
+    ? await dependencies.repository.findLeadById(scope, input.leadId)
+    : null;
 
   if (input.leadId && !sourceLead) {
     throw notFound("Source lead not found.", { lead_id: input.leadId });
@@ -262,14 +267,16 @@ export async function getPatientTimeline(
 
   if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
 
-  const timeline = await dependencies.repository.findPatientTimeline(scopeFrom(context), patientId);
+  const timeline = (
+    await dependencies.repository.findPatientTimeline(scopeFrom(context), patientId)
+  ).map(toPublicPatientTimelineItem);
   await audit(context, dependencies, "patient.record.viewed", {
     patientId,
     resourceType: "patient_timeline",
     resourceId: patientId
   });
 
-  return ok({ timeline });
+  return ok({ timeline, items: timeline });
 }
 
 export async function listLeads(
@@ -294,17 +301,21 @@ export async function createLead(
   authorize(context, { permission: "message.write" });
   const input = parseCreateLead(body);
   const lead = await dependencies.repository.createLead(scopeFrom(context), input);
-  const possibleMatches = await dependencies.repository.findPatientDuplicateCandidates(scopeFrom(context), {
-    fullName: String(input.sourceDetail.patientName ?? ""),
-    phone: input.primaryContact
-  });
+  const possibleMatches = await dependencies.repository.findPatientDuplicateCandidates(
+    scopeFrom(context),
+    {
+      fullName: String(input.sourceDetail.patientName ?? ""),
+      phone: input.primaryContact
+    }
+  );
 
   await dependencies.repository.createAttributionTouch(scopeFrom(context), {
     leadId: lead.id,
     source: lead.source,
     touchType: "first_touch",
     occurredAt: lead.firstSeenAt,
-    externalRef: typeof lead.sourceDetail.externalRef === "string" ? lead.sourceDetail.externalRef : null,
+    externalRef:
+      typeof lead.sourceDetail.externalRef === "string" ? lead.sourceDetail.externalRef : null,
     metadata: lead.sourceDetail
   });
   await audit(context, dependencies, "lead.created", {
@@ -419,7 +430,8 @@ export async function convertLeadToAppointment(
     source: lead.source,
     touchType: "booking_touch",
     occurredAt: appointment.createdAt,
-    externalRef: typeof lead.sourceDetail.externalRef === "string" ? lead.sourceDetail.externalRef : null,
+    externalRef:
+      typeof lead.sourceDetail.externalRef === "string" ? lead.sourceDetail.externalRef : null,
     metadata: { convertedFromLead: true }
   });
   await audit(context, dependencies, "lead.converted_to_appointment", {
@@ -510,7 +522,12 @@ export async function updateAppointment(
     });
   }
 
-  return transitionAppointment(context, dependencies, appointmentId, parseAppointmentStatus(requiredString(statusValue, "status")));
+  return transitionAppointment(
+    context,
+    dependencies,
+    appointmentId,
+    parseAppointmentStatus(requiredString(statusValue, "status"))
+  );
 }
 
 export async function confirmAppointment(
@@ -530,7 +547,10 @@ export async function checkInAppointment(
   authorize(context, { permission: "queue.manage" });
   const response = await transitionAppointment(context, dependencies, appointmentId, "checked_in");
   const appointment = response.body.appointment;
-  const queueEntry = await dependencies.repository.createQueueEntry(scopeFrom(context), appointment);
+  const queueEntry = await dependencies.repository.createQueueEntry(
+    scopeFrom(context),
+    appointment
+  );
 
   await audit(context, dependencies, "queue.entry_created", {
     patientId: appointment.patientId,
@@ -576,7 +596,11 @@ export async function updateQueueEntry(
 ) {
   authorize(context, { permission: "queue.manage" });
   const status = parseQueueStatus(requiredString(objectBody(body).status, "status"));
-  const queueEntry = await dependencies.repository.updateQueueEntry(scopeFrom(context), queueEntryId, status);
+  const queueEntry = await dependencies.repository.updateQueueEntry(
+    scopeFrom(context),
+    queueEntryId,
+    status
+  );
 
   if (!queueEntry) throw notFound("Queue entry not found.", { queue_entry_id: queueEntryId });
 
@@ -682,7 +706,11 @@ async function transitionAppointment(
   if (!existing) throw notFound("Appointment not found.", { appointment_id: appointmentId });
 
   assertAppointmentTransition(existing.status, status);
-  const appointment = await dependencies.repository.updateAppointmentStatus(scope, appointmentId, status);
+  const appointment = await dependencies.repository.updateAppointmentStatus(
+    scope,
+    appointmentId,
+    status
+  );
 
   if (!appointment) throw notFound("Appointment not found.", { appointment_id: appointmentId });
 
@@ -699,7 +727,11 @@ async function transitionAppointment(
     aggregateType: "appointment",
     aggregateId: appointment.id,
     patientId: appointment.patientId,
-    payload: { appointmentId: appointment.id, fromStatus: existing.status, toStatus: appointment.status }
+    payload: {
+      appointmentId: appointment.id,
+      fromStatus: existing.status,
+      toStatus: appointment.status
+    }
   });
 
   return ok({ appointment });
@@ -713,12 +745,95 @@ function scopeFrom(context: OperationsRequestContext): RepositoryScope {
   };
 }
 
-function authorize(context: OperationsRequestContext, request: Pick<AuthorizationRequest, "permission">): void {
+function authorize(
+  context: OperationsRequestContext,
+  request: Pick<AuthorizationRequest, "permission">
+): void {
   assertAuthorized(context.accessContext, {
     tenantId: context.accessContext.tenant.id,
     clinicId: context.clinicId,
     permission: request.permission
   });
+}
+
+type PublicTimelineItemType =
+  | "patient"
+  | "attribution"
+  | "lead"
+  | "appointment"
+  | "queue"
+  | "message"
+  | "clinical_note"
+  | "prescription"
+  | "media"
+  | "invoice"
+  | "payment"
+  | "task"
+  | "consent";
+
+function toPublicPatientTimelineItem(item: DomainPatientTimelineItem) {
+  return {
+    id: item.id,
+    patientId: item.patientId,
+    itemType: publicTimelineItemType(item.itemType),
+    eventType: timelineEventType(item.itemType),
+    occurredAt: item.occurredAt,
+    title: item.title,
+    summary: item.summary ?? "",
+    sensitive: true,
+    resourceId: item.sourceId,
+    sourceTable: item.sourceTable,
+    rawItemType: item.itemType,
+    metadata: item.metadata
+  };
+}
+
+function publicTimelineItemType(
+  itemType: DomainPatientTimelineItem["itemType"]
+): PublicTimelineItemType {
+  switch (itemType) {
+    case "patient_created":
+      return "patient";
+    case "attribution_touch_created":
+      return "attribution";
+    case "lead_created":
+    case "lead_matched":
+      return "lead";
+    case "appointment_created":
+    case "appointment_confirmed":
+    case "appointment_no_show":
+      return "appointment";
+    case "patient_checked_in":
+    case "queue_entry_created":
+      return "queue";
+    case "task_created":
+      return "task";
+  }
+}
+
+function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): DomainEventType {
+  switch (itemType) {
+    case "patient_created":
+      return "patient.created";
+    case "attribution_touch_created":
+      return "attribution.touch.created";
+    case "lead_created":
+      return "lead.created";
+    case "lead_matched":
+      return "lead.matched_to_patient";
+    case "appointment_created":
+      return "appointment.created";
+    case "appointment_confirmed":
+      return "appointment.confirmed";
+    case "patient_checked_in":
+      return "patient.checked_in";
+    case "queue_entry_created":
+      return "queue.entry_created";
+    case "appointment_no_show":
+      return "appointment.no_show";
+    case "task_created":
+      return "task.created";
+  }
 }
 
 async function audit(
@@ -811,7 +926,9 @@ function parseCreateAppointment(
     providerUserId: uuidField(input.providerUserId, "providerUserId"),
     appointmentTypeId: uuidField(input.appointmentTypeId, "appointmentTypeId"),
     chairId: optionalUuid(input.chairId, "chairId"),
-    status: parseAppointmentStatus(requiredString(input.status ?? defaults.status ?? "booked", "status")),
+    status: parseAppointmentStatus(
+      requiredString(input.status ?? defaults.status ?? "booked", "status")
+    ),
     startAt,
     endAt,
     source: defaults.source ?? parseLeadSource(requiredString(input.source ?? "manual", "source")),
@@ -855,7 +972,8 @@ function parseLeadIntent(value: string): LeadIntent {
 }
 
 function parseLeadStatus(value: string): LeadStatus {
-  if (!isValidLeadStatus(value)) throw validation("Invalid lead status.", { field: "status", value });
+  if (!isValidLeadStatus(value))
+    throw validation("Invalid lead status.", { field: "status", value });
   return value;
 }
 

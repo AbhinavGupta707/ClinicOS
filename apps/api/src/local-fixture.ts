@@ -186,23 +186,34 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly attributionTouches: AttributionTouchRecord[] = [];
   readonly outboxEvents: OutboxEventInput[] = [];
 
-  async listPatients(scope: RepositoryScope, filter: PatientSearchFilter = {}): Promise<PatientRecord[]> {
+  async listPatients(
+    scope: RepositoryScope,
+    filter: PatientSearchFilter = {}
+  ): Promise<PatientRecord[]> {
     return this.patients
       .filter((patient) => matchesScope(patient, scope))
       .filter((patient) => {
         if (filter.source && patient.source !== filter.source) return false;
-        if (filter.phone && normalizePhone(patient.phone ?? "") !== normalizePhone(filter.phone)) return false;
-        if (filter.query && !patient.fullName.toLowerCase().includes(filter.query.toLowerCase())) return false;
+        if (filter.phone && normalizePhone(patient.phone ?? "") !== normalizePhone(filter.phone))
+          return false;
+        if (filter.query && !patient.fullName.toLowerCase().includes(filter.query.toLowerCase()))
+          return false;
         return true;
       })
       .slice(0, filter.limit ?? 50);
   }
 
   async findPatientById(scope: RepositoryScope, patientId: UUID): Promise<PatientRecord | null> {
-    return this.patients.find((patient) => matchesScope(patient, scope) && patient.id === patientId) ?? null;
+    return (
+      this.patients.find((patient) => matchesScope(patient, scope) && patient.id === patientId) ??
+      null
+    );
   }
 
-  async findPatientTimeline(scope: RepositoryScope, patientId: UUID): Promise<PatientTimelineItem[]> {
+  async findPatientTimeline(
+    scope: RepositoryScope,
+    patientId: UUID
+  ): Promise<PatientTimelineItem[]> {
     return this.timelineItems
       .filter((item) => matchesScope(item, scope) && item.patientId === patientId)
       .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
@@ -241,11 +252,17 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     };
 
     this.patients.push(patient);
-    this.timelineItems.push(timeline(scope, patient.id, "patient_created", "patients", patient.id, "Patient registered"));
+    this.timelineItems.push(
+      timeline(scope, patient.id, "patient_created", "patients", patient.id, "Patient registered")
+    );
     return patient;
   }
 
-  async updatePatient(scope: RepositoryScope, patientId: UUID, input: UpdatePatientInput): Promise<PatientRecord | null> {
+  async updatePatient(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: UpdatePatientInput
+  ): Promise<PatientRecord | null> {
     const patient = await this.findPatientById(scope, patientId);
     if (!patient) return null;
 
@@ -297,7 +314,11 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return lead;
   }
 
-  async updateLeadStatus(scope: RepositoryScope, leadId: UUID, status: LeadRecord["status"]): Promise<LeadRecord | null> {
+  async updateLeadStatus(
+    scope: RepositoryScope,
+    leadId: UUID,
+    status: LeadRecord["status"]
+  ): Promise<LeadRecord | null> {
     const lead = await this.findLeadById(scope, leadId);
     if (!lead) return null;
     lead.status = status;
@@ -305,13 +326,19 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return lead;
   }
 
-  async matchLeadToPatient(scope: RepositoryScope, leadId: UUID, patientId: UUID): Promise<LeadRecord | null> {
+  async matchLeadToPatient(
+    scope: RepositoryScope,
+    leadId: UUID,
+    patientId: UUID
+  ): Promise<LeadRecord | null> {
     const lead = await this.findLeadById(scope, leadId);
     if (!lead) return null;
     lead.patientId = patientId;
     lead.status = "matched";
     lead.lastActivityAt = new Date().toISOString();
-    this.timelineItems.push(timeline(scope, patientId, "lead_matched", "leads", leadId, "Lead matched to patient"));
+    this.timelineItems.push(
+      timeline(scope, patientId, "lead_matched", "leads", leadId, "Lead matched to patient")
+    );
     return lead;
   }
 
@@ -328,7 +355,9 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     providerUserId?: UUID | null
   ): Promise<ProviderScheduleRecord[]> {
     return this.providerSchedules.filter(
-      (schedule) => matchesScope(schedule, scope) && (!providerUserId || schedule.providerUserId === providerUserId)
+      (schedule) =>
+        matchesScope(schedule, scope) &&
+        (!providerUserId || schedule.providerUserId === providerUserId)
     );
   }
 
@@ -340,15 +369,23 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       .filter((appointment) => matchesScope(appointment, scope))
       .filter((appointment) => {
         if (filter.date && !appointment.startAt.startsWith(filter.date)) return false;
-        if (filter.providerUserId && appointment.providerUserId !== filter.providerUserId) return false;
+        if (filter.providerUserId && appointment.providerUserId !== filter.providerUserId)
+          return false;
         if (filter.status && appointment.status !== filter.status) return false;
         return true;
       })
       .sort((left, right) => left.startAt.localeCompare(right.startAt));
   }
 
-  async findAppointmentById(scope: RepositoryScope, appointmentId: UUID): Promise<AppointmentRecord | null> {
-    return this.appointments.find((appointment) => matchesScope(appointment, scope) && appointment.id === appointmentId) ?? null;
+  async findAppointmentById(
+    scope: RepositoryScope,
+    appointmentId: UUID
+  ): Promise<AppointmentRecord | null> {
+    return (
+      this.appointments.find(
+        (appointment) => matchesScope(appointment, scope) && appointment.id === appointmentId
+      ) ?? null
+    );
   }
 
   async findAppointmentConflicts(
@@ -362,7 +399,8 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     }
   ): Promise<AppointmentConflict[]> {
     const existing = this.appointments.filter(
-      (appointment) => matchesScope(appointment, scope) && appointment.id !== filter.appointmentIdToExclude
+      (appointment) =>
+        matchesScope(appointment, scope) && appointment.id !== filter.appointmentIdToExclude
     );
 
     return detectAppointmentConflicts(
@@ -376,7 +414,10 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
   }
 
-  async createAppointment(scope: RepositoryScope, input: CreateAppointmentInput): Promise<AppointmentRecord> {
+  async createAppointment(
+    scope: RepositoryScope,
+    input: CreateAppointmentInput
+  ): Promise<AppointmentRecord> {
     const now = new Date().toISOString();
     const appointment: AppointmentRecord = {
       id: uuid(),
@@ -399,7 +440,14 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     this.appointments.push(appointment);
     this.timelineItems.push(
-      timeline(scope, appointment.patientId, "appointment_created", "appointments", appointment.id, "Appointment booked")
+      timeline(
+        scope,
+        appointment.patientId,
+        "appointment_created",
+        "appointments",
+        appointment.id,
+        "Appointment booked"
+      )
     );
     return appointment;
   }
@@ -413,11 +461,39 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     if (!appointment) return null;
     appointment.status = status;
     appointment.updatedAt = new Date().toISOString();
+
+    const timelineType =
+      status === "confirmed"
+        ? "appointment_confirmed"
+        : status === "checked_in"
+          ? "patient_checked_in"
+          : status === "no_show"
+            ? "appointment_no_show"
+            : null;
+
+    if (timelineType) {
+      this.timelineItems.push(
+        timeline(
+          scope,
+          appointment.patientId,
+          timelineType,
+          "appointments",
+          appointment.id,
+          status === "checked_in" ? "Patient checked in" : `Appointment ${status.replace("_", " ")}`
+        )
+      );
+    }
+
     return appointment;
   }
 
-  async createQueueEntry(scope: RepositoryScope, appointment: AppointmentRecord): Promise<QueueEntryRecord> {
-    const existing = this.queueEntries.find((entry) => matchesScope(entry, scope) && entry.appointmentId === appointment.id);
+  async createQueueEntry(
+    scope: RepositoryScope,
+    appointment: AppointmentRecord
+  ): Promise<QueueEntryRecord> {
+    const existing = this.queueEntries.find(
+      (entry) => matchesScope(entry, scope) && entry.appointmentId === appointment.id
+    );
     if (existing) return existing;
 
     const queueEntry: QueueEntryRecord = {
@@ -436,7 +512,14 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     this.queueEntries.push(queueEntry);
     this.timelineItems.push(
-      timeline(scope, appointment.patientId, "patient_checked_in", "queue_entries", queueEntry.id, "Patient checked in")
+      timeline(
+        scope,
+        appointment.patientId,
+        "queue_entry_created",
+        "queue_entries",
+        queueEntry.id,
+        "Queue entry created"
+      )
     );
     return queueEntry;
   }
@@ -447,12 +530,19 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       .sort((left, right) => left.position - right.position);
   }
 
-  async updateQueueEntry(scope: RepositoryScope, queueEntryId: UUID, status: QueueStatus): Promise<QueueEntryRecord | null> {
-    const queueEntry = this.queueEntries.find((entry) => matchesScope(entry, scope) && entry.id === queueEntryId);
+  async updateQueueEntry(
+    scope: RepositoryScope,
+    queueEntryId: UUID,
+    status: QueueStatus
+  ): Promise<QueueEntryRecord | null> {
+    const queueEntry = this.queueEntries.find(
+      (entry) => matchesScope(entry, scope) && entry.id === queueEntryId
+    );
     if (!queueEntry) return null;
     queueEntry.status = status;
     if (status === "called") queueEntry.calledAt = queueEntry.calledAt ?? new Date().toISOString();
-    if (status === "completed") queueEntry.completedAt = queueEntry.completedAt ?? new Date().toISOString();
+    if (status === "completed")
+      queueEntry.completedAt = queueEntry.completedAt ?? new Date().toISOString();
     return queueEntry;
   }
 
@@ -500,6 +590,18 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     };
 
     this.attributionTouches.push(touch);
+    if (touch.patientId) {
+      this.timelineItems.push(
+        timeline(
+          scope,
+          touch.patientId,
+          "attribution_touch_created",
+          "attribution_touches",
+          touch.id,
+          "Attribution touch recorded"
+        )
+      );
+    }
     return touch;
   }
 
@@ -511,12 +613,19 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     const appointments = await this.listAppointments(scope, { date });
     return {
       appointments,
-      leads: this.leads.filter((lead) => matchesScope(lead, scope) && ["new", "contacted", "matched"].includes(lead.status)),
-      tasks: this.tasks.filter((task) => matchesScope(task, scope) && ["open", "in_progress"].includes(task.status)),
+      leads: this.leads.filter(
+        (lead) => matchesScope(lead, scope) && ["new", "contacted", "matched"].includes(lead.status)
+      ),
+      tasks: this.tasks.filter(
+        (task) => matchesScope(task, scope) && ["open", "in_progress"].includes(task.status)
+      ),
       queue: await this.listQueueEntries(scope, date),
       returningPatientIds: new Set(
         this.appointments
-          .filter((appointment) => matchesScope(appointment, scope) && appointment.startAt < `${date}T00:00:00.000Z`)
+          .filter(
+            (appointment) =>
+              matchesScope(appointment, scope) && appointment.startAt < `${date}T00:00:00.000Z`
+          )
           .map((appointment) => appointment.patientId)
       )
     };

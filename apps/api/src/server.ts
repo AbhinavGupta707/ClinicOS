@@ -152,7 +152,11 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
 
       if (request.url?.startsWith("/v1/")) {
         if (!options.operationsRepository) {
-          throw new ApiError(503, "CONFIGURATION_ERROR", "ClinicOS operations repository is not configured.");
+          throw new ApiError(
+            503,
+            "CONFIGURATION_ERROR",
+            "ClinicOS operations repository is not configured."
+          );
         }
 
         const result = await routeOperationsRequest({
@@ -279,13 +283,19 @@ async function routeOperationsRequest(input: {
   const patientMatch = pathname.match(/^\/v1\/patients\/([^/]+)$/);
   if (patientMatch) {
     const patientId = pathUuid(patientMatch[1], "patientId");
-    if (input.request.method === "GET") return getPatient(operationsContext, dependencies, patientId);
-    if (input.request.method === "PATCH") return updatePatient(operationsContext, dependencies, patientId, body);
+    if (input.request.method === "GET")
+      return getPatient(operationsContext, dependencies, patientId);
+    if (input.request.method === "PATCH")
+      return updatePatient(operationsContext, dependencies, patientId, body);
   }
 
   const timelineMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/timeline$/);
   if (timelineMatch && input.request.method === "GET") {
-    return getPatientTimeline(operationsContext, dependencies, pathUuid(timelineMatch[1], "patientId"));
+    return getPatientTimeline(
+      operationsContext,
+      dependencies,
+      pathUuid(timelineMatch[1], "patientId")
+    );
   }
 
   if (input.request.method === "GET" && pathname === "/v1/leads") {
@@ -301,17 +311,32 @@ async function routeOperationsRequest(input: {
 
   const leadMatchPatientMatch = pathname.match(/^\/v1\/leads\/([^/]+)\/match-patient$/);
   if (leadMatchPatientMatch && input.request.method === "POST") {
-    return matchLeadToPatient(operationsContext, dependencies, pathUuid(leadMatchPatientMatch[1], "leadId"), body);
+    return matchLeadToPatient(
+      operationsContext,
+      dependencies,
+      pathUuid(leadMatchPatientMatch[1], "leadId"),
+      body
+    );
   }
 
   const leadConvertMatch = pathname.match(/^\/v1\/leads\/([^/]+)\/convert-to-appointment$/);
   if (leadConvertMatch && input.request.method === "POST") {
-    return convertLeadToAppointment(operationsContext, dependencies, pathUuid(leadConvertMatch[1], "leadId"), body);
+    return convertLeadToAppointment(
+      operationsContext,
+      dependencies,
+      pathUuid(leadConvertMatch[1], "leadId"),
+      body
+    );
   }
 
   const leadStatusMatch = pathname.match(/^\/v1\/leads\/([^/]+)\/status$/);
   if (leadStatusMatch && input.request.method === "PATCH") {
-    return updateLeadStatus(operationsContext, dependencies, pathUuid(leadStatusMatch[1], "leadId"), body);
+    return updateLeadStatus(
+      operationsContext,
+      dependencies,
+      pathUuid(leadStatusMatch[1], "leadId"),
+      body
+    );
   }
 
   if (input.request.method === "GET" && pathname === "/v1/appointments") {
@@ -335,40 +360,74 @@ async function routeOperationsRequest(input: {
   }
 
   if (input.request.method === "GET" && pathname === "/v1/provider-schedules") {
-    return listProviderSchedules(operationsContext, dependencies, url.searchParams.get("providerId"));
+    return listProviderSchedules(
+      operationsContext,
+      dependencies,
+      url.searchParams.get("providerId")
+    );
   }
 
   const appointmentPatchMatch = pathname.match(/^\/v1\/appointments\/([^/]+)$/);
   if (appointmentPatchMatch && input.request.method === "PATCH") {
-    return updateAppointment(operationsContext, dependencies, pathUuid(appointmentPatchMatch[1], "appointmentId"), body);
+    return updateAppointment(
+      operationsContext,
+      dependencies,
+      pathUuid(appointmentPatchMatch[1], "appointmentId"),
+      body
+    );
   }
 
   const appointmentConfirmMatch = pathname.match(/^\/v1\/appointments\/([^/]+)\/confirm$/);
   if (appointmentConfirmMatch && input.request.method === "POST") {
-    return confirmAppointment(operationsContext, dependencies, pathUuid(appointmentConfirmMatch[1], "appointmentId"));
+    return confirmAppointment(
+      operationsContext,
+      dependencies,
+      pathUuid(appointmentConfirmMatch[1], "appointmentId")
+    );
   }
 
   const appointmentCheckInMatch = pathname.match(/^\/v1\/appointments\/([^/]+)\/check-in$/);
   if (appointmentCheckInMatch && input.request.method === "POST") {
-    return checkInAppointment(operationsContext, dependencies, pathUuid(appointmentCheckInMatch[1], "appointmentId"));
+    return checkInAppointment(
+      operationsContext,
+      dependencies,
+      pathUuid(appointmentCheckInMatch[1], "appointmentId")
+    );
   }
 
   const appointmentNoShowMatch = pathname.match(/^\/v1\/appointments\/([^/]+)\/mark-no-show$/);
   if (appointmentNoShowMatch && input.request.method === "POST") {
-    return markAppointmentNoShow(operationsContext, dependencies, pathUuid(appointmentNoShowMatch[1], "appointmentId"));
+    return markAppointmentNoShow(
+      operationsContext,
+      dependencies,
+      pathUuid(appointmentNoShowMatch[1], "appointmentId")
+    );
   }
 
   if (input.request.method === "GET" && pathname === "/v1/queue") {
-    return listQueue(operationsContext, dependencies, url.searchParams.get("date") ?? todayIsoDate());
+    return listQueue(
+      operationsContext,
+      dependencies,
+      url.searchParams.get("date") ?? todayIsoDate()
+    );
   }
 
   const queuePatchMatch = pathname.match(/^\/v1\/queue\/([^/]+)$/);
   if (queuePatchMatch && input.request.method === "PATCH") {
-    return updateQueueEntry(operationsContext, dependencies, pathUuid(queuePatchMatch[1], "queueEntryId"), body);
+    return updateQueueEntry(
+      operationsContext,
+      dependencies,
+      pathUuid(queuePatchMatch[1], "queueEntryId"),
+      body
+    );
   }
 
   if (input.request.method === "GET" && pathname === "/v1/dashboard/morning") {
-    return getMorningDashboard(operationsContext, dependencies, url.searchParams.get("date") ?? todayIsoDate());
+    return getMorningDashboard(
+      operationsContext,
+      dependencies,
+      url.searchParams.get("date") ?? todayIsoDate()
+    );
   }
 
   throw new ApiError(404, "NOT_FOUND", "Route not found.", {
@@ -403,9 +462,14 @@ async function resolveAccessContext(input: {
   const snapshot = await input.identityRepository.findAccessByKeycloakSubject(principal.subject);
 
   if (!snapshot) {
-    throw new ApiError(403, "PERMISSION_DENIED", "Authenticated identity is not registered for ClinicOS.", {
-      reason: "identity_not_registered"
-    });
+    throw new ApiError(
+      403,
+      "PERMISSION_DENIED",
+      "Authenticated identity is not registered for ClinicOS.",
+      {
+        reason: "identity_not_registered"
+      }
+    );
   }
 
   return buildAccessContext({
@@ -459,6 +523,7 @@ function resolveClaims(input: {
   if (input.useLocalAuthFixture) {
     const subject =
       headerValue(input.request, "x-clinic-os-dev-subject") ??
+      headerValue(input.request, "x-clinicos-dev-subject") ??
       input.fixtureSubject ??
       "seed-assistant";
 

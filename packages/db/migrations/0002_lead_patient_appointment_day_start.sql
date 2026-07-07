@@ -97,11 +97,13 @@ create table if not exists patient_timeline_items (
   item_type text not null check (
     item_type in (
       'patient_created',
+      'attribution_touch_created',
       'lead_created',
       'lead_matched',
       'appointment_created',
       'appointment_confirmed',
       'patient_checked_in',
+      'queue_entry_created',
       'appointment_no_show',
       'task_created'
     )

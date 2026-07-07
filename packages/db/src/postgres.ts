@@ -47,7 +47,10 @@ export interface SqlQueryResult<T = Record<string, unknown>> {
 }
 
 export interface SqlQueryClient {
-  query<T = Record<string, unknown>>(sql: string, values?: readonly unknown[]): Promise<SqlQueryResult<T>>;
+  query<T = Record<string, unknown>>(
+    sql: string,
+    values?: readonly unknown[]
+  ): Promise<SqlQueryResult<T>>;
   release?(): void;
 }
 
@@ -263,7 +266,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     this.#client = client;
   }
 
-  async listPatients(scope: RepositoryScope, filter: PatientSearchFilter = {}): Promise<PatientRecord[]> {
+  async listPatients(
+    scope: RepositoryScope,
+    filter: PatientSearchFilter = {}
+  ): Promise<PatientRecord[]> {
     return this.#withRls(scope, async (client) => {
       const values: unknown[] = [scope.tenantId, scope.clinicId];
       const where = ["tenant_id = $1", "clinic_id = $2"];
@@ -275,7 +281,9 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
 
       if (filter.phone) {
         values.push(normalizePhone(filter.phone));
-        where.push(`regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = regexp_replace($${values.length}, '\\D', '', 'g')`);
+        where.push(
+          `regexp_replace(coalesce(phone, ''), '\\D', '', 'g') = regexp_replace($${values.length}, '\\D', '', 'g')`
+        );
       }
 
       if (filter.source) {
@@ -315,7 +323,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async findPatientTimeline(scope: RepositoryScope, patientId: UUID): Promise<PatientTimelineItem[]> {
+  async findPatientTimeline(
+    scope: RepositoryScope,
+    patientId: UUID
+  ): Promise<PatientTimelineItem[]> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<PatientTimelineRow>(
         `
@@ -409,7 +420,15 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           )
           values ($1, $2, $3, 'phone', $4, $5, true, $6, $7)
         `,
-        [scope.tenantId, scope.clinicId, patient.id, input.phone, normalizePhone(input.phone), input.source, scope.actorUserId]
+        [
+          scope.tenantId,
+          scope.clinicId,
+          patient.id,
+          input.phone,
+          normalizePhone(input.phone),
+          input.source,
+          scope.actorUserId
+        ]
       );
 
       await this.#appendTimeline(client, scope, {
@@ -426,7 +445,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async updatePatient(scope: RepositoryScope, patientId: UUID, input: UpdatePatientInput): Promise<PatientRecord | null> {
+  async updatePatient(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: UpdatePatientInput
+  ): Promise<PatientRecord | null> {
     return this.#withRls(scope, async (client) => {
       const existing = await this.#findPatientByIdInTransaction(client, scope, patientId);
       if (!existing) return null;
@@ -493,7 +516,9 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
   }
 
   async findLeadById(scope: RepositoryScope, leadId: UUID): Promise<LeadRecord | null> {
-    return this.#withRls(scope, async (client) => this.#findLeadByIdInTransaction(client, scope, leadId));
+    return this.#withRls(scope, async (client) =>
+      this.#findLeadByIdInTransaction(client, scope, leadId)
+    );
   }
 
   async createLead(scope: RepositoryScope, input: CreateLeadInput): Promise<LeadRecord> {
@@ -530,7 +555,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async updateLeadStatus(scope: RepositoryScope, leadId: UUID, status: LeadRecord["status"]): Promise<LeadRecord | null> {
+  async updateLeadStatus(
+    scope: RepositoryScope,
+    leadId: UUID,
+    status: LeadRecord["status"]
+  ): Promise<LeadRecord | null> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<LeadRow>(
         `
@@ -546,7 +575,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async matchLeadToPatient(scope: RepositoryScope, leadId: UUID, patientId: UUID): Promise<LeadRecord | null> {
+  async matchLeadToPatient(
+    scope: RepositoryScope,
+    leadId: UUID,
+    patientId: UUID
+  ): Promise<LeadRecord | null> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<LeadRow>(
         `
@@ -606,7 +639,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async listProviderSchedules(scope: RepositoryScope, providerUserId?: UUID | null): Promise<ProviderScheduleRecord[]> {
+  async listProviderSchedules(
+    scope: RepositoryScope,
+    providerUserId?: UUID | null
+  ): Promise<ProviderScheduleRecord[]> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<ProviderScheduleRow>(
         `
@@ -624,7 +660,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async listAppointments(scope: RepositoryScope, filter: AppointmentSearchFilter = {}): Promise<AppointmentRecord[]> {
+  async listAppointments(
+    scope: RepositoryScope,
+    filter: AppointmentSearchFilter = {}
+  ): Promise<AppointmentRecord[]> {
     return this.#withRls(scope, async (client) => {
       const values: unknown[] = [scope.tenantId, scope.clinicId];
       const where = ["tenant_id = $1", "clinic_id = $2"];
@@ -657,7 +696,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async findAppointmentById(scope: RepositoryScope, appointmentId: UUID): Promise<AppointmentRecord | null> {
+  async findAppointmentById(
+    scope: RepositoryScope,
+    appointmentId: UUID
+  ): Promise<AppointmentRecord | null> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<AppointmentRow>(
         `
@@ -736,7 +778,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async createAppointment(scope: RepositoryScope, input: CreateAppointmentInput): Promise<AppointmentRecord> {
+  async createAppointment(
+    scope: RepositoryScope,
+    input: CreateAppointmentInput
+  ): Promise<AppointmentRecord> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<AppointmentRow>(
         `
@@ -792,7 +837,14 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           )
           values ($1, $2, $3, null, $4, $5, $6)
         `,
-        [scope.tenantId, scope.clinicId, appointment.id, appointment.status, scope.actorUserId, "appointment_created"]
+        [
+          scope.tenantId,
+          scope.clinicId,
+          appointment.id,
+          appointment.status,
+          scope.actorUserId,
+          "appointment_created"
+        ]
       );
 
       await this.#appendTimeline(client, scope, {
@@ -802,7 +854,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         sourceId: appointment.id,
         title: "Appointment booked",
         summary: appointment.reason,
-        metadata: { appointmentId: appointment.id, source: appointment.source, startAt: appointment.startAt }
+        metadata: {
+          appointmentId: appointment.id,
+          source: appointment.source,
+          startAt: appointment.startAt
+        }
       });
 
       return appointment;
@@ -843,7 +899,15 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           )
           values ($1, $2, $3, $4, $5, $6, $7)
         `,
-        [scope.tenantId, scope.clinicId, appointment.id, existing.status, status, scope.actorUserId, reason ?? null]
+        [
+          scope.tenantId,
+          scope.clinicId,
+          appointment.id,
+          existing.status,
+          status,
+          scope.actorUserId,
+          reason ?? null
+        ]
       );
 
       const timelineType =
@@ -861,7 +925,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           itemType: timelineType,
           sourceTable: "appointments",
           sourceId: appointment.id,
-          title: status === "checked_in" ? "Patient checked in" : `Appointment ${status.replace("_", " ")}`,
+          title:
+            status === "checked_in"
+              ? "Patient checked in"
+              : `Appointment ${status.replace("_", " ")}`,
           summary: reason ?? null,
           metadata: { appointmentId: appointment.id, status }
         });
@@ -871,7 +938,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async createQueueEntry(scope: RepositoryScope, appointment: AppointmentRecord): Promise<QueueEntryRecord> {
+  async createQueueEntry(
+    scope: RepositoryScope,
+    appointment: AppointmentRecord
+  ): Promise<QueueEntryRecord> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<QueueEntryRow>(
         `
@@ -913,7 +983,19 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         ]
       );
 
-      return mapQueueEntryRow(result.rows[0]);
+      const queueEntry = mapQueueEntryRow(result.rows[0]);
+
+      await this.#appendTimeline(client, scope, {
+        patientId: queueEntry.patientId,
+        itemType: "queue_entry_created",
+        sourceTable: "queue_entries",
+        sourceId: queueEntry.id,
+        title: "Queue entry created",
+        summary: null,
+        metadata: { appointmentId: queueEntry.appointmentId, status: queueEntry.status }
+      });
+
+      return queueEntry;
     });
   }
 
@@ -932,7 +1014,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async updateQueueEntry(scope: RepositoryScope, queueEntryId: UUID, status: QueueStatus): Promise<QueueEntryRecord | null> {
+  async updateQueueEntry(
+    scope: RepositoryScope,
+    queueEntryId: UUID,
+    status: QueueStatus
+  ): Promise<QueueEntryRecord | null> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<QueueEntryRow>(
         `
@@ -1033,7 +1119,26 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         ]
       );
 
-      return mapAttributionTouchRow(result.rows[0]);
+      const touch = mapAttributionTouchRow(result.rows[0]);
+
+      if (touch.patientId) {
+        await this.#appendTimeline(client, scope, {
+          patientId: touch.patientId,
+          itemType: "attribution_touch_created",
+          sourceTable: "attribution_touches",
+          sourceId: touch.id,
+          title: "Attribution touch recorded",
+          summary: `${touch.source} ${touch.touchType.replace("_", " ")}`,
+          metadata: {
+            leadId: touch.leadId,
+            appointmentId: touch.appointmentId,
+            source: touch.source,
+            touchType: touch.touchType
+          }
+        });
+      }
+
+      return touch;
     });
   }
 
@@ -1149,7 +1254,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async #withRls<T>(scope: RepositoryScope, callback: (client: SqlQueryClient) => Promise<T>): Promise<T> {
+  async #withRls<T>(
+    scope: RepositoryScope,
+    callback: (client: SqlQueryClient) => Promise<T>
+  ): Promise<T> {
     return withTransaction(this.#client, async (client) => {
       for (const statement of buildSetLocalRlsStatements({
         tenantId: scope.tenantId,

@@ -16,8 +16,9 @@ describe("CP2 frontend workflow", () => {
   it("activates assistant navigation for checkpoint 2 workflow surfaces", () => {
     const visible = getVisibleSurfaces(["assistant"]);
 
-    expect(visible.filter((surface) => surface.availability === "active").map((surface) => surface.id))
-      .toEqual(expect.arrayContaining(["today", "lead-inbox", "appointments", "patients"]));
+    expect(
+      visible.filter((surface) => surface.availability === "active").map((surface) => surface.id)
+    ).toEqual(expect.arrayContaining(["today", "lead-inbox", "appointments", "patients"]));
     expect(getSurface("lead-inbox").requiredApis).toContain(
       "POST /v1/leads/{id}/convert-to-appointment"
     );
@@ -40,11 +41,11 @@ describe("CP2 frontend workflow", () => {
   it("formats duplicate patient suggestions with match reason", () => {
     const data = createFixtureWorkflowData("2026-07-07");
     const suggestions = findDuplicateSuggestions(data.patients, {
-      phone: "+910000000101"
+      phone: "+919900001001"
     });
     const displayText = duplicateSuggestionDisplayText(suggestions[0]!);
 
-    expect(suggestions[0]?.patient.displayName).toBe("Synthetic Returning Patient");
+    expect(suggestions[0]?.patient.displayName).toBe("Riya Synthetic");
     expect(displayText).toContain("matched by phone");
   });
 
@@ -67,13 +68,22 @@ describe("CP2 frontend workflow", () => {
 
   it("transforms dashboard and queue state after check-in", () => {
     const data = createFixtureWorkflowData("2026-07-07");
-    const checkedIn = applyFixtureCheckInAppointment(data, "fixture-appointment-unconfirmed");
+    const created = applyFixtureCreateLead(data, {
+      contactName: "Ira Synthetic",
+      messageSnippet: "Synthetic Google profile lead requesting a new patient visit.",
+      phone: "+919900001002",
+      source: "google"
+    });
+    const checkedIn = applyFixtureCheckInAppointment(
+      created.data,
+      "returningPatientUnconfirmedAppointment"
+    );
     const summary = summarizeDashboard(checkedIn);
 
     expect(summary.checkedIn).toBe(1);
     expect(checkedIn.queue.map((entry) => entry.appointmentId)).toContain(
-      "fixture-appointment-unconfirmed"
+      "returningPatientUnconfirmedAppointment"
     );
-    expect(summary.queueWaiting).toBeGreaterThanOrEqual(2);
+    expect(summary.queueWaiting).toBe(1);
   });
 });

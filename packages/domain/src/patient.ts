@@ -49,11 +49,13 @@ export interface PatientContactRecord {
 
 export type PatientTimelineItemType =
   | "patient_created"
+  | "attribution_touch_created"
   | "lead_created"
   | "lead_matched"
   | "appointment_created"
   | "appointment_confirmed"
   | "patient_checked_in"
+  | "queue_entry_created"
   | "appointment_no_show"
   | "task_created";
 
@@ -115,7 +117,10 @@ export function normalizePhone(value: string): string {
   return digits;
 }
 
-export function assertPatientCreateMinimum(input: { fullName?: string | null; phone?: string | null }): void {
+export function assertPatientCreateMinimum(input: {
+  fullName?: string | null;
+  phone?: string | null;
+}): void {
   if (!input.fullName?.trim()) {
     throw new Error("Patient fullName is required.");
   }
@@ -165,7 +170,10 @@ export function buildPatientDuplicateSuggestions(
       };
     })
     .filter((candidate) => candidate.reasons.length > 0)
-    .sort((left, right) => right.score - left.score || left.patient.fullName.localeCompare(right.patient.fullName));
+    .sort(
+      (left, right) =>
+        right.score - left.score || left.patient.fullName.localeCompare(right.patient.fullName)
+    );
 }
 
 function nameTokensOverlap(left: string, right: string): boolean {
