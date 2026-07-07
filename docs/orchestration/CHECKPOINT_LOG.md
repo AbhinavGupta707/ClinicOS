@@ -19,16 +19,16 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Node/npm: Node `v22.22.2`, npm `10.9.7`.
 - Browser/mobile tooling: Playwright CLI `1.61.1` and Expo CLI `57.0.4` resolve with approved npm network access; Xcode `26.4` is installed.
 - GitHub CLI: `gh auth status` reports the local token for `AbhinavGupta707` is invalid. GitHub push/Actions checks are a live verification gap until reauthenticated.
-- AWS: `aws sts get-caller-identity` did not authenticate in the sandboxed run. Cloud apply/live AWS checks are a gap until AWS SSO or temporary credentials are available.
-- Live provider credentials for WhatsApp, Razorpay, telephony, AI transcription/LLM, Google Business Profile, and ABDM are not present. Later checkpoints should use contract simulators unless live credentials become available.
+- AWS: initial sandboxed `aws sts get-caller-identity` did not authenticate; subsequent local setup authenticated the `clinicos` profile and recorded backend bucket/lock table names only in `.secrets/orchestration.env`.
+- Live provider credentials for WhatsApp and Razorpay sandbox are now partly present locally per `clinic_os_specs_v2/22_CREDENTIAL_SETUP_GUIDE.md`, but dashboard webhook registration must wait for deployed HTTPS callbacks with signature verification. Later checkpoints should keep simulator providers unless the checkpoint explicitly owns live-provider activation.
 
 ## Checkpoints
 
-| Checkpoint                             | Status    |     Base commit | Result commit | Notes                                                                                                                                                                                                                                                                          |
-| -------------------------------------- | --------- | --------------: | ------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0 - Git and orchestration preflight    | Complete  | repository root |   `main` HEAD | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured and pushed.                                                                                                                                                 |
-| 1 - Production platform foundation     | Complete  |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
-| 2 - Lead/patient/appointment/day-start | Launching |       `5fe65da` |       pending | CP2 launch packet created with visible project-scoped worktree lanes, repo-local Playwright preflight, shared-file policy, and integration-branch requirement.                                                                                                                 |
+| Checkpoint                             | Status   |     Base commit | Result commit | Notes                                                                                                                                                                                                                                                                          |
+| -------------------------------------- | -------- | --------------: | ------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0 - Git and orchestration preflight    | Complete | repository root |   `main` HEAD | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured and pushed.                                                                                                                                                 |
+| 1 - Production platform foundation     | Complete |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
+| 2 - Lead/patient/appointment/day-start | Complete |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -72,3 +72,28 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Contracts/Events: `019f39b0-703a-71b3-b15b-60cd2e4fb85c`, `/Users/abhinavgupta/.codex/worktrees/df37/ClinicOS`.
   - Frontend Workflow: `019f39b0-7027-7ed3-a1c5-b4a8bc5db4b6`, `/Users/abhinavgupta/.codex/worktrees/3ed5/ClinicOS`.
   - QA/Fixtures: `019f39b0-7036-75c3-8a75-85b0d8b93861`, `/Users/abhinavgupta/.codex/worktrees/14f1/ClinicOS`.
+
+## Checkpoint 2 Closeout - 2026-07-07
+
+- Detailed evidence: `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md`.
+- Integration branch: `codex/integration/checkpoint-2`.
+- Verified code commit: `58bf864`.
+- Closeout docs commit: `docs: record checkpoint 2 verification`.
+- Merge order:
+  - Backend/Data: `9d5a353` merged `bed1192`.
+  - Contracts/Events: `ac14dab` merged `a2eadf6`.
+  - Frontend Workflow: `6618581` merged `2fa6b1c`.
+  - QA/Fixtures: `5a5c419` merged `a945d3c`.
+  - Lockfile reconciliation: `07d32c0`.
+  - Master integration fixes: `cd120bc`, `58bf864`.
+- Full checks passed: `npm run check`, `npm run typecheck`, `npm run lint`, `npm run test`, `npm run build`.
+- CP2 checks passed: `node scripts/validate-cp2-fixtures.mjs`, `node --test tests/acceptance/*.test.mjs`, `node scripts/cp2-contract-smoke.mjs --dry-run`.
+- Security checks passed: `npm run security:secrets`, `npm run security:audit` high-severity gate, and `git diff --check`. Moderate advisories remain in upstream Next/PostCSS, Temporal/protobufjs, and Expo/xcode/uuid paths.
+- Live API smoke passed on `127.0.0.1:4100` with local dev fixture auth for lead capture, patient match/create, appointment conversion, confirmation, check-in, queue/dashboard reads, patient timeline evidence, accountant/doctor denials, and cross-tenant isolation denials.
+- Browser smoke passed: `CLINICOS_CP2_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000 npx playwright test tests/e2e/checkpoint-2-assistant-flow.spec.ts`.
+- Browser evidence:
+  - Desktop: `/private/tmp/clinicos-cp2-web-desktop.png`.
+  - Mobile 390px: `/private/tmp/clinicos-cp2-web-mobile-390.png`.
+- Accepted gaps:
+  - Live audit API probe is skipped until an audit read endpoint is merged; audit append and classification are covered by backend/security tests.
+  - Browser accountant role smoke needs role-specific storage state files; API accountant denial passed and the web client now hides patient-create controls for profiles without patient-write roles.

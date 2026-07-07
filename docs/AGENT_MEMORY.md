@@ -1,15 +1,15 @@
 # ClinicOS Agent Memory
 
-Last updated: 2026-07-06
+Last updated: 2026-07-07
 
 This file captures durable execution memory for future Codex sessions. Treat `clinic_os_specs_v2/` as the product source of truth and this file as operational memory about how to work in this repository.
 
 ## Current Orchestration State
 
-- Branch: `main`.
+- Branch: `main` after verified Checkpoint 2 promotion.
 - Checkpoint 1 code is complete through `be619cd`.
-- Post-CP1 documentation and orchestration memory are recorded in `docs/orchestration/CHECKPOINT_LOG.md` and this file.
-- Checkpoint 2 must start from the latest clean `main` after a fresh preflight.
+- Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`. After promotion, Checkpoint 3 should start from the latest clean `main`.
+- CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
 - CP1 worker lanes were real Codex-managed worktrees under `.codex/worktrees`.
 - A project-scoped worktree thread test succeeded: `target.type = "project"`, `projectId = "/Users/abhinavgupta/Desktop/ClinicOS"`, and `environment.type = "worktree"` made the worker visible under the `ClinicOS` project in the Codex sidebar.
 
@@ -62,6 +62,15 @@ For CP2 and later:
 - Keep `main` as the last verified checkpoint until integration gates pass.
 
 Follow `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
+
+## CP2 Integration Lessons
+
+- Live local smoke must use the same actor header spelling as the API fixture adapter. Prefer sending `X-Clinic-OS-Dev-Subject`; the server also accepts the legacy `X-ClinicOS-Dev-Subject` spelling for local/test robustness.
+- Live smoke fixtures must carry runtime IDs from API responses. Do not fall back to deterministic fixture UUIDs when the local fixture repository creates runtime UUIDs.
+- If a live-local smoke creates new patients, use per-run unique contact/name data so repeat smoke attempts do not poison the no-match branch.
+- Timeline APIs should expose public categories and dotted event types, while storage projections may use internal enum names. Keep audit/outbox event evidence separate from patient timeline projection evidence.
+- For browser E2E, keep route registration, canonical fixture keys, and `data-testid` selectors aligned with the QA fixture. Diagnose missing UI by registration/route first, then runtime.
+- Client-side role visibility should match backend permissions. Hiding controls is not a substitute for API authorization, but browser smoke should not show patient-create controls for accountant profiles.
 
 ## Shared-File Mistakes To Avoid
 

@@ -52,6 +52,28 @@ Assistant can capture a source-attributed lead, match or create a patient, book 
 5. Master integration patch on `codex/integration/checkpoint-2`
 6. Verified promotion to `main`
 
+## Integration Result
+
+- Integration branch: `codex/integration/checkpoint-2`.
+- Verified code commit: `58bf864`.
+- Lane merge commits:
+  - Backend/Data: `9d5a353` merged `bed1192`.
+  - Contracts/Events: `ac14dab` merged `a2eadf6`.
+  - Frontend Workflow: `6618581` merged `2fa6b1c`.
+  - QA/Fixtures: `5a5c419` merged `a945d3c`.
+- Lockfile reconciliation: `07d32c0`.
+- Master integration fixes:
+  - `cd120bc` closed source-lead patient creation and live smoke harness gaps.
+  - `58bf864` aligned CP2 timeline projection, local-dev actor headers, route registration, web fixture selectors, duplicate suggestion de-duping, and browser workflow role visibility.
+
+## Integration Fixes
+
+- `createPatient` now accepts a source `leadId`, validates the source lead, matches it to the created patient, records attribution touch linkage, audits `lead.matched_to_patient`, and emits a matching outbox event before lead conversion.
+- Patient timeline projection now includes attribution-touch and queue-entry timeline entries, maps storage projection types to public API categories, and returns dotted event types for timeline evidence.
+- Local dev fixture auth now accepts the ClinicOS dev-subject header spelling used by the smoke harness, preventing silent fallback to the assistant actor during role-denial checks.
+- The CP2 live smoke now adapts only local/test seed data, carries runtime IDs from API responses, uses unique per-run new-patient data, aligns queue/dashboard service dates, and verifies accountant/doctor/wrong-tenant denials.
+- The web workflow now registers `/surface/day-start` as a canonical alias for `today`, uses canonical CP2 scenario IDs/names, exposes stable QA selectors, de-dupes duplicate suggestions, clears stale selected-patient state when changing leads, and hides patient-create controls from roles without patient-write access.
+
 ## Verification Plan
 
 - Lane-level checks before merge: focused typecheck/lint/test/build for changed packages.
@@ -74,3 +96,42 @@ Assistant can capture a source-attributed lead, match or create a patient, book 
 - Queue/check-in updates are visible in API and UI.
 - Morning dashboard reflects current appointments, unconfirmed appointments, lead tasks, and queue state.
 - Tests and browser evidence are recorded in this document and `CHECKPOINT_LOG.md`.
+
+## Verification Evidence
+
+- Local stack: `npm run local:ps` showed Postgres and Redis healthy, with Temporal, Temporal UI, and Keycloak running.
+- Full code gates passed:
+  - `npm run check`
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run test`
+  - `npm run build`
+- Fixture and acceptance gates passed:
+  - `node scripts/validate-cp2-fixtures.mjs`
+  - `node --test tests/acceptance/*.test.mjs`
+  - `node scripts/cp2-contract-smoke.mjs --dry-run`
+- Security gates passed:
+  - `npm run security:secrets`
+  - `npm run security:audit` with high-severity gate; remaining advisories are moderate in upstream Next/PostCSS, Temporal/protobufjs, and Expo/xcode/uuid paths.
+  - `git diff --check`
+- Live API smoke passed against `http://127.0.0.1:4100` with `CLINIC_OS_API_USE_DEV_AUTH_FIXTURE=true`:
+  - capture WhatsApp returning lead
+  - match returning patient
+  - capture Google lead
+  - create patient from lead
+  - convert lead to appointment
+  - confirm appointment
+  - check in patient
+  - read queue and morning dashboard
+  - read patient timeline with patient, attribution, appointment, check-in, and queue event evidence
+  - deny accountant patient create, doctor appointment create, cross-tenant patient create, and wrong-tenant schedule read
+- Browser/user checks passed:
+  - `CLINICOS_CP2_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000 npx playwright test tests/e2e/checkpoint-2-assistant-flow.spec.ts`
+  - Desktop evidence: `/private/tmp/clinicos-cp2-web-desktop.png`
+  - Mobile 390px evidence: `/private/tmp/clinicos-cp2-web-mobile-390.png`
+
+## Accepted Gaps
+
+- The audit read API is not a CP2 shipped workflow, so the live smoke logs `skip audit API probe; set CLINICOS_CP2_AUDIT_API_PATH after audit read endpoint is merged.` CP2 audit behavior is covered by repository/unit/security tests and outbox/audit append checks.
+- Playwright accountant browser smoke remains skipped until role-specific storage state files are supplied. API-level accountant denial passed in the live smoke, and the web client now hides patient-create controls when the profile lacks patient-write roles.
+- Live external provider checks remain simulator-backed for CP2. Real WhatsApp/Razorpay/webhook registration belongs to later integration/deployment checkpoints after deployed HTTPS callbacks exist.

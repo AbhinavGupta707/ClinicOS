@@ -1,7 +1,7 @@
 # 22 - Credential Setup Guide
 
-**Date:** 2026-07-06  
-**Status:** Pre-orchestration guide  
+**Date:** 2026-07-07
+**Status:** Live local setup tracker and pre-orchestration guide
 **Purpose:** Give the autonomous implementation run a concrete, provider-by-provider credential handoff path without committing secrets.
 
 ## 1. Local Secret File
@@ -22,7 +22,7 @@ Never commit the real `.secrets/orchestration.env` file.
 
 ## 2. Verified Local Execution Surface
 
-Verified on 2026-07-06:
+Verified through 2026-07-07:
 
 | Surface | Status | Notes |
 |---|---|---|
@@ -35,7 +35,12 @@ Verified on 2026-07-06:
 | Expo CLI | Available | `npx --yes expo --version` resolved `57.0.4`; actual Expo app setup belongs in the mobile checkpoint. |
 | Xcode | Ready | Xcode `26.4`. |
 | iOS simulators | Ready | iOS `26.4` simulators are available; XcodeBuildMCP project/scheme defaults will be configured after an app exists. |
-| AWS CLI | Installed, not authenticated | AWS CLI `2.35.11`; current session is expired and needs reauthentication before infra apply. |
+| AWS CLI | Ready | AWS CLI `2.35.11`; local `clinicos` profile is authenticated. |
+| AWS Terraform backend | Ready | S3 state bucket and DynamoDB lock table are created in `ap-south-1`; names are stored only in `.secrets/orchestration.env`. |
+| AWS cost controls | Ready for alerts | AWS Budgets near-zero alert is configured. This warns on spend; it is not a hard usage stop and cannot guarantee credits are used before card billing in every AWS billing path. |
+| Razorpay sandbox API | Ready | Test key ID and secret are present locally and API auth has been verified. |
+| Razorpay webhook secret | Ready locally | Secret is generated and stored locally; dashboard webhook URL must wait for a deployed HTTPS API endpoint. |
+| Meta WhatsApp sandbox | Mostly ready | App ID, phone number ID, WABA ID, access token, and verify token are present locally; app secret capture still requires Meta password confirmation. |
 
 ## 3. Razorpay Sandbox
 
@@ -70,6 +75,12 @@ RAZORPAY_WEBHOOK_URL=https://.../webhooks/razorpay
 
 Keep `PAYMENT_PROVIDER=simulator` until sandbox credentials are ready.
 
+Current local status:
+
+- Test API credentials are present in `.secrets/orchestration.env`.
+- `RAZORPAY_WEBHOOK_SECRET` is present in `.secrets/orchestration.env`.
+- `RAZORPAY_WEBHOOK_URL` should remain empty until the API has a public HTTPS endpoint that preserves the raw request body and verifies Razorpay webhook signatures.
+
 ## 4. WhatsApp / Meta / BSP
 
 Best default for ClinicOS:
@@ -103,6 +114,13 @@ WHATSAPP_WEBHOOK_APP_SECRET_PROOF_REQUIRED=false
 ```
 
 Keep `WHATSAPP_PROVIDER=simulator` until sandbox credentials are ready.
+
+Current local status:
+
+- Meta Cloud API sandbox identifiers and access token are present in `.secrets/orchestration.env`.
+- `WHATSAPP_WEBHOOK_VERIFY_TOKEN` is present in `.secrets/orchestration.env`.
+- `WHATSAPP_APP_SECRET` still needs to be captured after Meta password confirmation.
+- Do not configure the Meta webhook callback URL until the API has a public HTTPS endpoint that supports Meta verification challenge handling and signed webhook processing.
 
 ## 5. AWS
 
@@ -150,7 +168,35 @@ AWS_SESSION_TOKEN=...
 
 Infra apply should not run until `aws sts get-caller-identity` succeeds.
 
-## 6. AI Providers
+Current local status:
+
+- `aws sts get-caller-identity --profile clinicos` has succeeded.
+- Terraform backend bucket and lock table values are present in `.secrets/orchestration.env`.
+- Use the `clinicos` profile for local infrastructure commands unless the checkpoint run deliberately switches to GitHub Actions OIDC.
+
+## 6. Webhook Registration Readiness
+
+The provider dashboards should not be connected to webhook URLs until the product exposes deployed HTTPS callbacks with production-grade verification. The routes specified for the implementation checkpoints are:
+
+```text
+POST /v1/webhooks/whatsapp/{accountId}
+POST /v1/webhooks/razorpay/{accountId}
+```
+
+Required before dashboard registration:
+
+- Public HTTPS API base URL.
+- Raw body preservation before JSON parsing.
+- WhatsApp verification challenge handler using `WHATSAPP_WEBHOOK_VERIFY_TOKEN`.
+- Meta signature/app-secret verification where configured.
+- Razorpay signature verification using `RAZORPAY_WEBHOOK_SECRET`.
+- Raw webhook storage before normalization.
+- Idempotency and replay handling.
+- Provider-state reconciliation before any domain state change such as marking a payment paid.
+
+Until those endpoints exist, local setup should stop at storing the secrets and provider IDs. Dashboard webhook registration belongs in the integration/deployment checkpoints.
+
+## 7. AI Providers
 
 Separate these two concerns:
 
@@ -181,7 +227,7 @@ Until that decision is made:
 TRANSCRIPTION_PROVIDER=simulator
 ```
 
-## 7. Google Business Profile
+## 8. Google Business Profile
 
 Use:
 
@@ -204,7 +250,7 @@ GOOGLE_BUSINESS_PROFILE_LOCATION_ID=...
 
 This is optional for the first autonomous run.
 
-## 8. Telephony
+## 9. Telephony
 
 Use:
 
@@ -230,7 +276,7 @@ TELEPHONY_WEBHOOK_SECRET=...
 
 This is optional for the first autonomous run.
 
-## 9. ABDM
+## 10. ABDM
 
 Use:
 
@@ -254,7 +300,7 @@ ABDM_CM_ID=...
 
 This is optional for the first autonomous run.
 
-## 10. Synthetic Pilot Data
+## 11. Synthetic Pilot Data
 
 Use synthetic data until the clinic explicitly approves real exports.
 
@@ -298,7 +344,7 @@ PILOT_TEMPLATES_DIR=fixtures/synthetic/templates
 PILOT_XRAY_SAMPLE_DIR=fixtures/synthetic/media
 ```
 
-## 11. Source Links
+## 12. Source Links
 
 - Razorpay API keys: `https://razorpay.com/docs/payments/dashboard/account-settings/api-keys/`
 - Razorpay webhooks: `https://razorpay.com/docs/payments/dashboard/account-settings/webhooks/`
