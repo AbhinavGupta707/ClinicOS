@@ -1,8 +1,10 @@
 import {
+  Activity,
   CalendarDays,
   ClipboardCheck,
   ClipboardPenLine,
   CreditCard,
+  DatabaseBackup,
   FileText,
   FileSignature,
   HeartPulse,
@@ -13,6 +15,7 @@ import {
   ListTodo,
   LucideIcon,
   PackageCheck,
+  RotateCcw,
   ShieldCheck,
   UserRoundCheck,
   UsersRound,
@@ -269,6 +272,52 @@ export const SURFACES: SurfaceRegistration[] = [
     roles: ["owner"]
   },
   {
+    availability: "active",
+    checkpoint: 7,
+    description:
+      "Provider health, capability gates, and honest live/sandbox/unavailable integration states.",
+    href: "/surface/integrations",
+    icon: Activity,
+    id: "integrations",
+    label: "Integrations",
+    requiredApis: [
+      "GET /v1/provider-health",
+      "GET /v1/dead-letter-events?status=unreviewed",
+      "GET /v1/migration-batches?status=needs_review"
+    ],
+    roles: ["owner", "assistant"]
+  },
+  {
+    availability: "active",
+    checkpoint: 7,
+    description: "Audited failed-provider event review and replay without fake provider success.",
+    href: "/surface/event-replay",
+    icon: RotateCcw,
+    id: "event-replay",
+    label: "Event replay",
+    requiredApis: [
+      "GET /v1/dead-letter-events?status=unreviewed",
+      "POST /v1/dead-letter-events/{deadLetterEventId}/replay"
+    ],
+    roles: ["owner"]
+  },
+  {
+    availability: "active",
+    checkpoint: 7,
+    description: "CSV migration duplicate review, rejected-row safety, and reviewed commit.",
+    href: "/surface/migration-review",
+    icon: DatabaseBackup,
+    id: "migration-review",
+    label: "Migration review",
+    requiredApis: [
+      "GET /v1/migration-batches?status=needs_review",
+      "GET /v1/migration-batches/{migrationBatchId}",
+      "POST /v1/migration-batches/{migrationBatchId}/conflicts/{conflictId}/resolve",
+      "POST /v1/migration-batches/{migrationBatchId}/commit"
+    ],
+    roles: ["owner"]
+  },
+  {
     availability: "registered_unavailable",
     checkpoint: 1,
     description: "Clinic setup, users, roles, templates, pricebook, and source policy.",
@@ -328,7 +377,11 @@ const SURFACE_ALIASES = new Map<string, string>([
   ["odontogram", "dental-media"],
   ["recalls", "tasks"],
   ["payments", "checkout"],
-  ["day-start", "today"]
+  ["day-start", "today"],
+  ["provider-health", "integrations"],
+  ["integration-ops", "integrations"],
+  ["dead-letter-replay", "event-replay"],
+  ["imports", "migration-review"]
 ]);
 
 export function hasSurface(surfaceId: string) {

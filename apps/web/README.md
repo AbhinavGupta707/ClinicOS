@@ -197,6 +197,40 @@ web read/action helpers and tests pin the CP6 route intent:
 is diagnosed before permissions or runtime behavior. Accountant navigation remains limited to
 billing/accounting surfaces; owner-control is owner-only.
 
+Checkpoint 7 adds a local-only integration ops fixture for provider health, failed-event replay,
+and migration review:
+
+```sh
+NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_USE_CP7_INTEGRATION_OPS_FIXTURE=true \
+NEXT_PUBLIC_CLINIC_OS_ENV=local \
+NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=owner \
+npm run dev --workspace apps/web
+```
+
+The CP7 fixture uses explicitly synthetic, non-PHI integration data behind
+`apps/web/lib/cp7-integration-ops.ts`. WhatsApp is shown as configured/degraded, telephony as
+unavailable, Google as manual/source only, and Razorpay as missing its hosted webhook URL. Dead
+letter replay records reviewed fixture evidence only, and migration commit is blocked until
+duplicate conflicts are resolved.
+
+In live mode the workflow is available through `/surface/integrations`,
+`/surface/event-replay`, `/surface/migration-review`, and the aliases
+`/surface/provider-health`, `/surface/dead-letter-replay`, and `/surface/imports`. The web helpers
+and tests pin the CP7 route-family assumption:
+
+- `GET /v1/provider-health`
+- `GET /v1/dead-letter-events?status=unreviewed`
+- `POST /v1/dead-letter-events/{deadLetterEventId}/replay`
+- `GET /v1/migration-batches?status=needs_review`
+- `GET /v1/migration-batches/{migrationBatchId}`
+- `POST /v1/migration-batches/{migrationBatchId}/conflicts/{conflictId}/resolve`
+- `POST /v1/migration-batches/{migrationBatchId}/commit`
+
+`404` from CP7 route checks is classified as `CP7_ENDPOINT_NOT_REGISTERED`, so registration and
+official activation are checked before permission/runtime debugging. Fixture browser smoke must use
+the explicit CP7 fixture flag and must not be treated as live provider evidence.
+
 ## `/me` contract expectation
 
 Until `packages/api-contracts` owns generated types, the web shell keeps a local mirror in `apps/web/lib/me.ts`. The expected shape is:
