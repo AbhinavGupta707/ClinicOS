@@ -70,3 +70,16 @@ All CP10 lanes were launched as project-scoped Codex worktree threads from `main
 ## Merge Order
 
 Pilot Configuration -> UX Polish -> End-To-End QA -> Operations/Docs -> master integration patch.
+
+## End-To-End QA Lane Evidence
+
+Pending integration review, the End-To-End QA lane owns these CP10 evidence artifacts:
+
+- `fixtures/synthetic/cp10/clinic_day_regression_flow.json`
+- `scripts/validate-cp10-fixtures.mjs`
+- `scripts/cp10-contract-smoke.mjs`
+- `tests/acceptance/cp10-fixture-contract.test.mjs`
+- `tests/e2e/checkpoint-10-clinic-day-flow.spec.ts`
+- `docs/qa/checkpoint-10-end-to-end-qa.md`
+
+The harness is synthetic/local-test only. It covers implemented route families from lead through owner dashboard, verifies role and tenant boundaries, records provider unavailable/no-credential checks, references CP7 migration dry-run and CP9 restore dry-run evidence, and keeps deferred workflows out of passed evidence.
