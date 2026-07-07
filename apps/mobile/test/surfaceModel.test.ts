@@ -1,21 +1,27 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  getActiveCaptureSurfaces,
   getAvailableMobileSurfaces,
   getUnavailableMobileSurfaces,
   mobileSurfaces
 } from "../src/features/shell/surfaceModel.ts";
 
-test("mobile shell exposes only session context in Checkpoint 1", () => {
+test("mobile shell exposes Checkpoint 8 capture surfaces without stale routes", () => {
   assert.equal(
-    getAvailableMobileSurfaces()
+    getActiveCaptureSurfaces()
       .map((surface) => surface.id)
       .join(","),
-    "session"
+    "session,chairside-media,voice-note,offline-upload"
   );
-  assert.equal(getUnavailableMobileSurfaces().length, 3);
+  assert.equal(getAvailableMobileSurfaces().length, 4);
+  assert.equal(getUnavailableMobileSurfaces().length, 0);
   assert.equal(
     mobileSurfaces.every((surface) => surface.apiBoundary.length > 0),
     true
+  );
+  assert.match(
+    mobileSurfaces.find((surface) => surface.id === "chairside-media")?.apiBoundary ?? "",
+    /upload-urls.*uploads\/\{uploadId\}\/content.*complete/
   );
 });
