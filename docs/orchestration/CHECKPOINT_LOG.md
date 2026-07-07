@@ -24,11 +24,12 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 
 ## Checkpoints
 
-| Checkpoint                             | Status   |     Base commit | Result commit | Notes                                                                                                                                                                                                                                                                          |
-| -------------------------------------- | -------- | --------------: | ------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| 0 - Git and orchestration preflight    | Complete | repository root |   `main` HEAD | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured and pushed.                                                                                                                                                 |
-| 1 - Production platform foundation     | Complete |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
-| 2 - Lead/patient/appointment/day-start | Complete |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
+| Checkpoint                             | Status    |     Base commit | Result commit | Notes                                                                                                                                                                                                                                                                          |
+| -------------------------------------- | --------- | --------------: | ------------: | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| 0 - Git and orchestration preflight    | Complete  | repository root |   `main` HEAD | Local Git repo initialized on `main`, monorepo scaffold created, docs baseline committed, GitHub remote configured and pushed.                                                                                                                                                 |
+| 1 - Production platform foundation     | Complete  |       `447206a` |     `be619cd` | Data/Auth, Runtime/Workflow, Repo/DevEx, and Web Shell lanes merged. Master integration added responsive web hardening, bootable API/mobile shells, full CI evidence, and a verified local Docker stack. Pause before CP2 for project-scoped worktree sidebar visibility test. |
+| 2 - Lead/patient/appointment/day-start | Complete  |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
+| 3 - Intake/consent/encounter/notes     | Launching |       `6ba1fa5` |       pending | CP3 launch packet created for visible project-scoped worktree lanes covering clinical backend, security/compliance, doctor/assistant UX, and QA fixtures.                                                                                                                      |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -97,3 +98,14 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Accepted gaps:
   - Live audit API probe is skipped until an audit read endpoint is merged; audit append and classification are covered by backend/security tests.
   - Browser accountant role smoke needs role-specific storage state files; API accountant denial passed and the web client now hides patient-create controls for profiles without patient-write roles.
+
+## Checkpoint 3 Launch - 2026-07-07
+
+- Launch packet: `docs/orchestration/CHECKPOINT_03_INTAKE_CONSENT_ENCOUNTER.md`.
+- Base commit: `6ba1fa5f8c0a5b8a058c33ca831494034d76c9e4`.
+- Integration branch rule: CP3 lane commits merge first into `codex/integration/checkpoint-3`; promote to `main` only after full code, live local, and browser/user gates pass.
+- Planned visible project-scoped lanes:
+  - Clinical Backend.
+  - Security/Compliance.
+  - Doctor/Assistant UX.
+  - QA/Fixtures.
