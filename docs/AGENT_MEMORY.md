@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after Checkpoint 6 final verification docs; next checkpoint is Checkpoint 7.
+- Branch: `main` after Checkpoint 6 final verification docs; Checkpoint 7 launch packet is being prepared from base `e7139c4`.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -36,6 +36,11 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Lab/Inventory/Event: `019f3c1d-6d96-7310-ba40-bed750544a62`, `/Users/abhinavgupta/.codex/worktrees/0166/ClinicOS`.
   - Operations UX: `019f3c1d-b7c5-7a32-8ee4-a1669e58aa73`, `/Users/abhinavgupta/.codex/worktrees/9f26/ClinicOS`.
   - Analytics/QA: `019f3c1e-1658-7aa2-ab3a-ca5135838beb`, `/Users/abhinavgupta/.codex/worktrees/4ff2/ClinicOS`.
+- Checkpoint 7 launch packet is `docs/orchestration/CHECKPOINT_07_LIVE_INTEGRATIONS_MIGRATION_HARDENING.md`. Launch lanes as visible project-scoped worktree threads from current `main`:
+  - Messaging Provider.
+  - Telephony/Source.
+  - Migration/Data.
+  - Integration Ops/QA.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture

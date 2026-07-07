@@ -33,6 +33,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 4 - Dental charting/media/imaging      | Complete  |       `c7b222c` |     `248496a` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4` and promoted to `main`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                     |
 | 5 - Treatment/checkout/payments         | Complete  |       `d3d341f` |     `d679a78` | CP5 visible project-scoped lanes merged into `codex/integration/checkpoint-5`, promoted to `main`, and followed by closeout docs commit `6f9fe1c`.                                                                                                           |
 | 6 - Continuity/operations/owner dashboard | Complete  |       `6f9fe1c` |     `08ddab9` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`, verified, documented, promoted to `main`, and post-promotion format gate repaired.                                                                 |
+| 7 - Live integrations/migration hardening | In Progress |       `e7139c4` |       pending | CP7 launch packet defines singular migration ownership, provider preflight, and four visible project-scoped worker lanes.                                                                 |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -292,3 +293,15 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Full live CP6 contract smoke without `--dry-run` requires a running API base URL supplied by `--base-url` or `CLINICOS_CP6_API_BASE_URL`; the dry-run contract passed and the live-base smoke is deferred until a local/live API target is explicitly running for that check.
   - `npm run security:audit` was not rerun because prior escalation for npm audit was policy-rejected; npm audit sends dependency inventory to the external registry audit service. Local tracked-file secret scan passed.
   - The current operations UI remains temporary. Browser/mobile testing is still mandatory for route registration, role gates, reachable controls, honest unavailable states, and no 390px overflow, but final visual polish is deferred to the later design pass.
+
+## Checkpoint 7 Launch - 2026-07-07
+
+- Launch packet: `docs/orchestration/CHECKPOINT_07_LIVE_INTEGRATIONS_MIGRATION_HARDENING.md`.
+- Base commit before launch packet: `e7139c4`.
+- Credential/input preflight: `.secrets/orchestration.env` is present; WhatsApp/Meta sandbox variables are present; Razorpay sandbox variables are present but `RAZORPAY_WEBHOOK_URL` is empty; Exotel-style telephony variables and Google Business Profile variables are missing/empty.
+- Integration branch rule: CP7 lane commits merge first into `codex/integration/checkpoint-7`; promote to `main` only after code checks, provider no-key/sandbox checks, migration conflict tests, browser/user evidence, docs, and accepted-gap review pass.
+- Planned visible project-scoped lanes:
+  - Messaging Provider.
+  - Telephony/Source.
+  - Migration/Data.
+  - Integration Ops/QA.
