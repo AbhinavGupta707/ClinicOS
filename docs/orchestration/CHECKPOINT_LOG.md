@@ -397,7 +397,8 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Credential/input preflight: `.secrets/orchestration.env` is present; AWS local profile/region/DR/backend variable names are present; ABDM variable names are present but empty; pilot export path variables and synthetic-only flag are present. Do not print secret values.
 - Integration branch rule: CP9 lane commits merge first into `codex/integration/checkpoint-9`; promote to `main` only after code checks, FHIR/export/privacy/security checks, restore/performance/tenant-isolation evidence, browser/user evidence for implemented UI, docs, and accepted-gap review pass.
 - Visible project-scoped lanes planned:
-  - Security/Privacy.
-  - FHIR/ABDM.
-  - Infrastructure/Ops.
-  - Performance/QA.
+  - Security/Privacy: pending `local:8e4b76f0-2035-4afa-8a47-d65138239c7a`, thread `019f3cec-36fc-7390-a841-bf11cb1a669c`, worktree `/Users/abhinavgupta/.codex/worktrees/6d89/ClinicOS`.
+  - FHIR/ABDM: pending `local:980187fa-bbd5-4364-86b2-511e38068b73`, thread `019f3cec-83b6-7383-81f5-e14f267d2392`, worktree `/Users/abhinavgupta/.codex/worktrees/1238/ClinicOS`.
+  - Infrastructure/Ops: pending `local:7bab86b2-b4af-4585-91bd-187a2939d141`, thread `019f3cec-d3a3-7a71-ba13-ab7ceaf09f69`, worktree `/Users/abhinavgupta/.codex/worktrees/7e8c/ClinicOS`.
+  - Performance/QA: pending `local:2aea50c5-e05d-4e0b-a16d-5f5ec6852393`, thread `019f3ced-1911-78e1-9301-ce5df9e8e934`, worktree `/Users/abhinavgupta/.codex/worktrees/1091/ClinicOS`.
+- All four CP9 worker worktrees resolved at base commit `6697df4`.

@@ -29,14 +29,14 @@ ClinicOS has production-grade compliance, interoperability, and operations-harde
 
 ## Visible Worktree Lanes
 
-Worker thread IDs and worktree paths will be recorded after project-scoped Codex worktree creation resolves.
-
 | Lane | Pending Worktree ID | Thread ID | Worktree |
 | --- | --- | --- | --- |
-| Security/Privacy | pending | pending | pending |
-| FHIR/ABDM | pending | pending | pending |
-| Infrastructure/Ops | pending | pending | pending |
-| Performance/QA | pending | pending | pending |
+| Security/Privacy | `local:8e4b76f0-2035-4afa-8a47-d65138239c7a` | `019f3cec-36fc-7390-a841-bf11cb1a669c` | `/Users/abhinavgupta/.codex/worktrees/6d89/ClinicOS` |
+| FHIR/ABDM | `local:980187fa-bbd5-4364-86b2-511e38068b73` | `019f3cec-83b6-7383-81f5-e14f267d2392` | `/Users/abhinavgupta/.codex/worktrees/1238/ClinicOS` |
+| Infrastructure/Ops | `local:7bab86b2-b4af-4585-91bd-187a2939d141` | `019f3cec-d3a3-7a71-ba13-ab7ceaf09f69` | `/Users/abhinavgupta/.codex/worktrees/7e8c/ClinicOS` |
+| Performance/QA | `local:2aea50c5-e05d-4e0b-a16d-5f5ec6852393` | `019f3ced-1911-78e1-9301-ce5df9e8e934` | `/Users/abhinavgupta/.codex/worktrees/1091/ClinicOS` |
+
+All four worktrees resolved at base commit `6697df4`.
 
 ## Shared-File Policy
 
