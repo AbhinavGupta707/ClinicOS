@@ -34,7 +34,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 5 - Treatment/checkout/payments         | Complete  |       `d3d341f` |     `d679a78` | CP5 visible project-scoped lanes merged into `codex/integration/checkpoint-5`, promoted to `main`, and followed by closeout docs commit `6f9fe1c`.                                                                                                           |
 | 6 - Continuity/operations/owner dashboard | Complete  |       `6f9fe1c` |     `08ddab9` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`, verified, documented, promoted to `main`, and post-promotion format gate repaired.                                                                 |
 | 7 - Live integrations/migration hardening | Complete |       `e7139c4` |     `92fb2b9` | CP7 visible project-scoped lanes merged into `codex/integration/checkpoint-7`, master integration reconciled live provider health/dead-letter/migration contracts, and verified branch was promoted to `main`.                         |
-| 8 - Mobile capture and AI scribe/action proposals | Launching |       `983cca5` |       pending | CP8 launch packet defines Expo mobile capture, consent-gated AI backend, review UX, and AI safety/QA lanes with simulator/fixture posture until live AI credentials and data-residency approvals exist. |
+| 8 - Mobile capture and AI scribe/action proposals | Complete |       `983cca5` |     `f967144` | CP8 visible project-scoped lanes merged into `codex/integration/checkpoint-8`. Master integration reconciled AI safety route contracts, consent blocking semantics, review-role browser gates, and fixture/live evidence boundaries before promotion. |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -358,3 +358,32 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Review UX: pending `local:989b9a6e-5e81-4271-a46d-380130d35c50`, thread `019f3cb8-6e4e-73d3-9754-9cbd5aa583d9`, worktree `/Users/abhinavgupta/.codex/worktrees/fc5f/ClinicOS`.
   - AI Safety/QA: pending `local:e4023aec-09ec-4659-8001-fa11db2751a4`, thread `019f3cb8-a9ea-79b2-9edd-d44513a60668`, worktree `/Users/abhinavgupta/.codex/worktrees/25b2/ClinicOS`.
 - Superseded duplicate Mobile Capture thread `019f3cab-83a6-7d42-8813-7829e961a04f` from earlier base `f562a8e` was marked superseded and archived; do not integrate it.
+
+## Checkpoint 8 Integration Verification - 2026-07-07
+
+- Integration branch: `codex/integration/checkpoint-8`.
+- Verified integration patch commit: `f967144`.
+- Merge order:
+  - AI Backend commit `4b00076` merged first with migration, domain, repository, API, security, and simulator AI provider contracts.
+  - Mobile Capture commit `ea8a6a2` merged second with Expo capture shell, durable CP4 media upload queue contract, secure cache abstractions, and audio-consent disabled state.
+  - Review UX commit `f2a192e` merged third with the web AI review surface, role-aware review decisions, and honest unavailable state for non-fixture aggregate queue mode.
+  - AI Safety/QA commit `b38b6b8` merged fourth with deterministic CP8 safety fixtures, validator, dry-run smoke, E2E specs, and QA notes.
+- Master integration patch `f967144` reconciled the CP8 safety dry-run from stale `/v1/ai/...` route assumptions to the canonical `ai-scribe` route family, aligned missing/revoked consent to HTTP `409` workflow-state blocking, removed fake web mobile-capture route assumptions, and gated role-specific Playwright assertions by `NEXT_PUBLIC_CLINIC_OS_DEV_ROLE`.
+- Targeted CP8 checks passed on the integration branch: `node scripts/validate-cp8-fixtures.mjs`, `node --test tests/acceptance/cp8-fixture-contract.test.mjs`, `node scripts/cp8-contract-smoke.mjs --dry-run`, `npm --workspace @clinic-os/mobile run typecheck`, `npm --workspace @clinic-os/mobile test`, `npm --workspace @clinic-os/web run typecheck`, `npm --workspace @clinic-os/web test`, `npm --workspace @clinic-os/web run lint`, `npm --workspace @clinic-os/api test`, and `node --test tests/acceptance/*.test.mjs`.
+- Full repository gates passed before promotion: `git diff --check`, `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`.
+- Browser/mobile user smoke passed:
+  - Doctor review and 390px mobile review: `CLINICOS_CP8_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3002 NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=doctor npx playwright test apps/web/tests/checkpoint-8-ai-review-workflow.spec.ts --grep "doctor reviews|mobile AI review"`.
+  - Root AI safety review flow: `CLINICOS_CP8_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3002 NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=doctor npx playwright test tests/e2e/checkpoint-8-ai-safety-flow.spec.ts`.
+  - Assistant review boundary: `CLINICOS_CP8_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3002 NEXT_PUBLIC_CLINIC_OS_DEV_ROLE=assistant npx playwright test apps/web/tests/checkpoint-8-ai-review-workflow.spec.ts --grep "assistant sees"`.
+  - Mobile lane Expo web smoke at 390px passed in the worker lane.
+- Browser evidence screenshots:
+  - `/private/tmp/clinicos-cp8-ai-review-doctor-desktop.png`.
+  - `/private/tmp/clinicos-cp8-ai-review-assistant-desktop.png`.
+  - `/private/tmp/clinicos-cp8-ai-review-mobile-390.png`.
+  - `/private/tmp/clinicos-cp8-mobile-capture-web-390.png`.
+- Accepted gaps:
+  - Live AI/STT provider activation remains deferred until an approved provider key, no-training/no-retention posture, data-residency approval, and explicit activation exist.
+  - The web aggregate review queue route is not configured by default. Non-fixture web mode shows an honest unavailable state unless `NEXT_PUBLIC_CLINIC_OS_CP8_REVIEW_QUEUE_PATH` and per-item `reviewDecisionHref` are supplied by a real backend/integration owner.
+  - Clinical application of AI outputs remains deferred as whole workflows. CP8 records review-only decisions and retains evaluation/audit evidence; it does not sign notes, mutate chart findings, prescribe, bill, or message patients from AI output.
+  - Expo/mobile app distribution and physical-device camera/audio smoke remain deferred; local Expo shell/export and mobile tests verify the capture contract and consent disabled behavior.
+  - `npm run security:audit` was not rerun because prior escalation was policy-rejected: npm audit discloses dependency inventory to the external registry audit service. The tracked-file secret scan passed.
