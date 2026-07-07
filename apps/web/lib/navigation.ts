@@ -175,9 +175,9 @@ export const SURFACES: SurfaceRegistration[] = [
       "POST /v1/patients/{patientId}/dental-findings",
       "PATCH /v1/dental-findings/{findingId}",
       "POST /v1/media/upload-urls",
-      "POST /v1/media/complete-upload",
-      "POST /v1/media/{mediaId}/links",
-      "POST /v1/media/{mediaId}/signed-access"
+      "PUT /v1/media/uploads/{uploadId}/content",
+      "POST /v1/media/uploads/{uploadId}/complete",
+      "POST /v1/media/assets/{mediaAssetId}/signed-url"
     ],
     roles: ["owner", "doctor", "assistant"]
   },

@@ -97,6 +97,8 @@ Follow `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
 ## CP4 Integration Lessons
 
 - Keep deterministic fixture contract plans and live API route contracts synchronized before merge. CP4 caught a dry-run script that still described older external imaging-link route shapes while the durable media API used upload, complete, list, and signed-access routes.
+- If a browser workflow is smoke-tested in fixture mode, add a separate unit or integration test for live API helper route shapes. CP4 fixture smoke passed while the web live helper still called stale media routes; the corrected live route sequence is upload reservation, upload content, upload completion by upload id, and signed URL by media asset id.
+- Keep external imaging reference/link support deferred as a whole workflow until a real adapter/API is owned. Do not quietly add a partial `/links`-style client route to make fixture coexistence evidence look live.
 - When a web workflow relies on checkpoint fixtures, start the web server with the matching fixture flag. CP4 required `NEXT_PUBLIC_CLINIC_OS_USE_CP4_WORKFLOW_FIXTURE=true` in addition to the dev identity fixture.
 - Media and dental schema changes should land in one canonical numbered migration during integration. Lane-local schema proposal docs are useful, but the integration branch owns the migration actually applied by the app.
 - Browser/mobile smoke remains useful for temporary UI because it proves route registration, role-conditioned controls, responsive reachability, and no horizontal overflow. Do not spend time on final visual polish before the design pass unless usability or safety is broken.

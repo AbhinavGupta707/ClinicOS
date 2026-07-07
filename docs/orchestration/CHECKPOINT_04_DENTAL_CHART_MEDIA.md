@@ -88,7 +88,7 @@ Doctor and assistant users can chart tooth-level dental findings, maintain denta
   - `POST /v1/encounters/:encounterId/dental-findings`
   - `PATCH /v1/dental-findings/:findingId`
   - `GET /v1/dental-findings/:findingId/history`
-  - Media routes from the Media Backend lane: upload URL creation, local simulator content upload, upload completion, patient media listing, and mediated signed URL access.
+  - Media routes from the Media Backend lane: `POST /v1/media/upload-urls`, `PUT /v1/media/uploads/:uploadId/content`, `POST /v1/media/uploads/:uploadId/complete`, `GET /v1/patients/:patientId/media`, and `POST /v1/media/assets/:mediaAssetId/signed-url`.
 - Web CP4 workflow for doctor/assistant dental chart, tooth detail, finding history, media gallery, media comparison, and accountant role denial.
 
 ## Verification Evidence
@@ -127,15 +127,43 @@ Doctor and assistant users can chart tooth-level dental findings, maintain denta
   - `npm run build`
   - `npm run security:audit` high-severity gate. Existing moderate upstream advisories remain in Next/PostCSS, Temporal/protobufjs, and Expo/xcode/uuid dependency paths.
 
+## Post-Closeout Re-Verification - 2026-07-07
+
+- Critical audit found that CP4 backend media routes were durable, but the web live helper and navigation metadata still named an older media route family: `/v1/media/complete-upload`, `/v1/media/{mediaId}/links`, and `/v1/media/{mediaId}/signed-access`.
+- Master integration patched the web live helper to use the actual durable route sequence: upload reservation, mediated upload content, completion by upload id, and signed URL by media asset id.
+- A focused web regression test now mocks `fetch` and asserts the exact live media route sequence and request body shape, including patient/encounter/tooth/finding context on upload reservation and the deferred live external-link behavior.
+- Targeted re-checks passed:
+  - `npm --workspace @clinic-os/web test -- cp4-workflow.test.ts`
+  - `npm --workspace @clinic-os/web run typecheck`
+  - `npm --workspace @clinic-os/web run lint`
+  - `npm --workspace @clinic-os/web test`
+  - `git diff --check`
+- Full re-checks passed after the patch:
+  - `npm run typecheck`
+  - `npm run lint`
+  - `npm run test`
+  - `npm run security:secrets`
+  - `npm run build`
+  - `npm run check`
+  - `node scripts/validate-cp4-fixtures.mjs`
+  - `node scripts/cp4-contract-smoke.mjs --dry-run`
+  - `node --test tests/acceptance/cp4-fixture-contract.test.mjs`
+- Browser re-smoke passed after the patch:
+  - Doctor/assistant desktop and 390px mobile: `CLINICOS_CP4_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000 npx playwright test tests/e2e/checkpoint-4-dental-media-flow.spec.ts --grep-invert "role denial"`
+  - Accountant role denial: `CLINICOS_CP4_ROLE_DENIAL_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3001 npx playwright test tests/e2e/checkpoint-4-dental-media-flow.spec.ts --grep "role denial"`
+  - Refreshed screenshots: `/private/tmp/clinicos-cp4-web-doctor-desktop.png` and `/private/tmp/clinicos-cp4-web-mobile-390.png`.
+- `npm run security:audit` could not be rerun in this pass: sandboxed execution could not resolve `registry.npmjs.org`, and escalation was policy-rejected because npm audit discloses dependency inventory to an external service. The last recorded CP4 closeout high-severity audit remains the available evidence for this gate.
+
 ## Accepted Gaps And Deferred Whole Workflows
 
-- CP4 implements durable upload, completion, patient media listing, and signed-access routes. The older CP4 fixture smoke still names an external-link/imaging-study route shape. That route family is not claimed as complete product behavior in CP4; external imaging-link workflow should be owned by a later integration or a dedicated imaging adapter checkpoint rather than patched in as a weak partial flow.
+- CP4 implements durable upload reservation, local simulator content upload, upload completion, patient media listing, and signed-access routes. CP4 fixture data still preserves DICOM metadata and external reference/link coexistence evidence, but live external imaging-link routes are not claimed as complete product behavior in CP4. That workflow should be owned by a later integration or a dedicated imaging adapter checkpoint rather than patched in as a weak partial flow.
 - The dental finding API stores one tooth/surface finding row per create/update operation. Multi-tooth charting is still possible by creating separate findings; bulk multi-tooth chart patching should be a later explicit workflow, not hidden inside a single partial endpoint.
 - Visual design remains temporary. CP4 browser verification focused on safety and responsive workflow invariants: no mobile horizontal overflow, reachable chart/media controls, honest role denial, and no fake clinical completion.
 
 ## CP4 Integration Lessons
 
 - Fixture contract scripts and live route contracts must stay aligned before lanes are merged. A dry-run fixture plan can pass while still describing an older durable route shape.
+- Web live helper tests must assert exact API route shapes whenever fixture browser smoke is used. Fixture-mode UI smoke proves user interaction and responsiveness, but it does not prove live API contract compatibility by itself.
 - UI smoke servers must include the checkpoint fixture flag when the workflow is fixture-backed. For CP4 that flag is `NEXT_PUBLIC_CLINIC_OS_USE_CP4_WORKFLOW_FIXTURE=true`.
 - Browser/mobile testing remains necessary even for rough UI because it validates route registration, role-conditioned rendering, reachable controls, and mobile overflow invariants that the final design will inherit.
 - Media and dental schema changes should stay in one numbered checkpoint migration. Parallel lane schema proposals are useful as design artifacts, but the integration branch owns the canonical migration.

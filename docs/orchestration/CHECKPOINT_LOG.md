@@ -175,6 +175,17 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Bulk multi-tooth chart patching is deferred; CP4 supports complete one-finding-per-row create/update/history/snapshot behavior.
   - Temporary UI was checked for safety and responsive invariants rather than final visual polish.
 
+## Checkpoint 4 Re-Verification - 2026-07-07
+
+- Critical audit before resuming CP5 found one real CP4 integration gap: the backend durable media routes were correct, but the web live helper and navigation metadata still named older media routes (`/v1/media/complete-upload`, `/v1/media/{mediaId}/links`, `/v1/media/{mediaId}/signed-access`).
+- Patched web live media attachment/viewing to use the durable CP4 route sequence: `POST /v1/media/upload-urls`, `PUT /v1/media/uploads/{uploadId}/content`, `POST /v1/media/uploads/{uploadId}/complete`, and `POST /v1/media/assets/{mediaAssetId}/signed-url`.
+- Live external imaging links remain deferred as a whole workflow. CP4 fixture evidence continues to preserve DICOM/external-reference coexistence, but the live web client now fails honestly for external-link attachment instead of inventing a partial route.
+- Regression coverage added in `apps/web/tests/cp4-workflow.test.ts` for the exact live route sequence and deferred external-link behavior.
+- Re-checks passed: `npm --workspace @clinic-os/web test -- cp4-workflow.test.ts`, `npm --workspace @clinic-os/web run typecheck`, `npm --workspace @clinic-os/web run lint`, `npm --workspace @clinic-os/web test`, and `git diff --check`.
+- Full gates passed after the patch: `npm run typecheck`, `npm run lint`, `npm run test`, `npm run security:secrets`, `npm run build`, `npm run check`, `node scripts/validate-cp4-fixtures.mjs`, `node scripts/cp4-contract-smoke.mjs --dry-run`, and `node --test tests/acceptance/cp4-fixture-contract.test.mjs`.
+- Browser re-smoke passed after the patch for doctor/assistant desktop, doctor/assistant 390px mobile, and accountant role denial. Refreshed screenshots: `/private/tmp/clinicos-cp4-web-doctor-desktop.png` and `/private/tmp/clinicos-cp4-web-mobile-390.png`.
+- `npm run security:audit` was not rerun: sandbox DNS failed for `registry.npmjs.org`, and escalation was policy-rejected because the audit sends dependency inventory to an external service. The prior CP4 high-severity audit evidence remains recorded in the closeout above.
+
 ## Checkpoint 5 Launch - 2026-07-07
 
 - Launch packet: `docs/orchestration/CHECKPOINT_05_TREATMENT_CHECKOUT_PAYMENTS.md`.

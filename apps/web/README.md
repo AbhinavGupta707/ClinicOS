@@ -102,9 +102,13 @@ mode the workflow is available through `/surface/dental-media`, `/surface/dental
 - `POST /v1/dental-chart-snapshots`
 - `GET /v1/patients/{patientId}/media`
 - `POST /v1/media/upload-urls`
-- `POST /v1/media/complete-upload`
-- `POST /v1/media/{mediaId}/links`
-- `POST /v1/media/{mediaId}/signed-access`
+- `PUT /v1/media/uploads/{uploadId}/content`
+- `POST /v1/media/uploads/{uploadId}/complete`
+- `POST /v1/media/assets/{mediaAssetId}/signed-url`
+
+Live external-imaging reference/link routes are deferred as a whole imaging-adapter workflow. CP4
+live media attachment binds patient, encounter, tooth, and finding context through the upload
+reservation and completion contract above.
 
 ## `/me` contract expectation
 

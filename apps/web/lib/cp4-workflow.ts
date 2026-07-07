@@ -223,9 +223,9 @@ export const CP4_REQUIRED_ENDPOINTS = [
   "POST /v1/dental-chart-snapshots",
   "GET /v1/patients/{patientId}/media",
   "POST /v1/media/upload-urls",
-  "POST /v1/media/complete-upload",
-  "POST /v1/media/{mediaId}/links",
-  "POST /v1/media/{mediaId}/signed-access"
+  "PUT /v1/media/uploads/{uploadId}/content",
+  "POST /v1/media/uploads/{uploadId}/complete",
+  "POST /v1/media/assets/{mediaAssetId}/signed-url"
 ] as const;
 
 export const PERMANENT_TOOTH_NUMBERS = [
@@ -574,93 +574,81 @@ export async function updateLiveFinding(input: FindingUpdateInput, signal?: Abor
 }
 
 export async function attachLiveMedia(input: MediaAttachInput, signal?: AbortSignal) {
-  if (input.kind !== "external_link" && !input.file) {
+  if (input.kind === "external_link") {
+    throw new Error(
+      "Live external imaging references are deferred to the dedicated imaging-link adapter workflow."
+    );
+  }
+
+  if (!input.file) {
     throw new Error("Live media upload requires a selected file.");
   }
 
-  let uploadedMediaId: string | null = null;
-  let uploadId: string | null = null;
-
-  if (input.file) {
-    const uploadPayload = await postEndpoint(
-      "/v1/media/upload-urls",
-      {
-        contentType: input.file.type || "application/octet-stream",
-        filename: input.file.name,
-        patientId: input.patientId,
-        provenance: {
-          actorName: input.actorName,
-          actorRole: input.actorRole,
-          kind: "clinic_staff_upload"
-        },
-        sizeBytes: input.file.size,
-        tag: input.tag
-      },
-      signal
-    );
-
-    if (!isRecord(uploadPayload)) {
-      throw new Error("Media upload URL response did not match the expected contract.");
-    }
-
-    uploadId = readString(uploadPayload, ["uploadId", "upload_id", "id"]);
-    uploadedMediaId = readString(uploadPayload, ["mediaId", "media_id"]);
-    const uploadUrl = readString(uploadPayload, ["uploadUrl", "upload_url", "signedUploadUrl"]);
-
-    if (uploadUrl) {
-      const uploadResponse = await fetch(uploadUrl, {
-        body: input.file,
-        headers: input.file.type ? { "Content-Type": input.file.type } : undefined,
-        method: "PUT",
-        signal
-      });
-
-      if (!uploadResponse.ok) {
-        throw new Error(`Signed upload failed with HTTP ${uploadResponse.status}.`);
-      }
-    }
-  }
-
-  const completePayload = await postEndpoint(
-    "/v1/media/complete-upload",
+  const mimeType = input.file.type || "application/octet-stream";
+  const sha256Digest = await sha256DigestForFile(input.file);
+  const uploadPayload = await postEndpoint(
+    "/v1/media/upload-urls",
     {
-      context: buildMediaContext(input),
-      displayName: input.file?.name ?? input.externalReference,
-      externalReference: input.externalReference,
-      kind: input.kind,
-      mediaId: uploadedMediaId,
+      dentalFindingId: input.target === "finding" ? input.findingId : null,
+      encounterId: input.encounterId,
+      fileSizeBytes: input.file.size,
+      mediaType: mediaKindToApiMediaType(input.kind),
+      mimeType,
+      originalFilename: input.file.name,
+      patientId: input.patientId,
       provenance: {
         actorName: input.actorName,
         actorRole: input.actorRole,
-        kind: input.kind === "external_link" ? "external_reference" : "browser_upload"
+        kind: "clinic_staff_upload",
+        referenceLabel: input.externalReference.trim() || null
       },
-      source: input.kind === "external_link" ? "external_reference" : "browser_upload",
-      tag: input.tag,
-      uploadId
+      sha256Digest,
+      tags: [input.tag],
+      toothNumber:
+        input.target === "tooth" || input.target === "finding" ? input.toothNumber : null
     },
     signal
   );
 
-  const mediaId = isRecord(completePayload)
-    ? (readString(completePayload, ["mediaId", "media_id", "id"]) ?? uploadedMediaId)
-    : uploadedMediaId;
+  const uploadContract = parseUploadContract(uploadPayload);
+  const uploadResponse = await fetch(buildWorkflowUrl(uploadContract.uploadUrl), {
+    body: input.file,
+    headers: {
+      ...uploadContract.requiredHeaders,
+      "Content-Type": mimeType
+    },
+    method: "PUT",
+    signal
+  });
 
-  if (mediaId) {
-    await postEndpoint(
-      `/v1/media/${encodeURIComponent(mediaId)}/links`,
-      buildMediaContext(input),
-      signal
-    );
+  if (!uploadResponse.ok) {
+    throw new Error(`Signed upload failed with HTTP ${uploadResponse.status}.`);
   }
 
-  return completePayload;
+  return postEndpoint(
+    `/v1/media/uploads/${encodeURIComponent(uploadContract.uploadId)}/complete`,
+    {
+      contentLength: input.file.size,
+      dicomMetadata:
+        input.kind === "xray"
+          ? { referenceLabel: input.externalReference.trim() || null, source: "browser_upload" }
+          : {},
+      encounterId: input.encounterId,
+      mimeType,
+      patientId: input.patientId,
+      scanStatus: defaultLiveMediaScanStatus(),
+      sha256Digest
+    },
+    signal
+  );
 }
 
 export async function requestLiveMediaView(input: MediaViewInput, signal?: AbortSignal) {
   return postEndpoint(
-    `/v1/media/${encodeURIComponent(input.mediaId)}/signed-access`,
+    `/v1/media/assets/${encodeURIComponent(input.mediaId)}/signed-url`,
     {
       actorName: input.actorName,
+      expiresInSeconds: 300,
       purpose: "clinical_review"
     },
     signal
@@ -1087,6 +1075,70 @@ function getBrowserOrigin() {
   }
 
   return "http://localhost";
+}
+
+function mediaKindToApiMediaType(kind: MediaKind) {
+  switch (kind) {
+    case "document":
+      return "document";
+    case "intraoral_photo":
+      return "intraoral_photo";
+    case "xray":
+      return "xray";
+    case "external_link":
+      throw new Error(
+        "Live external imaging references are deferred to the dedicated imaging-link adapter workflow."
+      );
+  }
+}
+
+function defaultLiveMediaScanStatus() {
+  const environment = process.env.NEXT_PUBLIC_CLINIC_OS_ENV ?? process.env.NODE_ENV;
+  return FIXTURE_ENVIRONMENTS.has(environment ?? "") ? "clean" : "pending";
+}
+
+async function sha256DigestForFile(file: File) {
+  if (typeof crypto === "undefined" || !crypto.subtle) {
+    return null;
+  }
+
+  const digest = await crypto.subtle.digest("SHA-256", await file.arrayBuffer());
+  return Array.from(new Uint8Array(digest))
+    .map((byte) => byte.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+function parseUploadContract(payload: unknown) {
+  if (!isRecord(payload)) {
+    throw new Error("Media upload URL response did not match the expected contract.");
+  }
+
+  const upload = isRecord(payload.upload) ? payload.upload : payload;
+  const uploadTarget = isRecord(payload.uploadTarget) ? payload.uploadTarget : payload;
+  const uploadId =
+    readString(upload, ["id", "uploadId", "upload_id"]) ??
+    readString(payload, ["uploadId", "upload_id", "id"]);
+  const uploadUrl = readString(uploadTarget, ["uploadUrl", "upload_url", "signedUploadUrl"]);
+
+  if (!uploadId || !uploadUrl) {
+    throw new Error("Media upload URL response did not include upload id and upload URL.");
+  }
+
+  return {
+    requiredHeaders: recordToStringMap(uploadTarget.requiredHeaders),
+    uploadId,
+    uploadUrl
+  };
+}
+
+function recordToStringMap(value: unknown) {
+  if (!isRecord(value)) return {};
+
+  return Object.fromEntries(
+    Object.entries(value).flatMap(([key, entry]) =>
+      typeof entry === "string" ? [[key, entry] as const] : []
+    )
+  );
 }
 
 async function fetchEndpoint(
