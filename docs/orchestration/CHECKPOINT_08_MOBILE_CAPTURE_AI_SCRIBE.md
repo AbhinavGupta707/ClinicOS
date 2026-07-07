@@ -2,6 +2,7 @@
 
 - Launch date: 2026-07-07
 - Launch base before this packet: `983cca5`
+- Worker launch base: `ac7211d`
 - Source plan: `clinic_os_specs_v2/20_ORCHESTRATION_CHECKPOINT_PLAN.md` section 16
 - Integration branch: `codex/integration/checkpoint-8`
 
@@ -23,6 +24,17 @@ Checkpoint 8 can proceed with deterministic AI fixtures and provider simulators.
 | AI Backend | Domain models, migration, repository/API operations for AI sessions/jobs/transcript segments/outputs/review decisions/action proposals, AI provider gateway/simulator, retention controls, audit/outbox events | Own the only CP8 database migration. May edit `packages/domain/**`, `packages/db/**`, `apps/api/**`, `packages/integrations/**`, security audit classifications. Do not edit mobile/web UI except contract notes. No live AI calls unless explicitly feature-flagged and credentials/preflight allow. | Domain/db/api/integrations/security tests, no-key/provider-simulator tests, consent/retention tests, raw audio/transcript privacy checks |
 | Review UX | Web review surfaces for clinical note drafts, dental chart patch drafts, action proposal inbox, approval/rejection/edit flows, route/navigation metadata, web tests | May edit `apps/web/**`, CP8 fixtures, and web docs. Do not invent backend routes; consume AI Backend contracts or mark whole review workflow unavailable. No fake clinical application state after approval button unless backend route applies it with authorization/audit. | `npm --workspace @clinic-os/web run typecheck`, `npm --workspace @clinic-os/web test`, `npm --workspace @clinic-os/web run lint`, browser smoke for doctor/assistant review and mobile-width safety |
 | AI Safety/QA | Evaluation fixture corpus, schema validation, unsupported-claim checks, prompt/safety runbook, E2E/root smoke specs, CP8 contract smoke and docs | May edit `fixtures/synthetic/cp8/**`, `scripts/*cp8*`, `tests/e2e/**`, `docs/qa/**`, safety docs/tests. Coordinate route names with AI Backend and Review UX. Do not weaken clinical safety to make fixtures pass. | Fixture validator, contract dry-run, safety tests for hallucination/unsupported claim/wrong tooth/no consent, browser smoke checklist |
+
+## Visible Worktree Lanes
+
+| Lane | Pending Worktree ID | Thread ID | Worktree |
+| --- | --- | --- | --- |
+| Mobile Capture | `local:bad96d1e-eaf1-41f4-8d8f-4ab52f7ba245` | `019f3cb7-ee10-7c83-a5c1-1407c64a7158` | `/Users/abhinavgupta/.codex/worktrees/834a/ClinicOS` |
+| AI Backend | `local:ce740f13-db5a-412f-8a51-f26cbd27897a` | `019f3cb8-2e5c-7dd1-8865-02823428698c` | `/Users/abhinavgupta/.codex/worktrees/0b3b/ClinicOS` |
+| Review UX | `local:989b9a6e-5e81-4271-a46d-380130d35c50` | `019f3cb8-6e4e-73d3-9754-9cbd5aa583d9` | `/Users/abhinavgupta/.codex/worktrees/fc5f/ClinicOS` |
+| AI Safety/QA | `local:e4023aec-09ec-4659-8001-fa11db2751a4` | `019f3cb8-a9ea-79b2-9edd-d44513a60668` | `/Users/abhinavgupta/.codex/worktrees/25b2/ClinicOS` |
+
+An older duplicate Mobile Capture thread from base `f562a8e` (`019f3cab-83a6-7d42-8813-7829e961a04f`, `/Users/abhinavgupta/.codex/worktrees/155b/ClinicOS`) was marked superseded and archived. Do not integrate it.
 
 ## Shared-File Policy
 

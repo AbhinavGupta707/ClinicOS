@@ -349,10 +349,12 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 
 - Launch packet: `docs/orchestration/CHECKPOINT_08_MOBILE_CAPTURE_AI_SCRIBE.md`.
 - Base commit before launch packet: `983cca5`.
+- Worker launch base after CP4 current-tree verification: `ac7211d`.
 - Credential/input preflight: `.secrets/orchestration.env` is present; live AI/STT provider keys and data-residency/retention approvals must not be assumed. CP8 proceeds with deterministic fixtures and provider simulators unless explicit live-provider approval exists.
 - Integration branch rule: CP8 lane commits merge first into `codex/integration/checkpoint-8`; promote to `main` only after code checks, AI safety checks, mobile/browser user checks, docs, and accepted-gap review pass.
-- Visible project-scoped lanes planned:
-  - Mobile Capture.
-  - AI Backend.
-  - Review UX.
-  - AI Safety/QA.
+- Visible project-scoped lanes launched from `main`:
+  - Mobile Capture: pending `local:bad96d1e-eaf1-41f4-8d8f-4ab52f7ba245`, thread `019f3cb7-ee10-7c83-a5c1-1407c64a7158`, worktree `/Users/abhinavgupta/.codex/worktrees/834a/ClinicOS`.
+  - AI Backend: pending `local:ce740f13-db5a-412f-8a51-f26cbd27897a`, thread `019f3cb8-2e5c-7dd1-8865-02823428698c`, worktree `/Users/abhinavgupta/.codex/worktrees/0b3b/ClinicOS`.
+  - Review UX: pending `local:989b9a6e-5e81-4271-a46d-380130d35c50`, thread `019f3cb8-6e4e-73d3-9754-9cbd5aa583d9`, worktree `/Users/abhinavgupta/.codex/worktrees/fc5f/ClinicOS`.
+  - AI Safety/QA: pending `local:e4023aec-09ec-4659-8001-fa11db2751a4`, thread `019f3cb8-a9ea-79b2-9edd-d44513a60668`, worktree `/Users/abhinavgupta/.codex/worktrees/25b2/ClinicOS`.
+- Superseded duplicate Mobile Capture thread `019f3cab-83a6-7d42-8813-7829e961a04f` from earlier base `f562a8e` was marked superseded and archived; do not integrate it.

@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after Checkpoint 8 launch packet commit `f562a8e`; Checkpoint 8 worker lanes are the next incomplete orchestration step.
+- Branch: `main` after CP4 current-tree verification commit `ac7211d`; Checkpoint 8 worker lanes are active in visible project-scoped worktrees.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -42,7 +42,12 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Migration/Data: `019f3c6a-655d-7223-8cf2-8cde3cf10b80`, `/Users/abhinavgupta/.codex/worktrees/9644/ClinicOS`.
   - Integration Ops/QA: `019f3c6a-9b72-7642-ab14-ce002f1d9511`, `/Users/abhinavgupta/.codex/worktrees/386a/ClinicOS`.
 - Checkpoint 7 is verified and promoted to `main` via merge commit `92fb2b9`; master integration patch commit is `c193b81`. CP7 reconciled live provider-health, integration-dead-letter replay, migration-batch collection, and row-based migration resolution contracts.
-- Checkpoint 8 launch packet is `docs/orchestration/CHECKPOINT_08_MOBILE_CAPTURE_AI_SCRIBE.md`; CP8 lanes should be visible project-scoped worktree threads for Mobile Capture, AI Backend, Review UX, and AI Safety/QA.
+- Checkpoint 8 launch packet is `docs/orchestration/CHECKPOINT_08_MOBILE_CAPTURE_AI_SCRIBE.md`; CP8 visible project-scoped worktree lanes:
+  - Mobile Capture: `019f3cb7-ee10-7c83-a5c1-1407c64a7158`, `/Users/abhinavgupta/.codex/worktrees/834a/ClinicOS`.
+  - AI Backend: `019f3cb8-2e5c-7dd1-8865-02823428698c`, `/Users/abhinavgupta/.codex/worktrees/0b3b/ClinicOS`.
+  - Review UX: `019f3cb8-6e4e-73d3-9754-9cbd5aa583d9`, `/Users/abhinavgupta/.codex/worktrees/fc5f/ClinicOS`.
+  - AI Safety/QA: `019f3cb8-a9ea-79b2-9edd-d44513a60668`, `/Users/abhinavgupta/.codex/worktrees/25b2/ClinicOS`.
+  - Superseded duplicate Mobile Capture thread `019f3cab-83a6-7d42-8813-7829e961a04f` from base `f562a8e` was archived and must not be integrated.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture
