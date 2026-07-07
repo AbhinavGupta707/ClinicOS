@@ -245,7 +245,8 @@ async function runLiveSmoke(scenario, plan, options) {
     const { body } = await executeRequest(options.baseUrl, scenario, request, options);
     assertSerializedIncludes(body, request.expectedBodyIncludes ?? [], request.key);
     assertSerializedExcludes(body, request.expectedBodyMustNotInclude ?? [], request.key);
-    if (request.expectedReason) assertSerializedIncludes(body, [request.expectedReason], request.key);
+    if (request.expectedReason)
+      assertSerializedIncludes(body, [request.expectedReason], request.key);
     console.log(`pass ${request.key}`);
   }
 }

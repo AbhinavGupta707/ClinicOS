@@ -15,7 +15,9 @@ test.describe("Checkpoint 9 performance QA registered-surface smoke", () => {
 
     await page.goto("/surface/compliance");
 
-    await expect(page.getByRole("heading", { name: "Compliance" })).toBeVisible();
+    await expect(
+      page.locator("main").getByRole("heading", { level: 1, name: "Compliance" })
+    ).toBeVisible();
     await expect(page.getByText("Unavailable")).toBeVisible();
     await expect(page.getByText("Required API boundary")).toBeVisible();
     await expect(page.getByText("No product data is rendered")).toBeVisible();
@@ -40,7 +42,9 @@ test.describe("Checkpoint 9 performance QA registered-surface smoke", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/surface/compliance");
 
-    await expect(page.getByRole("heading", { name: "Compliance" })).toBeVisible();
+    await expect(
+      page.locator("main").getByRole("heading", { level: 1, name: "Compliance" })
+    ).toBeVisible();
     await expect(page.getByText("Unavailable")).toBeVisible();
     await expect(page.getByRole("button", { name: "Awaiting API activation" })).toBeDisabled();
 
@@ -65,11 +69,15 @@ test.describe("Checkpoint 9 performance QA registered-surface smoke", () => {
 
     await page.goto("/surface/platform-support");
 
-    await expect(page.getByRole("heading", { name: "Platform support" })).toBeVisible();
+    await expect(
+      page.locator("main").getByRole("heading", { level: 1, name: "Platform support" })
+    ).toBeVisible();
     await expect(page.getByText("Unavailable")).toBeVisible();
     await expect(page.getByText("GET /v1/provider-health")).toBeVisible();
 
     const body = await page.locator("body").innerText();
-    expect(body).not.toMatch(/\b(Break-glass approved|Tenant data exported|Provider success confirmed)\b/i);
+    expect(body).not.toMatch(
+      /\b(Break-glass approved|Tenant data exported|Provider success confirmed)\b/i
+    );
   });
 });

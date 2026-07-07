@@ -69,7 +69,10 @@ export function validateCp9Scenario(scenario) {
   assert.equal(scenario.clock.businessDate, "2026-07-07");
   assert.equal(scenario.clock.timezone, "Asia/Kolkata");
   assertIsoWithOffset(scenario.clock.fixedNow, "clock.fixedNow");
-  assertIsoWithOffset(scenario.clock.clinicHoursWindow.startsAt, "clock.clinicHoursWindow.startsAt");
+  assertIsoWithOffset(
+    scenario.clock.clinicHoursWindow.startsAt,
+    "clock.clinicHoursWindow.startsAt"
+  );
   assertIsoWithOffset(scenario.clock.clinicHoursWindow.endsAt, "clock.clinicHoursWindow.endsAt");
 
   const knownTenantIds = new Set();
@@ -93,7 +96,10 @@ export function validateCp9Scenario(scenario) {
     assertKnownReference(knownTenantIds, actor.tenantId, `actor ${actor.key}.tenantId`);
     assertKnownReference(knownClinicIds, actor.clinicId, `actor ${actor.key}.clinicId`);
     assert.match(actor.email, TEST_EMAIL_PATTERN, `actor ${actor.key}.email`);
-    assert.ok(CLINIC_ROLE_SLUGS.has(actor.roleSlug), `actor ${actor.key}.roleSlug is not canonical`);
+    assert.ok(
+      CLINIC_ROLE_SLUGS.has(actor.roleSlug),
+      `actor ${actor.key}.roleSlug is not canonical`
+    );
     assert.ok(WEB_ROLE_SLUGS.has(actor.webRoleSlug), `actor ${actor.key}.webRoleSlug is invalid`);
     knownActorKeys.add(actor.key);
   }
@@ -147,7 +153,10 @@ function assertRouteContracts(contracts, knownActorKeys) {
     assertKnownKey(knownActorKeys, contract.actorKey, `route ${contract.key}.actorKey`);
     assertHttpMethod(contract.method, `route ${contract.key}.method`);
     assertV1Path(contract.path, `route ${contract.key}.path`);
-    assert.ok(PERMISSION_KEYS.has(contract.requiredPermission), `${contract.key} permission invalid`);
+    assert.ok(
+      PERMISSION_KEYS.has(contract.requiredPermission),
+      `${contract.key} permission invalid`
+    );
     assert.ok([200, 201, 202].includes(contract.expectedStatus), `${contract.key} status invalid`);
     assert.equal(typeof contract.liveImplemented, "boolean", `${contract.key} live flag invalid`);
     if (contract.ownerLane === "security_privacy") {
@@ -255,7 +264,11 @@ function assertBrowserChecklist(checklist) {
 
 function assertFixtureOnlyEvidence(rows) {
   const keys = new Set(rows.map((row) => row.key));
-  for (const key of ["abdm-feature-gate", "backup-restore-boundary", "browser-cp9-unavailable-state"]) {
+  for (const key of [
+    "abdm-feature-gate",
+    "backup-restore-boundary",
+    "browser-cp9-unavailable-state"
+  ]) {
     assert.ok(keys.has(key), `${key} fixture-only evidence missing`);
   }
 
@@ -274,9 +287,21 @@ function assertLocalSyntheticOnly(scenario) {
 
 function assertNoProductionPhiMarkers(scenario) {
   const serialized = JSON.stringify(scenario);
-  assert.equal(/\+91\s?\d{10}/.test(serialized), false, "CP9 fixture must not include phone numbers");
-  assert.equal(/sk_live|rzp_live|AKIA[0-9A-Z]{16}/.test(serialized), false, "CP9 fixture leaked a secret-like token");
-  assert.equal(/ABHA-\d{2,}/i.test(serialized), false, "CP9 fixture must not include real ABHA-like ids");
+  assert.equal(
+    /\+91\s?\d{10}/.test(serialized),
+    false,
+    "CP9 fixture must not include phone numbers"
+  );
+  assert.equal(
+    /sk_live|rzp_live|AKIA[0-9A-Z]{16}/.test(serialized),
+    false,
+    "CP9 fixture leaked a secret-like token"
+  );
+  assert.equal(
+    /ABHA-\d{2,}/i.test(serialized),
+    false,
+    "CP9 fixture must not include real ABHA-like ids"
+  );
 }
 
 function assertUuid(value, label) {

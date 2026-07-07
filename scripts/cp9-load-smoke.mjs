@@ -147,7 +147,10 @@ function printDryRun(plan) {
 
 async function runLoadSmoke(scenario, plan, options) {
   assert.ok(options.baseUrl, "Set --base-url or CLINICOS_CP9_API_BASE_URL for live load smoke.");
-  assert.ok(plan.endpoints.length > 0, "No live implemented endpoints are available for load smoke.");
+  assert.ok(
+    plan.endpoints.length > 0,
+    "No live implemented endpoints are available for load smoke."
+  );
 
   const queue = Array.from({ length: plan.thresholds.totalRequests }, (_, index) => {
     return plan.endpoints[index % plan.endpoints.length];
@@ -225,7 +228,10 @@ function assertLoadThresholds(summary, thresholds) {
     summary.p99LatencyMs <= thresholds.maxP99LatencyMs,
     `p99 ${summary.p99LatencyMs.toFixed(1)}ms exceeded ${thresholds.maxP99LatencyMs}ms`
   );
-  assert.ok(summary.errorRate <= thresholds.maxErrorRate, `errorRate ${summary.errorRate} exceeded threshold`);
+  assert.ok(
+    summary.errorRate <= thresholds.maxErrorRate,
+    `errorRate ${summary.errorRate} exceeded threshold`
+  );
   assert.ok(
     summary.status429Rate <= thresholds.maxStatus429Rate,
     `429Rate ${summary.status429Rate} exceeded threshold`
