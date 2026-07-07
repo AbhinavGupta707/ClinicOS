@@ -268,7 +268,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Verified integration merge head before evidence docs: `c1485b5`.
 - Evidence docs commit: `d9bb50b`.
 - Main promotion merge commit: `af93fde`.
-- Final post-promotion main head: `08ddab9` (`fix(cp6): format contract smoke script`).
+- Final CP6 post-promotion code/check fix: `08ddab9` (`fix(cp6): format contract smoke script`).
 - Merge order:
   - Workflow/Task Backend commit `bdfb4d8` merged first.
   - Lab/Inventory/Event commit `eea10e4` merged second with master conflict resolution across permissions, events, audit classes, API routes, repositories, and fixture data.
