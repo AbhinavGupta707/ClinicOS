@@ -50,6 +50,13 @@ export const DOMAIN_EVENT_TYPES = [
   "prescription.signed",
   "media.upload_requested",
   "media.upload_completed",
+  "invoice.created",
+  "payment.requested",
+  "payment.succeeded",
+  "payment.failed",
+  "payment.manually_recorded",
+  "payment.reconciliation_required",
+  "receipt.generated",
   "patient.timeline_item.created"
 ] as const;
 
@@ -126,14 +133,23 @@ export const CP5_BILLING_EVENT_TYPES = [
   "treatment_plan.accepted",
   "procedure.completed",
   "invoice.created",
+  "receipt.generated"
+] as const;
+
+export const CP5_PAYMENT_EVENT_TYPES = [
   "payment.requested",
   "payment.succeeded",
   "payment.failed",
   "payment.refunded",
-  "receipt.generated"
+  "payment.manually_recorded",
+  "payment.reconciliation_required",
 ] as const;
 
-export const CP5_EVENT_TYPES = [...CP4_EVENT_TYPES, ...CP5_BILLING_EVENT_TYPES] as const;
+export const CP5_EVENT_TYPES = [
+  ...CP4_EVENT_TYPES,
+  ...CP5_BILLING_EVENT_TYPES,
+  ...CP5_PAYMENT_EVENT_TYPES
+] as const;
 
 export type Cp2LeadEventType = (typeof CP2_LEAD_EVENT_TYPES)[number];
 export type Cp2PatientEventType = (typeof CP2_PATIENT_EVENT_TYPES)[number];
@@ -147,6 +163,7 @@ export type Cp3EventType = (typeof CP3_EVENT_TYPES)[number];
 export type Cp4DentalEventType = (typeof CP4_DENTAL_EVENT_TYPES)[number];
 export type Cp4EventType = (typeof CP4_EVENT_TYPES)[number];
 export type Cp5BillingEventType = (typeof CP5_BILLING_EVENT_TYPES)[number];
+export type Cp5PaymentEventType = (typeof CP5_PAYMENT_EVENT_TYPES)[number];
 export type Cp5EventType = (typeof CP5_EVENT_TYPES)[number];
 
 export type EventSourceKind =
@@ -194,6 +211,11 @@ export interface DomainEventAggregate {
     | "prescription"
     | "media_upload"
     | "media_asset"
+    | "invoice"
+    | "payment_request"
+    | "payment_transaction"
+    | "payment_reconciliation_item"
+    | "receipt"
     | "patient_timeline_item";
   id: UUID | string;
 }

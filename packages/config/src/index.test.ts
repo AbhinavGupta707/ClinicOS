@@ -75,13 +75,22 @@ describe("parseClinicOsEnv", () => {
     expect(result.success).toBe(false);
     if (result.success) return;
     expect(result.error.issues.map((issue) => issue.path.join("."))).toEqual(
-      expect.arrayContaining([
-        "RAZORPAY_KEY_ID",
-        "RAZORPAY_KEY_SECRET",
-        "RAZORPAY_WEBHOOK_SECRET",
-        "RAZORPAY_WEBHOOK_URL"
-      ])
+      expect.arrayContaining(["RAZORPAY_KEY_ID", "RAZORPAY_KEY_SECRET", "RAZORPAY_WEBHOOK_SECRET"])
     );
+  });
+
+  it("allows Razorpay sandbox credentials while hosted webhook URL registration is deferred", () => {
+    const config = parseClinicOsEnv({
+      ...baseEnv,
+      PAYMENT_PROVIDER: "razorpay",
+      RAZORPAY_KEY_ID: "rzp_test_key",
+      RAZORPAY_KEY_SECRET: "rzp_test_secret",
+      RAZORPAY_WEBHOOK_SECRET: "webhook-secret",
+      RAZORPAY_WEBHOOK_URL: ""
+    });
+
+    expect(config.providers.payment.provider).toBe("razorpay");
+    expect(config.providers.payment.razorpayWebhookUrl).toBeUndefined();
   });
 
   it("parses Meta WhatsApp and Razorpay sandbox credentials when supplied", () => {

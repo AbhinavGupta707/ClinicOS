@@ -3108,7 +3108,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           input.reconciliationStatus ?? "matched",
           input.idempotencyKey ?? null,
           input.receivedAt ?? null,
-          input.recordedByUserId ?? scope.actorUserId,
+          input.recordedByUserId === undefined ? scope.actorUserId : input.recordedByUserId,
           JSON.stringify(input.metadata ?? {})
         ]
       );

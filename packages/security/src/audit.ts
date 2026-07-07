@@ -326,6 +326,30 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "payment.succeeded": {
+    category: "billing",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "payment.failed": {
+    category: "billing",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "payment.manually_recorded": {
+    category: "billing",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "payment.reconciliation_required": {
+    category: "billing",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
   "receipt.generated": {
     category: "billing",
     riskLevel: "medium",
@@ -334,6 +358,12 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
   },
   "billing.payment.changed": {
     category: "billing",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "payment.provider.unavailable": {
+    category: "integration",
     riskLevel: "medium",
     phiInvolved: false,
     requiresPatientId: false

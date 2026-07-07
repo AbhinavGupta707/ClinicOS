@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import { safeParseClinicOsEnv, type ClinicOsConfig } from "@clinic-os/config";
+import { createPaymentProvider, type PaymentProvider } from "@clinic-os/integrations";
 import {
   AuthenticationError,
   AuthorizationError,
@@ -47,6 +48,7 @@ import {
   createLead,
   completeMediaUpload,
   createSignedMediaAccess,
+  createInvoicePaymentRequest,
   createPatientDentalFinding,
   createPatient,
   createPatientConsent,
@@ -74,7 +76,9 @@ import {
   matchLeadToPatient,
   revokePatientConsent,
   receiveMediaUploadContent,
+  recordInvoiceManualPayment,
   requestMediaUploadUrl,
+  processPaymentWebhook,
   saveEncounterClinicalNoteDraft,
   signEncounterClinicalNote,
   signPrescription,
@@ -86,6 +90,7 @@ import {
   updateTreatmentPlan,
   updatePatient,
   updateQueueEntry,
+  type PaymentOperationsRepository,
   type OperationsRequestContext
 } from "./operations.ts";
 import { LocalMediaStorageSimulator, type MediaStorageProvider } from "./media-storage.ts";
@@ -106,6 +111,7 @@ export interface ClinicOsApiServerOptions {
   operationsRepository?: ClinicOperationsRepository;
   auditSink?: AuditSink;
   mediaStorage?: MediaStorageProvider;
+  paymentProvider?: PaymentProvider;
   tokenVerifier?: TokenVerifier;
   useLocalAuthFixture?: boolean;
   fixtureSubject?: string;
@@ -180,6 +186,37 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
             },
             identityRepository: options.identityRepository,
             auditSink: options.auditSink
+          }
+        );
+
+        return sendJson(response, result.status, result.body);
+      }
+
+      if (request.method === "POST" && request.url === "/v1/payment-webhooks/razorpay") {
+        if (!options.operationsRepository) {
+          throw new ApiError(
+            503,
+            "CONFIGURATION_ERROR",
+            "ClinicOS operations repository is not configured."
+          );
+        }
+
+        const rawBody = (await readRawBody(request, 1024 * 1024)).toString("utf8");
+        const result = await processPaymentWebhook(
+          {
+            repository: options.operationsRepository,
+            auditSink: options.auditSink,
+            paymentProvider: options.paymentProvider ?? createRuntimePaymentProvider(options.config),
+            paymentRepository: paymentRepositoryFromOperationsRepository(options.operationsRepository)
+          },
+          {
+            requestId,
+            providerKey: "razorpay",
+            rawBody,
+            receivedAt: new Date().toISOString(),
+            headers: requestHeadersRecord(request),
+            ipAddress: request.socket.remoteAddress ?? null,
+            userAgent: headerValue(request, "user-agent") ?? null
           }
         );
 
@@ -261,6 +298,7 @@ export function createRuntimeApiServer(env: NodeJS.ProcessEnv = process.env): Ru
     operationsRepository: repositorySet.operationsRepository,
     auditSink: repositorySet.auditSink,
     mediaStorage: createRuntimeMediaStorage(parsed.data, env),
+    paymentProvider: createRuntimePaymentProvider(parsed.data),
     useLocalAuthFixture
   };
 
@@ -285,6 +323,7 @@ async function routeOperationsRequest(input: {
   repository: ClinicOperationsRepository;
   auditSink?: AuditSink;
   mediaStorage?: MediaStorageProvider;
+  paymentProvider?: PaymentProvider;
   useLocalAuthFixture: boolean;
   fixtureSubject?: string | undefined;
 }) {
@@ -302,7 +341,9 @@ async function routeOperationsRequest(input: {
   const dependencies = {
     repository: input.repository,
     auditSink: input.auditSink,
-    mediaStorage: input.mediaStorage
+    mediaStorage: input.mediaStorage,
+    paymentProvider: input.paymentProvider,
+    paymentRepository: paymentRepositoryFromOperationsRepository(input.repository)
   };
   const isMediaContentUpload =
     input.request.method === "PUT" && /^\/v1\/media\/uploads\/[^/]+\/content$/.test(pathname);
@@ -772,6 +813,26 @@ async function routeOperationsRequest(input: {
     );
   }
 
+  const invoicePaymentRequestMatch = pathname.match(/^\/v1\/invoices\/([^/]+)\/payment-requests$/);
+  if (invoicePaymentRequestMatch && input.request.method === "POST") {
+    return createInvoicePaymentRequest(
+      operationsContext,
+      dependencies,
+      pathUuid(invoicePaymentRequestMatch[1], "invoiceId"),
+      body
+    );
+  }
+
+  const invoiceManualPaymentMatch = pathname.match(/^\/v1\/invoices\/([^/]+)\/manual-payments$/);
+  if (invoiceManualPaymentMatch && input.request.method === "POST") {
+    return recordInvoiceManualPayment(
+      operationsContext,
+      dependencies,
+      pathUuid(invoiceManualPaymentMatch[1], "invoiceId"),
+      body
+    );
+  }
+
   throw new ApiError(404, "NOT_FOUND", "Route not found.", {
     method: input.request.method,
     path: pathname
@@ -884,6 +945,36 @@ function createRuntimeMediaStorage(
   });
 }
 
+function createRuntimePaymentProvider(config: ClinicOsConfig): PaymentProvider {
+  return createPaymentProvider({
+    provider: config.providers.payment.provider,
+    qrMode: config.providers.payment.qrMode,
+    razorpayKeyId: config.providers.payment.razorpayKeyId,
+    razorpayKeySecret: config.providers.payment.razorpayKeySecret,
+    razorpayWebhookSecret: config.providers.payment.razorpayWebhookSecret,
+    razorpayWebhookUrl: config.providers.payment.razorpayWebhookUrl
+  });
+}
+
+function paymentRepositoryFromOperationsRepository(
+  repository: ClinicOperationsRepository
+): PaymentOperationsRepository | undefined {
+  const candidate = repository as Partial<PaymentOperationsRepository>;
+  const requiredMethods = [
+    "findPaymentInvoiceById",
+    "createPaymentRequestFromProvider",
+    "recordManualPayment",
+    "recordPaymentWebhookReceipt",
+    "markPaymentWebhookReceiptRejected",
+    "applyPaymentProviderWebhook"
+  ] as const;
+
+  if (requiredMethods.every((method) => typeof candidate[method] === "function")) {
+    return candidate as PaymentOperationsRepository;
+  }
+  return undefined;
+}
+
 function resolveClaims(input: {
   request: IncomingMessage;
   tokenVerifier: TokenVerifier;
@@ -971,7 +1062,10 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   }
 }
 
-async function readRawBody(request: IncomingMessage): Promise<Buffer> {
+async function readRawBody(
+  request: IncomingMessage,
+  maxBytes = 100 * 1024 * 1024
+): Promise<Buffer> {
   const chunks: Buffer[] = [];
   let totalBytes = 0;
 
@@ -979,8 +1073,8 @@ async function readRawBody(request: IncomingMessage): Promise<Buffer> {
     const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
     totalBytes += buffer.byteLength;
 
-    if (totalBytes > 100 * 1024 * 1024) {
-      throw new ApiError(400, "VALIDATION_ERROR", "Uploaded media exceeds the 100MB limit.");
+    if (totalBytes > maxBytes) {
+      throw new ApiError(400, "VALIDATION_ERROR", "Request body exceeds the configured byte limit.");
     }
 
     chunks.push(buffer);
@@ -995,6 +1089,15 @@ function pathUuid(value: string, label: string): UUID {
   }
 
   return value;
+}
+
+function requestHeadersRecord(request: IncomingMessage): Record<string, string | undefined> {
+  return Object.fromEntries(
+    Object.entries(request.headers).map(([key, value]) => [
+      key,
+      Array.isArray(value) ? value[0] : value
+    ])
+  );
 }
 
 function todayIsoDate(): string {

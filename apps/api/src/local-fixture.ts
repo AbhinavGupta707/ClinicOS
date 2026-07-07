@@ -2074,7 +2074,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       reconciliationStatus: input.reconciliationStatus ?? "matched",
       idempotencyKey: input.idempotencyKey ?? null,
       receivedAt: input.receivedAt ?? now,
-      recordedByUserId: input.recordedByUserId ?? scope.actorUserId,
+      recordedByUserId: input.recordedByUserId === undefined ? scope.actorUserId : input.recordedByUserId,
       receiptId: null,
       metadata: input.metadata ?? {},
       createdAt: now,
@@ -2467,6 +2467,13 @@ export function createLocalFixtureClaims(input: {
 
 function uuid(): UUID {
   return randomUUID() as UUID;
+}
+
+function uuidOrNull(value: string | null | undefined): UUID | null {
+  if (!value || !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{12}$/i.test(value)) {
+    return null;
+  }
+  return value as UUID;
 }
 
 function matchesScope(record: { tenantId: UUID; clinicId: UUID }, scope: RepositoryScope): boolean {

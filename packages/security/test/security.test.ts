@@ -82,6 +82,10 @@ test("CP5 billing audit classifications separate catalog access from patient-lin
     "invoice.viewed",
     "payment.requested",
     "payment.recorded",
+    "payment.succeeded",
+    "payment.failed",
+    "payment.manually_recorded",
+    "payment.reconciliation_required",
     "receipt.generated"
   ] as const) {
     const classification = classifyAuditAction(action);
@@ -101,6 +105,17 @@ test("CP5 billing audit classifications separate catalog access from patient-lin
       }),
     /requires patientId/
   );
+});
+
+test("CP5 provider audit classifications separate config health from invoice payment evidence", () => {
+  const unavailable = classifyAuditAction("payment.provider.unavailable");
+  assert.equal(unavailable.requiresPatientId, false);
+  assert.equal(unavailable.phiInvolved, false);
+  assert.equal(unavailable.category, "integration");
+
+  assert.equal(classifyAuditAction("payment.succeeded").riskLevel, "high");
+  assert.equal(classifyAuditAction("payment.manually_recorded").riskLevel, "high");
+  assert.equal(classifyAuditAction("payment.reconciliation_required").category, "billing");
 });
 
 test("CP3 audit classifications cover intake consent encounter note prescription and timeline actions", () => {

@@ -78,7 +78,13 @@ export type PatientTimelineItemType =
   | "receipt_generated"
   | "prescription_draft_created"
   | "prescription_signed"
-  | "media_uploaded";
+  | "media_uploaded"
+  | "invoice_created"
+  | "payment_requested"
+  | "payment_succeeded"
+  | "payment_manually_recorded"
+  | "payment_reconciliation_required"
+  | "receipt_generated";
 
 export interface PatientTimelineItem {
   id: UUID;
