@@ -1,7 +1,18 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { pathToFileURL } from "node:url";
 import { loadCp4Scenario, validateCp4Scenario } from "./validate-cp4-fixtures.mjs";
+
+const CP4_UPLOAD_BYTES = Buffer.from("ClinicOS CP4 synthetic bitewing upload bytes\n", "utf8");
+const CP4_UPLOAD_DIGEST = createHash("sha256").update(CP4_UPLOAD_BYTES).digest("hex");
+const LIVE_DENTAL_FLOW_KEYS = [
+  "read-encounter-for-dental-chart",
+  "create-tooth-finding-as-assistant",
+  "review-update-finding-as-doctor",
+  "create-chart-snapshot"
+];
+const LIVE_TIMELINE_FLOW_KEY = "read-patient-timeline-after-media";
 
 const TOKEN_ENV_BY_ACTOR = {
   owner: "CLINICOS_CP4_OWNER_TOKEN",
@@ -106,25 +117,175 @@ function requestFromStep(step) {
 function buildNegativeRequests(scenario) {
   return scenario.roleTenantExpectations
     .filter((expectation) => expectation.expected === "deny" && expectation.liveSmoke !== false)
-    .map((expectation) => ({
+    .map((expectation) => ({ expectation, path: liveDenialPath(expectation.path) }))
+    .filter((entry) => entry.path)
+    .map(({ expectation, path }) => ({
       key: expectation.key,
       actorKey: expectation.actorKey,
       method: expectation.method,
-      path: expectation.path,
+      path,
       idempotencyKey: `cp4-${expectation.key}`,
       expectedStatus: expectedStatusList(expectation.expectedStatus),
       expectedReason: expectation.expectedReason,
-      body: clonePlain(expectation.requestBody),
-      assertion: `${expectation.operation} must deny ${expectation.actorKey} with ${expectation.expectedReason}.`
+      body: signedAccessBody(expectation.requestBody),
+      assertion: `${liveDenialOperation(expectation.operation)} must deny ${expectation.actorKey} with ${expectation.expectedReason}.`
     }));
+}
+
+function liveDenialPath(path) {
+  if (!path) return null;
+  if (path.endsWith("/links")) return null;
+  return path.replace("/signed-access", "/signed-url");
+}
+
+function liveDenialOperation(operation) {
+  return operation.replace("/signed-access", "/signed-url");
+}
+
+function signedAccessBody(body) {
+  if (body === undefined || body === null) return undefined;
+  const cloned = clonePlain(body);
+  if (cloned && typeof cloned === "object" && "purpose" in cloned) {
+    return { expiresInSeconds: 300 };
+  }
+  return cloned;
+}
+
+function buildLiveMediaRequests(scenario) {
+  const patient = byKey(scenario.patients, "chartingPatient", "patient");
+  const finding = byKey(scenario.dentalFindings, "tooth16OcclusalCaries", "dentalFinding");
+  const uploadedXray = byKey(scenario.mediaAssets, "uploadedBitewingXray", "mediaAsset");
+  const forbiddenFields = scenario.responseAssertions.mediaPrivacy.publicResponsesMustNotExpose;
+
+  return [
+    {
+      key: "request-xray-upload-url",
+      actorKey: "assistant",
+      method: "POST",
+      path: "/v1/media/upload-urls",
+      idempotencyKey: "cp4-request-xray-upload-url",
+      expectedStatus: [201],
+      expectedEvents: ["media.upload_requested"],
+      expectedAudit: [
+        {
+          action: "media.upload_requested",
+          phiFields: ["patientId", "mediaType", "tags"],
+          resourceType: "media_upload",
+          resourceId: "{uploadId}"
+        }
+      ],
+      expectedBodyIncludes: ["upload", "uploadTarget", "uploadUrl", "expiresAt"],
+      expectedBodyMustNotInclude: forbiddenFields,
+      body: {
+        dentalFindingId: finding.id,
+        encounterId: finding.encounterId,
+        fileSizeBytes: CP4_UPLOAD_BYTES.byteLength,
+        mediaType: "xray",
+        mimeType: uploadedXray.mimeType,
+        originalFilename: "cp4-synthetic-bitewing.png",
+        patientId: patient.id,
+        provenance: uploadedXray.provenance,
+        sha256Digest: CP4_UPLOAD_DIGEST,
+        tags: uploadedXray.tags,
+        toothNumber: finding.toothNumber
+      },
+      capture: {
+        uploadId: ["upload", "id"],
+        uploadUrl: ["uploadTarget", "uploadUrl"]
+      }
+    },
+    {
+      key: "upload-xray-content",
+      actorKey: "assistant",
+      method: "PUT",
+      path: "{uploadUrl}",
+      idempotencyKey: "cp4-upload-xray-content",
+      expectedStatus: [200],
+      expectedEvents: [],
+      expectedAudit: [],
+      expectedBodyIncludes: ["upload", "object", CP4_UPLOAD_DIGEST],
+      expectedBodyMustNotInclude: forbiddenFields,
+      rawBody: CP4_UPLOAD_BYTES,
+      contentType: uploadedXray.mimeType,
+      requiredHeaders: {
+        "x-clinic-os-upload-id": "{uploadId}"
+      }
+    },
+    {
+      key: "complete-xray-upload",
+      actorKey: "assistant",
+      method: "POST",
+      path: "/v1/media/uploads/{uploadId}/complete",
+      idempotencyKey: "cp4-complete-xray-upload",
+      expectedStatus: [201],
+      expectedEvents: ["media.upload_completed"],
+      expectedAudit: [
+        {
+          action: "media.upload_completed",
+          phiFields: ["patientId", "mediaAssetId", "scanStatus"],
+          resourceType: "media_asset",
+          resourceId: "{mediaAssetId}"
+        }
+      ],
+      expectedBodyIncludes: ["mediaAsset", "xray", "clean"],
+      expectedBodyMustNotInclude: forbiddenFields,
+      body: {
+        contentLength: CP4_UPLOAD_BYTES.byteLength,
+        dicomMetadata: {
+          metadataOnly: false,
+          source: "cp4_contract_smoke"
+        },
+        encounterId: finding.encounterId,
+        mimeType: uploadedXray.mimeType,
+        patientId: patient.id,
+        scanStatus: "clean",
+        sha256Digest: CP4_UPLOAD_DIGEST
+      },
+      capture: {
+        mediaAssetId: ["mediaAsset", "id"]
+      }
+    },
+    {
+      key: "list-patient-media-after-upload",
+      actorKey: "doctor",
+      method: "GET",
+      path: `/v1/patients/${patient.id}/media`,
+      idempotencyKey: "cp4-list-patient-media-after-upload",
+      expectedStatus: [200],
+      expectedEvents: [],
+      expectedAudit: [],
+      expectedBodyIncludes: ["mediaAssets", "xray", "{mediaAssetId}"],
+      expectedBodyMustNotInclude: forbiddenFields
+    },
+    {
+      key: "request-signed-media-view",
+      actorKey: "doctor",
+      method: "POST",
+      path: "/v1/media/assets/{mediaAssetId}/signed-url",
+      idempotencyKey: "cp4-request-signed-media-view",
+      expectedStatus: [200],
+      expectedEvents: ["media.viewed"],
+      expectedAudit: [
+        {
+          action: "media.viewed",
+          phiFields: ["patientId", "mediaAssetId", "viewerActorId"],
+          resourceType: "media_asset",
+          resourceId: "{mediaAssetId}"
+        }
+      ],
+      expectedBodyIncludes: ["mediaAsset", "access", "signedUrl", "expiresAt"],
+      expectedBodyMustNotInclude: forbiddenFields,
+      body: {
+        expiresInSeconds: 300
+      }
+    }
+  ];
 }
 
 function buildPostFlowVerification(scenario) {
   const patient = byKey(scenario.patients, "chartingPatient", "patient");
   const chart = byKey(scenario.dentalCharts, "chartingPatientAdultChart", "dentalChart");
   const finding = byKey(scenario.dentalFindings, "tooth16OcclusalCaries", "dentalFinding");
-  const uploadedXray = byKey(scenario.mediaAssets, "uploadedBitewingXray", "mediaAsset");
-  const study = byKey(scenario.imagingStudies, "syntheticBitewingStudy", "imagingStudy");
   const forbiddenFields = scenario.responseAssertions.mediaPrivacy.publicResponsesMustNotExpose;
 
   return [
@@ -140,27 +301,16 @@ function buildPostFlowVerification(scenario) {
       assertion: "Dental chart read must expose tooth-level finding history without storage paths."
     },
     {
-      key: "read-media-asset-metadata",
+      key: "list-patient-media-verification",
       actorKey: "doctor",
       method: "GET",
-      path: `/v1/media-assets/${uploadedXray.id}`,
-      idempotencyKey: "cp4-read-media-asset-metadata",
+      path: `/v1/patients/${patient.id}/media`,
+      idempotencyKey: "cp4-list-patient-media-verification",
       expectedStatus: [200],
-      expectedBodyIncludes: [uploadedXray.id, "xray", "scan_passed", "mediated_signed_url_only"],
-      expectedBodyMustNotInclude: forbiddenFields,
-      assertion: "Media metadata read must not expose raw object storage keys."
-    },
-    {
-      key: "read-imaging-study-coexistence-summary",
-      actorKey: "doctor",
-      method: "GET",
-      path: `/v1/patients/${patient.id}/imaging-studies/${study.id}`,
-      idempotencyKey: "cp4-read-imaging-study-coexistence-summary",
-      expectedStatus: [200],
-      expectedBodyIncludes: ["manual_upload", "metadata_import", "coexistence_imported"],
+      expectedBodyIncludes: ["mediaAssets", "xray", "{mediaAssetId}"],
       expectedBodyMustNotInclude: forbiddenFields,
       assertion:
-        "Imaging study summary must preserve upload/import provenance without implying PACS replacement."
+        "Media listing must expose clinical media metadata without raw object storage keys."
     },
     {
       key: "read-patient-timeline-verification",
@@ -169,19 +319,48 @@ function buildPostFlowVerification(scenario) {
       path: `/v1/patients/${patient.id}/timeline`,
       idempotencyKey: "cp4-read-patient-timeline-verification",
       expectedStatus: [200],
-      expectedBodyIncludes: scenario.responseAssertions.timeline.chartingPatientMustInclude,
+      expectedBodyIncludes: [
+        "dental_finding.created",
+        "dental_finding.updated",
+        "dental_chart.snapshot_created",
+        "media.upload_completed"
+      ],
       expectedBodyMustNotInclude: forbiddenFields,
       assertion:
-        "Patient timeline must include encounter, dental finding, chart snapshot, media, DICOM metadata, external link, and media view events."
+        "Patient timeline must include dental finding, chart snapshot, and durable media upload evidence."
     }
   ];
 }
 
 export function buildCp4SmokePlan(scenario) {
   validateCp4Scenario(scenario);
+  const liveDentalRequests = LIVE_DENTAL_FLOW_KEYS.map((key) =>
+    requestFromStep(byKey(scenario.flow.steps, key, "flow step"))
+  );
+  const liveTimelineRequest = {
+    ...requestFromStep(byKey(scenario.flow.steps, LIVE_TIMELINE_FLOW_KEY, "flow step")),
+    expectedBodyIncludes: [
+      "dental_finding.created",
+      "dental_finding.updated",
+      "dental_chart.snapshot_created",
+      "media.upload_completed"
+    ]
+  };
+  const fixtureOnlyRequests = scenario.flow.steps
+    .filter(
+      (step) => !LIVE_DENTAL_FLOW_KEYS.includes(step.key) && step.key !== LIVE_TIMELINE_FLOW_KEY
+    )
+    .filter(
+      (step) =>
+        !["request-xray-upload-url", "complete-xray-upload", "request-signed-media-view"].includes(
+          step.key
+        )
+    )
+    .map(requestFromStep);
 
   return {
-    flowRequests: scenario.flow.steps.map(requestFromStep),
+    fixtureOnlyRequests,
+    flowRequests: [...liveDentalRequests, ...buildLiveMediaRequests(scenario), liveTimelineRequest],
     negativeRequests: buildNegativeRequests(scenario),
     postFlowVerification: buildPostFlowVerification(scenario)
   };
@@ -251,20 +430,51 @@ function assertSerializedExcludes(value, needles, label) {
   }
 }
 
-function resolveLiveRequest(request) {
+function substituteState(value, state) {
+  if (typeof value === "string") {
+    return value.replace(/\{([a-zA-Z0-9_]+)\}/g, (_match, key) => {
+      assert.ok(state[key], `Missing live smoke state value for ${key}`);
+      return state[key];
+    });
+  }
+
+  if (Array.isArray(value)) return value.map((item) => substituteState(item, state));
+
+  if (value && typeof value === "object" && !Buffer.isBuffer(value)) {
+    return Object.fromEntries(
+      Object.entries(value).map(([key, item]) => [key, substituteState(item, state)])
+    );
+  }
+
+  return value;
+}
+
+function resolveLiveRequest(request, state = {}) {
   return {
     ...request,
-    path: normalizeApiPath(request.path),
-    body: clonePlain(request.body)
+    body: substituteState(clonePlain(request.body), state),
+    expectedBodyIncludes: substituteState(request.expectedBodyIncludes, state),
+    path: normalizeApiPath(substituteState(request.path, state)),
+    requiredHeaders: substituteState(request.requiredHeaders ?? {}, state)
   };
 }
 
 async function executeRequest(baseUrl, scenario, request, options) {
   const url = new URL(request.path, baseUrl);
+  const headers = {
+    ...headersForRequest(scenario, request, options),
+    ...request.requiredHeaders
+  };
+  if (request.contentType) headers["Content-Type"] = request.contentType;
   const response = await fetch(url, {
     method: request.method,
-    headers: headersForRequest(scenario, request, options),
-    body: request.body === undefined ? undefined : JSON.stringify(request.body)
+    headers,
+    body:
+      request.rawBody === undefined
+        ? request.body === undefined
+          ? undefined
+          : JSON.stringify(request.body)
+        : request.rawBody
   });
   const body = await parseResponseBody(response);
   const acceptedStatuses = expectedStatusList(request.expectedStatus);
@@ -277,6 +487,18 @@ async function executeRequest(baseUrl, scenario, request, options) {
   return { response, body };
 }
 
+function captureState(request, body, state) {
+  if (!request.capture) return;
+  for (const [stateKey, path] of Object.entries(request.capture)) {
+    let value = body;
+    for (const segment of path) {
+      value = value?.[segment];
+    }
+    assert.equal(typeof value, "string", `${request.key} did not expose ${path.join(".")}`);
+    state[stateKey] = value;
+  }
+}
+
 function printDryRun(plan) {
   const rows = [
     ...plan.flowRequests.map((request) => ({ type: "flow", ...request })),
@@ -285,6 +507,11 @@ function printDryRun(plan) {
   ];
 
   console.log("CP4 API smoke dry run plan:");
+  if (plan.fixtureOnlyRequests?.length) {
+    console.log(
+      `fixture-only ${plan.fixtureOnlyRequests.length} deferred imaging/link evidence steps are excluded from live API smoke`
+    );
+  }
   for (const row of rows) {
     console.log(
       [
@@ -324,19 +551,21 @@ function printDryRun(plan) {
 
 async function runLiveSmoke(scenario, plan, options) {
   assert.ok(options.baseUrl, "Set --base-url or CLINICOS_CP4_API_BASE_URL for live smoke.");
+  const state = {};
 
   for (const request of plan.flowRequests) {
-    const liveRequest = resolveLiveRequest(request);
+    const liveRequest = resolveLiveRequest(request, state);
     const { body } = await executeRequest(options.baseUrl, scenario, liveRequest, options);
-    assertSerializedIncludes(body, request.expectedBodyIncludes, request.key);
+    captureState(liveRequest, body, state);
+    assertSerializedIncludes(body, liveRequest.expectedBodyIncludes, request.key);
     assertSerializedExcludes(body, request.expectedBodyMustNotInclude, request.key);
     console.log(`pass ${request.key}`);
   }
 
   for (const request of plan.postFlowVerification) {
-    const liveRequest = resolveLiveRequest(request);
+    const liveRequest = resolveLiveRequest(request, state);
     const { body } = await executeRequest(options.baseUrl, scenario, liveRequest, options);
-    assertSerializedIncludes(body, request.expectedBodyIncludes, request.key);
+    assertSerializedIncludes(body, liveRequest.expectedBodyIncludes, request.key);
     assertSerializedExcludes(body, request.expectedBodyMustNotInclude, request.key);
     console.log(`pass ${request.key}`);
   }
@@ -357,8 +586,8 @@ async function runLiveSmoke(scenario, plan, options) {
       [
         "dental_finding.created",
         "dental_chart.snapshot_created",
-        "media.created",
-        "media.linked",
+        "media.upload_requested",
+        "media.upload_completed",
         "media.viewed"
       ],
       auditRequest.key
@@ -371,7 +600,7 @@ async function runLiveSmoke(scenario, plan, options) {
   }
 
   for (const request of plan.negativeRequests) {
-    const liveRequest = resolveLiveRequest(request);
+    const liveRequest = resolveLiveRequest(request, state);
     const { body } = await executeRequest(options.baseUrl, scenario, liveRequest, options);
     assertSerializedIncludes(body, [request.expectedReason], request.key);
     assertSerializedExcludes(

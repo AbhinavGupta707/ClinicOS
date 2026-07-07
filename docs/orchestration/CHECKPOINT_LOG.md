@@ -189,6 +189,14 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 - Browser re-smoke passed after the patch for doctor/assistant desktop, doctor/assistant 390px mobile, and accountant role denial. Refreshed screenshots: `/private/tmp/clinicos-cp4-web-doctor-desktop.png` and `/private/tmp/clinicos-cp4-web-mobile-390.png`.
 - `npm run security:audit` was not rerun: sandbox DNS failed for `registry.npmjs.org`, and escalation was policy-rejected because the audit sends dependency inventory to an external service. The prior CP4 high-severity audit evidence remains recorded in the closeout above.
 
+## Checkpoint 4 Current-Tree Verification - 2026-07-07
+
+- A later critical audit found one verification-artifact gap, not a new product-route implementation gap: `scripts/cp4-contract-smoke.mjs` and `tests/acceptance/cp4-fixture-contract.test.mjs` still let the CP4 dry-run plan describe legacy media routes (`/media/upload-url`, `/complete-upload`, `/links`, `/signed-access`) that are not the canonical live CP4 API.
+- Patched the CP4 smoke plan to exercise the actual durable media route family with dynamic upload/media IDs and raw content upload: `POST /v1/media/upload-urls`, `PUT /v1/media/uploads/{uploadId}/content`, `POST /v1/media/uploads/{uploadId}/complete`, `GET /v1/patients/{patientId}/media`, and `POST /v1/media/assets/{mediaAssetId}/signed-url`.
+- The smoke plan now explicitly separates four fixture-only deferred imaging/link evidence steps from live API smoke rather than treating deferred routes as implemented product behavior.
+- Re-checks passed: `node scripts/validate-cp4-fixtures.mjs`, `node scripts/cp4-contract-smoke.mjs --dry-run`, `node --test tests/acceptance/cp4-fixture-contract.test.mjs`, `npm --workspace @clinic-os/web test -- cp4-workflow.test.ts`, `git diff --check`, `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`.
+- `npm run security:audit` was still not rerun because it discloses dependency inventory to the external npm registry audit service and prior escalation was rejected. Use the recorded CP4 high-severity audit evidence unless the user explicitly approves rerunning that external audit.
+
 ## Checkpoint 5 Launch - 2026-07-07
 
 - Launch packet: `docs/orchestration/CHECKPOINT_05_TREATMENT_CHECKOUT_PAYMENTS.md`.

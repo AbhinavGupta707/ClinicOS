@@ -110,6 +110,7 @@ test("CP4 scenario requires audit, timeline, and domain event evidence", async (
 
 test("CP4 media expectations use signed mediation without raw storage exposure", async () => {
   const scenario = await loadCp4Scenario();
+  const plan = buildCp4SmokePlan(scenario);
   const forbiddenFields = scenario.responseAssertions.mediaPrivacy.publicResponsesMustNotExpose;
 
   assert.deepEqual(forbiddenFields, ["objectKey", "rawStoragePath", "bucket", "storagePath"]);
@@ -122,18 +123,28 @@ test("CP4 media expectations use signed mediation without raw storage exposure",
     assert.notEqual(asset.privacy.access, "public");
   }
 
-  const uploadStep = scenario.flow.steps.find((step) => step.key === "request-xray-upload-url");
-  assert.deepEqual(uploadStep.expectedBodyIncludes, ["assetId", "uploadUrl", "expiresAt"]);
+  const uploadStep = plan.flowRequests.find((step) => step.key === "request-xray-upload-url");
+  assert.equal(uploadStep.path, "/v1/media/upload-urls");
+  assert.deepEqual(uploadStep.expectedBodyIncludes, [
+    "upload",
+    "uploadTarget",
+    "uploadUrl",
+    "expiresAt"
+  ]);
   assert.deepEqual(uploadStep.expectedBodyMustNotInclude, forbiddenFields);
 
-  const signedViewStep = scenario.flow.steps.find(
-    (step) => step.key === "request-signed-media-view"
-  );
-  assert.deepEqual(signedViewStep.expectedBodyIncludes, ["signedUrl", "expiresAt", "auditEventId"]);
+  const signedViewStep = plan.flowRequests.find((step) => step.key === "request-signed-media-view");
+  assert.equal(signedViewStep.path, "/v1/media/assets/{mediaAssetId}/signed-url");
+  assert.deepEqual(signedViewStep.expectedBodyIncludes, [
+    "mediaAsset",
+    "access",
+    "signedUrl",
+    "expiresAt"
+  ]);
   assert.deepEqual(signedViewStep.expectedBodyMustNotInclude, forbiddenFields);
 
   const publicExpectationText = JSON.stringify(
-    scenario.flow.steps.map((step) => step.expectedBodyIncludes ?? [])
+    plan.flowRequests.map((step) => step.expectedBodyIncludes ?? [])
   );
   for (const field of forbiddenFields) {
     assert.equal(publicExpectationText.includes(field), false);
@@ -213,9 +224,10 @@ test("CP4 smoke plan can be built from documented contracts", async () => {
   const scenario = await loadCp4Scenario();
   const plan = buildCp4SmokePlan(scenario);
 
-  assert.equal(plan.flowRequests.length, 12);
-  assert.equal(plan.negativeRequests.length, 5);
-  assert.equal(plan.postFlowVerification.length, 4);
+  assert.equal(plan.flowRequests.length, 10);
+  assert.equal(plan.fixtureOnlyRequests.length, 4);
+  assert.equal(plan.negativeRequests.length, 4);
+  assert.equal(plan.postFlowVerification.length, 3);
   assert.deepEqual(
     plan.flowRequests.map((request) => `${request.method} ${request.path}`),
     [
@@ -223,16 +235,39 @@ test("CP4 smoke plan can be built from documented contracts", async () => {
       "POST /v1/encounters/40000000-0000-4000-8000-000000004001/dental-findings",
       "PATCH /v1/dental-findings/40000000-0000-4000-8000-000000006001",
       "POST /v1/patients/40000000-0000-4000-8000-000000002001/dental-chart/snapshots",
-      "POST /v1/patients/40000000-0000-4000-8000-000000002001/media/upload-url",
-      "POST /v1/media-assets/40000000-0000-4000-8000-000000008001/complete-upload",
-      "POST /v1/patients/40000000-0000-4000-8000-000000002001/imaging/dicom-metadata",
-      "POST /v1/patients/40000000-0000-4000-8000-000000002001/external-media-links",
-      "POST /v1/media-assets/40000000-0000-4000-8000-000000008001/links",
-      "POST /v1/media-assets/40000000-0000-4000-8000-000000008002/links",
-      "POST /v1/media-assets/40000000-0000-4000-8000-000000008001/signed-access",
+      "POST /v1/media/upload-urls",
+      "PUT {uploadUrl}",
+      "POST /v1/media/uploads/{uploadId}/complete",
+      "GET /v1/patients/40000000-0000-4000-8000-000000002001/media",
+      "POST /v1/media/assets/{mediaAssetId}/signed-url",
       "GET /v1/patients/40000000-0000-4000-8000-000000002001/timeline"
     ]
   );
+  assert.deepEqual(
+    plan.fixtureOnlyRequests.map((request) => `${request.method} ${request.path}`),
+    [
+      "POST /v1/patients/40000000-0000-4000-8000-000000002001/imaging/dicom-metadata",
+      "POST /v1/patients/40000000-0000-4000-8000-000000002001/external-media-links",
+      "POST /v1/media-assets/40000000-0000-4000-8000-000000008001/links",
+      "POST /v1/media-assets/40000000-0000-4000-8000-000000008002/links"
+    ]
+  );
+
+  const livePlanText = JSON.stringify([
+    plan.flowRequests,
+    plan.negativeRequests,
+    plan.postFlowVerification
+  ]);
+  assert.equal(/\/v1\/patients\/[^"]+\/media\/upload-url/.test(livePlanText), false);
+  for (const staleRouteFragment of [
+    "/complete-upload",
+    "/signed-access",
+    "/links",
+    "/external-media-links",
+    "/imaging/dicom-metadata"
+  ]) {
+    assert.equal(livePlanText.includes(staleRouteFragment), false);
+  }
 
   assert.ok(
     plan.postFlowVerification.every((request) =>

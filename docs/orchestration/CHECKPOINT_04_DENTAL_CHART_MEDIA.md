@@ -154,15 +154,23 @@ Doctor and assistant users can chart tooth-level dental findings, maintain denta
   - Refreshed screenshots: `/private/tmp/clinicos-cp4-web-doctor-desktop.png` and `/private/tmp/clinicos-cp4-web-mobile-390.png`.
 - `npm run security:audit` could not be rerun in this pass: sandboxed execution could not resolve `registry.npmjs.org`, and escalation was policy-rejected because npm audit discloses dependency inventory to an external service. The last recorded CP4 closeout high-severity audit remains the available evidence for this gate.
 
+## Current-Tree Verification - 2026-07-07
+
+- Critical current-tree audit found a remaining verification-artifact weakness: the web/API product route family was durable, but `scripts/cp4-contract-smoke.mjs` and its acceptance assertion still allowed the dry-run plan to describe stale media routes from the earlier fixture story.
+- The CP4 smoke plan now builds a live API plan around the implemented durable route sequence: `POST /v1/media/upload-urls`, `PUT /v1/media/uploads/{uploadId}/content`, `POST /v1/media/uploads/{uploadId}/complete`, `GET /v1/patients/{patientId}/media`, and `POST /v1/media/assets/{mediaAssetId}/signed-url`.
+- The smoke script captures runtime `uploadId`, `uploadUrl`, and `mediaAssetId` from responses, uploads raw synthetic content with the required upload header, and keeps DICOM/external-link fixture evidence explicitly fixture-only/deferred instead of listing it as live CP4 API behavior.
+- Acceptance coverage now fails if stale live-smoke route fragments such as `/complete-upload`, `/links`, `/signed-access`, `/external-media-links`, or `/imaging/dicom-metadata` re-enter the live smoke plan.
+- Re-checks passed: `node scripts/validate-cp4-fixtures.mjs`, `node scripts/cp4-contract-smoke.mjs --dry-run`, `node --test tests/acceptance/cp4-fixture-contract.test.mjs`, `npm --workspace @clinic-os/web test -- cp4-workflow.test.ts`, `git diff --check`, `npm run check`, `npm run security:secrets`, `npm run typecheck`, `npm run lint`, `npm run test`, and `npm run build`.
+
 ## Accepted Gaps And Deferred Whole Workflows
 
-- CP4 implements durable upload reservation, local simulator content upload, upload completion, patient media listing, and signed-access routes. CP4 fixture data still preserves DICOM metadata and external reference/link coexistence evidence, but live external imaging-link routes are not claimed as complete product behavior in CP4. That workflow should be owned by a later integration or a dedicated imaging adapter checkpoint rather than patched in as a weak partial flow.
+- CP4 implements durable upload reservation, local simulator content upload, upload completion, patient media listing, and mediated signed-URL routes. CP4 fixture data still preserves DICOM metadata and external reference/link coexistence evidence, but live external imaging-link routes are not claimed as complete product behavior in CP4. That workflow should be owned by a later integration or a dedicated imaging adapter checkpoint rather than patched in as a weak partial flow.
 - The dental finding API stores one tooth/surface finding row per create/update operation. Multi-tooth charting is still possible by creating separate findings; bulk multi-tooth chart patching should be a later explicit workflow, not hidden inside a single partial endpoint.
 - Visual design remains temporary. CP4 browser verification focused on safety and responsive workflow invariants: no mobile horizontal overflow, reachable chart/media controls, honest role denial, and no fake clinical completion.
 
 ## CP4 Integration Lessons
 
-- Fixture contract scripts and live route contracts must stay aligned before lanes are merged. A dry-run fixture plan can pass while still describing an older durable route shape.
+- Fixture contract scripts and live route contracts must stay aligned before lanes are merged. A dry-run fixture plan can pass while still describing an older durable route shape, so the smoke builder must separate fixture-only/deferred evidence from the live API plan.
 - Web live helper tests must assert exact API route shapes whenever fixture browser smoke is used. Fixture-mode UI smoke proves user interaction and responsiveness, but it does not prove live API contract compatibility by itself.
 - UI smoke servers must include the checkpoint fixture flag when the workflow is fixture-backed. For CP4 that flag is `NEXT_PUBLIC_CLINIC_OS_USE_CP4_WORKFLOW_FIXTURE=true`.
 - Browser/mobile testing remains necessary even for rough UI because it validates route registration, role-conditioned rendering, reachable controls, and mobile overflow invariants that the final design will inherit.

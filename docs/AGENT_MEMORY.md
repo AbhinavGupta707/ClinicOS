@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after Checkpoint 7 closeout commit `983cca5`; Checkpoint 8 launch packet is being prepared from that base.
+- Branch: `main` after Checkpoint 8 launch packet commit `f562a8e`; Checkpoint 8 worker lanes are the next incomplete orchestration step.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -122,6 +122,7 @@ Follow `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
 - Browser/mobile smoke remains useful for temporary UI because it proves route registration, role-conditioned controls, responsive reachability, and no horizontal overflow. Do not spend time on final visual polish before the design pass unless usability or safety is broken.
 - Never expose bucket names, object keys, raw storage paths, or PHI-bearing private media references in patient-facing API payloads. Use mediated signed access and audit media view/write operations.
 - If multi-tooth chart editing is not explicitly in scope, preserve a complete one-finding-per-row workflow and defer bulk chart patching as a whole workflow rather than hiding partial bulk behavior inside a weak endpoint.
+- Current-tree CP4 audit found the product route family was durable, but the contract smoke plan still listed stale/deferred media routes. Keep fixture-only coexistence evidence separate from live API smoke plans. Live CP4 media smoke must use dynamic upload/media IDs through `POST /v1/media/upload-urls`, `PUT /v1/media/uploads/{uploadId}/content`, `POST /v1/media/uploads/{uploadId}/complete`, `GET /v1/patients/{patientId}/media`, and `POST /v1/media/assets/{mediaAssetId}/signed-url`.
 
 ## CP5 Integration Lessons
 
