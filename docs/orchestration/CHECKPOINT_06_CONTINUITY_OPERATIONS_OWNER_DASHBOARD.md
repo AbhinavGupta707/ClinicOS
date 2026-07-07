@@ -8,6 +8,7 @@ Clinic staff can run continuity operations after checkout: recalls, post-op/paym
 
 - Branch: `main`
 - Base commit before launch packet: `6f9fe1c`
+- Worker launch commit: `7fefa31`
 - Launch date: 2026-07-07
 
 ## Scope
@@ -38,10 +39,10 @@ Clinic staff can run continuity operations after checkout: recalls, post-op/paym
 
 | Lane | Pending Worktree ID | Thread ID | Worktree | Ownership |
 | --- | --- | --- | --- | --- |
-| Workflow/Task Backend | pending | pending | pending | Tasks, recalls, follow-up rules, SOP schedules/runs, Temporal/local workflow tests, DB/domain/API contracts |
-| Lab/Inventory/Event | pending | pending | pending | Lab vendors/cases/slips/reconciliation, inventory items/checks/stock ledger/procurement tasks, incident/CAPA diary |
-| Operations UX | pending | pending | pending | Recall queue, task workbench, SOP checklist runner, lab board, inventory runner, event diary, role-aware navigation and browser smoke |
-| Analytics/QA | pending | pending | pending | Owner dashboard projections, fixture/contract smoke, E2E acceptance plans, role/tenant denials, documentation |
+| Workflow/Task Backend | `local:6c3ba047-cd82-491b-9566-1486b4c36082` | `019f3c1d-1708-7893-bfd7-1329dff99220` | `/Users/abhinavgupta/.codex/worktrees/dbc7/ClinicOS` | Tasks, recalls, follow-up rules, SOP schedules/runs, Temporal/local workflow tests, DB/domain/API contracts |
+| Lab/Inventory/Event | `local:cc373996-d87c-472b-9ca1-8fb8846722aa` | `019f3c1d-6d96-7310-ba40-bed750544a62` | `/Users/abhinavgupta/.codex/worktrees/0166/ClinicOS` | Lab vendors/cases/slips/reconciliation, inventory items/checks/stock ledger/procurement tasks, incident/CAPA diary |
+| Operations UX | `local:e2d1fbe3-7bbc-4af4-b3fa-a0e27c1b9d52` | `019f3c1d-b7c5-7a32-8ee4-a1669e58aa73` | `/Users/abhinavgupta/.codex/worktrees/9f26/ClinicOS` | Recall queue, task workbench, SOP checklist runner, lab board, inventory runner, event diary, role-aware navigation and browser smoke |
+| Analytics/QA | `local:a6a0b27a-81a2-4527-9041-9a1e721cc2aa` | `019f3c1e-1658-7aa2-ab3a-ca5135838beb` | `/Users/abhinavgupta/.codex/worktrees/4ff2/ClinicOS` | Owner dashboard projections, fixture/contract smoke, E2E acceptance plans, role/tenant denials, documentation |
 
 ## Shared-File Policy
 

@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after Checkpoint 5 promotion commit `6f9fe1c`; Checkpoint 6 launch is in progress from this verified base.
+- Branch: `main` after Checkpoint 6 worker launch commit `7fefa31`; Checkpoint 6 lanes are active in visible project-scoped worktree threads.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -30,7 +30,11 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Payment Provider: `019f3bcc-213b-7191-8424-2856a60a85a0`, `/Users/abhinavgupta/.codex/worktrees/fae5/ClinicOS`.
   - Checkout UX: `019f3bcc-213b-7191-8424-284dd78c7323`, `/Users/abhinavgupta/.codex/worktrees/82db/ClinicOS`.
   - Clinical Output QA: `019f3bcc-216e-79b3-bd9d-db6d77e928a5`, `/Users/abhinavgupta/.codex/worktrees/1f2d/ClinicOS`.
-- Checkpoint 6 lanes are planned as Workflow/Task Backend, Lab/Inventory/Event, Operations UX, and Analytics/QA. Launch them as visible project-scoped worktree threads from the current `main`.
+- Checkpoint 6 active visible project-scoped lanes:
+  - Workflow/Task Backend: `019f3c1d-1708-7893-bfd7-1329dff99220`, `/Users/abhinavgupta/.codex/worktrees/dbc7/ClinicOS`.
+  - Lab/Inventory/Event: `019f3c1d-6d96-7310-ba40-bed750544a62`, `/Users/abhinavgupta/.codex/worktrees/0166/ClinicOS`.
+  - Operations UX: `019f3c1d-b7c5-7a32-8ee4-a1669e58aa73`, `/Users/abhinavgupta/.codex/worktrees/9f26/ClinicOS`.
+  - Analytics/QA: `019f3c1e-1658-7aa2-ab3a-ca5135838beb`, `/Users/abhinavgupta/.codex/worktrees/4ff2/ClinicOS`.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture

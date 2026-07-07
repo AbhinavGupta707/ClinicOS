@@ -252,10 +252,11 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 
 - Launch packet: `docs/orchestration/CHECKPOINT_06_CONTINUITY_OPERATIONS_OWNER_DASHBOARD.md`.
 - Base commit before launch packet: `6f9fe1c` (`docs: record checkpoint 5 promotion`).
+- Worker launch commit: `7fefa31` (`docs: clarify checkpoint 6 migration ownership`).
 - Credential/input preflight: `.secrets/orchestration.env` is present; WhatsApp provider variables are present locally but must not be printed or committed; `.env.example` declares `TEMPORAL_ADDRESS`.
 - Integration branch rule: CP6 lane commits merge first into `codex/integration/checkpoint-6`; promote to `main` only after full code, deterministic workflow, browser/user, docs, and accepted-gap gates pass.
-- Visible project-scoped lanes planned:
-  - Workflow/Task Backend.
-  - Lab/Inventory/Event.
-  - Operations UX.
-  - Analytics/QA.
+- Visible project-scoped lanes launched:
+  - Workflow/Task Backend: pending `local:6c3ba047-cd82-491b-9566-1486b4c36082`, thread `019f3c1d-1708-7893-bfd7-1329dff99220`, worktree `/Users/abhinavgupta/.codex/worktrees/dbc7/ClinicOS`.
+  - Lab/Inventory/Event: pending `local:cc373996-d87c-472b-9ca1-8fb8846722aa`, thread `019f3c1d-6d96-7310-ba40-bed750544a62`, worktree `/Users/abhinavgupta/.codex/worktrees/0166/ClinicOS`.
+  - Operations UX: pending `local:e2d1fbe3-7bbc-4af4-b3fa-a0e27c1b9d52`, thread `019f3c1d-b7c5-7a32-8ee4-a1669e58aa73`, worktree `/Users/abhinavgupta/.codex/worktrees/9f26/ClinicOS`.
+  - Analytics/QA: pending `local:a6a0b27a-81a2-4527-9041-9a1e721cc2aa`, thread `019f3c1e-1658-7aa2-ab3a-ca5135838beb`, worktree `/Users/abhinavgupta/.codex/worktrees/4ff2/ClinicOS`.
