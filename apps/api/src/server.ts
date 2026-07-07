@@ -39,6 +39,8 @@ import {
   createEncounterPrescription,
   createIntakeFormTemplate,
   createLead,
+  completeMediaUpload,
+  createSignedMediaAccess,
   createPatient,
   createPatientConsent,
   getMorningDashboard,
@@ -51,6 +53,7 @@ import {
   listChairs,
   listIntakeFormTemplates,
   listLeads,
+  listPatientMediaAssets,
   listPatientConsents,
   listPatients,
   listProviderSchedules,
@@ -58,6 +61,8 @@ import {
   markAppointmentNoShow,
   matchLeadToPatient,
   revokePatientConsent,
+  receiveMediaUploadContent,
+  requestMediaUploadUrl,
   saveEncounterClinicalNoteDraft,
   signEncounterClinicalNote,
   signPrescription,
@@ -69,6 +74,7 @@ import {
   updateQueueEntry,
   type OperationsRequestContext
 } from "./operations.ts";
+import { LocalMediaStorageSimulator, type MediaStorageProvider } from "./media-storage.ts";
 
 interface AuditSink {
   appendAuditEvent(event: AuditEventRecord): Promise<void>;
@@ -85,6 +91,7 @@ export interface ClinicOsApiServerOptions {
   identityRepository: IdentityRepository;
   operationsRepository?: ClinicOperationsRepository;
   auditSink?: AuditSink;
+  mediaStorage?: MediaStorageProvider;
   tokenVerifier?: TokenVerifier;
   useLocalAuthFixture?: boolean;
   fixtureSubject?: string;
@@ -184,6 +191,7 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
           identityRepository: options.identityRepository,
           repository: options.operationsRepository,
           auditSink: options.auditSink,
+          mediaStorage: options.mediaStorage,
           useLocalAuthFixture: options.useLocalAuthFixture ?? false,
           fixtureSubject: options.fixtureSubject
         });
@@ -238,6 +246,7 @@ export function createRuntimeApiServer(env: NodeJS.ProcessEnv = process.env): Ru
     identityRepository: repositorySet.identityRepository,
     operationsRepository: repositorySet.operationsRepository,
     auditSink: repositorySet.auditSink,
+    mediaStorage: createRuntimeMediaStorage(parsed.data, env),
     useLocalAuthFixture
   };
 
@@ -261,6 +270,7 @@ async function routeOperationsRequest(input: {
   identityRepository: IdentityRepository;
   repository: ClinicOperationsRepository;
   auditSink?: AuditSink;
+  mediaStorage?: MediaStorageProvider;
   useLocalAuthFixture: boolean;
   fixtureSubject?: string | undefined;
 }) {
@@ -277,9 +287,14 @@ async function routeOperationsRequest(input: {
   };
   const dependencies = {
     repository: input.repository,
-    auditSink: input.auditSink
+    auditSink: input.auditSink,
+    mediaStorage: input.mediaStorage
   };
-  const body = ["POST", "PATCH", "PUT"].includes(input.request.method ?? "")
+  const isMediaContentUpload =
+    input.request.method === "PUT" && /^\/v1\/media\/uploads\/[^/]+\/content$/.test(pathname);
+  const body =
+    ["POST", "PATCH"].includes(input.request.method ?? "") ||
+    (input.request.method === "PUT" && !isMediaContentUpload)
     ? await readJsonBody(input.request)
     : undefined;
 
@@ -332,6 +347,15 @@ async function routeOperationsRequest(input: {
           ? pathUuid(url.searchParams.get("appointmentId") ?? "", "appointmentId")
           : null
       }
+    );
+  }
+
+  const patientMediaMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/media$/);
+  if (patientMediaMatch && input.request.method === "GET") {
+    return listPatientMediaAssets(
+      operationsContext,
+      dependencies,
+      pathUuid(patientMediaMatch[1], "patientId")
     );
   }
 
@@ -433,6 +457,43 @@ async function routeOperationsRequest(input: {
       operationsContext,
       dependencies,
       url.searchParams.get("providerId")
+    );
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/media/upload-urls") {
+    return requestMediaUploadUrl(operationsContext, dependencies, body);
+  }
+
+  const mediaUploadContentMatch = pathname.match(/^\/v1\/media\/uploads\/([^/]+)\/content$/);
+  if (mediaUploadContentMatch && input.request.method === "PUT") {
+    return receiveMediaUploadContent(
+      operationsContext,
+      dependencies,
+      pathUuid(mediaUploadContentMatch[1], "uploadId"),
+      {
+        body: await readRawBody(input.request),
+        contentType: headerValue(input.request, "content-type") ?? null
+      }
+    );
+  }
+
+  const mediaCompleteUploadMatch = pathname.match(/^\/v1\/media\/uploads\/([^/]+)\/complete$/);
+  if (mediaCompleteUploadMatch && input.request.method === "POST") {
+    return completeMediaUpload(
+      operationsContext,
+      dependencies,
+      pathUuid(mediaCompleteUploadMatch[1], "uploadId"),
+      body
+    );
+  }
+
+  const mediaSignedUrlMatch = pathname.match(/^\/v1\/media\/assets\/([^/]+)\/signed-url$/);
+  if (mediaSignedUrlMatch && input.request.method === "POST") {
+    return createSignedMediaAccess(
+      operationsContext,
+      dependencies,
+      pathUuid(mediaSignedUrlMatch[1], "mediaAssetId"),
+      body
     );
   }
 
@@ -648,6 +709,36 @@ function createPostgresRepositorySet(config: ClinicOsConfig): {
   };
 }
 
+function createRuntimeMediaStorage(
+  config: ClinicOsConfig,
+  env: NodeJS.ProcessEnv
+): MediaStorageProvider | undefined {
+  const provider = env.CLINIC_OS_MEDIA_STORAGE_PROVIDER ?? (config.isProductionLike ? "" : "local_simulator");
+
+  if (!provider) return undefined;
+
+  if (provider !== "local_simulator") {
+    throw new ApiError(503, "CONFIGURATION_ERROR", "Unsupported media storage provider.", {
+      provider
+    });
+  }
+
+  if (config.isProductionLike) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "The local media storage simulator is forbidden outside local/dev environments."
+    );
+  }
+
+  return new LocalMediaStorageSimulator({
+    environment: config.clinicOsEnv,
+    region: config.storage.region,
+    publicBaseUrl: env.CLINIC_OS_MEDIA_PUBLIC_BASE_URL,
+    uploadBasePath: "/v1/media/uploads"
+  });
+}
+
 function resolveClaims(input: {
   request: IncomingMessage;
   tokenVerifier: TokenVerifier;
@@ -733,6 +824,24 @@ async function readJsonBody(request: IncomingMessage): Promise<unknown> {
   } catch {
     throw new ApiError(400, "VALIDATION_ERROR", "Request body must be valid JSON.");
   }
+}
+
+async function readRawBody(request: IncomingMessage): Promise<Buffer> {
+  const chunks: Buffer[] = [];
+  let totalBytes = 0;
+
+  for await (const chunk of request) {
+    const buffer = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk);
+    totalBytes += buffer.byteLength;
+
+    if (totalBytes > 100 * 1024 * 1024) {
+      throw new ApiError(400, "VALIDATION_ERROR", "Uploaded media exceeds the 100MB limit.");
+    }
+
+    chunks.push(buffer);
+  }
+
+  return Buffer.concat(chunks);
 }
 
 function pathUuid(value: string, label: string): UUID {

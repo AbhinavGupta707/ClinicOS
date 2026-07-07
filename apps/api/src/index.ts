@@ -1,6 +1,7 @@
 export * from "./errors.ts";
 export * from "./keycloak-verifier.ts";
 export * from "./local-fixture.ts";
+export * from "./media-storage.ts";
 export * from "./me.ts";
 export * from "./operations.ts";
 export * from "./server.ts";

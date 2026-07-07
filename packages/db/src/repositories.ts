@@ -21,6 +21,11 @@ import type {
   IntakeFormType,
   IntakeFormSubmissionRecord,
   IntakeSubmissionSource,
+  MediaAssetRecord,
+  MediaScanStatus,
+  MediaStorageProviderKey,
+  MediaType,
+  MediaUploadReservationRecord,
   PatientRecord,
   PatientSource,
   PatientTimelineItem,
@@ -230,6 +235,34 @@ export interface CreatePrescriptionInput {
   notes?: string | null;
 }
 
+export interface CreateMediaUploadReservationInput {
+  id: UUID;
+  patientId: UUID;
+  encounterId?: UUID | null;
+  toothNumber?: string | null;
+  dentalFindingId?: UUID | null;
+  mediaType: MediaType;
+  originalFilename: string;
+  mimeType: string;
+  expectedFileSizeBytes: number;
+  expectedSha256Digest?: string | null;
+  objectKey: string;
+  storageProvider: MediaStorageProviderKey;
+  storageRegion?: string | null;
+  expiresAt: string;
+  tags?: string[];
+  provenance?: Record<string, unknown>;
+}
+
+export interface CompleteMediaUploadInput {
+  contentLength: number;
+  sha256Digest?: string | null;
+  objectVersion?: string | null;
+  scanStatus: MediaScanStatus;
+  quarantineReason?: string | null;
+  dicomMetadata?: Record<string, unknown>;
+}
+
 export interface SignClinicalNoteResult {
   encounter: EncounterRecord;
   note: ClinicalNoteVersionRecord;
@@ -355,4 +388,20 @@ export interface ClinicOperationsRepository {
     prescriptionId: UUID
   ): Promise<PrescriptionRecord | null>;
   signPrescription(scope: RepositoryScope, prescriptionId: UUID): Promise<PrescriptionRecord | null>;
+
+  createMediaUploadReservation(
+    scope: RepositoryScope,
+    input: CreateMediaUploadReservationInput
+  ): Promise<MediaUploadReservationRecord>;
+  findMediaUploadReservationById(
+    scope: RepositoryScope,
+    uploadId: UUID
+  ): Promise<MediaUploadReservationRecord | null>;
+  completeMediaUpload(
+    scope: RepositoryScope,
+    uploadId: UUID,
+    input: CompleteMediaUploadInput
+  ): Promise<MediaAssetRecord | null>;
+  listPatientMediaAssets(scope: RepositoryScope, patientId: UUID): Promise<MediaAssetRecord[]>;
+  findMediaAssetById(scope: RepositoryScope, mediaAssetId: UUID): Promise<MediaAssetRecord | null>;
 }
