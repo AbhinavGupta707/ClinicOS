@@ -1282,8 +1282,10 @@ button.duplicate-item {
 }
 
 .clinical-field input,
+.clinical-field select,
 .clinical-field textarea,
 .clinical-form input,
+.clinical-form select,
 .clinical-form textarea {
   background: #fff;
   border: 1px solid var(--border-strong);
@@ -1302,8 +1304,10 @@ button.duplicate-item {
 }
 
 .clinical-field input:focus-visible,
+.clinical-field select:focus-visible,
 .clinical-field textarea:focus-visible,
 .clinical-form input:focus-visible,
+.clinical-form select:focus-visible,
 .clinical-form textarea:focus-visible {
   outline: 3px solid rgba(39, 94, 159, 0.28);
   outline-offset: 1px;
@@ -1465,6 +1469,317 @@ button.duplicate-item {
   margin: 0;
 }
 
+.surface-hero--dental {
+  background:
+    linear-gradient(110deg, rgba(223, 247, 243, 0.78), rgba(255, 243, 216, 0.62)), var(--paper);
+}
+
+.cp4-workflow .workflow-tabs {
+  gap: var(--space-3);
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  padding: var(--space-2);
+}
+
+.workflow-grid--dental {
+  grid-template-columns: minmax(0, 1.04fr) minmax(380px, 0.96fr);
+}
+
+.workflow-grid--dental .work-panel:nth-child(3) {
+  grid-column: 1;
+}
+
+.workflow-grid--dental .work-panel:nth-child(4) {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.odontogram {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.odontogram-row {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(16, minmax(34px, 1fr));
+  min-width: 0;
+}
+
+.odontogram-midline {
+  background: #eef3f7;
+  border-radius: 8px;
+  color: var(--ink-soft);
+  font-size: 0.74rem;
+  font-weight: 900;
+  padding: 7px 10px;
+  text-align: center;
+  text-transform: uppercase;
+}
+
+.tooth-button {
+  align-items: center;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--ink);
+  cursor: pointer;
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+  min-height: 58px;
+  min-width: 0;
+  padding: 7px 4px;
+  position: relative;
+}
+
+.tooth-button strong {
+  font-size: 0.82rem;
+  line-height: 1;
+}
+
+.tooth-button span {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  font-weight: 900;
+}
+
+.tooth-button i {
+  background: var(--mint);
+  border: 2px solid #fff;
+  border-radius: 50%;
+  height: 10px;
+  position: absolute;
+  right: 5px;
+  top: 5px;
+  width: 10px;
+}
+
+.tooth-button--active,
+.tooth-button:hover {
+  border-color: var(--sky);
+  box-shadow: 0 0 0 3px rgba(39, 94, 159, 0.15);
+}
+
+.tooth-button--finding {
+  background: #fffaf0;
+  border-color: #f2ce84;
+}
+
+.tooth-button--high {
+  background: var(--danger-soft);
+  border-color: #ffc9c4;
+}
+
+.tooth-button:focus-visible,
+.finding-card:focus-visible,
+.media-card:focus-visible,
+.surface-checkbox-grid input:focus-visible {
+  outline: 3px solid rgba(39, 94, 159, 0.35);
+  outline-offset: 2px;
+}
+
+.finding-list,
+.finding-history-layout,
+.media-gallery {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.finding-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: 12px;
+  text-align: left;
+}
+
+.finding-card--active,
+.finding-card:hover {
+  border-color: var(--mint);
+  box-shadow: inset 3px 0 0 var(--mint);
+}
+
+.finding-card strong,
+.finding-card span,
+.finding-card p {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.finding-card p {
+  color: var(--ink-soft);
+  font-size: 0.86rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.cp4-finding-form,
+.cp4-media-form {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.surface-checkbox-grid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.surface-checkbox-grid label {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: inline-flex;
+  gap: var(--space-3);
+  min-height: 38px;
+  padding: 7px 9px;
+}
+
+.surface-checkbox-grid span {
+  color: var(--ink);
+  font-size: 0.78rem;
+  text-transform: none;
+}
+
+.field-help {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  grid-column: 1 / -1;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.media-gallery {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.media-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: 10px;
+  text-align: left;
+}
+
+.media-card--active,
+.media-card:hover {
+  border-color: var(--sky);
+  box-shadow: inset 3px 0 0 var(--sky);
+}
+
+.media-card strong,
+.media-card span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.media-card span {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+}
+
+.media-preview {
+  align-items: center;
+  aspect-ratio: 4 / 3;
+  background: #eef3f7;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: var(--ink-soft);
+  display: grid;
+  gap: var(--space-3);
+  justify-items: center;
+  min-width: 0;
+  padding: 12px;
+}
+
+.media-preview span {
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.media-preview--xray {
+  background: #111820;
+  color: #eaf2f8;
+}
+
+.media-preview--intraoral_photo {
+  background: var(--mint-soft);
+  color: #06584f;
+}
+
+.media-preview--external_link {
+  background: var(--sky-soft);
+  color: #17456f;
+}
+
+.signed-media-panel {
+  align-items: center;
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: minmax(0, 1fr) auto;
+  margin-top: 14px;
+  min-width: 0;
+  padding: 12px;
+}
+
+.signed-media-panel strong,
+.signed-media-panel span,
+.signed-media-panel code {
+  display: block;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.signed-media-panel span,
+.signed-media-panel code {
+  color: var(--ink-soft);
+  font-size: 0.82rem;
+  margin-top: 4px;
+}
+
+.comparison-grid {
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.comparison-panel {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: 12px;
+}
+
+.comparison-panel strong,
+.comparison-panel span {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.comparison-panel span {
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.4;
+}
+
 @keyframes pulse {
   0% {
     background-position: 100% 0;
@@ -1484,9 +1799,16 @@ button.duplicate-item {
   }
 
   .workflow-grid--dashboard,
+  .workflow-grid--dental,
   .workflow-grid--encounter,
   .workflow-grid--split {
     grid-template-columns: 1fr;
+  }
+
+  .workflow-grid--dental .work-panel:nth-child(3),
+  .workflow-grid--dental .work-panel:nth-child(4) {
+    grid-column: auto;
+    grid-row: auto;
   }
 
   .workflow-grid--encounter .work-panel:nth-child(2) {
@@ -1582,6 +1904,10 @@ button.duplicate-item {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .cp4-workflow .workflow-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
   .dashboard-metrics {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1658,12 +1984,15 @@ button.duplicate-item {
   .dashboard-metrics,
   .form-grid,
   .clinical-form,
+  .cp4-finding-form,
+  .cp4-media-form,
   .patient-switcher,
   .prescription-grid {
     grid-template-columns: 1fr;
   }
 
-  .cp3-workflow .workflow-tabs {
+  .cp3-workflow .workflow-tabs,
+  .cp4-workflow .workflow-tabs {
     grid-template-columns: 1fr;
   }
 
@@ -1675,7 +2004,10 @@ button.duplicate-item {
   .patient-row,
   .queue-entry,
   .consent-row,
-  .timeline-item {
+  .timeline-item,
+  .signed-media-panel,
+  .comparison-grid,
+  .media-gallery {
     grid-template-columns: 1fr;
   }
 
@@ -1693,6 +2025,14 @@ button.duplicate-item {
 
   .segment {
     flex: 1 1 42%;
+  }
+
+  .odontogram-row {
+    grid-template-columns: repeat(8, minmax(0, 1fr));
+  }
+
+  .tooth-button {
+    min-height: 52px;
   }
 }
 

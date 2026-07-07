@@ -14,13 +14,19 @@ interface SurfaceViewProps {
 
 export function SurfaceView({ profile, surface }: SurfaceViewProps) {
   const canAccess = canAccessSurface(surface, profile.roles);
+  const deniedTestId =
+    surface.id === "dental-media"
+      ? "cp4-dental-media-access-denied"
+      : surface.checkpoint === 3
+        ? "cp3-clinical-access-denied"
+        : undefined;
 
   if (!canAccess) {
     return (
       <section
         className="state-panel state-panel--content"
         aria-labelledby="denied-title"
-        data-testid={surface.checkpoint === 3 ? "cp3-clinical-access-denied" : undefined}
+        data-testid={deniedTestId}
       >
         <LockKeyhole size={28} aria-hidden="true" />
         <p className="state-kicker">Role boundary</p>

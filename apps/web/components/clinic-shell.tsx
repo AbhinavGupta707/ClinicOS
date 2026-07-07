@@ -8,13 +8,10 @@ import { useEffect, useMemo, useState } from "react";
 import { AssistantWorkflow, isCp2WorkflowSurface } from "@/components/assistant-workflow";
 import { AuthStatusPanel } from "@/components/auth-status-panel";
 import { ClinicalWorkflow, isCp3WorkflowSurface } from "@/components/clinical-workflow";
+import { DentalMediaWorkflow, isCp4WorkflowSurface } from "@/components/dental-media-workflow";
 import { SurfaceView } from "@/components/surface-view";
 import { loadMe, type MeState } from "@/lib/me";
-import {
-  canAccessSurface,
-  getSurface,
-  getVisibleSurfaces
-} from "@/lib/navigation";
+import { canAccessSurface, getSurface, getVisibleSurfaces } from "@/lib/navigation";
 import { ROLE_LABELS } from "@/lib/roles";
 
 interface ClinicShellProps {
@@ -183,6 +180,8 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
               profile={profile}
               setActiveSurfaceId={setActiveSurfaceId}
             />
+          ) : isCp4WorkflowSurface(activeSurface.id) ? (
+            <DentalMediaWorkflow profile={profile} />
           ) : (
             <SurfaceView profile={profile} surface={activeSurface} />
           )}
