@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   AppointmentConflict,
   AppointmentRecord,
@@ -49,6 +49,15 @@ import type {
   MediaScanStatus,
   MediaStorageProviderKey,
   MediaUploadReservationRecord,
+  ImportedRecordLinkRecord,
+  IntegrationDeadLetterRecord,
+  MigrationBatchDetail,
+  MigrationBatchRecord,
+  MigrationCommitRecord,
+  MigrationCommitResult,
+  MigrationConflictRecord,
+  MigrationRollbackResult,
+  MigrationRowRecord,
   OwnerDashboardProjectionData,
   PaymentRequestRecord,
   PaymentTransactionRecord,
@@ -149,6 +158,7 @@ import type {
   CreateLabVendorInput,
   CreateLeadInput,
   CreateMediaUploadReservationInput,
+  CreateMigrationBatchInput,
   CreatePatientInput,
   CreatePatientInstructionInput,
   CreatePrescriptionInput,
@@ -159,6 +169,7 @@ import type {
   CreateTaskInput,
   DateRangeFilter,
   DashboardDataSet,
+  CommitMigrationBatchInput,
   GenerateDueContinuityInput,
   GenerateDueContinuityResult,
   GenerateDueSopRunsInput,
@@ -171,12 +182,18 @@ import type {
   InventoryExceptionFilter,
   LabCaseSearchFilter,
   LeadSearchFilter,
+  IntegrationDeadLetterSearchFilter,
+  MigrationBatchSearchFilter,
+  MigrationRowsFilter,
   OutboxEventInput,
   PatientSearchFilter,
   RecordPaymentTransactionInput,
   RecallSearchFilter,
   RepositoryScope,
+  ReplayIntegrationDeadLetterInput,
   RevokeConsentInput,
+  ResolveMigrationRowInput,
+  RollbackMigrationBatchInput,
   SaveClinicalNoteDraftInput,
   SignClinicalNoteResult,
   SopRunSearchFilter,
@@ -630,6 +647,575 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       );
 
       return result.rows[0] ? mapPatientRow(result.rows[0]) : null;
+    });
+  }
+
+  async createMigrationBatch(
+    scope: RepositoryScope,
+    input: CreateMigrationBatchInput
+  ): Promise<MigrationBatchDetail> {
+    return this.#withRls(scope, async (client) => {
+      const batchResult = await client.query<MigrationBatchRow>(
+        `
+          insert into migration_batches (
+            tenant_id,
+            clinic_id,
+            import_type,
+            source_system,
+            source_file_name,
+            source_checksum,
+            state,
+            uploaded_by_user_id
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.importType,
+          input.sourceSystem,
+          input.sourceFileName ?? null,
+          input.sourceChecksum ?? null,
+          input.state,
+          scope.actorUserId
+        ]
+      );
+      const batch = mapMigrationBatchRow(batchResult.rows[0]);
+
+      for (const rowInput of input.rows) {
+        const rowResult = await client.query<MigrationRowRow>(
+          `
+            insert into migration_rows (
+              tenant_id,
+              clinic_id,
+              batch_id,
+              row_number,
+              import_type,
+              external_record_id,
+              raw_payload,
+              raw_payload_digest,
+              normalized_record,
+              validation_errors,
+              status,
+              match_status
+            )
+            values ($1, $2, $3, $4, $5, $6, $7::jsonb, $8, $9::jsonb, $10::jsonb, $11, $12)
+            returning *
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            batch.id,
+            rowInput.rowNumber,
+            rowInput.importType,
+            rowInput.externalRecordId ?? null,
+            JSON.stringify(rowInput.rawPayload),
+            rowInput.rawPayloadDigest,
+            rowInput.normalizedRecord ? JSON.stringify(rowInput.normalizedRecord) : null,
+            JSON.stringify(rowInput.validationErrors),
+            rowInput.status,
+            rowInput.matchStatus
+          ]
+        );
+        const row = mapMigrationRowRow(rowResult.rows[0], []);
+
+        for (const conflictInput of rowInput.conflicts ?? []) {
+          await client.query(
+            `
+              insert into migration_conflicts (
+                tenant_id,
+                clinic_id,
+                batch_id,
+                row_id,
+                conflict_type,
+                severity,
+                target_record_type,
+                target_record_id,
+                field_name,
+                summary,
+                evidence
+              )
+              values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb)
+            `,
+            [
+              scope.tenantId,
+              scope.clinicId,
+              batch.id,
+              row.id,
+              conflictInput.conflictType,
+              conflictInput.severity,
+              conflictInput.targetRecordType ?? null,
+              conflictInput.targetRecordId ?? null,
+              conflictInput.fieldName ?? null,
+              conflictInput.summary,
+              JSON.stringify(conflictInput.evidence ?? {})
+            ]
+          );
+        }
+      }
+
+      await this.#refreshMigrationBatchCountsInTransaction(client, scope, batch.id);
+      const detail = await this.#findMigrationBatchDetailInTransaction(client, scope, batch.id);
+      if (!detail) throw new Error("Migration batch was not found after creation.");
+      return detail;
+    });
+  }
+
+  async listMigrationBatches(
+    scope: RepositoryScope,
+    filter: MigrationBatchSearchFilter = {}
+  ): Promise<MigrationBatchDetail[]> {
+    return this.#withRls(scope, async (client) => {
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "clinic_id = $2"];
+      if (filter.status) {
+        values.push(filter.status);
+        where.push(`state = $${values.length}`);
+      }
+      values.push(Math.min(filter.limit ?? 25, 100));
+      const batches = (
+        await client.query<MigrationBatchRow>(
+          `
+            select *
+            from migration_batches
+            where ${where.join(" and ")}
+            order by created_at desc
+            limit $${values.length}
+          `,
+          values
+        )
+      ).rows.map(mapMigrationBatchRow);
+
+      const details: MigrationBatchDetail[] = [];
+      for (const batch of batches) {
+        const detail = await this.#findMigrationBatchDetailInTransaction(client, scope, batch.id);
+        if (detail) details.push(detail);
+      }
+      return details;
+    });
+  }
+
+  async findMigrationBatchById(
+    scope: RepositoryScope,
+    batchId: UUID
+  ): Promise<MigrationBatchDetail | null> {
+    return this.#withRls(scope, (client) =>
+      this.#findMigrationBatchDetailInTransaction(client, scope, batchId)
+    );
+  }
+
+  async listMigrationRows(
+    scope: RepositoryScope,
+    batchId: UUID,
+    filter: MigrationRowsFilter = {}
+  ): Promise<MigrationRowRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const values: unknown[] = [scope.tenantId, scope.clinicId, batchId];
+      const where = ["tenant_id = $1", "clinic_id = $2", "batch_id = $3"];
+      if (filter.matchStatus) {
+        values.push(filter.matchStatus);
+        where.push(`match_status = $${values.length}`);
+      }
+      if (filter.status) {
+        values.push(filter.status);
+        where.push(`status = $${values.length}`);
+      }
+      const result = await client.query<MigrationRowRow>(
+        `
+          select *
+          from migration_rows
+          where ${where.join(" and ")}
+          order by row_number
+        `,
+        values
+      );
+      return this.#attachMigrationRowConflicts(client, scope, result.rows.map((row) => mapMigrationRowRow(row, [])));
+    });
+  }
+
+  async resolveMigrationRow(
+    scope: RepositoryScope,
+    batchId: UUID,
+    rowId: UUID,
+    input: ResolveMigrationRowInput
+  ): Promise<MigrationRowRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      if (input.action === "link_existing") {
+        const patient = input.targetRecordId
+          ? await this.#findPatientByIdInTransaction(client, scope, input.targetRecordId)
+          : null;
+        if (!patient) return null;
+      }
+
+      const updated = await client.query<MigrationRowRow>(
+        `
+          update migration_rows
+          set
+            resolution_action = $4,
+            resolution_target_record_type = $5,
+            resolution_target_record_id = $6,
+            resolution_note = $7,
+            status = $8,
+            match_status = $9
+          where tenant_id = $1 and clinic_id = $2 and batch_id = $3 and id = $10
+            and status not in ('committed', 'rolled_back')
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          batchId,
+          input.action,
+          input.action === "link_existing" ? input.targetRecordType ?? "patient" : null,
+          input.action === "link_existing" ? input.targetRecordId ?? null : null,
+          input.note ?? null,
+          input.action === "skip" ? "skipped" : "ready_to_commit",
+          input.action === "skip" ? "skipped" : "resolved",
+          rowId
+        ]
+      );
+      if (!updated.rows[0]) return null;
+
+      await client.query(
+        `
+          update migration_conflicts
+          set
+            status = $4,
+            resolution_action = $5,
+            resolved_by_user_id = $6,
+            resolved_at = now()
+          where tenant_id = $1 and clinic_id = $2 and batch_id = $3 and row_id = $7
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          batchId,
+          input.action === "skip" ? "ignored" : "resolved",
+          input.action,
+          scope.actorUserId,
+          rowId
+        ]
+      );
+      await this.#refreshMigrationBatchCountsInTransaction(client, scope, batchId);
+      const [row] = await this.#attachMigrationRowConflicts(client, scope, [
+        mapMigrationRowRow(updated.rows[0], [])
+      ]);
+      return row ?? null;
+    });
+  }
+
+  async commitMigrationBatch(
+    scope: RepositoryScope,
+    batchId: UUID,
+    input: CommitMigrationBatchInput = {}
+  ): Promise<MigrationCommitResult | null> {
+    return this.#withRls(scope, async (client) => {
+      const batch = await this.#findMigrationBatchRowInTransaction(client, scope, batchId);
+      if (!batch) return null;
+      const existing = await this.#findMigrationCommitInTransaction(
+        client,
+        scope,
+        batchId,
+        "commit",
+        input.idempotencyKey ?? null
+      );
+      if (existing || ["committed", "partially_committed"].includes(batch.state)) {
+        const detail = await this.#findMigrationBatchDetailInTransaction(client, scope, batchId);
+        if (!detail) return null;
+        return {
+          batch: detail.batch,
+          commit:
+            existing ??
+            (await this.#latestMigrationCommitInTransaction(client, scope, batchId, "commit")) ??
+            (await this.#insertMigrationCommitInTransaction(client, scope, batchId, "commit", "succeeded", input.idempotencyKey ?? null, {}, null)),
+          rows: detail.rows,
+          importedRecordLinks: await this.#listImportedRecordLinksInTransaction(client, scope, batchId)
+        };
+      }
+
+      const readyRows = (
+        await client.query<MigrationRowRow>(
+          `
+            select *
+            from migration_rows
+            where tenant_id = $1 and clinic_id = $2 and batch_id = $3 and status = 'ready_to_commit'
+            order by row_number
+          `,
+          [scope.tenantId, scope.clinicId, batchId]
+        )
+      ).rows.map((row) => mapMigrationRowRow(row, []));
+
+      for (const row of readyRows) {
+        if (!row.normalizedRecord || row.normalizedRecord.recordType !== "patient") {
+          await this.#markMigrationRowFailed(client, scope, row.id, "Only patient import rows can be committed in CP7.");
+          continue;
+        }
+
+        if (row.resolutionAction === "link_existing") {
+          if (!row.resolutionTargetRecordId) {
+            await this.#markMigrationRowFailed(client, scope, row.id, "Resolved existing patient target is missing.");
+            continue;
+          }
+          await this.#createImportedRecordLinkInTransaction(
+            client,
+            scope,
+            batch,
+            row,
+            row.resolutionTargetRecordId,
+            "linked_existing"
+          );
+          await this.#markMigrationRowCommitted(client, scope, row.id, "patient", row.resolutionTargetRecordId);
+          continue;
+        }
+
+        const patient = await this.#insertImportedPatientInTransaction(client, scope, row, batch.sourceSystem);
+        await this.#createImportedRecordLinkInTransaction(
+          client,
+          scope,
+          batch,
+          row,
+          patient.id,
+          "created_from_import"
+        );
+        await this.#markMigrationRowCommitted(client, scope, row.id, "patient", patient.id);
+      }
+
+      const counts = await this.#refreshMigrationBatchCountsInTransaction(client, scope, batchId);
+      const finalState =
+        counts.failedRowCount > 0 || counts.invalidRowCount > 0 || counts.conflictRowCount > 0
+          ? "partially_committed"
+          : "committed";
+      const batchResult = await client.query<MigrationBatchRow>(
+        `
+          update migration_batches
+          set state = $4, committed_by_user_id = $5, committed_at = now()
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, batchId, finalState, scope.actorUserId]
+      );
+      const commit = await this.#insertMigrationCommitInTransaction(
+        client,
+        scope,
+        batchId,
+        "commit",
+        finalState === "committed" ? "succeeded" : "partially_succeeded",
+        input.idempotencyKey ?? null,
+        {
+          committedRows: counts.committedRowCount,
+          invalidRows: counts.invalidRowCount,
+          failedRows: counts.failedRowCount
+        },
+        counts.failedRowCount > 0 ? { failedRows: counts.failedRowCount } : null
+      );
+      const rows = await this.#listMigrationRowsInTransaction(client, scope, batchId);
+      return {
+        batch: mapMigrationBatchRow(batchResult.rows[0]),
+        commit,
+        rows,
+        importedRecordLinks: await this.#listImportedRecordLinksInTransaction(client, scope, batchId)
+      };
+    });
+  }
+
+  async rollbackMigrationBatch(
+    scope: RepositoryScope,
+    batchId: UUID,
+    input: RollbackMigrationBatchInput = {}
+  ): Promise<MigrationRollbackResult | null> {
+    return this.#withRls(scope, async (client) => {
+      const batch = await this.#findMigrationBatchRowInTransaction(client, scope, batchId);
+      if (!batch) return null;
+      const existing = await this.#findMigrationCommitInTransaction(
+        client,
+        scope,
+        batchId,
+        "rollback",
+        input.idempotencyKey ?? null
+      );
+      if (existing || batch.state === "rolled_back") {
+        const detail = await this.#findMigrationBatchDetailInTransaction(client, scope, batchId);
+        if (!detail) return null;
+        return {
+          batch: detail.batch,
+          rollback:
+            existing ??
+            (await this.#latestMigrationCommitInTransaction(client, scope, batchId, "rollback")) ??
+            (await this.#insertMigrationCommitInTransaction(client, scope, batchId, "rollback", "succeeded", input.idempotencyKey ?? null, {}, null)),
+          rows: detail.rows,
+          importedRecordLinks: await this.#listImportedRecordLinksInTransaction(client, scope, batchId),
+          blockedLinks: []
+        };
+      }
+
+      const links = (
+        await client.query<ImportedRecordLinkRow>(
+          `
+            select *
+            from imported_record_links
+            where tenant_id = $1 and clinic_id = $2 and batch_id = $3 and verification_status = 'imported_unverified'
+            order by created_at
+          `,
+          [scope.tenantId, scope.clinicId, batchId]
+        )
+      ).rows.map(mapImportedRecordLinkRow);
+      const blockedLinks: ImportedRecordLinkRecord[] = [];
+
+      for (const link of links) {
+        if (
+          link.linkType === "created_from_import" &&
+          (await this.#patientHasRollbackBlockingDependenciesInTransaction(client, scope, link.targetRecordId))
+        ) {
+          await client.query(
+            `
+              update imported_record_links
+              set metadata = metadata || $4::jsonb
+              where tenant_id = $1 and clinic_id = $2 and id = $3
+            `,
+            [
+              scope.tenantId,
+              scope.clinicId,
+              link.id,
+              JSON.stringify({
+                rollbackBlockedAt: new Date().toISOString(),
+                rollbackBlockedReason: "Imported patient has downstream clinical or billing dependencies."
+              })
+            ]
+          );
+          blockedLinks.push(link);
+          continue;
+        }
+
+        if (link.linkType === "created_from_import") {
+          await client.query(
+            `
+              delete from dental_charts
+              where tenant_id = $1 and clinic_id = $2 and patient_id = $3
+            `,
+            [scope.tenantId, scope.clinicId, link.targetRecordId]
+          );
+          await client.query(
+            `
+              delete from patient_timeline_items
+              where tenant_id = $1 and clinic_id = $2 and patient_id = $3
+            `,
+            [scope.tenantId, scope.clinicId, link.targetRecordId]
+          );
+          await client.query(
+            `
+              delete from patients
+              where tenant_id = $1 and clinic_id = $2 and id = $3
+            `,
+            [scope.tenantId, scope.clinicId, link.targetRecordId]
+          );
+        }
+
+        await client.query(
+          `
+            update imported_record_links
+            set verification_status = 'rolled_back'
+            where tenant_id = $1 and clinic_id = $2 and id = $3
+          `,
+          [scope.tenantId, scope.clinicId, link.id]
+        );
+        await client.query(
+          `
+            update migration_rows
+            set status = 'rolled_back'
+            where tenant_id = $1 and clinic_id = $2 and id = $3
+          `,
+          [scope.tenantId, scope.clinicId, link.rowId]
+        );
+      }
+
+      const counts = await this.#refreshMigrationBatchCountsInTransaction(client, scope, batchId);
+      const finalState = blockedLinks.length > 0 ? "partially_committed" : "rolled_back";
+      const batchResult = await client.query<MigrationBatchRow>(
+        `
+          update migration_batches
+          set state = $4, rolled_back_by_user_id = $5, rolled_back_at = now()
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, batchId, finalState, scope.actorUserId]
+      );
+      const rollback = await this.#insertMigrationCommitInTransaction(
+        client,
+        scope,
+        batchId,
+        "rollback",
+        blockedLinks.length > 0 ? "partially_succeeded" : "succeeded",
+        input.idempotencyKey ?? null,
+        {
+          rolledBackRows: counts.rolledBackRowCount,
+          blockedLinks: blockedLinks.length
+        },
+        blockedLinks.length > 0 ? { blockedLinkIds: blockedLinks.map((link) => link.id) } : null
+      );
+      const rows = await this.#listMigrationRowsInTransaction(client, scope, batchId);
+      return {
+        batch: mapMigrationBatchRow(batchResult.rows[0]),
+        rollback,
+        rows,
+        importedRecordLinks: await this.#listImportedRecordLinksInTransaction(client, scope, batchId),
+        blockedLinks
+      };
+    });
+  }
+
+  async listIntegrationDeadLetters(
+    scope: RepositoryScope,
+    filter: IntegrationDeadLetterSearchFilter = {}
+  ): Promise<IntegrationDeadLetterRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "(clinic_id is null or clinic_id = $2)"];
+      if (filter.status) {
+        values.push(filter.status);
+        where.push(`status = $${values.length}`);
+      }
+      values.push(Math.min(filter.limit ?? 50, 100));
+      const result = await client.query<IntegrationDeadLetterRow>(
+        `
+          select *
+          from integration_dead_letters
+          where ${where.join(" and ")}
+          order by created_at desc
+          limit $${values.length}
+        `,
+        values
+      );
+      return result.rows.map(mapIntegrationDeadLetterRow);
+    });
+  }
+
+  async requestIntegrationDeadLetterReplay(
+    scope: RepositoryScope,
+    deadLetterId: UUID,
+    input: ReplayIntegrationDeadLetterInput
+  ): Promise<IntegrationDeadLetterRecord | null> {
+    const reasonDigest = input.reason
+      ? sha256Text(`${input.reviewedByUserId}:${input.reason}`)
+      : null;
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<IntegrationDeadLetterRow>(
+        `
+          update integration_dead_letters
+          set status = 'retry_scheduled',
+              retry_count = retry_count + 1,
+              next_retry_at = now(),
+              last_error_digest = coalesce($4, last_error_digest),
+              updated_at = now()
+          where tenant_id = $1
+            and (clinic_id is null or clinic_id = $2)
+            and id = $3
+            and status not in ('replayed', 'resolved', 'discarded')
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, deadLetterId, reasonDigest]
+      );
+      return result.rows[0] ? mapIntegrationDeadLetterRow(result.rows[0]) : null;
     });
   }
 
@@ -5590,6 +6176,474 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
+  async #findMigrationBatchRowInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batchId: UUID
+  ): Promise<MigrationBatchRecord | null> {
+    const result = await client.query<MigrationBatchRow>(
+      `
+        select *
+        from migration_batches
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, batchId]
+    );
+    return result.rows[0] ? mapMigrationBatchRow(result.rows[0]) : null;
+  }
+
+  async #findMigrationBatchDetailInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batchId: UUID
+  ): Promise<MigrationBatchDetail | null> {
+    const batch = await this.#findMigrationBatchRowInTransaction(client, scope, batchId);
+    if (!batch) return null;
+    const rows = await this.#listMigrationRowsInTransaction(client, scope, batchId);
+    const conflicts = (
+      await client.query<MigrationConflictRow>(
+        `
+          select *
+          from migration_conflicts
+          where tenant_id = $1 and clinic_id = $2 and batch_id = $3
+          order by created_at
+        `,
+        [scope.tenantId, scope.clinicId, batchId]
+      )
+    ).rows.map(mapMigrationConflictRow);
+    return { batch, rows, conflicts };
+  }
+
+  async #listMigrationRowsInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batchId: UUID
+  ): Promise<MigrationRowRecord[]> {
+    const rows = (
+      await client.query<MigrationRowRow>(
+        `
+          select *
+          from migration_rows
+          where tenant_id = $1 and clinic_id = $2 and batch_id = $3
+          order by row_number
+        `,
+        [scope.tenantId, scope.clinicId, batchId]
+      )
+    ).rows.map((row) => mapMigrationRowRow(row, []));
+    return this.#attachMigrationRowConflicts(client, scope, rows);
+  }
+
+  async #attachMigrationRowConflicts(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    rows: MigrationRowRecord[]
+  ): Promise<MigrationRowRecord[]> {
+    if (rows.length === 0) return [];
+    const conflicts = (
+      await client.query<MigrationConflictRow>(
+        `
+          select *
+          from migration_conflicts
+          where tenant_id = $1 and clinic_id = $2 and row_id = any($3::uuid[])
+          order by created_at
+        `,
+        [scope.tenantId, scope.clinicId, rows.map((row) => row.id)]
+      )
+    ).rows.map(mapMigrationConflictRow);
+    return rows.map((row) => ({
+      ...row,
+      conflicts: conflicts.filter((conflict) => conflict.rowId === row.id)
+    }));
+  }
+
+  async #refreshMigrationBatchCountsInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batchId: UUID
+  ): Promise<{
+    invalidRowCount: number;
+    conflictRowCount: number;
+    readyRowCount: number;
+    committedRowCount: number;
+    rolledBackRowCount: number;
+    failedRowCount: number;
+  }> {
+    const counts = await client.query<{
+      row_count: string | number;
+      valid_row_count: string | number;
+      invalid_row_count: string | number;
+      conflict_row_count: string | number;
+      ready_row_count: string | number;
+      committed_row_count: string | number;
+      rolled_back_row_count: string | number;
+      failed_row_count: string | number;
+    }>(
+      `
+        select
+          count(*) as row_count,
+          count(*) filter (where status <> 'invalid') as valid_row_count,
+          count(*) filter (where status = 'invalid') as invalid_row_count,
+          count(distinct migration_rows.id) filter (where migration_conflicts.status = 'open') as conflict_row_count,
+          count(*) filter (where migration_rows.status = 'ready_to_commit') as ready_row_count,
+          count(*) filter (where migration_rows.status = 'committed') as committed_row_count,
+          count(*) filter (where migration_rows.status = 'rolled_back') as rolled_back_row_count,
+          count(*) filter (where migration_rows.status = 'failed') as failed_row_count
+        from migration_rows
+        left join migration_conflicts on migration_conflicts.tenant_id = migration_rows.tenant_id
+          and migration_conflicts.row_id = migration_rows.id
+        where migration_rows.tenant_id = $1 and migration_rows.clinic_id = $2 and migration_rows.batch_id = $3
+      `,
+      [scope.tenantId, scope.clinicId, batchId]
+    );
+    const row = counts.rows[0];
+    const nextState =
+      Number(row.conflict_row_count) > 0
+        ? "needs_review"
+        : Number(row.ready_row_count) > 0
+          ? "ready_to_commit"
+          : Number(row.row_count) > 0
+            ? "validated"
+            : "uploaded";
+    await client.query(
+      `
+        update migration_batches
+        set
+          row_count = $4,
+          valid_row_count = $5,
+          invalid_row_count = $6,
+          conflict_row_count = $7,
+          ready_row_count = $8,
+          committed_row_count = $9,
+          rolled_back_row_count = $10,
+          failed_row_count = $11,
+          state = case
+            when state in ('committed', 'partially_committed', 'rolled_back', 'failed') then state
+            else $12
+          end
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        batchId,
+        Number(row.row_count),
+        Number(row.valid_row_count),
+        Number(row.invalid_row_count),
+        Number(row.conflict_row_count),
+        Number(row.ready_row_count),
+        Number(row.committed_row_count),
+        Number(row.rolled_back_row_count),
+        Number(row.failed_row_count),
+        nextState
+      ]
+    );
+    return {
+      invalidRowCount: Number(row.invalid_row_count),
+      conflictRowCount: Number(row.conflict_row_count),
+      readyRowCount: Number(row.ready_row_count),
+      committedRowCount: Number(row.committed_row_count),
+      rolledBackRowCount: Number(row.rolled_back_row_count),
+      failedRowCount: Number(row.failed_row_count)
+    };
+  }
+
+  async #findMigrationCommitInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batchId: UUID,
+    action: MigrationCommitRecord["action"],
+    idempotencyKey: string | null
+  ): Promise<MigrationCommitRecord | null> {
+    if (!idempotencyKey) return null;
+    const result = await client.query<MigrationCommitRow>(
+      `
+        select *
+        from migration_commits
+        where tenant_id = $1 and clinic_id = $2 and batch_id = $3 and action = $4 and idempotency_key = $5
+      `,
+      [scope.tenantId, scope.clinicId, batchId, action, idempotencyKey]
+    );
+    return result.rows[0] ? mapMigrationCommitRow(result.rows[0]) : null;
+  }
+
+  async #latestMigrationCommitInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batchId: UUID,
+    action: MigrationCommitRecord["action"]
+  ): Promise<MigrationCommitRecord | null> {
+    const result = await client.query<MigrationCommitRow>(
+      `
+        select *
+        from migration_commits
+        where tenant_id = $1 and clinic_id = $2 and batch_id = $3 and action = $4
+        order by started_at desc
+        limit 1
+      `,
+      [scope.tenantId, scope.clinicId, batchId, action]
+    );
+    return result.rows[0] ? mapMigrationCommitRow(result.rows[0]) : null;
+  }
+
+  async #insertMigrationCommitInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batchId: UUID,
+    action: MigrationCommitRecord["action"],
+    status: MigrationCommitRecord["status"],
+    idempotencyKey: string | null,
+    summary: Record<string, unknown>,
+    errorSummary: Record<string, unknown> | null
+  ): Promise<MigrationCommitRecord> {
+    const result = await client.query<MigrationCommitRow>(
+      `
+        insert into migration_commits (
+          tenant_id,
+          clinic_id,
+          batch_id,
+          action,
+          status,
+          idempotency_key,
+          requested_by_user_id,
+          summary,
+          error_summary,
+          finished_at
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, $8::jsonb, $9::jsonb, now())
+        on conflict (tenant_id, clinic_id, batch_id, action, idempotency_key)
+          where idempotency_key is not null
+        do update set summary = migration_commits.summary
+        returning *
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        batchId,
+        action,
+        status,
+        idempotencyKey,
+        scope.actorUserId,
+        JSON.stringify(summary),
+        errorSummary ? JSON.stringify(errorSummary) : null
+      ]
+    );
+    return mapMigrationCommitRow(result.rows[0]);
+  }
+
+  async #insertImportedPatientInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    row: MigrationRowRecord,
+    sourceSystem: string
+  ): Promise<PatientRecord> {
+    if (!row.normalizedRecord || row.normalizedRecord.recordType !== "patient") {
+      throw new Error("Migration row does not contain a normalized patient record.");
+    }
+    const result = await client.query<PatientRow>(
+      `
+        insert into patients (
+          tenant_id,
+          clinic_id,
+          full_name,
+          phone,
+          email,
+          date_of_birth,
+          gender,
+          source,
+          created_by_user_id,
+          updated_by_user_id
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, 'imported', $8, $8)
+        returning *
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        row.normalizedRecord.fullName,
+        row.normalizedRecord.phone,
+        row.normalizedRecord.email,
+        row.normalizedRecord.dateOfBirth,
+        row.normalizedRecord.gender,
+        scope.actorUserId
+      ]
+    );
+    const patient = mapPatientRow(result.rows[0]);
+    await client.query(
+      `
+        insert into patient_contacts (
+          tenant_id,
+          clinic_id,
+          patient_id,
+          contact_type,
+          value,
+          normalized_value,
+          is_primary,
+          source,
+          created_by_user_id
+        )
+        values ($1, $2, $3, 'phone', $4, $5, true, 'imported', $6)
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        patient.id,
+        row.normalizedRecord.phone,
+        normalizePhone(row.normalizedRecord.phone),
+        scope.actorUserId
+      ]
+    );
+    await this.#appendTimeline(client, scope, {
+      patientId: patient.id,
+      itemType: "patient_created",
+      sourceTable: "migration_rows",
+      sourceId: row.id,
+      title: "Patient imported",
+      summary: `Imported from ${sourceSystem}`,
+      metadata: {
+        migrationBatchId: row.batchId,
+        migrationRowId: row.id,
+        externalRecordId: row.externalRecordId,
+        verificationStatus: "imported_unverified"
+      }
+    });
+    return patient;
+  }
+
+  async #createImportedRecordLinkInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batch: MigrationBatchRecord,
+    row: MigrationRowRecord,
+    targetRecordId: UUID,
+    linkType: ImportedRecordLinkRecord["linkType"]
+  ): Promise<ImportedRecordLinkRecord> {
+    const result = await client.query<ImportedRecordLinkRow>(
+      `
+        insert into imported_record_links (
+          tenant_id,
+          clinic_id,
+          batch_id,
+          row_id,
+          import_type,
+          source_system,
+          external_record_id,
+          target_record_type,
+          target_record_id,
+          link_type,
+          metadata,
+          created_by_user_id
+        )
+        values ($1, $2, $3, $4, $5, $6, $7, 'patient', $8, $9, $10::jsonb, $11)
+        on conflict do nothing
+        returning *
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        batch.id,
+        row.id,
+        batch.importType,
+        batch.sourceSystem,
+        row.externalRecordId,
+        targetRecordId,
+        linkType,
+        JSON.stringify({
+          rowNumber: row.rowNumber,
+          resolutionAction: row.resolutionAction ?? "create_new"
+        }),
+        scope.actorUserId
+      ]
+    );
+    if (result.rows[0]) return mapImportedRecordLinkRow(result.rows[0]);
+    const existing = await client.query<ImportedRecordLinkRow>(
+      `
+        select *
+        from imported_record_links
+        where tenant_id = $1 and clinic_id = $2 and batch_id = $3 and row_id = $4
+        limit 1
+      `,
+      [scope.tenantId, scope.clinicId, batch.id, row.id]
+    );
+    return mapImportedRecordLinkRow(existing.rows[0]);
+  }
+
+  async #markMigrationRowCommitted(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    rowId: UUID,
+    recordType: string,
+    recordId: UUID
+  ): Promise<void> {
+    await client.query(
+      `
+        update migration_rows
+        set status = 'committed', committed_record_type = $4, committed_record_id = $5, error_message = null
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, rowId, recordType, recordId]
+    );
+  }
+
+  async #markMigrationRowFailed(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    rowId: UUID,
+    errorMessage: string
+  ): Promise<void> {
+    await client.query(
+      `
+        update migration_rows
+        set status = 'failed', error_message = $4
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, rowId, errorMessage]
+    );
+  }
+
+  async #listImportedRecordLinksInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batchId: UUID
+  ): Promise<ImportedRecordLinkRecord[]> {
+    return (
+      await client.query<ImportedRecordLinkRow>(
+        `
+          select *
+          from imported_record_links
+          where tenant_id = $1 and clinic_id = $2 and batch_id = $3
+          order by created_at
+        `,
+        [scope.tenantId, scope.clinicId, batchId]
+      )
+    ).rows.map(mapImportedRecordLinkRow);
+  }
+
+  async #patientHasRollbackBlockingDependenciesInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    patientId: UUID
+  ): Promise<boolean> {
+    const result = await client.query<{ dependency_count: string | number }>(
+      `
+        select (
+          (select count(*) from appointments where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+          + (select count(*) from encounters where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+          + (select count(*) from form_responses where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+          + (select count(*) from consents where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+          + (select count(*) from dental_findings where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+          + (select count(*) from media_assets where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+          + (select count(*) from treatment_plans where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+          + (select count(*) from procedure_performed_records where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+          + (select count(*) from invoices where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+          + (select count(*) from lab_cases where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+          + (select count(*) from incidents where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+        ) as dependency_count
+      `,
+      [scope.tenantId, scope.clinicId, patientId]
+    );
+    return Number(result.rows[0]?.dependency_count ?? 0) > 0;
+  }
+
   async #withRls<T>(
     scope: RepositoryScope,
     callback: (client: SqlQueryClient) => Promise<T>
@@ -6983,6 +8037,131 @@ interface PatientTimelineRow {
   metadata: Record<string, unknown>;
 }
 
+interface MigrationBatchRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  import_type: MigrationBatchRecord["importType"];
+  source_system: string;
+  source_file_name: string | null;
+  source_checksum: string | null;
+  state: MigrationBatchRecord["state"];
+  uploaded_by_user_id: UUID;
+  committed_by_user_id: UUID | null;
+  rolled_back_by_user_id: UUID | null;
+  row_count: number | string;
+  valid_row_count: number | string;
+  invalid_row_count: number | string;
+  conflict_row_count: number | string;
+  ready_row_count: number | string;
+  committed_row_count: number | string;
+  rolled_back_row_count: number | string;
+  failed_row_count: number | string;
+  committed_at: Date | string | null;
+  rolled_back_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface MigrationRowRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  batch_id: UUID;
+  row_number: number;
+  import_type: MigrationRowRecord["importType"];
+  external_record_id: string | null;
+  raw_payload_digest: string;
+  normalized_record: MigrationRowRecord["normalizedRecord"] | null;
+  validation_errors: MigrationRowRecord["validationErrors"];
+  status: MigrationRowRecord["status"];
+  match_status: MigrationRowRecord["matchStatus"];
+  resolution_action: MigrationRowRecord["resolutionAction"];
+  resolution_target_record_type: string | null;
+  resolution_target_record_id: UUID | null;
+  resolution_note: string | null;
+  committed_record_type: string | null;
+  committed_record_id: UUID | null;
+  error_message: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface MigrationConflictRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  batch_id: UUID;
+  row_id: UUID;
+  conflict_type: MigrationConflictRecord["conflictType"];
+  severity: MigrationConflictRecord["severity"];
+  target_record_type: string | null;
+  target_record_id: UUID | null;
+  field_name: string | null;
+  summary: string;
+  evidence: Record<string, unknown>;
+  status: MigrationConflictRecord["status"];
+  resolution_action: MigrationConflictRecord["resolutionAction"];
+  resolved_by_user_id: UUID | null;
+  resolved_at: Date | string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface IntegrationDeadLetterRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID | null;
+  raw_event_id: UUID | null;
+  normalized_event_id: UUID | null;
+  provider_key: string;
+  failure_stage: IntegrationDeadLetterRecord["failureStage"];
+  failure_code: string;
+  failure_summary: string;
+  retry_count: number | string;
+  next_retry_at: Date | string | null;
+  status: IntegrationDeadLetterRecord["status"];
+  last_error_digest: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface MigrationCommitRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  batch_id: UUID;
+  action: MigrationCommitRecord["action"];
+  status: MigrationCommitRecord["status"];
+  idempotency_key: string | null;
+  requested_by_user_id: UUID;
+  summary: Record<string, unknown>;
+  error_summary: Record<string, unknown> | null;
+  started_at: Date | string;
+  finished_at: Date | string | null;
+}
+
+interface ImportedRecordLinkRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  batch_id: UUID;
+  row_id: UUID;
+  import_type: ImportedRecordLinkRecord["importType"];
+  source_system: string;
+  external_record_id: string | null;
+  target_record_type: string;
+  target_record_id: UUID;
+  link_type: ImportedRecordLinkRecord["linkType"];
+  verification_status: ImportedRecordLinkRecord["verificationStatus"];
+  verified_by_user_id: UUID | null;
+  verified_at: Date | string | null;
+  metadata: Record<string, unknown>;
+  created_by_user_id: UUID;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
 interface LeadRow {
   id: UUID;
   tenant_id: UUID;
@@ -8016,6 +9195,156 @@ function mapTimelineRow(row: PatientTimelineRow): PatientTimelineItem {
     title: row.title,
     summary: row.summary,
     metadata: row.metadata
+  };
+}
+
+function mapMigrationBatchRow(row: MigrationBatchRow): MigrationBatchRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    importType: row.import_type,
+    sourceSystem: row.source_system,
+    sourceFileName: row.source_file_name,
+    sourceChecksum: row.source_checksum,
+    state: row.state,
+    uploadedByUserId: row.uploaded_by_user_id,
+    committedByUserId: row.committed_by_user_id,
+    rolledBackByUserId: row.rolled_back_by_user_id,
+    rowCount: Number(row.row_count),
+    validRowCount: Number(row.valid_row_count),
+    invalidRowCount: Number(row.invalid_row_count),
+    conflictRowCount: Number(row.conflict_row_count),
+    readyRowCount: Number(row.ready_row_count),
+    committedRowCount: Number(row.committed_row_count),
+    rolledBackRowCount: Number(row.rolled_back_row_count),
+    failedRowCount: Number(row.failed_row_count),
+    committedAt: row.committed_at ? toIso(row.committed_at) : null,
+    rolledBackAt: row.rolled_back_at ? toIso(row.rolled_back_at) : null,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapMigrationRowRow(
+  row: MigrationRowRow,
+  conflicts: MigrationConflictRecord[]
+): MigrationRowRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    batchId: row.batch_id,
+    rowNumber: row.row_number,
+    importType: row.import_type,
+    externalRecordId: row.external_record_id,
+    rawPayloadDigest: row.raw_payload_digest,
+    rawPayloadRef: {
+      rowId: row.id,
+      digest: row.raw_payload_digest,
+      retained: true
+    },
+    normalizedRecord: row.normalized_record,
+    validationErrors: row.validation_errors ?? [],
+    status: row.status,
+    matchStatus: row.match_status,
+    resolutionAction: row.resolution_action,
+    resolutionTargetRecordType: row.resolution_target_record_type,
+    resolutionTargetRecordId: row.resolution_target_record_id,
+    resolutionNote: row.resolution_note,
+    committedRecordType: row.committed_record_type,
+    committedRecordId: row.committed_record_id,
+    errorMessage: row.error_message,
+    conflicts,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapMigrationConflictRow(row: MigrationConflictRow): MigrationConflictRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    batchId: row.batch_id,
+    rowId: row.row_id,
+    conflictType: row.conflict_type,
+    severity: row.severity,
+    targetRecordType: row.target_record_type,
+    targetRecordId: row.target_record_id,
+    fieldName: row.field_name,
+    summary: row.summary,
+    evidence: row.evidence ?? {},
+    status: row.status,
+    resolutionAction: row.resolution_action,
+    resolvedByUserId: row.resolved_by_user_id,
+    resolvedAt: row.resolved_at ? toIso(row.resolved_at) : null,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapIntegrationDeadLetterRow(row: IntegrationDeadLetterRow): IntegrationDeadLetterRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    rawEventId: row.raw_event_id,
+    normalizedEventId: row.normalized_event_id,
+    providerKey: row.provider_key,
+    failureStage: row.failure_stage,
+    failureCode: row.failure_code,
+    failureSummary: row.failure_summary,
+    retryCount: Number(row.retry_count),
+    nextRetryAt: row.next_retry_at ? toIso(row.next_retry_at) : null,
+    status: row.status,
+    lastErrorDigest: row.last_error_digest,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapMigrationCommitRow(row: MigrationCommitRow): MigrationCommitRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    batchId: row.batch_id,
+    action: row.action,
+    status: row.status,
+    idempotencyKey: row.idempotency_key,
+    requestedByUserId: row.requested_by_user_id,
+    summary: row.summary ?? {},
+    errorSummary: row.error_summary,
+    startedAt: toIso(row.started_at),
+    finishedAt: row.finished_at ? toIso(row.finished_at) : null
+  };
+}
+
+function sha256Text(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function mapImportedRecordLinkRow(row: ImportedRecordLinkRow): ImportedRecordLinkRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    batchId: row.batch_id,
+    rowId: row.row_id,
+    importType: row.import_type,
+    sourceSystem: row.source_system,
+    externalRecordId: row.external_record_id,
+    targetRecordType: row.target_record_type,
+    targetRecordId: row.target_record_id,
+    linkType: row.link_type,
+    verificationStatus: row.verification_status,
+    verifiedByUserId: row.verified_by_user_id,
+    verifiedAt: row.verified_at ? toIso(row.verified_at) : null,
+    metadata: row.metadata ?? {},
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
   };
 }
 

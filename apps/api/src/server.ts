@@ -35,6 +35,7 @@ import {
   acceptTreatmentPlan,
   amendEncounterClinicalNote,
   confirmAppointment,
+  commitMigrationBatch,
   convertLeadToAppointment,
   createAppointment,
   createCorrectiveAction,
@@ -57,6 +58,7 @@ import {
   createLabReconciliation,
   createLabVendor,
   createLead,
+  createMigrationBatch,
   completeMediaUpload,
   createSignedMediaAccess,
   createInvoicePaymentRequest,
@@ -69,10 +71,13 @@ import {
   createSopTemplate,
   generateDueContinuityTasks,
   generateDueSopRuns,
+  listDeadLetterEvents,
   getMorningDashboard,
   getOwnerDashboard,
   getEncounter,
   getInvoice,
+  getMigrationBatch,
+  listMigrationBatches,
   getPatientDentalChart,
   getPatient,
   getPatientPrepSummary,
@@ -92,9 +97,11 @@ import {
   listLabCases,
   listLabVendors,
   listLeads,
+  listMigrationBatchRows,
   listPatientMediaAssets,
   listPatientConsents,
   listPatients,
+  listProviderHealth,
   listProviderSchedules,
   listQueue,
   listRecalls,
@@ -106,7 +113,10 @@ import {
   receiveMediaUploadContent,
   recordInvoiceManualPayment,
   requestMediaUploadUrl,
+  replayDeadLetterEvent,
+  resolveMigrationBatchRow,
   processPaymentWebhook,
+  rollbackMigrationBatch,
   saveEncounterClinicalNoteDraft,
   signEncounterClinicalNote,
   signPrescription,
@@ -278,6 +288,7 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
           repository: options.operationsRepository,
           auditSink: options.auditSink,
           mediaStorage: options.mediaStorage,
+          paymentProvider: options.paymentProvider ?? createRuntimePaymentProvider(options.config),
           useLocalAuthFixture: options.useLocalAuthFixture ?? false,
           fixtureSubject: options.fixtureSubject
         });
@@ -378,7 +389,8 @@ async function routeOperationsRequest(input: {
     auditSink: input.auditSink,
     mediaStorage: input.mediaStorage,
     paymentProvider: input.paymentProvider,
-    paymentRepository: paymentRepositoryFromOperationsRepository(input.repository)
+    paymentRepository: paymentRepositoryFromOperationsRepository(input.repository),
+    runtimeConfig: input.config
   };
   const isMediaContentUpload =
     input.request.method === "PUT" && /^\/v1\/media\/uploads\/[^/]+\/content$/.test(pathname);
@@ -406,6 +418,93 @@ async function routeOperationsRequest(input: {
 
   if (input.request.method === "POST" && pathname === "/v1/patients") {
     return createPatient(operationsContext, dependencies, body);
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/provider-health") {
+    return listProviderHealth(operationsContext, dependencies);
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/dead-letter-events") {
+    return listDeadLetterEvents(operationsContext, dependencies, {
+      limit: url.searchParams.get("limit"),
+      status: url.searchParams.get("status")
+    });
+  }
+
+  const deadLetterReplayMatch = pathname.match(/^\/v1\/dead-letter-events\/([^/]+)\/replay$/);
+  if (deadLetterReplayMatch && input.request.method === "POST") {
+    return replayDeadLetterEvent(
+      operationsContext,
+      dependencies,
+      pathUuid(deadLetterReplayMatch[1], "deadLetterEventId"),
+      body
+    );
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/migration-batches") {
+    return listMigrationBatches(operationsContext, dependencies, {
+      limit: url.searchParams.get("limit"),
+      status: url.searchParams.get("status")
+    });
+  }
+
+  if (input.request.method === "POST" && pathname === "/v1/migration-batches") {
+    return createMigrationBatch(operationsContext, dependencies, body);
+  }
+
+  const migrationBatchRowsMatch = pathname.match(/^\/v1\/migration-batches\/([^/]+)\/rows$/);
+  if (migrationBatchRowsMatch && input.request.method === "GET") {
+    return listMigrationBatchRows(
+      operationsContext,
+      dependencies,
+      pathUuid(migrationBatchRowsMatch[1], "batchId"),
+      {
+        matchStatus: url.searchParams.get("matchStatus"),
+        status: url.searchParams.get("status")
+      }
+    );
+  }
+
+  const migrationBatchRowResolveMatch = pathname.match(
+    /^\/v1\/migration-batches\/([^/]+)\/rows\/([^/]+)\/resolve$/
+  );
+  if (migrationBatchRowResolveMatch && input.request.method === "POST") {
+    return resolveMigrationBatchRow(
+      operationsContext,
+      dependencies,
+      pathUuid(migrationBatchRowResolveMatch[1], "batchId"),
+      pathUuid(migrationBatchRowResolveMatch[2], "rowId"),
+      body
+    );
+  }
+
+  const migrationBatchCommitMatch = pathname.match(/^\/v1\/migration-batches\/([^/]+)\/commit$/);
+  if (migrationBatchCommitMatch && input.request.method === "POST") {
+    return commitMigrationBatch(
+      operationsContext,
+      dependencies,
+      pathUuid(migrationBatchCommitMatch[1], "batchId"),
+      body
+    );
+  }
+
+  const migrationBatchRollbackMatch = pathname.match(/^\/v1\/migration-batches\/([^/]+)\/rollback$/);
+  if (migrationBatchRollbackMatch && input.request.method === "POST") {
+    return rollbackMigrationBatch(
+      operationsContext,
+      dependencies,
+      pathUuid(migrationBatchRollbackMatch[1], "batchId"),
+      body
+    );
+  }
+
+  const migrationBatchMatch = pathname.match(/^\/v1\/migration-batches\/([^/]+)$/);
+  if (migrationBatchMatch && input.request.method === "GET") {
+    return getMigrationBatch(
+      operationsContext,
+      dependencies,
+      pathUuid(migrationBatchMatch[1], "batchId")
+    );
   }
 
   const patientMatch = pathname.match(/^\/v1\/patients\/([^/]+)$/);

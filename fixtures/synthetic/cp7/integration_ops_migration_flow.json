@@ -1,0 +1,265 @@
+{
+  "schemaVersion": "clinic-os.cp7.qa-fixture.v1",
+  "fixtureUse": {
+    "localOnly": true,
+    "syntheticOnly": true,
+    "productionUseDenied": true,
+    "allowedEnvironments": ["local", "development", "test", "ci"]
+  },
+  "clock": {
+    "businessDate": "2026-07-07",
+    "timezone": "Asia/Kolkata",
+    "fixedNow": "2026-07-07T10:15:00+05:30"
+  },
+  "tenants": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "key": "primaryTenant",
+      "name": "CP7 Synthetic Tenant"
+    }
+  ],
+  "clinics": [
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "key": "primaryClinic",
+      "name": "CP7 Synthetic Dental Clinic",
+      "tenantId": "11111111-1111-4111-8111-111111111111"
+    }
+  ],
+  "actors": [
+    {
+      "clinicId": "22222222-2222-4222-8222-222222222222",
+      "email": "cp7.owner@example.test",
+      "id": "33333333-3333-4333-8333-333333333333",
+      "key": "owner",
+      "roleSlug": "owner",
+      "tenantId": "11111111-1111-4111-8111-111111111111"
+    },
+    {
+      "clinicId": "22222222-2222-4222-8222-222222222222",
+      "email": "cp7.assistant@example.test",
+      "id": "44444444-4444-4444-8444-444444444444",
+      "key": "assistant",
+      "roleSlug": "assistant",
+      "tenantId": "11111111-1111-4111-8111-111111111111"
+    }
+  ],
+  "providerHealth": [
+    {
+      "capabilities": ["outbound_templates", "inbound_messages", "delivery_status"],
+      "checkedAt": "2026-07-07T10:15:00+05:30",
+      "expectedStatus": "degraded",
+      "key": "whatsapp-cloud",
+      "label": "WhatsApp Cloud",
+      "mode": "configured/degraded",
+      "providerKey": "whatsapp_cloud",
+      "unavailableReason": "Hosted verified callback is not registered."
+    },
+    {
+      "capabilities": ["payment_links", "payment_qr"],
+      "checkedAt": "2026-07-07T10:15:00+05:30",
+      "expectedStatus": "degraded",
+      "key": "razorpay",
+      "label": "Razorpay",
+      "mode": "sandbox webhook URL missing",
+      "providerKey": "razorpay",
+      "unavailableReason": "RAZORPAY_WEBHOOK_URL is empty."
+    },
+    {
+      "capabilities": [],
+      "checkedAt": "2026-07-07T10:15:00+05:30",
+      "expectedStatus": "unavailable",
+      "key": "telephony-exotel",
+      "label": "Telephony",
+      "mode": "provider unavailable",
+      "providerKey": "exotel",
+      "unavailableReason": "Exotel-style account variables and callback secret are missing."
+    },
+    {
+      "capabilities": ["manual_source_attribution"],
+      "checkedAt": "2026-07-07T10:15:00+05:30",
+      "expectedStatus": "not_configured",
+      "key": "google-business",
+      "label": "Google Business Profile",
+      "mode": "manual/source only",
+      "providerKey": "google_business_profile",
+      "unavailableReason": "Google Business Profile OAuth variables are missing."
+    }
+  ],
+  "deadLetterEvents": [
+    {
+      "attempts": 3,
+      "eventType": "whatsapp.status.webhook.normalization_failed",
+      "failedAt": "2026-07-07T09:40:00+05:30",
+      "id": "55555555-5555-4555-8555-555555555555",
+      "key": "whatsappStatusDeadLetter",
+      "lastError": "Signed callback verification is not active.",
+      "providerKey": "whatsapp_cloud",
+      "replayAvailable": true,
+      "status": "unreviewed"
+    },
+    {
+      "attempts": 5,
+      "eventType": "telephony.missed_call.provider_event",
+      "failedAt": "2026-07-07T08:55:00+05:30",
+      "id": "66666666-6666-4666-8666-666666666666",
+      "key": "telephonyUnavailableDeadLetter",
+      "lastError": "Telephony provider account is unavailable.",
+      "providerKey": "exotel",
+      "replayAvailable": false,
+      "replayBlockedReason": "Telephony credentials and callback registration are missing.",
+      "status": "blocked"
+    }
+  ],
+  "migrationBatches": [
+    {
+      "commit": {
+        "blockedReason": "Resolve duplicate review before committing.",
+        "committedRows": 0,
+        "state": "blocked"
+      },
+      "conflicts": [
+        {
+          "candidateSummary": "Existing verified ClinicOS patient with same phone; keep existing record.",
+          "id": "77777777-7777-4777-8777-777777777777",
+          "key": "duplicatePatient",
+          "rowKey": "duplicatePatientRow",
+          "status": "unresolved",
+          "type": "possible_duplicate"
+        }
+      ],
+      "id": "88888888-8888-4888-8888-888888888888",
+      "key": "rayPatients",
+      "rows": [
+        {
+          "externalReference": "ray-patient-001",
+          "id": "99999999-9999-4999-8999-999999999999",
+          "key": "newPatientRow",
+          "preview": "Synthetic imported patient, phone ending 7001, marked unverified until reviewed.",
+          "rowNumber": 2,
+          "status": "valid",
+          "target": "patient"
+        },
+        {
+          "externalReference": "ray-patient-002",
+          "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+          "issue": "Possible duplicate of a verified ClinicOS patient.",
+          "key": "duplicatePatientRow",
+          "preview": "Synthetic duplicate candidate, phone ending 7002.",
+          "rowNumber": 3,
+          "status": "conflict",
+          "target": "patient"
+        },
+        {
+          "externalReference": "ray-patient-003",
+          "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+          "issue": "Missing required phone number and consent provenance.",
+          "key": "rejectedPatientRow",
+          "preview": "Rejected synthetic row with incomplete contact fields.",
+          "rowNumber": 4,
+          "status": "rejected",
+          "target": "patient"
+        }
+      ],
+      "sourceSystem": "ray_csv_export",
+      "status": "needs_review",
+      "uploadedAt": "2026-07-07T08:30:00+05:30"
+    }
+  ],
+  "flow": {
+    "steps": [
+      {
+        "actorKey": "owner",
+        "expectedBodyIncludes": ["whatsapp_cloud", "degraded", "razorpay", "webhook"],
+        "expectedBodyMustNotInclude": ["secret material", "Provider success confirmed"],
+        "expectedStatus": 200,
+        "key": "read-provider-health",
+        "liveImplemented": false,
+        "method": "GET",
+        "path": "/v1/provider-health",
+        "routeFamily": "provider-health"
+      },
+      {
+        "actorKey": "owner",
+        "expectedBodyIncludes": ["unreviewed", "blocked"],
+        "expectedBodyMustNotInclude": ["Provider success confirmed"],
+        "expectedStatus": 200,
+        "key": "read-dead-letter-events",
+        "liveImplemented": false,
+        "method": "GET",
+        "path": "/v1/dead-letter-events?status=unreviewed",
+        "routeFamily": "dead-letter-events"
+      },
+      {
+        "actorKey": "owner",
+        "expectedBodyIncludes": ["accepted"],
+        "expectedBodyMustNotInclude": ["delivered", "read"],
+        "expectedStatus": 202,
+        "key": "replay-dead-letter-event",
+        "liveImplemented": false,
+        "method": "POST",
+        "path": "/v1/dead-letter-events/55555555-5555-4555-8555-555555555555/replay",
+        "requestBody": {
+          "reason": "Operator reviewed failed provider event.",
+          "reviewedByName": "CP7 owner fixture"
+        },
+        "routeFamily": "dead-letter-replay"
+      },
+      {
+        "actorKey": "owner",
+        "expectedBodyIncludes": ["needs_review", "possible_duplicate"],
+        "expectedBodyMustNotInclude": ["real patient", "overwrite"],
+        "expectedStatus": 200,
+        "key": "read-migration-batch",
+        "liveImplemented": false,
+        "method": "GET",
+        "path": "/v1/migration-batches/88888888-8888-4888-8888-888888888888",
+        "routeFamily": "migration-batches"
+      },
+      {
+        "actorKey": "owner",
+        "expectedBodyIncludes": ["resolved"],
+        "expectedStatus": 200,
+        "key": "resolve-migration-conflict",
+        "liveImplemented": false,
+        "method": "POST",
+        "path": "/v1/migration-batches/88888888-8888-4888-8888-888888888888/rows/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/resolve",
+        "requestBody": {
+          "action": "link_existing",
+          "note": "Keep existing verified ClinicOS record.",
+          "reviewedByName": "CP7 owner fixture"
+        },
+        "routeFamily": "migration-row-resolution"
+      },
+      {
+        "actorKey": "owner",
+        "expectedBodyIncludes": ["committed"],
+        "expectedBodyMustNotInclude": ["silent_overwrite"],
+        "expectedStatus": 202,
+        "key": "commit-migration-batch",
+        "liveImplemented": false,
+        "method": "POST",
+        "path": "/v1/migration-batches/88888888-8888-4888-8888-888888888888/commit",
+        "requestBody": {
+          "committedByName": "CP7 owner fixture",
+          "safetyConfirmation": "reviewed_rows_only_no_silent_overwrite"
+        },
+        "routeFamily": "migration-commit"
+      }
+    ]
+  },
+  "browserSelectorContract": {
+    "fixtureAlert": "cp7-fixture-alert",
+    "workspace": "cp7-integration-ops-workspace",
+    "providerReadiness": "cp7-provider-readiness",
+    "providerDashboard": "cp7-provider-dashboard",
+    "deadLetterReplay": "cp7-dead-letter-replay",
+    "replayAction": "cp7-replay-dead-letter",
+    "replayStatus": "cp7-replay-status",
+    "migrationReview": "cp7-migration-review",
+    "migrationStatus": "cp7-migration-status",
+    "resolveMigrationConflict": "cp7-resolve-migration-conflict",
+    "commitMigrationBatch": "cp7-commit-migration-batch",
+    "timeline": "cp7-timeline"
+  }
+}

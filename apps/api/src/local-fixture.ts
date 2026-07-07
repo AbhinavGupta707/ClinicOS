@@ -18,6 +18,7 @@ import {
   type CreateIntakeFormTemplateInput,
   type CreateLeadInput,
   type CreateMediaUploadReservationInput,
+  type CreateMigrationBatchInput,
   type CreatePatientInput,
   type CreatePatientInstructionInput,
   type CreatePaymentRequestInput,
@@ -37,6 +38,7 @@ import {
   type GenerateDueContinuityResult,
   type GenerateDueSopRunsInput,
   type GenerateDueSopRunsResult,
+  type IntegrationDeadLetterSearchFilter,
   type CreateInventoryCategoryInput,
   type CreateInventoryCheckRunInput,
   type CreateInventoryCheckTemplateInput,
@@ -52,6 +54,9 @@ import {
   type InventoryExceptionFilter,
   type LabCaseSearchFilter,
   type LeadSearchFilter,
+  type CommitMigrationBatchInput,
+  type MigrationBatchSearchFilter,
+  type MigrationRowsFilter,
   type OwnerDashboardProjectionData,
   type OutboxEventInput,
   type PatientSearchFilter,
@@ -59,7 +64,10 @@ import {
   type RepositoryScope,
   type RecordPaymentTransactionInput,
   type RecordRecallActionInput,
+  type ReplayIntegrationDeadLetterInput,
   type RevokeConsentInput,
+  type ResolveMigrationRowInput,
+  type RollbackMigrationBatchInput,
   type SaveClinicalNoteDraftInput,
   type SignClinicalNoteResult,
   type SopRunSearchFilter,
@@ -149,6 +157,15 @@ import {
   mediaAssetStatusForScan,
   type MediaAssetRecord,
   type MediaUploadReservationRecord,
+  type ImportedRecordLinkRecord,
+  type IntegrationDeadLetterRecord,
+  type MigrationBatchDetail,
+  type MigrationBatchRecord,
+  type MigrationCommitRecord,
+  type MigrationCommitResult,
+  type MigrationConflictRecord,
+  type MigrationRollbackResult,
+  type MigrationRowRecord,
   type PaymentRequestRecord,
   type PaymentTransactionRecord,
   type PatientRecord,
@@ -793,6 +810,12 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   ];
   readonly attributionTouches: AttributionTouchRecord[] = [];
   readonly outboxEvents: OutboxEventInput[] = [];
+  readonly migrationBatches: MigrationBatchRecord[] = [];
+  readonly migrationRows: MigrationRowRecord[] = [];
+  readonly migrationConflicts: MigrationConflictRecord[] = [];
+  readonly migrationCommits: MigrationCommitRecord[] = [];
+  readonly importedRecordLinks: ImportedRecordLinkRecord[] = [];
+  readonly integrationDeadLetters: IntegrationDeadLetterRecord[] = [];
   readonly intakeFormTemplates: IntakeFormTemplateRecord[] = [
     {
       id: uuid(),
@@ -1007,6 +1030,420 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     });
 
     return patient;
+  }
+
+  async createMigrationBatch(
+    scope: RepositoryScope,
+    input: CreateMigrationBatchInput
+  ): Promise<MigrationBatchDetail> {
+    const now = new Date().toISOString();
+    const batch: MigrationBatchRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      importType: input.importType,
+      sourceSystem: input.sourceSystem,
+      sourceFileName: input.sourceFileName ?? null,
+      sourceChecksum: input.sourceChecksum ?? null,
+      state: input.state,
+      uploadedByUserId: scope.actorUserId,
+      committedByUserId: null,
+      rolledBackByUserId: null,
+      rowCount: input.rows.length,
+      validRowCount: input.rows.filter((row) => row.status !== "invalid").length,
+      invalidRowCount: input.rows.filter((row) => row.status === "invalid").length,
+      conflictRowCount: input.rows.filter((row) =>
+        ["needs_review", "conflict", "duplicate_candidate"].includes(row.matchStatus)
+      ).length,
+      readyRowCount: input.rows.filter((row) => row.status === "ready_to_commit").length,
+      committedRowCount: 0,
+      rolledBackRowCount: 0,
+      failedRowCount: 0,
+      committedAt: null,
+      rolledBackAt: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.migrationBatches.push(batch);
+
+    for (const rowInput of input.rows) {
+      const row: MigrationRowRecord = {
+        id: uuid(),
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        batchId: batch.id,
+        rowNumber: rowInput.rowNumber,
+        importType: rowInput.importType,
+        externalRecordId: rowInput.externalRecordId ?? null,
+        rawPayloadDigest: rowInput.rawPayloadDigest,
+        rawPayloadRef: {
+          rowId: "00000000-0000-4000-8000-000000000000" as UUID,
+          digest: rowInput.rawPayloadDigest,
+          retained: true
+        },
+        normalizedRecord: rowInput.normalizedRecord ?? null,
+        validationErrors: rowInput.validationErrors,
+        status: rowInput.status,
+        matchStatus: rowInput.matchStatus,
+        resolutionAction: null,
+        resolutionTargetRecordType: null,
+        resolutionTargetRecordId: null,
+        resolutionNote: null,
+        committedRecordType: null,
+        committedRecordId: null,
+        errorMessage: null,
+        conflicts: [],
+        createdAt: now,
+        updatedAt: now
+      };
+      row.rawPayloadRef = { ...row.rawPayloadRef, rowId: row.id };
+      this.migrationRows.push(row);
+
+      for (const conflictInput of rowInput.conflicts ?? []) {
+        const conflict: MigrationConflictRecord = {
+          id: uuid(),
+          tenantId: scope.tenantId,
+          clinicId: scope.clinicId,
+          batchId: batch.id,
+          rowId: row.id,
+          conflictType: conflictInput.conflictType,
+          severity: conflictInput.severity,
+          targetRecordType: conflictInput.targetRecordType ?? null,
+          targetRecordId: conflictInput.targetRecordId ?? null,
+          fieldName: conflictInput.fieldName ?? null,
+          summary: conflictInput.summary,
+          evidence: conflictInput.evidence ?? {},
+          status: "open",
+          resolutionAction: null,
+          resolvedByUserId: null,
+          resolvedAt: null,
+          createdAt: now,
+          updatedAt: now
+        };
+        this.migrationConflicts.push(conflict);
+      }
+    }
+
+    this.#refreshMigrationBatchCounts(batch);
+    return this.#migrationBatchDetail(scope, batch);
+  }
+
+  async findMigrationBatchById(
+    scope: RepositoryScope,
+    batchId: UUID
+  ): Promise<MigrationBatchDetail | null> {
+    const batch =
+      this.migrationBatches.find((candidate) => matchesScope(candidate, scope) && candidate.id === batchId) ??
+      null;
+    return batch ? this.#migrationBatchDetail(scope, batch) : null;
+  }
+
+  async listMigrationBatches(
+    scope: RepositoryScope,
+    filter: MigrationBatchSearchFilter = {}
+  ): Promise<MigrationBatchDetail[]> {
+    return this.migrationBatches
+      .filter((batch) => matchesScope(batch, scope))
+      .filter((batch) => !filter.status || batch.state === filter.status)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, filter.limit ?? 25)
+      .map((batch) => this.#migrationBatchDetail(scope, batch));
+  }
+
+  async listMigrationRows(
+    scope: RepositoryScope,
+    batchId: UUID,
+    filter: MigrationRowsFilter = {}
+  ): Promise<MigrationRowRecord[]> {
+    return this.migrationRows
+      .filter((row) => matchesScope(row, scope) && row.batchId === batchId)
+      .filter((row) => {
+        if (filter.matchStatus && row.matchStatus !== filter.matchStatus) return false;
+        if (filter.status && row.status !== filter.status) return false;
+        return true;
+      })
+      .sort((left, right) => left.rowNumber - right.rowNumber)
+      .map((row) => this.#migrationRowWithConflicts(scope, row));
+  }
+
+  async resolveMigrationRow(
+    scope: RepositoryScope,
+    batchId: UUID,
+    rowId: UUID,
+    input: ResolveMigrationRowInput
+  ): Promise<MigrationRowRecord | null> {
+    const batch =
+      this.migrationBatches.find((candidate) => matchesScope(candidate, scope) && candidate.id === batchId) ??
+      null;
+    const row =
+      this.migrationRows.find(
+        (candidate) => matchesScope(candidate, scope) && candidate.batchId === batchId && candidate.id === rowId
+      ) ?? null;
+    if (!batch || !row) return null;
+    if (row.status === "committed" || row.status === "rolled_back") return null;
+
+    if (input.action === "link_existing") {
+      const patient = input.targetRecordId
+        ? await this.findPatientById(scope, input.targetRecordId)
+        : null;
+      if (!patient) return null;
+      row.resolutionTargetRecordType = input.targetRecordType ?? "patient";
+      row.resolutionTargetRecordId = patient.id;
+    } else {
+      row.resolutionTargetRecordType = null;
+      row.resolutionTargetRecordId = null;
+    }
+
+    row.resolutionAction = input.action;
+    row.resolutionNote = input.note ?? null;
+    row.status = input.action === "skip" ? "skipped" : "ready_to_commit";
+    row.matchStatus = input.action === "skip" ? "skipped" : "resolved";
+    row.updatedAt = new Date().toISOString();
+
+    for (const conflict of this.migrationConflicts.filter(
+      (candidate) => matchesScope(candidate, scope) && candidate.batchId === batchId && candidate.rowId === rowId
+    )) {
+      conflict.status = input.action === "skip" ? "ignored" : "resolved";
+      conflict.resolutionAction = input.action;
+      conflict.resolvedByUserId = scope.actorUserId;
+      conflict.resolvedAt = row.updatedAt;
+      conflict.updatedAt = row.updatedAt;
+    }
+
+    this.#refreshMigrationBatchCounts(batch);
+    return this.#migrationRowWithConflicts(scope, row);
+  }
+
+  async commitMigrationBatch(
+    scope: RepositoryScope,
+    batchId: UUID,
+    input: CommitMigrationBatchInput = {}
+  ): Promise<MigrationCommitResult | null> {
+    const batch =
+      this.migrationBatches.find((candidate) => matchesScope(candidate, scope) && candidate.id === batchId) ??
+      null;
+    if (!batch) return null;
+
+    const existing = this.#findExistingMigrationCommit(scope, batchId, "commit", input.idempotencyKey);
+    if (existing || batch.state === "committed" || batch.state === "partially_committed") {
+      return {
+        batch,
+        commit: existing ?? this.#latestMigrationCommit(scope, batchId, "commit") ?? this.#createMigrationCommit(scope, batchId, "commit", "succeeded", input.idempotencyKey ?? null, {}, null),
+        rows: await this.listMigrationRows(scope, batchId),
+        importedRecordLinks: this.#importedLinksForBatch(scope, batchId)
+      };
+    }
+
+    const readyRows = this.migrationRows.filter(
+      (row) => matchesScope(row, scope) && row.batchId === batchId && row.status === "ready_to_commit"
+    );
+    const linksCreated: ImportedRecordLinkRecord[] = [];
+
+    for (const row of readyRows) {
+      if (!row.normalizedRecord || row.normalizedRecord.recordType !== "patient") {
+        row.status = "failed";
+        row.errorMessage = "Only patient import rows can be committed in CP7.";
+        continue;
+      }
+
+      if (row.resolutionAction === "link_existing") {
+        if (!row.resolutionTargetRecordId) {
+          row.status = "failed";
+          row.errorMessage = "Resolved existing patient target is missing.";
+          continue;
+        }
+
+        row.committedRecordType = "patient";
+        row.committedRecordId = row.resolutionTargetRecordId;
+        row.status = "committed";
+        linksCreated.push(
+          this.#createImportedRecordLink(scope, batch, row, row.resolutionTargetRecordId, "linked_existing")
+        );
+        continue;
+      }
+
+      const patient = await this.createPatient(scope, {
+        fullName: row.normalizedRecord.fullName,
+        phone: row.normalizedRecord.phone,
+        email: row.normalizedRecord.email,
+        dateOfBirth: row.normalizedRecord.dateOfBirth,
+        gender: row.normalizedRecord.gender,
+        source: "imported",
+        sourceDetail: {
+          sourceSystem: batch.sourceSystem,
+          externalReference: row.externalRecordId,
+          ...row.normalizedRecord.sourceDetail
+        }
+      });
+      row.committedRecordType = "patient";
+      row.committedRecordId = patient.id;
+      row.status = "committed";
+      row.updatedAt = new Date().toISOString();
+      linksCreated.push(this.#createImportedRecordLink(scope, batch, row, patient.id, "created_from_import"));
+    }
+
+    const failedRows = this.migrationRows.filter(
+      (row) => matchesScope(row, scope) && row.batchId === batchId && row.status === "failed"
+    );
+    this.#refreshMigrationBatchCounts(batch);
+    batch.committedByUserId = scope.actorUserId;
+    batch.committedAt = new Date().toISOString();
+    batch.state =
+      failedRows.length > 0 || batch.invalidRowCount > 0 || batch.conflictRowCount > 0
+        ? "partially_committed"
+        : "committed";
+    batch.updatedAt = batch.committedAt;
+
+    const commit = this.#createMigrationCommit(
+      scope,
+      batchId,
+      "commit",
+      batch.state === "committed" ? "succeeded" : "partially_succeeded",
+      input.idempotencyKey ?? null,
+      {
+        committedRows: batch.committedRowCount,
+        invalidRows: batch.invalidRowCount,
+        failedRows: batch.failedRowCount,
+        linksCreated: linksCreated.length
+      },
+      failedRows.length > 0 ? { failedRowIds: failedRows.map((row) => row.id) } : null
+    );
+
+    return {
+      batch,
+      commit,
+      rows: await this.listMigrationRows(scope, batchId),
+      importedRecordLinks: this.#importedLinksForBatch(scope, batchId)
+    };
+  }
+
+  async rollbackMigrationBatch(
+    scope: RepositoryScope,
+    batchId: UUID,
+    input: RollbackMigrationBatchInput = {}
+  ): Promise<MigrationRollbackResult | null> {
+    const batch =
+      this.migrationBatches.find((candidate) => matchesScope(candidate, scope) && candidate.id === batchId) ??
+      null;
+    if (!batch) return null;
+
+    const existing = this.#findExistingMigrationCommit(scope, batchId, "rollback", input.idempotencyKey);
+    if (existing || batch.state === "rolled_back") {
+      return {
+        batch,
+        rollback: existing ?? this.#latestMigrationCommit(scope, batchId, "rollback") ?? this.#createMigrationCommit(scope, batchId, "rollback", "succeeded", input.idempotencyKey ?? null, {}, null),
+        rows: await this.listMigrationRows(scope, batchId),
+        importedRecordLinks: this.#importedLinksForBatch(scope, batchId),
+        blockedLinks: []
+      };
+    }
+
+    const links = this.#importedLinksForBatch(scope, batchId).filter(
+      (link) => link.verificationStatus === "imported_unverified"
+    );
+    const blockedLinks: ImportedRecordLinkRecord[] = [];
+    const rolledBackLinks: ImportedRecordLinkRecord[] = [];
+
+    for (const link of links) {
+      if (link.linkType === "created_from_import" && this.#patientHasRollbackBlockingDependencies(scope, link.targetRecordId)) {
+        link.metadata = {
+          ...link.metadata,
+          rollbackBlockedAt: new Date().toISOString(),
+          rollbackBlockedReason: "Imported patient has downstream clinical or billing dependencies."
+        };
+        blockedLinks.push(link);
+        continue;
+      }
+
+      if (link.linkType === "created_from_import") {
+        removeWhere(this.dentalCharts, (chart) => matchesScope(chart, scope) && chart.patientId === link.targetRecordId);
+        removeWhere(this.timelineItems, (item) => matchesScope(item, scope) && item.patientId === link.targetRecordId);
+        removeWhere(this.patients, (patient) => matchesScope(patient, scope) && patient.id === link.targetRecordId);
+      }
+
+      link.verificationStatus = "rolled_back";
+      link.updatedAt = new Date().toISOString();
+      rolledBackLinks.push(link);
+
+      const row = this.migrationRows.find(
+        (candidate) => matchesScope(candidate, scope) && candidate.id === link.rowId
+      );
+      if (row) {
+        row.status = "rolled_back";
+        row.matchStatus = row.resolutionAction === "link_existing" ? "resolved" : row.matchStatus;
+        row.updatedAt = link.updatedAt;
+      }
+    }
+
+    this.#refreshMigrationBatchCounts(batch);
+    batch.rolledBackByUserId = scope.actorUserId;
+    batch.rolledBackAt = new Date().toISOString();
+    batch.state = blockedLinks.length > 0 ? "partially_committed" : "rolled_back";
+    batch.updatedAt = batch.rolledBackAt;
+
+    const rollback = this.#createMigrationCommit(
+      scope,
+      batchId,
+      "rollback",
+      blockedLinks.length > 0 ? "partially_succeeded" : "succeeded",
+      input.idempotencyKey ?? null,
+      {
+        rolledBackLinks: rolledBackLinks.length,
+        blockedLinks: blockedLinks.length
+      },
+      blockedLinks.length > 0 ? { blockedLinkIds: blockedLinks.map((link) => link.id) } : null
+    );
+
+    return {
+      batch,
+      rollback,
+      rows: await this.listMigrationRows(scope, batchId),
+      importedRecordLinks: this.#importedLinksForBatch(scope, batchId),
+      blockedLinks
+    };
+  }
+
+  async listIntegrationDeadLetters(
+    scope: RepositoryScope,
+    filter: IntegrationDeadLetterSearchFilter = {}
+  ): Promise<IntegrationDeadLetterRecord[]> {
+    return this.integrationDeadLetters
+      .filter(
+        (deadLetter) =>
+          deadLetter.tenantId === scope.tenantId &&
+          (deadLetter.clinicId === null || deadLetter.clinicId === scope.clinicId)
+      )
+      .filter((deadLetter) => !filter.status || deadLetter.status === filter.status)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, filter.limit ?? 50)
+      .map((deadLetter) => ({ ...deadLetter }));
+  }
+
+  async requestIntegrationDeadLetterReplay(
+    scope: RepositoryScope,
+    deadLetterId: UUID,
+    input: ReplayIntegrationDeadLetterInput
+  ): Promise<IntegrationDeadLetterRecord | null> {
+    const deadLetter =
+      this.integrationDeadLetters.find(
+        (candidate) =>
+          candidate.tenantId === scope.tenantId &&
+          (candidate.clinicId === null || candidate.clinicId === scope.clinicId) &&
+          candidate.id === deadLetterId
+      ) ?? null;
+    if (!deadLetter || ["replayed", "resolved", "discarded"].includes(deadLetter.status)) {
+      return null;
+    }
+
+    const requestedAt = new Date().toISOString();
+    deadLetter.status = "retry_scheduled";
+    deadLetter.retryCount += 1;
+    deadLetter.nextRetryAt = requestedAt;
+    deadLetter.updatedAt = requestedAt;
+    deadLetter.lastErrorDigest = input.reason
+      ? `reviewed:${input.reviewedByUserId}:${input.reason.slice(0, 64)}`
+      : deadLetter.lastErrorDigest;
+    return { ...deadLetter };
   }
 
   async listLeads(scope: RepositoryScope, filter: LeadSearchFilter = {}): Promise<LeadRecord[]> {
@@ -4626,6 +5063,188 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     this.dentalFindingHistory.push(history);
     return history;
   }
+
+  #migrationBatchDetail(scope: RepositoryScope, batch: MigrationBatchRecord): MigrationBatchDetail {
+    const rows = this.migrationRows
+      .filter((row) => matchesScope(row, scope) && row.batchId === batch.id)
+      .sort((left, right) => left.rowNumber - right.rowNumber)
+      .map((row) => this.#migrationRowWithConflicts(scope, row));
+    const conflicts = this.migrationConflicts
+      .filter((conflict) => matchesScope(conflict, scope) && conflict.batchId === batch.id)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+    return { batch, rows, conflicts };
+  }
+
+  #migrationRowWithConflicts(scope: RepositoryScope, row: MigrationRowRecord): MigrationRowRecord {
+    return {
+      ...row,
+      rawPayloadRef: { ...row.rawPayloadRef },
+      conflicts: this.migrationConflicts
+        .filter((conflict) => matchesScope(conflict, scope) && conflict.rowId === row.id)
+        .sort((left, right) => left.createdAt.localeCompare(right.createdAt))
+    };
+  }
+
+  #refreshMigrationBatchCounts(batch: MigrationBatchRecord): void {
+    const rows = this.migrationRows.filter(
+      (row) =>
+        row.tenantId === batch.tenantId &&
+        row.clinicId === batch.clinicId &&
+        row.batchId === batch.id
+    );
+    const openConflictRowIds = new Set(
+      this.migrationConflicts
+        .filter(
+          (conflict) =>
+            conflict.tenantId === batch.tenantId &&
+            conflict.clinicId === batch.clinicId &&
+            conflict.batchId === batch.id &&
+            conflict.status === "open"
+        )
+        .map((conflict) => conflict.rowId)
+    );
+
+    batch.rowCount = rows.length;
+    batch.validRowCount = rows.filter((row) => row.status !== "invalid").length;
+    batch.invalidRowCount = rows.filter((row) => row.status === "invalid").length;
+    batch.conflictRowCount = openConflictRowIds.size;
+    batch.readyRowCount = rows.filter((row) => row.status === "ready_to_commit").length;
+    batch.committedRowCount = rows.filter((row) => row.status === "committed").length;
+    batch.rolledBackRowCount = rows.filter((row) => row.status === "rolled_back").length;
+    batch.failedRowCount = rows.filter((row) => row.status === "failed").length;
+
+    if (!["committed", "partially_committed", "rolled_back", "failed"].includes(batch.state)) {
+      if (batch.conflictRowCount > 0) batch.state = "needs_review";
+      else if (batch.readyRowCount > 0) batch.state = "ready_to_commit";
+      else batch.state = rows.length > 0 ? "validated" : "uploaded";
+    }
+    batch.updatedAt = new Date().toISOString();
+  }
+
+  #createMigrationCommit(
+    scope: RepositoryScope,
+    batchId: UUID,
+    action: MigrationCommitRecord["action"],
+    status: MigrationCommitRecord["status"],
+    idempotencyKey: string | null,
+    summary: Record<string, unknown>,
+    errorSummary: Record<string, unknown> | null
+  ): MigrationCommitRecord {
+    const now = new Date().toISOString();
+    const commit: MigrationCommitRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      batchId,
+      action,
+      status,
+      idempotencyKey,
+      requestedByUserId: scope.actorUserId,
+      summary,
+      errorSummary,
+      startedAt: now,
+      finishedAt: now
+    };
+    this.migrationCommits.push(commit);
+    return commit;
+  }
+
+  #findExistingMigrationCommit(
+    scope: RepositoryScope,
+    batchId: UUID,
+    action: MigrationCommitRecord["action"],
+    idempotencyKey?: string | null
+  ): MigrationCommitRecord | null {
+    if (!idempotencyKey) return null;
+    return (
+      this.migrationCommits.find(
+        (commit) =>
+          matchesScope(commit, scope) &&
+          commit.batchId === batchId &&
+          commit.action === action &&
+          commit.idempotencyKey === idempotencyKey
+      ) ?? null
+    );
+  }
+
+  #latestMigrationCommit(
+    scope: RepositoryScope,
+    batchId: UUID,
+    action: MigrationCommitRecord["action"]
+  ): MigrationCommitRecord | null {
+    return (
+      this.migrationCommits
+        .filter((commit) => matchesScope(commit, scope) && commit.batchId === batchId && commit.action === action)
+        .sort((left, right) => right.startedAt.localeCompare(left.startedAt))[0] ?? null
+    );
+  }
+
+  #createImportedRecordLink(
+    scope: RepositoryScope,
+    batch: MigrationBatchRecord,
+    row: MigrationRowRecord,
+    targetRecordId: UUID,
+    linkType: ImportedRecordLinkRecord["linkType"]
+  ): ImportedRecordLinkRecord {
+    const existing = this.importedRecordLinks.find(
+      (link) =>
+        matchesScope(link, scope) &&
+        link.batchId === batch.id &&
+        link.rowId === row.id &&
+        link.targetRecordType === "patient" &&
+        link.targetRecordId === targetRecordId
+    );
+    if (existing) return existing;
+
+    const now = new Date().toISOString();
+    const link: ImportedRecordLinkRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      batchId: batch.id,
+      rowId: row.id,
+      importType: batch.importType,
+      sourceSystem: batch.sourceSystem,
+      externalRecordId: row.externalRecordId,
+      targetRecordType: "patient",
+      targetRecordId,
+      linkType,
+      verificationStatus: "imported_unverified",
+      verifiedByUserId: null,
+      verifiedAt: null,
+      metadata: {
+        rowNumber: row.rowNumber,
+        resolutionAction: row.resolutionAction ?? "create_new"
+      },
+      createdByUserId: scope.actorUserId,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.importedRecordLinks.push(link);
+    return link;
+  }
+
+  #importedLinksForBatch(scope: RepositoryScope, batchId: UUID): ImportedRecordLinkRecord[] {
+    return this.importedRecordLinks
+      .filter((link) => matchesScope(link, scope) && link.batchId === batchId)
+      .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+  }
+
+  #patientHasRollbackBlockingDependencies(scope: RepositoryScope, patientId: UUID): boolean {
+    return (
+      this.appointments.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.encounters.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.intakeFormSubmissions.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.consents.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.dentalFindings.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.mediaAssets.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.treatmentPlans.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.proceduresPerformed.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.invoices.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.labCases.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.incidents.some((record) => matchesScope(record, scope) && record.patientId === patientId)
+    );
+  }
 }
 
 export function createLocalFixtureClaims(input: {
@@ -4675,6 +5294,12 @@ function uuidOrNull(value: string | null | undefined): UUID | null {
 
 function matchesScope(record: { tenantId: UUID; clinicId: UUID }, scope: RepositoryScope): boolean {
   return record.tenantId === scope.tenantId && record.clinicId === scope.clinicId;
+}
+
+function removeWhere<T>(items: T[], predicate: (item: T) => boolean): void {
+  for (let index = items.length - 1; index >= 0; index -= 1) {
+    if (predicate(items[index])) items.splice(index, 1);
+  }
 }
 
 function taskSortKey(task: TaskRecord): string {

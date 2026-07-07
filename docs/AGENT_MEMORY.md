@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after Checkpoint 6 final verification docs; Checkpoint 7 launch packet is being prepared from base `e7139c4`.
+- Branch: `codex/integration/checkpoint-7` with Checkpoint 7 worker merges and master integration verification in progress before promotion to `main`.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -41,6 +41,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Telephony/Source: `019f3c6a-2d9c-7c01-bbad-d95e05fdcf9c`, `/Users/abhinavgupta/.codex/worktrees/046c/ClinicOS`.
   - Migration/Data: `019f3c6a-655d-7223-8cf2-8cde3cf10b80`, `/Users/abhinavgupta/.codex/worktrees/9644/ClinicOS`.
   - Integration Ops/QA: `019f3c6a-9b72-7642-ab14-ce002f1d9511`, `/Users/abhinavgupta/.codex/worktrees/386a/ClinicOS`.
+- Checkpoint 7 integration verification reconciled live provider-health, integration-dead-letter replay, migration-batch collection, and row-based migration resolution contracts on `codex/integration/checkpoint-7`. Promote to `main` only after the logged gates remain green.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture
@@ -138,6 +139,14 @@ Follow `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
 - Browser CP fixture smoke must start with every required fixture flag. CP6 needs both `NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true` and `NEXT_PUBLIC_CLINIC_OS_USE_CP6_OPERATIONS_FIXTURE=true`; missing fixture setup means no valid user-smoke evidence.
 - Keep local contract dry-runs and live-base smokes distinct. CP6 `node scripts/cp6-contract-smoke.mjs --dry-run` validates the route contract without a running API; full live smoke requires `--base-url` or `CLINICOS_CP6_API_BASE_URL`.
 - Temporary operations UI still deserves mobile/browser smoke for route registration, role safety, reachable controls, honest unavailable states, and no horizontal overflow. Do not spend time on final visual polish before the design pass unless those safety/usability invariants fail.
+
+## CP7 Integration Lessons
+
+- Fixture browser smoke can pass while live helper contracts are stale. CP7 Ops/QA originally used `conflicts/{conflictId}/resolve`, while the backend canonical contract is row-centered: `rows/{rowId}/resolve`. Master integration must scan fixture docs, web helpers, navigation metadata, and API routes together before closeout.
+- Keep deterministic fixture IDs out of live-smoke assumptions unless they are actually seeded into the API runtime. CP7 keeps fixture dry-run route plans separate from API operations tests for provider health, dead-letter replay requests, and migration collection reads.
+- Provider health dashboards must not treat local simulators as provider readiness. Surface simulator/dev state as local-only, unavailable, or not configured for CP7 ops while still allowing simulator-backed contract tests elsewhere.
+- Dead-letter replay is a request/evidence workflow until a handler confirms processing. Do not mark WhatsApp delivery/read, missed-call capture, payment, or patient state as completed from the replay button alone.
+- For migration imports, resolve rows, not abstract conflicts. The row is the durable commit/skip/link unit and carries the conflict evidence needed to preserve no-overwrite behavior.
 
 ## Shared-File Mistakes To Avoid
 

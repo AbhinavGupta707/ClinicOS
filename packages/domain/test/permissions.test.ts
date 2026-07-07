@@ -16,6 +16,7 @@ test("accountant role cannot read clinical PHI by default", () => {
   assert.equal(roleGrantsPermission("accountant", "task.manage"), false);
   assert.equal(roleGrantsPermission("accountant", "recall.manage"), false);
   assert.equal(roleGrantsPermission("accountant", "sop.manage"), false);
+  assert.equal(roleGrantsPermission("accountant", "migration.manage"), false);
 });
 
 test("doctor can sign clinical records and assistant cannot", () => {
@@ -57,6 +58,7 @@ test("clinical permission classifier covers PHI-sensitive permissions", () => {
   assert.equal(isClinicalPermission("task.manage"), true);
   assert.equal(isClinicalPermission("recall.manage"), true);
   assert.equal(isClinicalPermission("lab.manage"), true);
+  assert.equal(isClinicalPermission("migration.manage"), true);
   assert.equal(isClinicalPermission("billing.export"), false);
   assert.ok(DEFAULT_ROLE_PERMISSION_GRANTS.owner_admin.length > DEFAULT_ROLE_PERMISSION_GRANTS.assistant.length);
 });
@@ -72,7 +74,10 @@ test("CP6 operations keep accountant analytics separate from operational mutatio
   }
 
   assert.equal(roleGrantsPermission("assistant", "lab.manage"), true);
+  assert.equal(roleGrantsPermission("assistant", "migration.manage"), true);
+  assert.equal(roleGrantsPermission("doctor", "migration.manage"), true);
   assert.equal(roleGrantsPermission("receptionist", "inventory.manage"), true);
+  assert.equal(roleGrantsPermission("receptionist", "migration.manage"), true);
   assert.equal(roleGrantsPermission("receptionist", "incident.manage"), true);
   assert.equal(roleGrantsPermission("receptionist", "corrective_action.manage"), true);
 });
