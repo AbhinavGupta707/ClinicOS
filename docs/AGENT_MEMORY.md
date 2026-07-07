@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after Checkpoint 6 worker launch commit `7fefa31`; Checkpoint 6 lanes are active in visible project-scoped worktree threads.
+- Branch: `codex/integration/checkpoint-6` at verified integration merge head `c1485b5`; Checkpoint 6 is ready for main promotion after evidence docs are committed.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -30,7 +30,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Payment Provider: `019f3bcc-213b-7191-8424-2856a60a85a0`, `/Users/abhinavgupta/.codex/worktrees/fae5/ClinicOS`.
   - Checkout UX: `019f3bcc-213b-7191-8424-284dd78c7323`, `/Users/abhinavgupta/.codex/worktrees/82db/ClinicOS`.
   - Clinical Output QA: `019f3bcc-216e-79b3-bd9d-db6d77e928a5`, `/Users/abhinavgupta/.codex/worktrees/1f2d/ClinicOS`.
-- Checkpoint 6 active visible project-scoped lanes:
+- Checkpoint 6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`:
   - Workflow/Task Backend: `019f3c1d-1708-7893-bfd7-1329dff99220`, `/Users/abhinavgupta/.codex/worktrees/dbc7/ClinicOS`.
   - Lab/Inventory/Event: `019f3c1d-6d96-7310-ba40-bed750544a62`, `/Users/abhinavgupta/.codex/worktrees/0166/ClinicOS`.
   - Operations UX: `019f3c1d-b7c5-7a32-8ee4-a1669e58aa73`, `/Users/abhinavgupta/.codex/worktrees/9f26/ClinicOS`.
@@ -123,6 +123,15 @@ Follow `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`.
 - Prefer narrow workflow permissions over broad PHI permissions when a role needs a specific clinical-output action. CP5 receptionists can create instruction request evidence through `patient_instruction.write` without gaining general `patient.phi.read`.
 - Browser negative assertions should avoid accidental word matches. The CP5 "no delivered/read" smoke must match whole words so it does not fail on legitimate states like "print ready."
 - `npm run security:audit` may be blocked by policy because npm audit discloses dependency inventory to the external registry audit service. Record the rejection exactly and keep `npm run security:secrets` plus code/test/build/browser evidence; do not try to bypass the policy.
+
+## CP6 Integration Lessons
+
+- CP6 lane boundaries were directionally right, but shared contracts still converged in the master pass. For future checkpoints, explicitly name one owner for migrations, route registration, permissions, audit classes, fixture IDs, and dashboard read-model shapes before launch.
+- Keep migrations split by true workflow ownership when parallel lanes produce separate durable areas. CP6 preserves `0006_continuity_tasks_recalls_sops.sql` and `0007_lab_inventory_events.sql` instead of folding unrelated operations workflows into one migration.
+- Do not let analytics lanes create parallel domain model shapes for records already owned elsewhere. CP6 owner-dashboard task projections import canonical continuity task types from `packages/domain/src/continuity.ts`.
+- Browser CP fixture smoke must start with every required fixture flag. CP6 needs both `NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true` and `NEXT_PUBLIC_CLINIC_OS_USE_CP6_OPERATIONS_FIXTURE=true`; missing fixture setup means no valid user-smoke evidence.
+- Keep local contract dry-runs and live-base smokes distinct. CP6 `node scripts/cp6-contract-smoke.mjs --dry-run` validates the route contract without a running API; full live smoke requires `--base-url` or `CLINICOS_CP6_API_BASE_URL`.
+- Temporary operations UI still deserves mobile/browser smoke for route registration, role safety, reachable controls, honest unavailable states, and no horizontal overflow. Do not spend time on final visual polish before the design pass unless those safety/usability invariants fail.
 
 ## Shared-File Mistakes To Avoid
 

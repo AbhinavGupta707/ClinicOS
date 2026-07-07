@@ -31,7 +31,8 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 2 - Lead/patient/appointment/day-start | Complete  |       `5fe65da` |     `58bf864` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-2`. Master integration fixed lead-created patient matching, timeline projection evidence, live smoke actor headers, route aliasing, web selectors, and CP2 browser fixture alignment.            |
 | 3 - Intake/consent/encounter/notes     | Complete  |       `6fe2cbc` |     `eb68abd` | Visible project-scoped worker lanes merged into `codex/integration/checkpoint-3`. Master integration aligned live CP3 routes, consent enforcement, prep summary, QA fixtures, web selectors, browser smoke, and security/audit coverage.                                         |
 | 4 - Dental charting/media/imaging      | Complete  |       `c7b222c` |     `248496a` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4` and promoted to `main`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                     |
-| 5 - Treatment/checkout/payments         | In Progress |       `d3d341f` |       pending | CP5 initial launch at `f495c02` failed due Codex usage-limit errors. After CP4 re-verification and commit `d3d341f`, fresh visible project-scoped worker lanes were relaunched and are active.                                                                                   |
+| 5 - Treatment/checkout/payments         | Complete  |       `d3d341f` |     `d679a78` | CP5 visible project-scoped lanes merged into `codex/integration/checkpoint-5`, promoted to `main`, and followed by closeout docs commit `6f9fe1c`.                                                                                                           |
+| 6 - Continuity/operations/owner dashboard | Verified pending promotion |       `6f9fe1c` |     `c1485b5` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`. Code, fixture, browser, build, and local security gates passed; main promotion is the next master-owned step.                                                                 |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -260,3 +261,30 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Lab/Inventory/Event: pending `local:cc373996-d87c-472b-9ca1-8fb8846722aa`, thread `019f3c1d-6d96-7310-ba40-bed750544a62`, worktree `/Users/abhinavgupta/.codex/worktrees/0166/ClinicOS`.
   - Operations UX: pending `local:e2d1fbe3-7bbc-4af4-b3fa-a0e27c1b9d52`, thread `019f3c1d-b7c5-7a32-8ee4-a1669e58aa73`, worktree `/Users/abhinavgupta/.codex/worktrees/9f26/ClinicOS`.
   - Analytics/QA: pending `local:a6a0b27a-81a2-4527-9041-9a1e721cc2aa`, thread `019f3c1e-1658-7aa2-ab3a-ca5135838beb`, worktree `/Users/abhinavgupta/.codex/worktrees/4ff2/ClinicOS`.
+
+## Checkpoint 6 Integration Verification - 2026-07-07
+
+- Integration branch: `codex/integration/checkpoint-6`.
+- Verified integration merge head before promotion: `c1485b5`.
+- Merge order:
+  - Workflow/Task Backend commit `bdfb4d8` merged first.
+  - Lab/Inventory/Event commit `eea10e4` merged second with master conflict resolution across permissions, events, audit classes, API routes, repositories, and fixture data.
+  - Analytics/QA commit `db2d33f` merged third with owner-dashboard task projections reconciled to the canonical continuity task model.
+  - Operations UX commit `beeeea0` merged fourth after backend and dashboard contracts were stable.
+- Master conflict decisions:
+  - Preserved two separate CP6 migrations: `0006_continuity_tasks_recalls_sops.sql` for continuity/tasks/SOPs and `0007_lab_inventory_events.sql` for lab, inventory, and quality-event workflows.
+  - Kept domain task types canonical in `packages/domain/src/continuity.ts`; owner-dashboard analytics imports those types instead of carrying a parallel task shape.
+  - Unioned CP6 route, permission, audit, outbox, and local fixture contracts rather than choosing one lane's partial view.
+  - Browser fixture smoke requires both the dev identity fixture and CP6 operations fixture flags; missing flags are treated as a setup error, not product evidence.
+- Targeted checks passed during integration: `npm --workspace @clinic-os/domain test`, `npm --workspace @clinic-os/security test`, `npm --workspace @clinic-os/db run typecheck`, `npm --workspace @clinic-os/api run typecheck`, `npm --workspace @clinic-os/db test`, `npm --workspace @clinic-os/api test`, `npm --workspace @clinic-os/web test`, `npm --workspace @clinic-os/web run typecheck`, `npm --workspace @clinic-os/web run lint`, and `npm --workspace @clinic-os/web run build`.
+- Contract and fixture checks passed: `node scripts/validate-cp6-fixtures.mjs`, `node --test tests/acceptance/cp6-fixture-contract.test.mjs`, and `node scripts/cp6-contract-smoke.mjs --dry-run`.
+- Full repository gates passed before promotion: `npm run typecheck`, `npm run lint`, `npm run test`, `npm run build`, `npm run security:secrets`, and `git diff --check`.
+- Browser/user smoke passed against the CP6 fixture using `CLINICOS_CP6_E2E_ENABLED=true`, `CLINICOS_CP6_OWNER_SMOKE_ENABLED=true`, `NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE=true`, `NEXT_PUBLIC_CLINIC_OS_USE_CP6_OPERATIONS_FIXTURE=true`, and `CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000`: `npx playwright test tests/e2e/checkpoint-6-operations-flow.spec.ts`.
+- Browser evidence screenshots:
+  - `/private/tmp/clinicos-cp6-operations-desktop.png`.
+  - `/private/tmp/clinicos-cp6-operations-mobile-390.png`.
+  - `/private/tmp/clinicos-cp6-owner-control.png`.
+- Accepted gaps:
+  - Full live CP6 contract smoke without `--dry-run` requires a running API base URL supplied by `--base-url` or `CLINICOS_CP6_API_BASE_URL`; the dry-run contract passed and the live-base smoke is deferred until a local/live API target is explicitly running for that check.
+  - `npm run security:audit` was not rerun because prior escalation for npm audit was policy-rejected; npm audit sends dependency inventory to the external registry audit service. Local tracked-file secret scan passed.
+  - The current operations UI remains temporary. Browser/mobile testing is still mandatory for route registration, role gates, reachable controls, honest unavailable states, and no 390px overflow, but final visual polish is deferred to the later design pass.
