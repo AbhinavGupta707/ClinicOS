@@ -2,6 +2,15 @@
   "name": "@clinic-os/fhir",
   "version": "0.0.0",
   "private": true,
-  "description": "FHIR R4 projection and validation helpers."
+  "description": "FHIR R4 projection and validation helpers.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "find src -name '*.ts' -exec node --check {} \\;",
+    "lint": "find src test -name '*.ts' -exec node --check {} \\;",
+    "test": "node --test test/*.test.ts",
+    "build": "find src -name '*.ts' -exec node --check {} \\;"
+  }
 }
-
