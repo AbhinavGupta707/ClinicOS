@@ -1,4 +1,5 @@
 export * from "./appointments.ts";
+export * from "./clinical.ts";
 export * from "./dashboard.ts";
 export * from "./events.ts";
 export * from "./leads.ts";

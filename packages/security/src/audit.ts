@@ -146,7 +146,7 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
-  "clinical.note.signed": {
+  "clinical_note.signed": {
     category: "clinical",
     riskLevel: "critical",
     phiInvolved: true,
@@ -193,6 +193,54 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     riskLevel: "low",
     phiInvolved: true,
     requiresPatientId: false
+  },
+  "form_response.submitted": {
+    category: "phi_access",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "consent.created": {
+    category: "privacy",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "consent.revoked": {
+    category: "privacy",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "encounter.created": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "encounter.started": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "clinical_note.draft_created": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "clinical_note.amended": {
+    category: "clinical",
+    riskLevel: "critical",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "prescription.draft_created": {
+    category: "clinical",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
   }
 } as const;
 

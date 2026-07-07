@@ -1,30 +1,55 @@
 import { randomUUID } from "node:crypto";
-import { assertAuthorized, type AccessContext, type AuthorizationRequest } from "@clinic-os/auth";
+import {
+  assertAuthorized,
+  roleSlugsForScope,
+  type AccessContext,
+  type AuthorizationRequest
+} from "@clinic-os/auth";
 import type {
   ClinicOperationsRepository,
   CreateAppointmentInput,
+  CreateConsentInput,
+  CreateEncounterInput,
+  CreateIntakeFormSubmissionInput,
+  CreateIntakeFormTemplateInput,
   CreateLeadInput,
   CreatePatientInput,
+  CreatePrescriptionInput,
   RepositoryScope
 } from "@clinic-os/db";
 import {
   assertAppointmentTransition,
+  assertEncounterTransition,
+  assertPrescriptionMedicationList,
   assertLeadTransition,
   assertPatientCreateMinimum,
   buildMorningDashboard,
   buildPatientDuplicateSuggestions,
   calculateEndAt,
+  hasClinicalNoteContent,
   isAppointmentStatus,
+  isConsentCaptureMethod,
+  isConsentPurpose,
+  isEncounterStatus,
+  isIntakeFormType,
+  isIntakeSubmissionSource,
   isValidLeadStatus,
   isUuid,
   type AppointmentRecord,
   type AppointmentStatus,
+  type ClinicalNoteContent,
+  type ConsentCaptureMethod,
+  type ConsentPurpose,
   type DomainEventType,
+  type EncounterStatus,
+  type IntakeFormType,
+  type IntakeSubmissionSource,
   type LeadIntent,
   type LeadSource,
   type LeadStatus,
   type PatientTimelineItem as DomainPatientTimelineItem,
   type PatientSource,
+  type PrescriptionMedication,
   type QueueStatus,
   type UUID
 } from "@clinic-os/domain";
@@ -85,6 +110,11 @@ const QUEUE_STATUSES = new Set<QueueStatus>([
   "completed",
   "cancelled"
 ]);
+
+const DOCTOR_ONLY_SIGNATURE_PERMISSIONS = new Set([
+  "clinical.note.sign",
+  "prescription.sign"
+] as const);
 
 export async function listPatients(
   context: OperationsRequestContext,
@@ -627,6 +657,509 @@ export async function getMorningDashboard(
   return ok({ dashboard: buildMorningDashboard({ date, ...data }) });
 }
 
+export async function listIntakeFormTemplates(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "patient.read" });
+  const templates = await dependencies.repository.listIntakeFormTemplates(scopeFrom(context));
+  return ok({ templates });
+}
+
+export async function createIntakeFormTemplate(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "clinic.manage" });
+  const template = await dependencies.repository.createIntakeFormTemplate(
+    scopeFrom(context),
+    parseCreateIntakeFormTemplate(body)
+  );
+  return created({ template });
+}
+
+export async function submitPatientIntakeForm(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "intake.write" });
+  const scope = scopeFrom(context);
+  const patient = await dependencies.repository.findPatientById(scope, patientId);
+  if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
+
+  const input = parseCreateIntakeFormSubmission(body, patientId);
+  const template = await dependencies.repository.findIntakeFormTemplateById(scope, input.templateId);
+  if (!template || !template.active) {
+    throw notFound("Intake form template not found.", { template_id: input.templateId });
+  }
+
+  const formResponse = await dependencies.repository.createIntakeFormSubmission(scope, input);
+
+  await audit(context, dependencies, "form_response.submitted", {
+    patientId,
+    resourceType: "form_response",
+    resourceId: formResponse.id,
+    metadata: { templateId: input.templateId, source: input.source }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "form_response.submitted",
+    aggregateType: "form_response",
+    aggregateId: formResponse.id,
+    patientId,
+    payload: {
+      formResponseId: formResponse.id,
+      patientId,
+      templateId: input.templateId,
+      source: input.source
+    }
+  });
+
+  return created({ formResponse, submission: formResponse });
+}
+
+export async function listPatientConsents(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID
+) {
+  authorize(context, { permission: "patient.read" });
+  authorize(context, { permission: "patient.phi.read" });
+  const scope = scopeFrom(context);
+  const patient = await dependencies.repository.findPatientById(scope, patientId);
+  if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
+
+  const consents = await dependencies.repository.listPatientConsents(scope, patientId);
+  const enforcementState = await dependencies.repository.getConsentEnforcementState(scope, patientId);
+
+  return ok({ consents, enforcementState });
+}
+
+export async function createPatientConsent(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "intake.write" });
+  const scope = scopeFrom(context);
+  const patient = await dependencies.repository.findPatientById(scope, patientId);
+  if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
+
+  const input = parseCreateConsent(body, patientId);
+  const existing = await dependencies.repository.listPatientConsents(scope, patientId);
+  const duplicateActiveConsent = existing.find(
+    (consent) => consent.purpose === input.purpose && consent.status === "active"
+  );
+  if (duplicateActiveConsent) {
+    throw conflict("An active consent already exists for this purpose.", {
+      consent_id: duplicateActiveConsent.id,
+      purpose: input.purpose
+    });
+  }
+
+  const consent = await dependencies.repository.createConsent(scope, input);
+  const enforcementState = await dependencies.repository.getConsentEnforcementState(scope, patientId);
+
+  await audit(context, dependencies, "consent.created", {
+    patientId,
+    resourceType: "consent",
+    resourceId: consent.id,
+    metadata: { purpose: consent.purpose, captureMethod: consent.captureMethod }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "consent.created",
+    aggregateType: "consent",
+    aggregateId: consent.id,
+    patientId,
+    payload: {
+      consentId: consent.id,
+      patientId,
+      purpose: consent.purpose,
+      enforcementState
+    }
+  });
+
+  return created({ consent, enforcementState });
+}
+
+export async function revokePatientConsent(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  patientId: UUID,
+  consentId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "intake.write" });
+  const scope = scopeFrom(context);
+  const patient = await dependencies.repository.findPatientById(scope, patientId);
+  if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
+
+  const existing = (await dependencies.repository.listPatientConsents(scope, patientId)).find(
+    (consent) => consent.id === consentId
+  );
+  if (!existing) throw notFound("Consent not found.", { consent_id: consentId });
+  if (existing.status !== "active") {
+    throw conflict("Consent is already revoked.", { consent_id: consentId });
+  }
+
+  const consent = await dependencies.repository.revokeConsent(scope, consentId, {
+    revocationReason: requiredString(objectBody(body).reason, "reason")
+  });
+  if (!consent) throw notFound("Consent not found.", { consent_id: consentId });
+
+  const enforcementState = await dependencies.repository.getConsentEnforcementState(scope, patientId);
+
+  await audit(context, dependencies, "consent.revoked", {
+    patientId,
+    resourceType: "consent",
+    resourceId: consent.id,
+    metadata: { purpose: consent.purpose, enforcementState }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "consent.revoked",
+    aggregateType: "consent",
+    aggregateId: consent.id,
+    patientId,
+    payload: {
+      consentId: consent.id,
+      patientId,
+      purpose: consent.purpose,
+      enforcementState
+    }
+  });
+
+  return ok({ consent, enforcementState });
+}
+
+export async function createEncounter(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "clinical.note.write" });
+  const scope = scopeFrom(context);
+  const input = parseCreateEncounter(body);
+  const patient = await dependencies.repository.findPatientById(scope, input.patientId);
+  if (!patient) throw notFound("Patient not found.", { patient_id: input.patientId });
+
+  if (input.appointmentId) {
+    const appointment = await dependencies.repository.findAppointmentById(scope, input.appointmentId);
+    if (!appointment) throw notFound("Appointment not found.", { appointment_id: input.appointmentId });
+    if (appointment.patientId !== input.patientId) {
+      throw validation("Appointment does not belong to the encounter patient.", {
+        appointment_id: appointment.id,
+        patient_id: input.patientId
+      });
+    }
+  }
+
+  const encounter = await dependencies.repository.createEncounter(scope, input);
+
+  await audit(context, dependencies, "encounter.created", {
+    patientId: encounter.patientId,
+    resourceType: "encounter",
+    resourceId: encounter.id,
+    metadata: { appointmentId: encounter.appointmentId, providerUserId: encounter.providerUserId }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "encounter.created",
+    aggregateType: "encounter",
+    aggregateId: encounter.id,
+    patientId: encounter.patientId,
+    payload: { encounterId: encounter.id, patientId: encounter.patientId, status: encounter.status }
+  });
+
+  return created({ encounter });
+}
+
+export async function getEncounter(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  encounterId: UUID
+) {
+  authorize(context, { permission: "clinical.note.read" });
+  const scope = scopeFrom(context);
+  const encounter = await dependencies.repository.findEncounterById(scope, encounterId);
+  if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+
+  const noteVersions = await dependencies.repository.listClinicalNoteVersions(scope, encounterId);
+  return ok({ encounter, noteVersions });
+}
+
+export async function startEncounter(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  encounterId: UUID
+) {
+  authorize(context, { permission: "clinical.note.write" });
+  const scope = scopeFrom(context);
+  const existing = await dependencies.repository.findEncounterById(scope, encounterId);
+  if (!existing) throw notFound("Encounter not found.", { encounter_id: encounterId });
+
+  try {
+    assertEncounterTransition(existing.status, "drafting");
+  } catch (error) {
+    throw conflict(error instanceof Error ? error.message : "Invalid encounter transition.", {
+      encounter_id: encounterId,
+      from_status: existing.status,
+      to_status: "drafting"
+    });
+  }
+  const encounter = await dependencies.repository.transitionEncounter(
+    scope,
+    encounterId,
+    "drafting",
+    "encounter_started"
+  );
+  if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+
+  await audit(context, dependencies, "encounter.started", {
+    patientId: encounter.patientId,
+    resourceType: "encounter",
+    resourceId: encounter.id,
+    metadata: { appointmentId: encounter.appointmentId }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "encounter.started",
+    aggregateType: "encounter",
+    aggregateId: encounter.id,
+    patientId: encounter.patientId,
+    payload: { encounterId: encounter.id, patientId: encounter.patientId, status: encounter.status }
+  });
+
+  return ok({ encounter });
+}
+
+export async function saveEncounterClinicalNoteDraft(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  encounterId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "clinical.note.write" });
+  const scope = scopeFrom(context);
+  const encounter = await dependencies.repository.findEncounterById(scope, encounterId);
+  if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+  if (["signed", "amended", "closed", "cancelled"].includes(encounter.status)) {
+    throw conflict("Signed or closed encounters cannot be edited through the draft endpoint.", {
+      encounter_id: encounterId,
+      status: encounter.status
+    });
+  }
+
+  const input = parseSaveClinicalNoteDraft(body);
+  if (!hasClinicalNoteContent(input.content)) {
+    throw validation("Clinical note draft requires at least one note section.", {
+      field: "content"
+    });
+  }
+
+  const note = await dependencies.repository.saveClinicalNoteDraft(scope, encounterId, input);
+  if (!note) {
+    throw conflict("Clinical note draft could not be saved for this encounter state.", {
+      encounter_id: encounterId,
+      status: encounter.status
+    });
+  }
+  const updatedEncounter = await dependencies.repository.findEncounterById(scope, encounterId);
+
+  await audit(context, dependencies, "clinical_note.draft_created", {
+    patientId: encounter.patientId,
+    resourceType: "clinical_note",
+    resourceId: note.id,
+    metadata: { encounterId, readyForSign: input.readyForSign === true }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "clinical_note.draft_created",
+    aggregateType: "clinical_note",
+    aggregateId: note.id,
+    patientId: encounter.patientId,
+    payload: { encounterId, noteVersionId: note.id, versionNumber: note.versionNumber }
+  });
+
+  return ok({ encounter: updatedEncounter, note });
+}
+
+export async function signEncounterClinicalNote(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  encounterId: UUID
+) {
+  authorizeDoctorSignature(context, "clinical.note.sign");
+  const scope = scopeFrom(context);
+  const encounter = await dependencies.repository.findEncounterById(scope, encounterId);
+  if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+
+  const draft = (await dependencies.repository.listClinicalNoteVersions(scope, encounterId)).find(
+    (note) => note.status === "draft"
+  );
+  if (!draft) {
+    throw validation("Encounter does not have a draft clinical note to sign.", {
+      encounter_id: encounterId
+    });
+  }
+  if (!hasClinicalNoteContent(draft.content)) {
+    throw validation("Clinical note content is required before signing.", {
+      clinical_note_version_id: draft.id
+    });
+  }
+
+  const result = await dependencies.repository.signClinicalNote(scope, encounterId);
+  if (!result) throw notFound("Encounter not found.", { encounter_id: encounterId });
+
+  await audit(context, dependencies, "clinical_note.signed", {
+    patientId: result.note.patientId,
+    resourceType: "clinical_note",
+    resourceId: result.note.id,
+    metadata: { encounterId, versionNumber: result.note.versionNumber }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "clinical_note.signed",
+    aggregateType: "clinical_note",
+    aggregateId: result.note.id,
+    patientId: result.note.patientId,
+    payload: { encounterId, noteVersionId: result.note.id, versionNumber: result.note.versionNumber }
+  });
+
+  return ok(result);
+}
+
+export async function amendEncounterClinicalNote(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  encounterId: UUID,
+  body: unknown
+) {
+  authorizeDoctorSignature(context, "clinical.note.sign");
+  const scope = scopeFrom(context);
+  const encounter = await dependencies.repository.findEncounterById(scope, encounterId);
+  if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+
+  const input = parseAmendClinicalNote(body);
+  if (!hasClinicalNoteContent(input.content)) {
+    throw validation("Clinical note amendment requires at least one note section.", {
+      field: "content"
+    });
+  }
+
+  const result = await dependencies.repository.amendClinicalNote(scope, encounterId, input);
+  if (!result) {
+    throw conflict("Encounter does not have a signed note to amend.", {
+      encounter_id: encounterId
+    });
+  }
+
+  await audit(context, dependencies, "clinical_note.amended", {
+    patientId: result.note.patientId,
+    resourceType: "clinical_note",
+    resourceId: result.note.id,
+    metadata: {
+      encounterId,
+      versionNumber: result.note.versionNumber,
+      amendedFromVersionId: result.amendedFrom.id
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "clinical_note.amended",
+    aggregateType: "clinical_note",
+    aggregateId: result.note.id,
+    patientId: result.note.patientId,
+    payload: {
+      encounterId,
+      noteVersionId: result.note.id,
+      amendedFromVersionId: result.amendedFrom.id,
+      versionNumber: result.note.versionNumber
+    }
+  });
+
+  return ok(result);
+}
+
+export async function createEncounterPrescription(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  encounterId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "clinical.note.write" });
+  const input = parseCreatePrescription(body);
+  try {
+    assertPrescriptionMedicationList(input.medications);
+  } catch (error) {
+    throw validation(error instanceof Error ? error.message : "Invalid prescription medications.", {
+      field: "medications"
+    });
+  }
+  const scope = scopeFrom(context);
+  const encounter = await dependencies.repository.findEncounterById(scope, encounterId);
+  if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+
+  const prescription = await dependencies.repository.createPrescription(scope, encounterId, input);
+  if (!prescription) throw notFound("Encounter not found.", { encounter_id: encounterId });
+
+  await audit(context, dependencies, "prescription.draft_created", {
+    patientId: prescription.patientId,
+    resourceType: "prescription",
+    resourceId: prescription.id,
+    metadata: { encounterId, medicationCount: prescription.medications.length }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "prescription.draft_created",
+    aggregateType: "prescription",
+    aggregateId: prescription.id,
+    patientId: prescription.patientId,
+    payload: {
+      prescriptionId: prescription.id,
+      encounterId,
+      patientId: prescription.patientId,
+      medicationCount: prescription.medications.length
+    }
+  });
+
+  return created({ prescription });
+}
+
+export async function signPrescription(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  prescriptionId: UUID
+) {
+  authorizeDoctorSignature(context, "prescription.sign");
+  const scope = scopeFrom(context);
+  const existing = await dependencies.repository.findPrescriptionById(scope, prescriptionId);
+  if (!existing) throw notFound("Prescription not found.", { prescription_id: prescriptionId });
+  if (existing.status !== "draft") {
+    throw conflict("Prescription is already signed.", { prescription_id: prescriptionId });
+  }
+
+  const prescription = await dependencies.repository.signPrescription(scope, prescriptionId);
+  if (!prescription) throw notFound("Prescription not found.", { prescription_id: prescriptionId });
+
+  await audit(context, dependencies, "prescription.signed", {
+    patientId: prescription.patientId,
+    resourceType: "prescription",
+    resourceId: prescription.id,
+    metadata: { encounterId: prescription.encounterId, medicationCount: prescription.medications.length }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "prescription.signed",
+    aggregateType: "prescription",
+    aggregateId: prescription.id,
+    patientId: prescription.patientId,
+    payload: {
+      prescriptionId: prescription.id,
+      encounterId: prescription.encounterId,
+      patientId: prescription.patientId,
+      medicationCount: prescription.medications.length
+    }
+  });
+
+  return ok({ prescription });
+}
+
 async function bookAppointment(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
@@ -756,6 +1289,29 @@ function authorize(
   });
 }
 
+function authorizeDoctorSignature(
+  context: OperationsRequestContext,
+  permission: "clinical.note.sign" | "prescription.sign"
+): void {
+  if (!DOCTOR_ONLY_SIGNATURE_PERMISSIONS.has(permission)) {
+    throw new ApiError(500, "CONFIGURATION_ERROR", "Invalid doctor-only permission.");
+  }
+
+  authorize(context, { permission });
+  const roles = roleSlugsForScope(
+    context.accessContext,
+    context.accessContext.tenant.id,
+    context.clinicId
+  );
+
+  if (!roles.includes("doctor")) {
+    throw new ApiError(403, "PERMISSION_DENIED", "Only doctors can sign clinical records.", {
+      required_permission: permission,
+      required_role: "doctor"
+    });
+  }
+}
+
 type PublicTimelineItemType =
   | "patient"
   | "attribution"
@@ -808,6 +1364,19 @@ function publicTimelineItemType(
       return "queue";
     case "task_created":
       return "task";
+    case "form_response_submitted":
+      return "clinical_note";
+    case "consent_created":
+    case "consent_revoked":
+      return "consent";
+    case "encounter_created":
+    case "encounter_started":
+    case "clinical_note_signed":
+    case "clinical_note_amended":
+      return "clinical_note";
+    case "prescription_created":
+    case "prescription_signed":
+      return "prescription";
   }
 }
 
@@ -833,6 +1402,24 @@ function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): Dom
       return "appointment.no_show";
     case "task_created":
       return "task.created";
+    case "form_response_submitted":
+      return "form_response.submitted";
+    case "consent_created":
+      return "consent.created";
+    case "consent_revoked":
+      return "consent.revoked";
+    case "encounter_created":
+      return "encounter.created";
+    case "encounter_started":
+      return "encounter.started";
+    case "clinical_note_signed":
+      return "clinical_note.signed";
+    case "clinical_note_amended":
+      return "clinical_note.amended";
+    case "prescription_created":
+      return "prescription.draft_created";
+    case "prescription_signed":
+      return "prescription.signed";
   }
 }
 
@@ -938,6 +1525,128 @@ function parseCreateAppointment(
   };
 }
 
+function parseCreateIntakeFormTemplate(body: unknown): CreateIntakeFormTemplateInput {
+  const input = objectBody(body);
+  return {
+    code: requiredString(input.code, "code"),
+    displayName: requiredString(input.displayName, "displayName"),
+    formType: parseIntakeFormType(requiredString(input.formType, "formType")),
+    version: integerField(input.version ?? 1, "version", { min: 1 }),
+    schema: recordField(input.schema, "schema"),
+    active: input.active === undefined ? true : booleanField(input.active, "active")
+  };
+}
+
+function parseCreateIntakeFormSubmission(
+  body: unknown,
+  patientId: UUID
+): CreateIntakeFormSubmissionInput {
+  const input = objectBody(body);
+  return {
+    patientId,
+    templateId: uuidField(input.templateId, "templateId"),
+    source: parseIntakeSubmissionSource(requiredString(input.source ?? "digital", "source")),
+    responses: recordField(input.responses, "responses"),
+    medicalHistorySnapshot: recordField(input.medicalHistorySnapshot, "medicalHistorySnapshot"),
+    provenance: recordField(input.provenance, "provenance")
+  };
+}
+
+function parseCreateConsent(body: unknown, patientId: UUID): CreateConsentInput {
+  const input = objectBody(body);
+  return {
+    patientId,
+    purpose: parseConsentPurpose(requiredString(input.purpose, "purpose")),
+    templateCode: requiredString(input.templateCode, "templateCode"),
+    templateVersion: integerField(input.templateVersion, "templateVersion", { min: 1 }),
+    captureMethod: parseConsentCaptureMethod(
+      requiredString(input.captureMethod ?? "clinic_staff", "captureMethod")
+    ),
+    grantedByName: optionalNullableString(input.grantedByName, "grantedByName"),
+    relationshipToPatient: optionalNullableString(
+      input.relationshipToPatient,
+      "relationshipToPatient"
+    ),
+    evidence: recordField(input.evidence, "evidence"),
+    provenance: recordField(input.provenance, "provenance")
+  };
+}
+
+function parseCreateEncounter(body: unknown): CreateEncounterInput {
+  const input = objectBody(body);
+  return {
+    patientId: uuidField(input.patientId, "patientId"),
+    appointmentId: optionalUuid(input.appointmentId, "appointmentId"),
+    providerUserId: uuidField(input.providerUserId, "providerUserId"),
+    reason: optionalNullableString(input.reason, "reason"),
+    medicalHistorySnapshot: recordField(input.medicalHistorySnapshot, "medicalHistorySnapshot")
+  };
+}
+
+function parseSaveClinicalNoteDraft(body: unknown): {
+  content: ClinicalNoteContent;
+  readyForSign?: boolean;
+} {
+  const input = objectBody(body);
+  return {
+    content: parseClinicalNoteContent(input.content ?? input.sections),
+    readyForSign:
+      input.readyForSign === undefined ? undefined : booleanField(input.readyForSign, "readyForSign")
+  };
+}
+
+function parseAmendClinicalNote(body: unknown): {
+  content: ClinicalNoteContent;
+  amendmentReason: string;
+} {
+  const input = objectBody(body);
+  return {
+    content: parseClinicalNoteContent(input.content ?? input.sections),
+    amendmentReason: requiredString(input.amendmentReason ?? input.reason, "amendmentReason")
+  };
+}
+
+function parseCreatePrescription(body: unknown): CreatePrescriptionInput {
+  const input = objectBody(body);
+  return {
+    medications: parsePrescriptionMedications(input.medications),
+    notes: optionalNullableString(input.notes, "notes")
+  };
+}
+
+function parseClinicalNoteContent(value: unknown): ClinicalNoteContent {
+  const input = objectField(value, "content");
+  return {
+    chiefComplaint: optionalString(input.chiefComplaint, "chiefComplaint"),
+    history: optionalString(input.history, "history"),
+    examination: optionalString(input.examination, "examination"),
+    investigations: optionalString(input.investigations, "investigations"),
+    diagnosis: optionalString(input.diagnosis, "diagnosis"),
+    treatmentPlan: optionalString(input.treatmentPlan, "treatmentPlan"),
+    treatmentPerformed: optionalString(input.treatmentPerformed, "treatmentPerformed"),
+    followUpInstructions: optionalString(input.followUpInstructions, "followUpInstructions"),
+    additionalSections: recordField(input.additionalSections, "additionalSections")
+  };
+}
+
+function parsePrescriptionMedications(value: unknown): PrescriptionMedication[] {
+  if (!Array.isArray(value)) {
+    throw validation("medications must be an array.", { field: "medications" });
+  }
+
+  return value.map((item, index) => {
+    const input = objectField(item, `medications[${index}]`);
+    return {
+      name: requiredString(input.name, `medications[${index}].name`),
+      strength: optionalString(input.strength, `medications[${index}].strength`),
+      route: optionalString(input.route, `medications[${index}].route`),
+      frequency: requiredString(input.frequency, `medications[${index}].frequency`),
+      duration: requiredString(input.duration, `medications[${index}].duration`),
+      instructions: optionalString(input.instructions, `medications[${index}].instructions`)
+    };
+  });
+}
+
 function parseGender(value: unknown) {
   const gender = requiredString(value, "gender");
   if (!["female", "male", "other", "unknown"].includes(gender)) {
@@ -980,6 +1689,41 @@ function parseLeadStatus(value: string): LeadStatus {
 function parseAppointmentStatus(value: string): AppointmentStatus {
   if (!isAppointmentStatus(value)) {
     throw validation("Invalid appointment status.", { field: "status", value });
+  }
+  return value;
+}
+
+function parseIntakeFormType(value: string): IntakeFormType {
+  if (!isIntakeFormType(value)) {
+    throw validation("Invalid intake form type.", { field: "formType", value });
+  }
+  return value;
+}
+
+function parseIntakeSubmissionSource(value: string): IntakeSubmissionSource {
+  if (!isIntakeSubmissionSource(value)) {
+    throw validation("Invalid intake submission source.", { field: "source", value });
+  }
+  return value;
+}
+
+function parseConsentPurpose(value: string): ConsentPurpose {
+  if (!isConsentPurpose(value)) {
+    throw validation("Invalid consent purpose.", { field: "purpose", value });
+  }
+  return value;
+}
+
+function parseConsentCaptureMethod(value: string): ConsentCaptureMethod {
+  if (!isConsentCaptureMethod(value)) {
+    throw validation("Invalid consent capture method.", { field: "captureMethod", value });
+  }
+  return value;
+}
+
+function parseEncounterStatus(value: string): EncounterStatus {
+  if (!isEncounterStatus(value)) {
+    throw validation("Invalid encounter status.", { field: "status", value });
   }
   return value;
 }
@@ -1050,9 +1794,41 @@ function numberField(value: unknown, field: string): number {
   return value;
 }
 
+function integerField(
+  value: unknown,
+  field: string,
+  options: { min?: number; max?: number } = {}
+): number {
+  const number = numberField(value, field);
+  if (!Number.isInteger(number)) {
+    throw validation(`${field} must be an integer.`, { field });
+  }
+  if (options.min !== undefined && number < options.min) {
+    throw validation(`${field} must be at least ${options.min}.`, { field });
+  }
+  if (options.max !== undefined && number > options.max) {
+    throw validation(`${field} must be at most ${options.max}.`, { field });
+  }
+  return number;
+}
+
+function booleanField(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw validation(`${field} must be a boolean.`, { field });
+  }
+  return value;
+}
+
 function recordField(value: unknown, field: string): Record<string, unknown> {
   if (value === undefined || value === null) return {};
   if (typeof value !== "object" || Array.isArray(value)) {
+    throw validation(`${field} must be a JSON object.`, { field });
+  }
+  return value as Record<string, unknown>;
+}
+
+function objectField(value: unknown, field: string): Record<string, unknown> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw validation(`${field} must be a JSON object.`, { field });
   }
   return value as Record<string, unknown>;
@@ -1072,6 +1848,10 @@ function notFound(message: string, details: Record<string, unknown>): ApiError {
 
 function validation(message: string, details: Record<string, unknown> = {}): ApiError {
   return new ApiError(400, "VALIDATION_ERROR", message, details);
+}
+
+function conflict(message: string, details: Record<string, unknown> = {}): ApiError {
+  return new ApiError(409, "CONFLICT", message, details);
 }
 
 export function randomRequestId(): string {
