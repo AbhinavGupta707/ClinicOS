@@ -45,7 +45,7 @@ describe("role-aware navigation", () => {
 
   it("reports active versus registered unavailable surfaces", () => {
     expect(summarizeSurfaceAccess(["assistant"])).toMatchObject({
-      activeCount: 14,
+      activeCount: 15,
       registeredCount: expect.any(Number),
       unavailableCount: expect.any(Number)
     });
@@ -125,5 +125,28 @@ describe("role-aware navigation", () => {
     expect(accountantVisible).not.toContain("owner-control");
     expect(hasSurface("recalls")).toBe(true);
     expect(resolveSurfaceId("continuity")).toBe("tasks");
+  });
+
+  it("activates CP7 integration ops without exposing replay or migration to non-owner roles", () => {
+    const assistantActive = getVisibleSurfaces(["assistant"])
+      .filter((surface) => surface.availability === "active")
+      .map((surface) => surface.id);
+    const ownerActive = getVisibleSurfaces(["owner"])
+      .filter((surface) => surface.availability === "active")
+      .map((surface) => surface.id);
+    const accountantVisible = getVisibleSurfaces(["accountant"]).map((surface) => surface.id);
+
+    expect(assistantActive).toContain("integrations");
+    expect(assistantActive).not.toContain("event-replay");
+    expect(assistantActive).not.toContain("migration-review");
+    expect(ownerActive).toEqual(
+      expect.arrayContaining(["integrations", "event-replay", "migration-review"])
+    );
+    expect(accountantVisible).not.toContain("integrations");
+    expect(accountantVisible).not.toContain("event-replay");
+    expect(accountantVisible).not.toContain("migration-review");
+    expect(resolveSurfaceId("provider-health")).toBe("integrations");
+    expect(resolveSurfaceId("dead-letter-replay")).toBe("event-replay");
+    expect(resolveSurfaceId("imports")).toBe("migration-review");
   });
 });

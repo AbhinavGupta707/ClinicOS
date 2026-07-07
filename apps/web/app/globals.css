@@ -1908,7 +1908,18 @@ button.duplicate-item {
     linear-gradient(110deg, rgba(223, 247, 243, 0.76), rgba(231, 240, 251, 0.72)), var(--paper);
 }
 
+.surface-hero--integrations {
+  background:
+    linear-gradient(110deg, rgba(231, 240, 251, 0.78), rgba(255, 243, 216, 0.68)), var(--paper);
+}
+
 .cp6-workflow .workflow-tabs {
+  gap: var(--space-3);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  padding: var(--space-2);
+}
+
+.cp7-workflow .workflow-tabs {
   gap: var(--space-3);
   grid-template-columns: repeat(3, minmax(0, 1fr));
   padding: var(--space-2);
@@ -1918,12 +1929,27 @@ button.duplicate-item {
   grid-template-columns: minmax(0, 1fr) minmax(360px, 0.86fr);
 }
 
+.workflow-grid--cp7 {
+  grid-template-columns: minmax(0, 1fr) minmax(320px, 0.72fr);
+}
+
 .readiness-grid--cp6 {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.readiness-grid--cp7 {
   grid-template-columns: repeat(3, minmax(0, 1fr));
 }
 
 .cp6-card-list,
 .cp6-checklist {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.cp7-card-list,
+.cp7-capabilities {
   display: grid;
   gap: var(--space-3);
   min-width: 0;
@@ -1943,9 +1969,87 @@ button.duplicate-item {
   padding: 12px;
 }
 
+.cp7-card,
+.cp7-capability {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+  padding: 12px;
+}
+
 .cp6-card {
   grid-template-columns: minmax(0, 1fr) auto auto;
   text-align: left;
+}
+
+.cp7-card--compact {
+  gap: var(--space-2);
+}
+
+.cp7-card__heading {
+  align-items: flex-start;
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+}
+
+.cp7-card__heading strong,
+.cp7-card__heading span,
+.cp7-card-note,
+.cp7-capability strong,
+.cp7-capability span,
+.cp7-capability small,
+.cp7-metric small {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.cp7-card__heading span,
+.cp7-card-note,
+.cp7-capability small {
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  line-height: 1.4;
+  margin: 0;
+}
+
+.cp7-card-note--warn {
+  color: var(--warning);
+}
+
+.cp7-capability {
+  background: #f8fafc;
+}
+
+.cp7-capability {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+
+.cp7-capability small {
+  grid-column: 1 / -1;
+}
+
+.cp7-status--available {
+  background: var(--mint-soft);
+  border-color: #bce8e1;
+  color: #06584f !important;
+}
+
+.cp7-status--degraded,
+.cp7-status--not_configured {
+  background: var(--warning-soft);
+  border-color: #f2ce84;
+  color: #684002 !important;
+}
+
+.cp7-status--unavailable {
+  background: var(--danger-soft);
+  border-color: #ffc9c4;
+  color: var(--danger) !important;
 }
 
 button.cp6-card {
@@ -2027,6 +2131,7 @@ button.cp6-card:hover {
 
   .workflow-grid--dashboard,
   .workflow-grid--checkout,
+  .workflow-grid--cp7,
   .workflow-grid--cp6,
   .workflow-grid--dental,
   .workflow-grid--encounter,
@@ -2119,6 +2224,7 @@ button.cp6-card:hover {
   .prep-grid,
   .readiness-grid--checkout,
   .readiness-grid--clinical,
+  .readiness-grid--cp7,
   .readiness-grid--cp6 {
     grid-template-columns: 1fr;
   }
@@ -2144,6 +2250,10 @@ button.cp6-card:hover {
   }
 
   .cp6-workflow .workflow-tabs {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cp7-workflow .workflow-tabs {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -2228,6 +2338,8 @@ button.cp6-card:hover {
   .cp5-estimate-form,
   .cp5-manual-form,
   .cp5-output-form,
+  .cp7-card__heading,
+  .cp7-capability,
   .cp6-card,
   .cp6-check-row,
   .cp6-count-row,
@@ -2240,6 +2352,10 @@ button.cp6-card:hover {
   .cp4-workflow .workflow-tabs,
   .cp5-workflow .workflow-tabs,
   .cp6-workflow .workflow-tabs {
+    grid-template-columns: 1fr;
+  }
+
+  .cp7-workflow .workflow-tabs {
     grid-template-columns: 1fr;
   }
 
