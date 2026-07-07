@@ -3,6 +3,8 @@ import { describe, expect, it } from "vitest";
 import {
   canAccessSurface,
   getPrimarySurfaceId,
+  getSurfaceStateLabel,
+  getUnavailableReason,
   getSurface,
   getVisibleSurfaces,
   hasSurface,
@@ -186,5 +188,17 @@ describe("role-aware navigation", () => {
     expect(canAccessSurface(getSurface("pilot-readiness"), ["owner"])).toBe(true);
     expect(resolveSurfaceId("pilot")).toBe("pilot-readiness");
     expect(resolveSurfaceId("release-readiness")).toBe("pilot-readiness");
+  });
+
+  it("keeps CP10 pilot settings registered unavailable with explicit activation wording", () => {
+    const settings = getSurface("settings");
+
+    expect(settings.availability).toBe("registered_unavailable");
+    expect(getSurfaceStateLabel(settings)).toBe("Registered unavailable");
+    expect(getUnavailableReason(settings)).toContain("pilot clinic configuration");
+    expect(getUnavailableReason(settings)).toContain("owning CP10 configuration slice");
+    expect(settings.requiredApis).toEqual(
+      expect.arrayContaining(["GET /v1/users", "GET /external-systems/accounts"])
+    );
   });
 });

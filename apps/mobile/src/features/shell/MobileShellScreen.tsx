@@ -10,14 +10,24 @@ import {
 } from "react-native";
 import { ClinicOsApiClient, type MobileSession, type PatientSummary, type QueueEntrySummary } from "../../lib/apiClient";
 import { createDefaultPhotoCaptureProvider } from "../capture/adapters/photoCaptureProvider";
-import { evaluateAudioControl, type AudioControlDecision } from "../capture/audioConsent";
+import {
+  applyNativeAudioCapability,
+  evaluateAudioControl,
+  type AudioControlDecision,
+  type NativeAudioCapability
+} from "../capture/audioConsent";
 import { InMemorySecureCaptureCache } from "../capture/secureCache";
 import type { CaptureCapability, PatientCaptureContext, UploadQueueItem } from "../capture/types";
 import { completedAssetMessage, MobileUploadQueue } from "../capture/uploadQueue";
-import { getActiveCaptureSurfaces } from "./surfaceModel";
+import { getAvailableMobileSurfaces, getUnavailableMobileSurfaces } from "./surfaceModel";
 
 const apiBaseUrl = process.env.EXPO_PUBLIC_CLINIC_OS_API_URL ?? "http://127.0.0.1:4000";
 const devSubject = process.env.EXPO_PUBLIC_CLINIC_OS_DEV_SUBJECT ?? null;
+const nativeAudioCapability: NativeAudioCapability = {
+  state: "unavailable",
+  reason:
+    "Native recording packages are not installed or reconciled in the release-candidate mobile app."
+};
 
 export function MobileShellScreen() {
   const api = useMemo(
@@ -45,6 +55,7 @@ export function MobileShellScreen() {
   );
   const [queueItems, setQueueItems] = useState<readonly UploadQueueItem[]>([]);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const renderedAudioDecision = applyNativeAudioCapability(audioDecision, nativeAudioCapability);
 
   const selectedPatient = selectedPatientId
     ? patientsState.status === "loaded"
@@ -168,9 +179,15 @@ export function MobileShellScreen() {
         <View style={styles.grid}>
           <StatusPanel title="Session" state={sessionState} loadedText={(session) => session.user.displayName} />
           <View style={styles.panel}>
-            <Text style={styles.panelTitle}>Capture Surfaces</Text>
-            {getActiveCaptureSurfaces().map((surface) => (
+            <Text style={styles.panelTitle}>Available Capture Surfaces</Text>
+            {getAvailableMobileSurfaces().map((surface) => (
               <Text key={surface.id} style={styles.metaLine}>
+                {surface.label}: {surface.apiBoundary}
+              </Text>
+            ))}
+            <Text style={styles.subTitle}>Registered Unavailable</Text>
+            {getUnavailableMobileSurfaces().map((surface) => (
+              <Text key={surface.id} style={styles.unavailableLine}>
                 {surface.label}: {surface.apiBoundary}
               </Text>
             ))}
@@ -280,10 +297,16 @@ export function MobileShellScreen() {
 
         <View style={styles.panel}>
           <Text style={styles.panelTitle}>Audio Capture</Text>
-          <Text style={styles.audioTitle}>{audioDecision.title}</Text>
-          <Text style={styles.panelBody}>{audioDecision.detail}</Text>
-          <Pressable disabled={!audioDecision.enabled} style={[styles.primaryButton, styles.disabledButton]}>
-            <Text style={styles.primaryButtonText}>Start Audio</Text>
+          <Text style={styles.audioTitle}>{renderedAudioDecision.title}</Text>
+          <Text style={styles.panelBody}>{renderedAudioDecision.detail}</Text>
+          <Pressable
+            accessibilityState={{ disabled: !renderedAudioDecision.enabled }}
+            disabled={!renderedAudioDecision.enabled}
+            style={[styles.primaryButton, !renderedAudioDecision.enabled && styles.disabledButton]}
+          >
+            <Text style={styles.primaryButtonText}>
+              {renderedAudioDecision.enabled ? "Start Audio" : "Audio adapter unavailable"}
+            </Text>
           </Pressable>
         </View>
 
@@ -566,6 +589,19 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: "800",
     lineHeight: 20
+  },
+  unavailableLine: {
+    backgroundColor: colors.amberSoft,
+    borderColor: "#eed08a",
+    borderRadius: 8,
+    borderWidth: 1,
+    color: colors.amber,
+    fontSize: 13,
+    fontWeight: "800",
+    lineHeight: 20,
+    marginTop: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8
   },
   title: {
     color: colors.ink,
