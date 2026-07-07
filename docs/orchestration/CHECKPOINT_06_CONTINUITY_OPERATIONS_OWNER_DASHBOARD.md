@@ -49,7 +49,7 @@ Clinic staff can run continuity operations after checkout: recalls, post-op/paym
 | --- | --- | --- |
 | `package-lock.json` | Master integration | Workers must not commit lockfile changes; request dependency changes in handoff. |
 | Root `package.json` | Master integration | Workers request root scripts unless explicitly assigned. |
-| DB migrations | Workflow/Task Backend and Lab/Inventory/Event coordinate through one CP6 migration sequence | Do not create competing migration numbers. If both lanes need schema, agree on one canonical `0006_*` migration before commit. |
+| DB migrations | Workflow/Task Backend owns `0006_continuity_tasks_recalls_sops.sql`; Lab/Inventory/Event owns `0007_lab_inventory_events.sql` | Do not create competing migration numbers. If a lane needs another lane's table, document the dependency and let master reconcile cross-migration references on the integration branch. |
 | Domain events/permissions | Backend lanes first | Analytics/UX consume canonical events. Do not invent UI-only event names. |
 | API route contracts | Backend lanes own; UX consumes | Route drift must be reported early. Granular routes are acceptable; no fake aggregate route should be advertised before implementation. |
 | Fixtures/test data | Analytics/QA owns deterministic fixture shape | Product runtime must not depend on fixtures outside explicit local/test fixture modes. |
