@@ -223,13 +223,13 @@
         "key": "resolve-migration-conflict",
         "liveImplemented": false,
         "method": "POST",
-        "path": "/v1/migration-batches/88888888-8888-4888-8888-888888888888/conflicts/77777777-7777-4777-8777-777777777777/resolve",
+        "path": "/v1/migration-batches/88888888-8888-4888-8888-888888888888/rows/aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa/resolve",
         "requestBody": {
-          "notes": "Keep existing verified ClinicOS record.",
-          "resolution": "keep_existing_verified_record",
+          "action": "link_existing",
+          "note": "Keep existing verified ClinicOS record.",
           "reviewedByName": "CP7 owner fixture"
         },
-        "routeFamily": "migration-conflicts"
+        "routeFamily": "migration-row-resolution"
       },
       {
         "actorKey": "owner",

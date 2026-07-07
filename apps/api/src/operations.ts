@@ -5,6 +5,7 @@ import {
   type AccessContext,
   type AuthorizationRequest
 } from "@clinic-os/auth";
+import type { ClinicOsConfig } from "@clinic-os/config";
 import type {
   ClinicOperationsRepository,
   CreateAppointmentInput,
@@ -126,6 +127,8 @@ import {
   type IntakeFormType,
   type IntakeSubmissionSource,
   type InvoiceDetail,
+  type IntegrationDeadLetterRecord,
+  type IntegrationDeadLetterStatus,
   type LeadIntent,
   type LeadSource,
   type LeadStatus,
@@ -134,6 +137,7 @@ import {
   type MediaType,
   type ManualPaymentMethod,
   type MigrationBatchDetail,
+  type MigrationBatchState,
   type MigrationRowRecord,
   type PaymentProviderKey as BillingPaymentProviderKey,
   type PaymentRequestRecord,
@@ -154,11 +158,15 @@ import {
   type UUID
 } from "@clinic-os/domain";
 import {
+  createMessagingProvider,
   PaymentProviderError,
+  createTelephonyProvider,
+  type AdapterCapability,
   type PaymentProvider,
   type PaymentProviderRequestKind,
   type PaymentProviderRequestResult,
   type PaymentProviderWebhookEvent,
+  type ProviderHealth,
   type RawPaymentWebhook
 } from "@clinic-os/integrations";
 import {
@@ -186,6 +194,7 @@ export interface OperationsDependencies {
   mediaStorage?: MediaStorageProvider;
   paymentProvider?: PaymentProvider;
   paymentRepository?: PaymentOperationsRepository;
+  runtimeConfig?: ClinicOsConfig;
 }
 
 const SYSTEM_INTEGRATION_ACTOR_USER_ID = "00000000-0000-4000-8000-000000000000" as UUID;
@@ -605,6 +614,92 @@ export async function getMigrationBatch(
   return ok(toMigrationBatchResponse(detail));
 }
 
+export async function listProviderHealth(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "migration.manage" });
+  const config = runtimeConfigFrom(dependencies);
+  const [messagingHealth, paymentHealth, telephonyHealth] = await Promise.all([
+    createRuntimeMessagingProvider(config).healthCheck(),
+    paymentProviderFrom(dependencies).healthCheck(),
+    createRuntimeTelephonyProvider(config).healthCheck()
+  ]);
+
+  return ok({
+    providers: [
+      providerCardFromHealth({
+        activationChecks: whatsappActivationChecks(config, messagingHealth),
+        category: "messaging",
+        health: messagingHealth,
+        id: "whatsapp-cloud",
+        label: "WhatsApp Cloud",
+        mode: whatsappProviderMode(config, messagingHealth),
+        providerKey: "whatsapp_cloud"
+      }),
+      providerCardFromHealth({
+        activationChecks: razorpayActivationChecks(config, paymentHealth),
+        category: "payments",
+        health: paymentHealth,
+        id: "razorpay",
+        label: "Razorpay",
+        mode: razorpayProviderMode(config, paymentHealth),
+        providerKey: "razorpay"
+      }),
+      providerCardFromHealth({
+        activationChecks: telephonyActivationChecks(config, telephonyHealth),
+        category: "telephony",
+        health: telephonyHealth,
+        id: "telephony-exotel",
+        label: "Telephony",
+        mode: telephonyProviderMode(config, telephonyHealth),
+        providerKey: "exotel"
+      }),
+      manualProviderCard({
+        activationChecks: [
+          "Google Business Profile OAuth/account variables are not configured in CP7.",
+          "Manual source attribution remains ClinicOS-owned and auditable.",
+          "No Google API read/write dependency is active."
+        ],
+        category: "source",
+        evidence: "Google is manual/source only; no live profile API dependency is active.",
+        id: "google-business",
+        label: "Google Business Profile",
+        mode: "manual/source only",
+        providerKey: "google_business_profile",
+        status: "not_configured"
+      }),
+      manualProviderCard({
+        activationChecks: [
+          "Clinic-approved import batches use durable migration review routes.",
+          "Rows are marked imported/unverified until review.",
+          "Verified ClinicOS records are never overwritten silently."
+        ],
+        category: "migration",
+        evidence: "Manual import review is available through migration batch routes.",
+        id: "manual-import",
+        label: "Manual import",
+        mode: "durable migration review",
+        providerKey: "manual_import",
+        status: "available"
+      })
+    ]
+  });
+}
+
+export async function listMigrationBatches(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { status?: string | null; limit?: string | null }
+) {
+  authorize(context, { permission: "migration.manage" });
+  const details = await dependencies.repository.listMigrationBatches(scopeFrom(context), {
+    limit: parseOptionalLimit(filter.limit, 25, 100),
+    status: parseOptionalMigrationBatchState(filter.status)
+  });
+  return ok({ migrationBatches: details.map(toMigrationBatchResponse) });
+}
+
 export async function listMigrationBatchRows(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
@@ -621,6 +716,68 @@ export async function listMigrationBatchRows(
     if (!batch) throw notFound("Migration batch not found.", { batch_id: batchId });
   }
   return ok({ rows: rows.map(toPublicMigrationRow) });
+}
+
+export async function listDeadLetterEvents(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { status?: string | null; limit?: string | null }
+) {
+  authorize(context, { permission: "migration.manage" });
+  const deadLetters = await dependencies.repository.listIntegrationDeadLetters(scopeFrom(context), {
+    limit: parseOptionalLimit(filter.limit, 50, 100),
+    status: parseOptionalIntegrationDeadLetterStatus(filter.status)
+  });
+  return ok({ deadLetterEvents: deadLetters.map(toPublicDeadLetterEvent) });
+}
+
+export async function replayDeadLetterEvent(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  deadLetterId: UUID,
+  body: unknown
+) {
+  authorize(context, { permission: "migration.manage" });
+  const input = objectBody(body);
+  const replay = await dependencies.repository.requestIntegrationDeadLetterReplay(
+    scopeFrom(context),
+    deadLetterId,
+    {
+      reason: optionalNullableString(input.reason, "reason") ?? null,
+      reviewedByUserId: context.accessContext.user.id
+    }
+  );
+  if (!replay) throw notFound("Dead-letter event not found or replay is not available.", {
+    dead_letter_event_id: deadLetterId
+  });
+
+  await audit(context, dependencies, "integration.dead_letter.replayed", {
+    resourceType: "integration_dead_letter",
+    resourceId: replay.id,
+    metadata: {
+      providerKey: replay.providerKey,
+      status: replay.status
+    }
+  });
+  await appendOutbox(context, dependencies, {
+    eventType: "integration.dead_letter.replayed",
+    aggregateType: "integration_dead_letter",
+    aggregateId: replay.id,
+    payload: {
+      deadLetterEventId: replay.id,
+      providerKey: replay.providerKey,
+      status: replay.status
+    }
+  });
+
+  return accepted({
+    replay: {
+      status: "accepted",
+      deadLetterEvent: toPublicDeadLetterEvent(replay),
+      outcomeDetail:
+        "Replay request was recorded for a handler to process; no provider-confirmed patient state was advanced."
+    }
+  });
 }
 
 export async function resolveMigrationBatchRow(
@@ -4606,6 +4763,50 @@ function parseOptionalMigrationRowStatus(value: string | null | undefined): Migr
   return value as MigrationRowRecord["status"];
 }
 
+function parseOptionalMigrationBatchState(value: string | null | undefined): MigrationBatchState | null {
+  if (!value) return null;
+  if (
+    ![
+      "uploaded",
+      "parsed",
+      "validated",
+      "needs_review",
+      "ready_to_commit",
+      "committed",
+      "partially_committed",
+      "failed",
+      "rolled_back"
+    ].includes(value)
+  ) {
+    throw validation("status is not supported.", { status: value });
+  }
+  return value as MigrationBatchState;
+}
+
+function parseOptionalIntegrationDeadLetterStatus(
+  value: string | null | undefined
+): IntegrationDeadLetterStatus | null {
+  if (!value) return null;
+  if (value === "unreviewed") return "open";
+  if (value === "replay_requested") return "retry_scheduled";
+  if (value === "replayed") return "replayed";
+  if (value === "ignored") return "discarded";
+  if (value === "blocked") return "open";
+  if (["open", "retry_scheduled", "resolved", "discarded"].includes(value)) {
+    return value as IntegrationDeadLetterStatus;
+  }
+  throw validation("status is not supported for dead-letter events.", { status: value });
+}
+
+function parseOptionalLimit(value: string | null | undefined, fallback: number, max: number): number {
+  if (!value) return fallback;
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw validation("limit must be a positive integer.", { limit: value });
+  }
+  return Math.min(parsed, max);
+}
+
 function toMigrationBatchResponse(detail: MigrationBatchDetail) {
   return {
     batch: detail.batch,
@@ -4619,6 +4820,217 @@ function toPublicMigrationRow(row: MigrationRowRecord): MigrationRowRecord {
     ...row,
     rawPayloadRef: { ...row.rawPayloadRef }
   };
+}
+
+function toPublicDeadLetterEvent(deadLetter: IntegrationDeadLetterRecord) {
+  const replayAvailable =
+    ["open", "retry_scheduled"].includes(deadLetter.status) &&
+    Boolean(deadLetter.rawEventId ?? deadLetter.normalizedEventId);
+  return {
+    attempts: deadLetter.retryCount,
+    eventType: `${deadLetter.failureStage}.${deadLetter.failureCode}`,
+    failedAt: deadLetter.createdAt,
+    id: deadLetter.id,
+    lastError: deadLetter.failureSummary,
+    outcomeDetail:
+      deadLetter.status === "retry_scheduled"
+        ? "Replay request is recorded for handler processing; provider success is not confirmed."
+        : "Dead-letter is reviewable; replay does not advance provider state without handler evidence.",
+    providerKey: publicProviderKey(deadLetter.providerKey),
+    replayAvailable,
+    ...(replayAvailable
+      ? {}
+      : { replayBlockedReason: "Replay requires a retained raw or normalized provider event reference." }),
+    status: publicDeadLetterStatus(deadLetter)
+  };
+}
+
+function publicDeadLetterStatus(
+  deadLetter: IntegrationDeadLetterRecord
+): "blocked" | "ignored" | "replayed" | "replay_requested" | "unreviewed" {
+  if (deadLetter.status === "retry_scheduled") return "replay_requested";
+  if (deadLetter.status === "replayed") return "replayed";
+  if (deadLetter.status === "resolved" || deadLetter.status === "discarded") return "ignored";
+  if (!deadLetter.rawEventId && !deadLetter.normalizedEventId) return "blocked";
+  return "unreviewed";
+}
+
+function runtimeConfigFrom(dependencies: OperationsDependencies): ClinicOsConfig {
+  if (!dependencies.runtimeConfig) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "ClinicOS runtime config is not available for integration provider health."
+    );
+  }
+  return dependencies.runtimeConfig;
+}
+
+function createRuntimeMessagingProvider(config: ClinicOsConfig) {
+  return createMessagingProvider({
+    provider: config.providers.whatsapp.provider,
+    accessToken: config.providers.whatsapp.accessToken,
+    appId: config.providers.whatsapp.appId,
+    appSecret: config.providers.whatsapp.appSecret,
+    businessAccountId: config.providers.whatsapp.businessAccountId,
+    phoneNumberId: config.providers.whatsapp.phoneNumberId,
+    webhookVerifyToken: config.providers.whatsapp.webhookVerifyToken,
+    appSecretProofRequired: config.providers.whatsapp.appSecretProofRequired,
+    templateNamespace: config.providers.whatsapp.templateNamespace,
+    allowLiveMetaApiCalls: false,
+    liveHealthCheckEnabled: false
+  });
+}
+
+function createRuntimeTelephonyProvider(config: ClinicOsConfig) {
+  return createTelephonyProvider({
+    provider: config.providers.telephony.provider,
+    accountSid: config.providers.telephony.accountSid,
+    apiKey: config.providers.telephony.apiKey,
+    apiToken: config.providers.telephony.apiToken,
+    virtualNumber: config.providers.telephony.virtualNumber,
+    webhookSecret: config.providers.telephony.webhookSecret,
+    regionSubdomain: config.providers.telephony.regionSubdomain,
+    webhookCallbackConfigured: false
+  });
+}
+
+function providerCardFromHealth(input: {
+  activationChecks: string[];
+  category: "messaging" | "migration" | "payments" | "source" | "telephony";
+  health: ProviderHealth;
+  id: string;
+  label: string;
+  mode: string;
+  providerKey: "exotel" | "google_business_profile" | "manual_import" | "razorpay" | "whatsapp_cloud";
+}) {
+  const status = publicProviderStatus(input.providerKey, input.health);
+  return {
+    activationChecks: input.activationChecks,
+    capabilities: input.health.capabilities.map((capability) =>
+      providerCapability(capability, status)
+    ),
+    category: input.category,
+    checkedAt: input.health.checkedAt,
+    evidence: input.health.message ?? `${input.label} health check completed.`,
+    id: input.id,
+    label: input.label,
+    mode: input.mode,
+    providerKey: input.providerKey,
+    status
+  };
+}
+
+function manualProviderCard(input: {
+  activationChecks: string[];
+  category: "messaging" | "migration" | "payments" | "source" | "telephony";
+  evidence: string;
+  id: string;
+  label: string;
+  mode: string;
+  providerKey: "exotel" | "google_business_profile" | "manual_import" | "razorpay" | "whatsapp_cloud";
+  status: "available" | "degraded" | "not_configured" | "unavailable";
+}) {
+  const checkedAt = new Date().toISOString();
+  return {
+    activationChecks: input.activationChecks,
+    capabilities: [],
+    category: input.category,
+    checkedAt,
+    evidence: input.evidence,
+    id: input.id,
+    label: input.label,
+    mode: input.mode,
+    providerKey: input.providerKey,
+    status: input.status
+  };
+}
+
+function publicProviderStatus(
+  providerKey: "exotel" | "google_business_profile" | "manual_import" | "razorpay" | "whatsapp_cloud",
+  health: ProviderHealth
+): "available" | "degraded" | "not_configured" | "unavailable" {
+  if (providerKey === "razorpay" && health.providerKey === "simulator") return "not_configured";
+  if (providerKey === "exotel" && health.providerKey === "simulator") return "not_configured";
+  return health.status;
+}
+
+function providerCapability(
+  capability: AdapterCapability,
+  providerStatus: "available" | "degraded" | "not_configured" | "unavailable"
+) {
+  const status =
+    providerStatus === "available" ? "available" : providerStatus === "degraded" ? "degraded" : "unavailable";
+  return {
+    detail: `${capabilityLabel(capability)} is ${status.replace("_", " ")} for this provider boundary.`,
+    key: capability.toLowerCase(),
+    label: capabilityLabel(capability),
+    status
+  };
+}
+
+function capabilityLabel(capability: AdapterCapability) {
+  return capability
+    .toLowerCase()
+    .split("_")
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(" ");
+}
+
+function whatsappActivationChecks(config: ClinicOsConfig, health: ProviderHealth): string[] {
+  return [
+    `Configured provider: ${config.providers.whatsapp.provider}.`,
+    health.message ?? "WhatsApp provider health check completed.",
+    "Live Meta API calls remain disabled for health checks unless explicitly enabled in provider code."
+  ];
+}
+
+function razorpayActivationChecks(config: ClinicOsConfig, health: ProviderHealth): string[] {
+  return [
+    `Configured provider: ${config.providers.payment.provider}.`,
+    health.message ?? "Payment provider health check completed.",
+    config.providers.payment.razorpayWebhookUrl
+      ? "Hosted Razorpay webhook URL is configured."
+      : "RAZORPAY_WEBHOOK_URL is missing; provider-paid state requires signed callback registration."
+  ];
+}
+
+function telephonyActivationChecks(config: ClinicOsConfig, health: ProviderHealth): string[] {
+  return [
+    `Configured provider: ${config.providers.telephony.provider}.`,
+    health.message ?? "Telephony provider health check completed.",
+    "Signed telephony callback registration must exist before live missed-call capture is shown as active."
+  ];
+}
+
+function whatsappProviderMode(config: ClinicOsConfig, health: ProviderHealth) {
+  if (config.providers.whatsapp.provider === "meta_cloud" && health.status === "available") {
+    return "configured/no-live-health-probe";
+  }
+  if (config.providers.whatsapp.provider === "meta_cloud") return "configured/degraded";
+  return health.status === "not_configured" ? "not configured" : "provider unavailable";
+}
+
+function razorpayProviderMode(config: ClinicOsConfig, health: ProviderHealth) {
+  if (config.providers.payment.provider !== "razorpay") return "not configured";
+  if (!config.providers.payment.razorpayWebhookUrl) return "sandbox webhook URL missing";
+  return health.status;
+}
+
+function telephonyProviderMode(config: ClinicOsConfig, health: ProviderHealth) {
+  if (config.providers.telephony.provider !== "exotel") return "provider unavailable";
+  return health.status === "available" ? "configured callback" : "provider unavailable";
+}
+
+function publicProviderKey(
+  providerKey: string
+): "exotel" | "google_business_profile" | "manual_import" | "razorpay" | "whatsapp_cloud" {
+  if (providerKey === "meta_whatsapp_cloud" || providerKey === "whatsapp_cloud") return "whatsapp_cloud";
+  if (providerKey === "telephony" || providerKey === "exotel") return "exotel";
+  if (providerKey === "google_business_profile" || providerKey === "google_business") return "google_business_profile";
+  if (providerKey === "manual_import") return "manual_import";
+  if (providerKey === "razorpay") return "razorpay";
+  return "manual_import";
 }
 
 function sha256Json(value: unknown): string {

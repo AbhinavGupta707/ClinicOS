@@ -50,11 +50,23 @@ export type MigrationBatchStatus =
   | "committed"
   | "failed"
   | "needs_review"
+  | "parsed"
+  | "partially_committed"
   | "ready_to_commit"
+  | "rolled_back"
   | "uploaded"
   | "validated";
 
-export type MigrationRowStatus = "committed" | "conflict" | "ready_to_commit" | "rejected" | "valid";
+export type MigrationRowStatus =
+  | "committed"
+  | "conflict"
+  | "failed"
+  | "needs_review"
+  | "ready_to_commit"
+  | "rejected"
+  | "rolled_back"
+  | "skipped"
+  | "valid";
 export type MigrationConflictStatus = "resolved" | "unresolved";
 
 export interface MigrationRow {
@@ -71,8 +83,11 @@ export interface MigrationConflict {
   candidateSummary: string;
   id: string;
   resolution?: "keep_existing_verified_record" | "import_as_unverified";
+  resolutionAction?: "create_new" | "link_existing" | "skip" | null;
   rowId: string;
   status: MigrationConflictStatus;
+  targetRecordId?: string | null;
+  targetRecordType?: string | null;
   type: "possible_duplicate" | "verified_record_conflict";
 }
 
@@ -170,7 +185,7 @@ export const CP7_REQUIRED_ENDPOINTS = [
   "POST /v1/dead-letter-events/{deadLetterEventId}/replay",
   "GET /v1/migration-batches?status=needs_review",
   "GET /v1/migration-batches/{migrationBatchId}",
-  "POST /v1/migration-batches/{migrationBatchId}/conflicts/{conflictId}/resolve",
+  "POST /v1/migration-batches/{migrationBatchId}/rows/{rowId}/resolve",
   "POST /v1/migration-batches/{migrationBatchId}/commit"
 ] as const;
 
@@ -191,7 +206,10 @@ export const MIGRATION_BATCH_STATUS_LABELS: Record<MigrationBatchStatus, string>
   committed: "Committed",
   failed: "Failed",
   needs_review: "Needs review",
+  parsed: "Parsed",
+  partially_committed: "Partially committed",
   ready_to_commit: "Ready to commit",
+  rolled_back: "Rolled back",
   uploaded: "Uploaded",
   validated: "Validated"
 };
@@ -770,7 +788,10 @@ export async function replayLiveDeadLetterEvent(
 
 export async function resolveLiveMigrationConflict(
   batchId: string,
-  conflictId: string,
+  conflict: Pick<
+    MigrationConflict,
+    "id" | "rowId" | "targetRecordId" | "targetRecordType"
+  >,
   input: {
     actorName: string;
     notes: string;
@@ -778,13 +799,20 @@ export async function resolveLiveMigrationConflict(
   },
   signal?: AbortSignal
 ) {
+  const action = input.resolution === "keep_existing_verified_record" ? "link_existing" : "create_new";
   return postEndpoint(
-    `/v1/migration-batches/${encodeURIComponent(batchId)}/conflicts/${encodeURIComponent(
-      conflictId
+    `/v1/migration-batches/${encodeURIComponent(batchId)}/rows/${encodeURIComponent(
+      conflict.rowId
     )}/resolve`,
     {
-      notes: input.notes,
-      resolution: input.resolution,
+      action,
+      note: input.notes,
+      ...(action === "link_existing"
+        ? {
+            targetRecordId: conflict.targetRecordId,
+            targetRecordType: conflict.targetRecordType ?? "patient"
+          }
+        : {}),
       reviewedByName: input.actorName
     },
     signal
@@ -890,7 +918,9 @@ function normalizeCp7LivePayload(input: {
   const migrationBatches = readArray(input.migrationPayload, [
     "migrationBatches",
     "batches"
-  ]).filter(isMigrationBatch);
+  ])
+    .map(normalizeLiveMigrationBatch)
+    .filter((batch): batch is MigrationBatch => Boolean(batch));
 
   if (providers.length === 0 || !Array.isArray(deadLetters) || !Array.isArray(migrationBatches)) {
     return {
@@ -974,6 +1004,158 @@ function readArray(payload: unknown, keys: string[]) {
   return [];
 }
 
+function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
+  if (isMigrationBatch(value)) return value;
+  if (!isRecord(value) || !isRecord(value.batch)) return null;
+
+  const batch = value.batch;
+  const id = readString(batch, ["id"]);
+  const state = readString(batch, ["state"]);
+  if (!id || !isMigrationBatchStatus(state)) return null;
+
+  const rows = readArray(value, ["rows"]).map(normalizeLiveMigrationRow);
+  const conflicts = readArray(value, ["conflicts"]).map(normalizeLiveMigrationConflict);
+  const normalizedRows = rows.filter((row): row is MigrationRow => Boolean(row));
+  const normalizedConflicts = conflicts.filter((conflict): conflict is MigrationConflict =>
+    Boolean(conflict)
+  );
+  const openConflicts = normalizedConflicts.some((conflict) => conflict.status === "unresolved");
+  const committedRows = readNumber(batch, ["committedRowCount"]) ?? 0;
+  const readyRows = readNumber(batch, ["readyRowCount"]) ?? 0;
+
+  return {
+    commit: {
+      ...(state === "committed" || state === "partially_committed"
+        ? { committedAt: readString(batch, ["committedAt"]) ?? undefined }
+        : {}),
+      blockedReason: openConflicts ? "Resolve duplicate review before committing." : undefined,
+      committedRows,
+      state:
+        state === "committed" || state === "partially_committed"
+          ? "committed"
+          : state === "ready_to_commit" || readyRows > 0
+            ? "ready"
+            : openConflicts
+              ? "blocked"
+              : "unavailable"
+    },
+    conflicts: normalizedConflicts,
+    id,
+    rows: normalizedRows,
+    sourceSystem: normalizeMigrationSourceSystem(readString(batch, ["sourceSystem"])),
+    status: state,
+    uploadedAt: readString(batch, ["createdAt", "uploadedAt"]) ?? new Date().toISOString()
+  };
+}
+
+function normalizeLiveMigrationRow(value: unknown): MigrationRow | null {
+  if (!isRecord(value)) return null;
+  const id = readString(value, ["id"]);
+  const rowNumber = readNumber(value, ["rowNumber"]);
+  if (!id || rowNumber === null) return null;
+
+  const normalizedRecord = isRecord(value.normalizedRecord) ? value.normalizedRecord : null;
+  const firstConflict = readArray(value, ["conflicts"]).find(isRecord);
+  const validationIssue = readArray(value, ["validationErrors"]).find(isRecord);
+  const status = normalizeMigrationRowStatus(
+    readString(value, ["status"]),
+    readString(value, ["matchStatus"]),
+    Boolean(firstConflict)
+  );
+  const target = migrationTargetFromImportType(readString(value, ["importType"]));
+  const externalReference =
+    readString(value, ["externalRecordId", "externalReference"]) ??
+    readString(normalizedRecord ?? {}, ["externalReference"]) ??
+    id;
+  const fullName = readString(normalizedRecord ?? {}, ["fullName"]);
+  const phone = readString(normalizedRecord ?? {}, ["phone", "normalizedPhone"]);
+  const preview =
+    fullName && phone
+      ? `${fullName}, phone ${phone}`
+      : fullName ?? externalReference ?? `Import row ${rowNumber}`;
+
+  return {
+    externalReference,
+    id,
+    issue:
+      readString(value, ["errorMessage"]) ??
+      readString(firstConflict ?? {}, ["summary"]) ??
+      readString(validationIssue ?? {}, ["message"]) ??
+      undefined,
+    preview,
+    rowNumber,
+    status,
+    target
+  };
+}
+
+function normalizeLiveMigrationConflict(value: unknown): MigrationConflict | null {
+  if (!isRecord(value)) return null;
+  const id = readString(value, ["id"]);
+  const rowId = readString(value, ["rowId"]);
+  if (!id || !rowId) return null;
+
+  const conflictType = readString(value, ["conflictType", "type"]);
+  return {
+    candidateSummary: readString(value, ["summary", "candidateSummary"]) ?? "Migration row needs review.",
+    id,
+    resolutionAction: normalizeResolutionAction(readString(value, ["resolutionAction"])),
+    rowId,
+    status: readString(value, ["status"]) === "open" ? "unresolved" : "resolved",
+    targetRecordId: readString(value, ["targetRecordId"]),
+    targetRecordType: readString(value, ["targetRecordType"]),
+    type:
+      conflictType === "verified_record_overlap" || conflictType === "field_conflict"
+        ? "verified_record_conflict"
+        : "possible_duplicate"
+  };
+}
+
+function normalizeMigrationRowStatus(
+  status: string | null,
+  matchStatus: string | null,
+  hasConflict: boolean
+): MigrationRowStatus {
+  if (status === "invalid") return "rejected";
+  if (status === "committed") return "committed";
+  if (status === "ready_to_commit") return "ready_to_commit";
+  if (status === "skipped") return "skipped";
+  if (status === "rolled_back") return "rolled_back";
+  if (status === "failed") return "failed";
+  if (hasConflict || matchStatus === "duplicate_candidate" || matchStatus === "conflict") {
+    return "conflict";
+  }
+  if (status === "needs_review") return "needs_review";
+  return "valid";
+}
+
+function normalizeResolutionAction(value: string | null): MigrationConflict["resolutionAction"] {
+  if (value === "create_new" || value === "link_existing" || value === "skip") return value;
+  return null;
+}
+
+function normalizeMigrationSourceSystem(value: string | null): MigrationBatch["sourceSystem"] {
+  return value === "synthetic_csv" ? "synthetic_csv" : "ray_csv_export";
+}
+
+function migrationTargetFromImportType(value: string | null): MigrationRow["target"] {
+  if (value === "appointments") return "appointment";
+  if (value === "invoices" || value === "payments") return "invoice";
+  return "patient";
+}
+
+function readNumber(record: Record<string, unknown>, keys: string[]) {
+  for (const key of keys) {
+    const value = record[key];
+    if (typeof value === "number" && Number.isFinite(value)) return value;
+    if (typeof value === "string" && value.trim().length > 0) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+  return null;
+}
+
 function isProviderHealthCard(value: unknown): value is ProviderHealthCard {
   if (!isRecord(value)) return false;
 
@@ -1045,7 +1227,10 @@ function isMigrationBatchStatus(value: unknown): value is MigrationBatchStatus {
     value === "committed" ||
     value === "failed" ||
     value === "needs_review" ||
+    value === "parsed" ||
+    value === "partially_committed" ||
     value === "ready_to_commit" ||
+    value === "rolled_back" ||
     value === "uploaded" ||
     value === "validated"
   );

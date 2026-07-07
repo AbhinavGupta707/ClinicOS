@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type {
   AppointmentConflict,
   AppointmentRecord,
@@ -50,6 +50,7 @@ import type {
   MediaStorageProviderKey,
   MediaUploadReservationRecord,
   ImportedRecordLinkRecord,
+  IntegrationDeadLetterRecord,
   MigrationBatchDetail,
   MigrationBatchRecord,
   MigrationCommitRecord,
@@ -181,12 +182,15 @@ import type {
   InventoryExceptionFilter,
   LabCaseSearchFilter,
   LeadSearchFilter,
+  IntegrationDeadLetterSearchFilter,
+  MigrationBatchSearchFilter,
   MigrationRowsFilter,
   OutboxEventInput,
   PatientSearchFilter,
   RecordPaymentTransactionInput,
   RecallSearchFilter,
   RepositoryScope,
+  ReplayIntegrationDeadLetterInput,
   RevokeConsentInput,
   ResolveMigrationRowInput,
   RollbackMigrationBatchInput,
@@ -758,6 +762,40 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
+  async listMigrationBatches(
+    scope: RepositoryScope,
+    filter: MigrationBatchSearchFilter = {}
+  ): Promise<MigrationBatchDetail[]> {
+    return this.#withRls(scope, async (client) => {
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "clinic_id = $2"];
+      if (filter.status) {
+        values.push(filter.status);
+        where.push(`state = $${values.length}`);
+      }
+      values.push(Math.min(filter.limit ?? 25, 100));
+      const batches = (
+        await client.query<MigrationBatchRow>(
+          `
+            select *
+            from migration_batches
+            where ${where.join(" and ")}
+            order by created_at desc
+            limit $${values.length}
+          `,
+          values
+        )
+      ).rows.map(mapMigrationBatchRow);
+
+      const details: MigrationBatchDetail[] = [];
+      for (const batch of batches) {
+        const detail = await this.#findMigrationBatchDetailInTransaction(client, scope, batch.id);
+        if (detail) details.push(detail);
+      }
+      return details;
+    });
+  }
+
   async findMigrationBatchById(
     scope: RepositoryScope,
     batchId: UUID
@@ -1123,6 +1161,61 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         importedRecordLinks: await this.#listImportedRecordLinksInTransaction(client, scope, batchId),
         blockedLinks
       };
+    });
+  }
+
+  async listIntegrationDeadLetters(
+    scope: RepositoryScope,
+    filter: IntegrationDeadLetterSearchFilter = {}
+  ): Promise<IntegrationDeadLetterRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "(clinic_id is null or clinic_id = $2)"];
+      if (filter.status) {
+        values.push(filter.status);
+        where.push(`status = $${values.length}`);
+      }
+      values.push(Math.min(filter.limit ?? 50, 100));
+      const result = await client.query<IntegrationDeadLetterRow>(
+        `
+          select *
+          from integration_dead_letters
+          where ${where.join(" and ")}
+          order by created_at desc
+          limit $${values.length}
+        `,
+        values
+      );
+      return result.rows.map(mapIntegrationDeadLetterRow);
+    });
+  }
+
+  async requestIntegrationDeadLetterReplay(
+    scope: RepositoryScope,
+    deadLetterId: UUID,
+    input: ReplayIntegrationDeadLetterInput
+  ): Promise<IntegrationDeadLetterRecord | null> {
+    const reasonDigest = input.reason
+      ? sha256Text(`${input.reviewedByUserId}:${input.reason}`)
+      : null;
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<IntegrationDeadLetterRow>(
+        `
+          update integration_dead_letters
+          set status = 'retry_scheduled',
+              retry_count = retry_count + 1,
+              next_retry_at = now(),
+              last_error_digest = coalesce($4, last_error_digest),
+              updated_at = now()
+          where tenant_id = $1
+            and (clinic_id is null or clinic_id = $2)
+            and id = $3
+            and status not in ('replayed', 'resolved', 'discarded')
+          returning *
+        `,
+        [scope.tenantId, scope.clinicId, deadLetterId, reasonDigest]
+      );
+      return result.rows[0] ? mapIntegrationDeadLetterRow(result.rows[0]) : null;
     });
   }
 
@@ -8015,6 +8108,24 @@ interface MigrationConflictRow {
   updated_at: Date | string;
 }
 
+interface IntegrationDeadLetterRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID | null;
+  raw_event_id: UUID | null;
+  normalized_event_id: UUID | null;
+  provider_key: string;
+  failure_stage: IntegrationDeadLetterRecord["failureStage"];
+  failure_code: string;
+  failure_summary: string;
+  retry_count: number | string;
+  next_retry_at: Date | string | null;
+  status: IntegrationDeadLetterRecord["status"];
+  last_error_digest: string | null;
+  created_at: Date | string;
+  updated_at: Date | string;
+}
+
 interface MigrationCommitRow {
   id: UUID;
   tenant_id: UUID;
@@ -9173,6 +9284,26 @@ function mapMigrationConflictRow(row: MigrationConflictRow): MigrationConflictRe
   };
 }
 
+function mapIntegrationDeadLetterRow(row: IntegrationDeadLetterRow): IntegrationDeadLetterRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    rawEventId: row.raw_event_id,
+    normalizedEventId: row.normalized_event_id,
+    providerKey: row.provider_key,
+    failureStage: row.failure_stage,
+    failureCode: row.failure_code,
+    failureSummary: row.failure_summary,
+    retryCount: Number(row.retry_count),
+    nextRetryAt: row.next_retry_at ? toIso(row.next_retry_at) : null,
+    status: row.status,
+    lastErrorDigest: row.last_error_digest,
+    createdAt: toIso(row.created_at),
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
 function mapMigrationCommitRow(row: MigrationCommitRow): MigrationCommitRecord {
   return {
     id: row.id,
@@ -9188,6 +9319,10 @@ function mapMigrationCommitRow(row: MigrationCommitRow): MigrationCommitRecord {
     startedAt: toIso(row.started_at),
     finishedAt: row.finished_at ? toIso(row.finished_at) : null
   };
+}
+
+function sha256Text(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function mapImportedRecordLinkRow(row: ImportedRecordLinkRow): ImportedRecordLinkRecord {

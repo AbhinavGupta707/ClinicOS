@@ -163,7 +163,7 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
           tone: "success"
         });
       } else {
-        await resolveLiveMigrationConflict(batch.id, conflict.id, {
+        await resolveLiveMigrationConflict(batch.id, conflict, {
           actorName: profile.user.displayName,
           notes: "Keep existing verified ClinicOS record; import row stays unverified/history only.",
           resolution: "keep_existing_verified_record"

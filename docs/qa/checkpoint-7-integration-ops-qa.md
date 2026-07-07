@@ -22,7 +22,7 @@ The dry-run pins this route-family assumption for the integration branch:
 - `POST /v1/dead-letter-events/{deadLetterEventId}/replay`
 - `GET /v1/migration-batches?status=needs_review`
 - `GET /v1/migration-batches/{migrationBatchId}`
-- `POST /v1/migration-batches/{migrationBatchId}/conflicts/{conflictId}/resolve`
+- `POST /v1/migration-batches/{migrationBatchId}/rows/{rowId}/resolve`
 - `POST /v1/migration-batches/{migrationBatchId}/commit`
 
 If the backend lanes merge different route names, reconcile the web helper and dry-run script in the checkpoint integration branch before claiming CP7 completion.

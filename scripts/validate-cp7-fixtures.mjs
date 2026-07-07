@@ -28,7 +28,7 @@ const REQUIRED_ROUTE_FAMILIES = [
   "dead-letter-events",
   "dead-letter-replay",
   "migration-batches",
-  "migration-conflicts",
+  "migration-row-resolution",
   "migration-commit"
 ];
 const REQUIRED_BROWSER_SELECTORS = [

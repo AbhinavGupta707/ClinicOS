@@ -71,11 +71,13 @@ import {
   createSopTemplate,
   generateDueContinuityTasks,
   generateDueSopRuns,
+  listDeadLetterEvents,
   getMorningDashboard,
   getOwnerDashboard,
   getEncounter,
   getInvoice,
   getMigrationBatch,
+  listMigrationBatches,
   getPatientDentalChart,
   getPatient,
   getPatientPrepSummary,
@@ -99,6 +101,7 @@ import {
   listPatientMediaAssets,
   listPatientConsents,
   listPatients,
+  listProviderHealth,
   listProviderSchedules,
   listQueue,
   listRecalls,
@@ -110,6 +113,7 @@ import {
   receiveMediaUploadContent,
   recordInvoiceManualPayment,
   requestMediaUploadUrl,
+  replayDeadLetterEvent,
   resolveMigrationBatchRow,
   processPaymentWebhook,
   rollbackMigrationBatch,
@@ -284,6 +288,7 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
           repository: options.operationsRepository,
           auditSink: options.auditSink,
           mediaStorage: options.mediaStorage,
+          paymentProvider: options.paymentProvider ?? createRuntimePaymentProvider(options.config),
           useLocalAuthFixture: options.useLocalAuthFixture ?? false,
           fixtureSubject: options.fixtureSubject
         });
@@ -384,7 +389,8 @@ async function routeOperationsRequest(input: {
     auditSink: input.auditSink,
     mediaStorage: input.mediaStorage,
     paymentProvider: input.paymentProvider,
-    paymentRepository: paymentRepositoryFromOperationsRepository(input.repository)
+    paymentRepository: paymentRepositoryFromOperationsRepository(input.repository),
+    runtimeConfig: input.config
   };
   const isMediaContentUpload =
     input.request.method === "PUT" && /^\/v1\/media\/uploads\/[^/]+\/content$/.test(pathname);
@@ -412,6 +418,34 @@ async function routeOperationsRequest(input: {
 
   if (input.request.method === "POST" && pathname === "/v1/patients") {
     return createPatient(operationsContext, dependencies, body);
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/provider-health") {
+    return listProviderHealth(operationsContext, dependencies);
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/dead-letter-events") {
+    return listDeadLetterEvents(operationsContext, dependencies, {
+      limit: url.searchParams.get("limit"),
+      status: url.searchParams.get("status")
+    });
+  }
+
+  const deadLetterReplayMatch = pathname.match(/^\/v1\/dead-letter-events\/([^/]+)\/replay$/);
+  if (deadLetterReplayMatch && input.request.method === "POST") {
+    return replayDeadLetterEvent(
+      operationsContext,
+      dependencies,
+      pathUuid(deadLetterReplayMatch[1], "deadLetterEventId"),
+      body
+    );
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/migration-batches") {
+    return listMigrationBatches(operationsContext, dependencies, {
+      limit: url.searchParams.get("limit"),
+      status: url.searchParams.get("status")
+    });
   }
 
   if (input.request.method === "POST" && pathname === "/v1/migration-batches") {

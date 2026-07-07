@@ -224,7 +224,7 @@ and tests pin the CP7 route-family assumption:
 - `POST /v1/dead-letter-events/{deadLetterEventId}/replay`
 - `GET /v1/migration-batches?status=needs_review`
 - `GET /v1/migration-batches/{migrationBatchId}`
-- `POST /v1/migration-batches/{migrationBatchId}/conflicts/{conflictId}/resolve`
+- `POST /v1/migration-batches/{migrationBatchId}/rows/{rowId}/resolve`
 - `POST /v1/migration-batches/{migrationBatchId}/commit`
 
 `404` from CP7 route checks is classified as `CP7_ENDPOINT_NOT_REGISTERED`, so registration and

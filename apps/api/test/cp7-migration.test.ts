@@ -2,14 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildAccessContext, principalFromVerifiedKeycloakClaims } from "@clinic-os/auth";
 import { CHECKPOINT1_SEED_IDS } from "@clinic-os/db";
+import { createPaymentProvider } from "@clinic-os/integrations";
 import {
   commitMigrationBatch,
   createClinicOsApiServer,
   createMigrationBatch,
   InMemoryAuditSink,
+  listDeadLetterEvents,
+  listMigrationBatches,
   listMigrationBatchRows,
+  listProviderHealth,
   LocalFixtureClinicOperationsRepository,
   LocalFixtureIdentityRepository,
+  replayDeadLetterEvent,
   resolveMigrationBatchRow,
   rollbackMigrationBatch,
   type OperationsDependencies,
@@ -122,6 +127,70 @@ test("CP7 migration import separates invalid rows, resolves duplicates, commits 
   assert.equal(rolledBack.body.blockedLinks.length, 0);
   assert.equal(repository.patients.length, 1);
   assert.equal(repository.importedRecordLinks.every((link) => link.verificationStatus === "rolled_back"), true);
+});
+
+test("CP7 integration ops API surfaces provider health, dead-letter replay requests, and migration collection reads", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const auditSink = new InMemoryAuditSink();
+  const dependencies: OperationsDependencies = {
+    auditSink,
+    paymentProvider: createPaymentProvider({ provider: "simulator" }),
+    repository,
+    runtimeConfig: config
+  };
+  const owner = await operationsContext("seed-owner", "cp7-ops");
+  const deadLetterId = "12345678-1234-4234-8234-123456789abc";
+
+  repository.integrationDeadLetters.push({
+    clinicId,
+    createdAt: "2026-07-07T09:40:00.000Z",
+    failureCode: "normalization_failed",
+    failureStage: "normalization",
+    failureSummary: "Signed callback verification is not active.",
+    id: deadLetterId,
+    lastErrorDigest: "sha256:redacted",
+    nextRetryAt: null,
+    normalizedEventId: null,
+    providerKey: "meta_whatsapp_cloud",
+    rawEventId: "22345678-1234-4234-8234-123456789abc",
+    retryCount: 3,
+    status: "open",
+    tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+    updatedAt: "2026-07-07T09:40:00.000Z"
+  });
+
+  const health = await listProviderHealth(owner, dependencies);
+  assert.equal(health.status, 200);
+  assert.ok(health.body.providers.some((provider) => provider.providerKey === "whatsapp_cloud"));
+  assert.ok(health.body.providers.some((provider) => provider.providerKey === "manual_import"));
+  assert.equal(JSON.stringify(health.body).includes("Provider success confirmed"), false);
+
+  const listedDeadLetters = await listDeadLetterEvents(owner, dependencies, {
+    status: "unreviewed"
+  });
+  assert.equal(listedDeadLetters.status, 200);
+  assert.equal(listedDeadLetters.body.deadLetterEvents[0].status, "unreviewed");
+  assert.equal("rawEventId" in listedDeadLetters.body.deadLetterEvents[0], false);
+
+  const replay = await replayDeadLetterEvent(owner, dependencies, deadLetterId, {
+    reason: "Owner reviewed provider failure evidence."
+  });
+  assert.equal(replay.status, 202);
+  assert.equal(replay.body.replay.status, "accepted");
+  assert.equal(replay.body.replay.deadLetterEvent.status, "replay_requested");
+  assert.ok(auditSink.events.some((event) => event.action === "integration.dead_letter.replayed"));
+  assert.ok(repository.outboxEvents.some((event) => event.eventType === "integration.dead_letter.replayed"));
+
+  const created = await createMigrationBatch(owner, dependencies, {
+    importType: "patients",
+    rows: [{ externalReference: "ops-1", fullName: "Ops Import", phone: "+91 99900 03333" }]
+  });
+  const listedBatches = await listMigrationBatches(owner, dependencies, {
+    status: "ready_to_commit"
+  });
+  assert.equal(listedBatches.status, 200);
+  assert.equal(listedBatches.body.migrationBatches[0].batch.id, created.body.batch.id);
+  assert.equal("rawPayload" in listedBatches.body.migrationBatches[0].rows[0], false);
 });
 
 test("CP7 migration routes expose create and row listing contract without raw payloads", async (t) => {

@@ -33,7 +33,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 4 - Dental charting/media/imaging      | Complete  |       `c7b222c` |     `248496a` | CP4 visible project-scoped lanes merged into `codex/integration/checkpoint-4` and promoted to `main`. Master integration reconciled dental/media schema, live dental APIs, media security, browser smoke alignment, and full repository gates.                                     |
 | 5 - Treatment/checkout/payments         | Complete  |       `d3d341f` |     `d679a78` | CP5 visible project-scoped lanes merged into `codex/integration/checkpoint-5`, promoted to `main`, and followed by closeout docs commit `6f9fe1c`.                                                                                                           |
 | 6 - Continuity/operations/owner dashboard | Complete  |       `6f9fe1c` |     `08ddab9` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`, verified, documented, promoted to `main`, and post-promotion format gate repaired.                                                                 |
-| 7 - Live integrations/migration hardening | In Progress |       `e7139c4` |       pending | CP7 launch packet defines singular migration ownership, provider preflight, and four visible project-scoped worker lanes.                                                                 |
+| 7 - Live integrations/migration hardening | Integration Verified |       `e7139c4` |       pending | CP7 visible project-scoped lanes merged into `codex/integration/checkpoint-7`; master integration reconciled live provider health, dead-letter replay, migration collection/read contracts, and row-based migration resolution.                         |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -305,3 +305,31 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Telephony/Source: pending `local:480585d3-3208-4e03-9377-ff468927e57b`, thread `019f3c6a-2d9c-7c01-bbad-d95e05fdcf9c`, worktree `/Users/abhinavgupta/.codex/worktrees/046c/ClinicOS`.
   - Migration/Data: pending `local:e2e401d4-7304-4cbf-9b5d-fb87c28b44f1`, thread `019f3c6a-655d-7223-8cf2-8cde3cf10b80`, worktree `/Users/abhinavgupta/.codex/worktrees/9644/ClinicOS`.
   - Integration Ops/QA: pending `local:6c4aa04d-328a-415f-ad92-21d4bf54c75a`, thread `019f3c6a-9b72-7642-ab14-ce002f1d9511`, worktree `/Users/abhinavgupta/.codex/worktrees/386a/ClinicOS`.
+
+## Checkpoint 7 Integration Verification - 2026-07-07
+
+- Integration branch: `codex/integration/checkpoint-7`.
+- Merge order:
+  - Messaging Provider commit `9ce137a` merged first.
+  - Telephony/Source commit `945c248` merged second.
+  - Migration/Data commit `9aa5a29` merged third with master conflict resolution in domain exports/package metadata so source-attribution and migration/provider-event modules were both preserved.
+  - Integration Ops/QA commit `f839d03` merged fourth.
+- Master integration patch added live CP7 route registration and repository support for:
+  - `GET /v1/provider-health`.
+  - `GET /v1/dead-letter-events?status=unreviewed`.
+  - `POST /v1/dead-letter-events/{deadLetterEventId}/replay`.
+  - `GET /v1/migration-batches?status=needs_review`.
+  - Existing canonical row resolution: `POST /v1/migration-batches/{migrationBatchId}/rows/{rowId}/resolve`.
+- Master integration patch corrected the stale Ops/QA fixture/web route assumption from conflict-centered resolution to row-centered migration resolution. The web live helper now normalizes backend migration batch/detail payloads instead of relying on fixture-shaped migration cards.
+- Dead-letter replay records an audited replay request and outbox event, but does not mark provider delivery/read state or patient workflow state as complete without handler evidence.
+- Provider-health surfaces use real provider adapter health checks where configured, keep local simulators visibly local/unconfigured for the CP7 ops dashboard, and retain Google/manual import as explicit manual/unavailable states.
+- Targeted checks passed: `npm --workspace @clinic-os/domain run typecheck`, `npm --workspace @clinic-os/db run typecheck`, `npm --workspace @clinic-os/api run typecheck`, `npm --workspace @clinic-os/web test -- cp7-integration-ops`, `node scripts/validate-cp7-fixtures.mjs`, `node scripts/cp7-contract-smoke.mjs --dry-run`, `npm --workspace @clinic-os/api test -- cp7-migration.test.ts`, `npm --workspace @clinic-os/db test`, `npm --workspace @clinic-os/web run typecheck`, `npm --workspace @clinic-os/web run lint`, `npm --workspace @clinic-os/api run lint`, `npm --workspace @clinic-os/db run lint`, `npm --workspace @clinic-os/web run build`, and `npm run build:shared`.
+- Full repository gates passed before promotion: `npm run typecheck`, `npm run test`, `npm run lint`, `npm run security:secrets`, and `git diff --check`.
+- Browser/user smoke passed against the CP7 fixture:
+  - `CLINICOS_CP7_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000 npx playwright test tests/e2e/checkpoint-7-integration-ops-flow.spec.ts`.
+  - Desktop provider/dead-letter/migration workflow passed.
+  - 390px mobile reachability/no-horizontal-overflow smoke passed.
+- Accepted gaps:
+  - Hosted Meta/Razorpay/telephony callbacks remain deferred until deployment owns verified HTTPS callback registration.
+  - Google Business Profile live API remains deferred as a whole workflow; CP7 preserves manual source attribution without a live Google dependency.
+  - Fixture browser smoke proves UI safety/responsiveness and route assumptions; live route implementation is covered by API operations tests because deterministic CP7 fixture IDs are not seeded into every API runtime.

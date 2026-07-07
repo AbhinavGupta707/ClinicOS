@@ -312,7 +312,7 @@ export const SURFACES: SurfaceRegistration[] = [
     requiredApis: [
       "GET /v1/migration-batches?status=needs_review",
       "GET /v1/migration-batches/{migrationBatchId}",
-      "POST /v1/migration-batches/{migrationBatchId}/conflicts/{conflictId}/resolve",
+      "POST /v1/migration-batches/{migrationBatchId}/rows/{rowId}/resolve",
       "POST /v1/migration-batches/{migrationBatchId}/commit"
     ],
     roles: ["owner"]

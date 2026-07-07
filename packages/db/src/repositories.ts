@@ -51,12 +51,15 @@ import type {
   IntakeFormType,
   IntakeFormSubmissionRecord,
   IntakeSubmissionSource,
+  IntegrationDeadLetterRecord,
+  IntegrationDeadLetterStatus,
   MediaAssetRecord,
   MediaScanStatus,
   MediaStorageProviderKey,
   MediaType,
   MigrationBatchDetail,
   MigrationBatchRecord,
+  MigrationBatchState,
   MigrationCommitResult,
   MigrationConflictRecord,
   MigrationImportType,
@@ -212,12 +215,27 @@ export interface MigrationRowsFilter {
   status?: MigrationRowStatus | null;
 }
 
+export interface MigrationBatchSearchFilter {
+  status?: MigrationBatchState | null;
+  limit?: number | null;
+}
+
 export interface CommitMigrationBatchInput {
   idempotencyKey?: string | null;
 }
 
 export interface RollbackMigrationBatchInput {
   idempotencyKey?: string | null;
+}
+
+export interface IntegrationDeadLetterSearchFilter {
+  status?: IntegrationDeadLetterStatus | null;
+  limit?: number | null;
+}
+
+export interface ReplayIntegrationDeadLetterInput {
+  reviewedByUserId: UUID;
+  reason?: string | null;
 }
 
 export interface CreateLeadInput {
@@ -763,6 +781,10 @@ export interface ClinicOperationsRepository {
   updatePatient(scope: RepositoryScope, patientId: UUID, input: UpdatePatientInput): Promise<PatientRecord | null>;
 
   createMigrationBatch(scope: RepositoryScope, input: CreateMigrationBatchInput): Promise<MigrationBatchDetail>;
+  listMigrationBatches(
+    scope: RepositoryScope,
+    filter?: MigrationBatchSearchFilter
+  ): Promise<MigrationBatchDetail[]>;
   findMigrationBatchById(scope: RepositoryScope, batchId: UUID): Promise<MigrationBatchDetail | null>;
   listMigrationRows(
     scope: RepositoryScope,
@@ -785,6 +807,15 @@ export interface ClinicOperationsRepository {
     batchId: UUID,
     input?: RollbackMigrationBatchInput
   ): Promise<MigrationRollbackResult | null>;
+  listIntegrationDeadLetters(
+    scope: RepositoryScope,
+    filter?: IntegrationDeadLetterSearchFilter
+  ): Promise<IntegrationDeadLetterRecord[]>;
+  requestIntegrationDeadLetterReplay(
+    scope: RepositoryScope,
+    deadLetterId: UUID,
+    input: ReplayIntegrationDeadLetterInput
+  ): Promise<IntegrationDeadLetterRecord | null>;
 
   listLeads(scope: RepositoryScope, filter?: LeadSearchFilter): Promise<LeadRecord[]>;
   findLeadById(scope: RepositoryScope, leadId: UUID): Promise<LeadRecord | null>;

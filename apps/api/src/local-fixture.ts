@@ -38,6 +38,7 @@ import {
   type GenerateDueContinuityResult,
   type GenerateDueSopRunsInput,
   type GenerateDueSopRunsResult,
+  type IntegrationDeadLetterSearchFilter,
   type CreateInventoryCategoryInput,
   type CreateInventoryCheckRunInput,
   type CreateInventoryCheckTemplateInput,
@@ -54,6 +55,7 @@ import {
   type LabCaseSearchFilter,
   type LeadSearchFilter,
   type CommitMigrationBatchInput,
+  type MigrationBatchSearchFilter,
   type MigrationRowsFilter,
   type OwnerDashboardProjectionData,
   type OutboxEventInput,
@@ -62,6 +64,7 @@ import {
   type RepositoryScope,
   type RecordPaymentTransactionInput,
   type RecordRecallActionInput,
+  type ReplayIntegrationDeadLetterInput,
   type RevokeConsentInput,
   type ResolveMigrationRowInput,
   type RollbackMigrationBatchInput,
@@ -155,6 +158,7 @@ import {
   type MediaAssetRecord,
   type MediaUploadReservationRecord,
   type ImportedRecordLinkRecord,
+  type IntegrationDeadLetterRecord,
   type MigrationBatchDetail,
   type MigrationBatchRecord,
   type MigrationCommitRecord,
@@ -811,6 +815,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly migrationConflicts: MigrationConflictRecord[] = [];
   readonly migrationCommits: MigrationCommitRecord[] = [];
   readonly importedRecordLinks: ImportedRecordLinkRecord[] = [];
+  readonly integrationDeadLetters: IntegrationDeadLetterRecord[] = [];
   readonly intakeFormTemplates: IntakeFormTemplateRecord[] = [
     {
       id: uuid(),
@@ -1133,6 +1138,18 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return batch ? this.#migrationBatchDetail(scope, batch) : null;
   }
 
+  async listMigrationBatches(
+    scope: RepositoryScope,
+    filter: MigrationBatchSearchFilter = {}
+  ): Promise<MigrationBatchDetail[]> {
+    return this.migrationBatches
+      .filter((batch) => matchesScope(batch, scope))
+      .filter((batch) => !filter.status || batch.state === filter.status)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, filter.limit ?? 25)
+      .map((batch) => this.#migrationBatchDetail(scope, batch));
+  }
+
   async listMigrationRows(
     scope: RepositoryScope,
     batchId: UUID,
@@ -1384,6 +1401,49 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       importedRecordLinks: this.#importedLinksForBatch(scope, batchId),
       blockedLinks
     };
+  }
+
+  async listIntegrationDeadLetters(
+    scope: RepositoryScope,
+    filter: IntegrationDeadLetterSearchFilter = {}
+  ): Promise<IntegrationDeadLetterRecord[]> {
+    return this.integrationDeadLetters
+      .filter(
+        (deadLetter) =>
+          deadLetter.tenantId === scope.tenantId &&
+          (deadLetter.clinicId === null || deadLetter.clinicId === scope.clinicId)
+      )
+      .filter((deadLetter) => !filter.status || deadLetter.status === filter.status)
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt))
+      .slice(0, filter.limit ?? 50)
+      .map((deadLetter) => ({ ...deadLetter }));
+  }
+
+  async requestIntegrationDeadLetterReplay(
+    scope: RepositoryScope,
+    deadLetterId: UUID,
+    input: ReplayIntegrationDeadLetterInput
+  ): Promise<IntegrationDeadLetterRecord | null> {
+    const deadLetter =
+      this.integrationDeadLetters.find(
+        (candidate) =>
+          candidate.tenantId === scope.tenantId &&
+          (candidate.clinicId === null || candidate.clinicId === scope.clinicId) &&
+          candidate.id === deadLetterId
+      ) ?? null;
+    if (!deadLetter || ["replayed", "resolved", "discarded"].includes(deadLetter.status)) {
+      return null;
+    }
+
+    const requestedAt = new Date().toISOString();
+    deadLetter.status = "retry_scheduled";
+    deadLetter.retryCount += 1;
+    deadLetter.nextRetryAt = requestedAt;
+    deadLetter.updatedAt = requestedAt;
+    deadLetter.lastErrorDigest = input.reason
+      ? `reviewed:${input.reviewedByUserId}:${input.reason.slice(0, 64)}`
+      : deadLetter.lastErrorDigest;
+    return { ...deadLetter };
   }
 
   async listLeads(scope: RepositoryScope, filter: LeadSearchFilter = {}): Promise<LeadRecord[]> {

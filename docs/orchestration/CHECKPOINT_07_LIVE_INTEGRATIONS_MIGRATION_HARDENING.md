@@ -59,3 +59,24 @@ The master integration pass owns cross-lane reconciliation of route names, permi
 - No production Meta webhook dashboard registration until there is a deployed HTTPS callback with verification and signature handling.
 - No live Exotel/Google integration unless credentials and callback/authorization surfaces are provided.
 - No weakening of CP5 payment reconciliation; CP7 may display health/capabilities but does not replace the CP5 payment provider workflow.
+
+## Integration Verification
+
+- Integration branch: `codex/integration/checkpoint-7`.
+- Worker commits merged in dependency order: Messaging Provider `9ce137a`, Telephony/Source `945c248`, Migration/Data `9aa5a29`, and Integration Ops/QA `f839d03`.
+- Master integration reconciled cross-lane route drift:
+  - CP7 live provider health routes are registered and backed by real adapter health checks or explicit manual/unavailable states.
+  - CP7 dead-letter read/replay routes are backed by `integration_dead_letters`; replay records an audited request and outbox event without fake delivery/read completion.
+  - CP7 migration collection reads are backed by durable migration batches.
+  - Web/live migration resolution now uses the canonical row route: `POST /v1/migration-batches/{migrationBatchId}/rows/{rowId}/resolve`.
+- The Ops/QA fixture remains fixture-only and local/test-only. Live route implementation is tested at the API operations layer because deterministic fixture IDs are not guaranteed in every API runtime.
+- Checks passed:
+  - `npm run typecheck`
+  - `npm run test`
+  - `npm run lint`
+  - `npm run security:secrets`
+  - `npm --workspace @clinic-os/web run build`
+  - `node scripts/validate-cp7-fixtures.mjs`
+  - `node scripts/cp7-contract-smoke.mjs --dry-run`
+  - `CLINICOS_CP7_E2E_ENABLED=true CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000 npx playwright test tests/e2e/checkpoint-7-integration-ops-flow.spec.ts`
+- Browser smoke passed for desktop provider/dead-letter/migration review and 390px mobile reachability/no-horizontal-overflow.

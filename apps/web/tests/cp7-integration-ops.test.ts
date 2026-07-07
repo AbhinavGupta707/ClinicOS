@@ -150,7 +150,46 @@ describe("CP7 integration ops workflow", () => {
 
       if (url === "http://localhost/v1/migration-batches?status=needs_review") {
         expect(init?.method).toBeUndefined();
-        return jsonResponse({ migrationBatches: fixture.migrationBatches });
+        return jsonResponse({
+          migrationBatches: [
+            {
+              batch: {
+                committedRowCount: 0,
+                conflictRowCount: 1,
+                createdAt: "2026-07-07T08:30:00+05:30",
+                id: "cp7MigrationBatchRayPatients",
+                readyRowCount: 1,
+                sourceSystem: "ray_legacy_export",
+                state: "needs_review"
+              },
+              conflicts: [
+                {
+                  conflictType: "duplicate_patient",
+                  id: "cp7ConflictDuplicatePatient",
+                  rowId: "cp7MigrationRowDuplicatePatient",
+                  status: "open",
+                  summary: "Existing verified ClinicOS patient with same phone; keep existing record.",
+                  targetRecordId: "cp7ExistingPatient",
+                  targetRecordType: "patient"
+                }
+              ],
+              rows: [
+                {
+                  externalRecordId: "ray-patient-002",
+                  id: "cp7MigrationRowDuplicatePatient",
+                  importType: "patients",
+                  matchStatus: "duplicate_candidate",
+                  normalizedRecord: {
+                    fullName: "Synthetic duplicate candidate",
+                    phone: "+919999997002"
+                  },
+                  rowNumber: 3,
+                  status: "needs_review"
+                }
+              ]
+            }
+          ]
+        });
       }
 
       if (url.endsWith("/v1/dead-letter-events/cp7DeadLetterWhatsappStatus/replay")) {
@@ -160,11 +199,11 @@ describe("CP7 integration ops workflow", () => {
 
       if (
         url.endsWith(
-          "/v1/migration-batches/cp7MigrationBatchRayPatients/conflicts/cp7ConflictDuplicatePatient/resolve"
+          "/v1/migration-batches/cp7MigrationBatchRayPatients/rows/cp7MigrationRowDuplicatePatient/resolve"
         )
       ) {
         expect(init?.method).toBe("POST");
-        return jsonResponse({ conflict: { status: "resolved" } });
+        return jsonResponse({ row: { status: "ready_to_commit" } });
       }
 
       if (url.endsWith("/v1/migration-batches/cp7MigrationBatchRayPatients/commit")) {
@@ -183,7 +222,12 @@ describe("CP7 integration ops workflow", () => {
     });
     await resolveLiveMigrationConflict(
       "cp7MigrationBatchRayPatients",
-      "cp7ConflictDuplicatePatient",
+      {
+        id: "cp7ConflictDuplicatePatient",
+        rowId: "cp7MigrationRowDuplicatePatient",
+        targetRecordId: "cp7ExistingPatient",
+        targetRecordType: "patient"
+      },
       {
         actorName: "owner fixture user",
         notes: "Keep existing verified ClinicOS record.",
@@ -195,12 +239,16 @@ describe("CP7 integration ops workflow", () => {
     });
 
     expect(loaded.status).toBe("ready");
+    expect("data" in loaded ? loaded.data.migrationBatches[0]?.conflicts[0] : null).toMatchObject({
+      rowId: "cp7MigrationRowDuplicatePatient",
+      targetRecordId: "cp7ExistingPatient"
+    });
     expect(fetchMock.mock.calls.map((call) => call[0].toString())).toEqual([
       "http://localhost/v1/provider-health",
       "http://localhost/v1/dead-letter-events?status=unreviewed",
       "http://localhost/v1/migration-batches?status=needs_review",
       "http://localhost/v1/dead-letter-events/cp7DeadLetterWhatsappStatus/replay",
-      "http://localhost/v1/migration-batches/cp7MigrationBatchRayPatients/conflicts/cp7ConflictDuplicatePatient/resolve",
+      "http://localhost/v1/migration-batches/cp7MigrationBatchRayPatients/rows/cp7MigrationRowDuplicatePatient/resolve",
       "http://localhost/v1/migration-batches/cp7MigrationBatchRayPatients/commit"
     ]);
 
@@ -215,6 +263,15 @@ describe("CP7 integration ops workflow", () => {
     expect(commitBody).toMatchObject({
       committedByName: "owner fixture user",
       safetyConfirmation: "reviewed_rows_only_no_silent_overwrite"
+    });
+
+    const resolveBody = JSON.parse(fetchMock.mock.calls[4]?.[1]?.body as string);
+    expect(resolveBody).toMatchObject({
+      action: "link_existing",
+      note: "Keep existing verified ClinicOS record.",
+      reviewedByName: "owner fixture user",
+      targetRecordId: "cp7ExistingPatient",
+      targetRecordType: "patient"
     });
   });
 });
