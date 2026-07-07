@@ -6,7 +6,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Current Orchestration State
 
-- Branch: `main` after Checkpoint 7 promotion merge `92fb2b9`; Checkpoint 8 has not been launched yet.
+- Branch: `main` after Checkpoint 7 closeout commit `983cca5`; Checkpoint 8 launch packet is being prepared from that base.
 - Checkpoint 1 code is complete through `be619cd`.
 - Checkpoint 2 integration is complete on `codex/integration/checkpoint-2`; verified code commit is `58bf864` and closeout evidence is in `docs: record checkpoint 2 verification`.
 - CP2 documentation and evidence are recorded in `docs/orchestration/CHECKPOINT_02_LEAD_PATIENT_APPOINTMENT.md` and `docs/orchestration/CHECKPOINT_LOG.md`.
@@ -42,6 +42,7 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
   - Migration/Data: `019f3c6a-655d-7223-8cf2-8cde3cf10b80`, `/Users/abhinavgupta/.codex/worktrees/9644/ClinicOS`.
   - Integration Ops/QA: `019f3c6a-9b72-7642-ab14-ce002f1d9511`, `/Users/abhinavgupta/.codex/worktrees/386a/ClinicOS`.
 - Checkpoint 7 is verified and promoted to `main` via merge commit `92fb2b9`; master integration patch commit is `c193b81`. CP7 reconciled live provider-health, integration-dead-letter replay, migration-batch collection, and row-based migration resolution contracts.
+- Checkpoint 8 launch packet is `docs/orchestration/CHECKPOINT_08_MOBILE_CAPTURE_AI_SCRIBE.md`; CP8 lanes should be visible project-scoped worktree threads for Mobile Capture, AI Backend, Review UX, and AI Safety/QA.
 - The initial CP5 launch attempt created visible project-scoped worktrees at `f495c02`, but all worker turns failed before implementation with Codex account usage-limit errors. Treat those `CP5 FAILED - ...` threads as historical only.
 
 ## Non-Negotiable Product Posture

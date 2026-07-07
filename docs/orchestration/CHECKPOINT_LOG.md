@@ -34,6 +34,7 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
 | 5 - Treatment/checkout/payments         | Complete  |       `d3d341f` |     `d679a78` | CP5 visible project-scoped lanes merged into `codex/integration/checkpoint-5`, promoted to `main`, and followed by closeout docs commit `6f9fe1c`.                                                                                                           |
 | 6 - Continuity/operations/owner dashboard | Complete  |       `6f9fe1c` |     `08ddab9` | CP6 visible project-scoped lanes merged into `codex/integration/checkpoint-6`, verified, documented, promoted to `main`, and post-promotion format gate repaired.                                                                 |
 | 7 - Live integrations/migration hardening | Complete |       `e7139c4` |     `92fb2b9` | CP7 visible project-scoped lanes merged into `codex/integration/checkpoint-7`, master integration reconciled live provider health/dead-letter/migration contracts, and verified branch was promoted to `main`.                         |
+| 8 - Mobile capture and AI scribe/action proposals | Launching |       `983cca5` |       pending | CP8 launch packet defines Expo mobile capture, consent-gated AI backend, review UX, and AI safety/QA lanes with simulator/fixture posture until live AI credentials and data-residency approvals exist. |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -335,3 +336,15 @@ This file records checkpoint execution state for `orchestrate-worktrees`.
   - Hosted Meta/Razorpay/telephony callbacks remain deferred until deployment owns verified HTTPS callback registration.
   - Google Business Profile live API remains deferred as a whole workflow; CP7 preserves manual source attribution without a live Google dependency.
   - Fixture browser smoke proves UI safety/responsiveness and route assumptions; live route implementation is covered by API operations tests because deterministic CP7 fixture IDs are not seeded into every API runtime.
+
+## Checkpoint 8 Launch - 2026-07-07
+
+- Launch packet: `docs/orchestration/CHECKPOINT_08_MOBILE_CAPTURE_AI_SCRIBE.md`.
+- Base commit before launch packet: `983cca5`.
+- Credential/input preflight: `.secrets/orchestration.env` is present; live AI/STT provider keys and data-residency/retention approvals must not be assumed. CP8 proceeds with deterministic fixtures and provider simulators unless explicit live-provider approval exists.
+- Integration branch rule: CP8 lane commits merge first into `codex/integration/checkpoint-8`; promote to `main` only after code checks, AI safety checks, mobile/browser user checks, docs, and accepted-gap review pass.
+- Visible project-scoped lanes planned:
+  - Mobile Capture.
+  - AI Backend.
+  - Review UX.
+  - AI Safety/QA.
