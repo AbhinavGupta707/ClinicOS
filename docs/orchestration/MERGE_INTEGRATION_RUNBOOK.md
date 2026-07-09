@@ -1,8 +1,17 @@
 # Merge And Integration Runbook
 
-Date: 2026-07-06
+Date: 2026-07-09
 
-This runbook optimizes the master orchestration pass after isolated worker lanes finish. It supplements the `orchestrate-worktrees` skill and the canonical checkpoint plan in `clinic_os_specs_v2/20_ORCHESTRATION_CHECKPOINT_PLAN.md`.
+This runbook optimizes the master orchestration pass after isolated worker lanes finish. For CP12-CP18 it supplements the `orchestrate-worktrees` skill, `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`, and the active checkpoint packet. Plan 20 remains historical CP0-CP10 context.
+
+## CP12-CP18 Control Addendum
+
+- Master runs on `gpt-5.6-sol` `xhigh`; visible worktree workers use the packet’s explicit `gpt-5.6-sol` `high`/`xhigh` setting.
+- Create and verify the requested 90-second thread heartbeat at orchestration start. If rejected, record it and use the documented active-loop/fallback cadence.
+- Build a path-level conflict matrix before thread creation. Two workers must not own the same implementation file.
+- Use project ID `/Users/abhinavgupta/Desktop/ClinicOS` resolved through `list_projects`; never use hidden/projectless/raw worktrees.
+- Workers commit lane changes but never merge or change release truth. The master reviews actual worktree commits/diffs.
+- `main` remains the last verified checkpoint; all lane integration happens on `codex/integration/checkpoint-N`.
 
 ## CP1 Lesson
 
@@ -154,7 +163,7 @@ Before merging the integration branch to `main`, all must be true:
 - Lane commits and merge resolutions are reviewed.
 - Shared-file conflicts are explained in the checkpoint log.
 - Lockfile is reconciled.
-- Full code checks pass or accepted gaps are documented.
+- Full code checks pass; unavailable external evidence is recorded as an open hard gate, not an accepted implementation gap.
 - User-perspective checks pass for implemented workflows.
 - Local/live/simulator provider checks match checkpoint requirements.
 - Docs and memory are updated.

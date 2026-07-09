@@ -4,7 +4,7 @@
 **Status:** Current CP11-CP18 external-input checklist
 **Purpose:** List the information, accounts, and credentials needed for autonomous end-to-end implementation and verification.
 
-> Post-CP10 execution uses one persistent master session. This file now tracks external inputs/authority by remediation checkpoint, not worktree launch. Credential presence never equals provider activation; use the E0-E7 evidence standard.
+> CP11 was executed in one master session. CP12-CP18 use master-orchestrated visible worktrees. This file tracks external inputs/authority by remediation checkpoint; credential presence never equals provider activation and does not broaden worker authority.
 
 ## 1. Important Secret Handling Rule
 

@@ -34,27 +34,29 @@ For implementation agents:
 3. `24_PRODUCTION_SECURITY_THREAT_MODEL_AND_CONTROLS.md` - current threat model and mandatory controls.
 4. `../docs/security/PRODUCTION_SECURITY_AND_READINESS_REMEDIATION_REGISTER.md` - audited findings and closure evidence.
 5. `../docs/qa/PRODUCTION_READINESS_EVIDENCE_STANDARD.md` - evidence tiers and release claim rules.
-6. `../docs/implementation/POST_CP10_SINGLE_SESSION_EXECUTION_PROGRAM.md` - current execution protocol.
-7. `16_DOCUMENTATION_STRUCTURE_AND_IMPLEMENTATION_INDEX.md` - active documentation map and implementation workstream index.
-8. `01_PRD.md` - product vision, personas, workflows, replacement/coexistence strategy.
-9. `14_STACK_AND_VENDOR_DECISIONS.md` - current defaults for workflow runtime, auth, cloud region, WhatsApp, payments, ABDM, mobile capture, and AI/scribe architecture.
-10. `15_PILOT_FIELD_NOTE_DENTAL_WORKFLOW.md` - real dental clinic workflow evidence and pilot archetype.
-11. `02_SYSTEM_ARCHITECTURE.md` - three-layer architecture, tech stack, integration and event-driven design.
-12. `03_DOMAIN_MODEL_AND_FHIR_MAPPING.md` - canonical entities, source attribution, workflow primitives, FHIR R4 mapping.
-13. `06_SECURITY_PRIVACY_COMPLIANCE_INDIA.md` - DPDP, consent, audit, integration/legal guardrails.
-14. `17_IMPLEMENTATION_PLAN_PLATFORM_INFRA.md` - platform and infrastructure execution plan.
-15. `18_IMPLEMENTATION_PLAN_CLINIC_OS_DENTAL.md` - clinic workflow and dental product execution plan.
-16. `19_IMPLEMENTATION_PLAN_INTEGRATIONS_AI_MOBILE.md` - integrations, mobile capture, AI, and interoperability execution plan.
-17. `08_USER_STORIES_AND_ACCEPTANCE_CRITERIA.md` - implementation-ready user stories and acceptance criteria.
-18. `09_API_CONTRACTS_AND_EVENTS.md` - API, event, and agent action contracts.
-19. `04_INTEGRATIONS_SPEC.md` - integration reference details.
-20. `05_AI_AGENTS_AND_CLINICAL_SAFETY.md` - AI safety reference details.
-21. `13_CRITICAL_ARCHITECTURE_REVIEW.md` - research-backed review record and rationale.
-22. `00_SOURCE_REGISTER.md` - research sources and evidence notes.
-23. `21_EXECUTION_INPUTS_AND_CREDENTIALS.md` - credentials, sandbox accounts, clinic inputs, and access needed for autonomous verification.
-24. `22_CREDENTIAL_SETUP_GUIDE.md` - concrete provider setup steps and env fields for autonomous credential preflight.
+6. `../docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md` - current master/worktree execution protocol.
+7. `../docs/orchestration/CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md` - active launch packet.
+8. `../docs/orchestration/CP12_TO_CP18_AUTONOMOUS_KICKOFF.md` - copy/paste master-orchestrator launcher.
+9. `16_DOCUMENTATION_STRUCTURE_AND_IMPLEMENTATION_INDEX.md` - active documentation map and implementation workstream index.
+10. `01_PRD.md` - product vision, personas, workflows, replacement/coexistence strategy.
+11. `14_STACK_AND_VENDOR_DECISIONS.md` - current defaults for workflow runtime, auth, cloud region, WhatsApp, payments, ABDM, mobile capture, and AI/scribe architecture.
+12. `15_PILOT_FIELD_NOTE_DENTAL_WORKFLOW.md` - real dental clinic workflow evidence and pilot archetype.
+13. `02_SYSTEM_ARCHITECTURE.md` - three-layer architecture, tech stack, integration and event-driven design.
+14. `03_DOMAIN_MODEL_AND_FHIR_MAPPING.md` - canonical entities, source attribution, workflow primitives, FHIR R4 mapping.
+15. `06_SECURITY_PRIVACY_COMPLIANCE_INDIA.md` - DPDP, consent, audit, integration/legal guardrails.
+16. `17_IMPLEMENTATION_PLAN_PLATFORM_INFRA.md` - platform and infrastructure execution plan.
+17. `18_IMPLEMENTATION_PLAN_CLINIC_OS_DENTAL.md` - clinic workflow and dental product execution plan.
+18. `19_IMPLEMENTATION_PLAN_INTEGRATIONS_AI_MOBILE.md` - integrations, mobile capture, AI, and interoperability execution plan.
+19. `08_USER_STORIES_AND_ACCEPTANCE_CRITERIA.md` - implementation-ready user stories and acceptance criteria.
+20. `09_API_CONTRACTS_AND_EVENTS.md` - API, event, and agent action contracts.
+21. `04_INTEGRATIONS_SPEC.md` - integration reference details.
+22. `05_AI_AGENTS_AND_CLINICAL_SAFETY.md` - AI safety reference details.
+23. `13_CRITICAL_ARCHITECTURE_REVIEW.md` - research-backed review record and rationale.
+24. `00_SOURCE_REGISTER.md` - research sources and evidence notes.
+25. `21_EXECUTION_INPUTS_AND_CREDENTIALS.md` - credentials, sandbox accounts, clinic inputs, and access needed for autonomous verification.
+26. `22_CREDENTIAL_SETUP_GUIDE.md` - concrete provider setup steps and env fields for autonomous credential preflight.
 
-`20_ORCHESTRATION_CHECKPOINT_PLAN.md` and CP1-CP10 reports remain historical implementation records. Post-CP10 execution no longer defaults to worktree orchestration; plan 23 and the single-session program are authoritative.
+`20_ORCHESTRATION_CHECKPOINT_PLAN.md` and CP1-CP10 reports remain historical implementation records. CP11 was executed in one session. CP12-CP18 now use the post-CP11 master/worktree program and checkpoint packets.
 
 Historical roadmap/backlog/ADR material lives in `archive/` and is not current implementation guidance.
 

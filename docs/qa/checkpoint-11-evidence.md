@@ -22,9 +22,7 @@ release_decision: NO-GO
 skips: 0 within the E3 claims below
 ```
 
-The user prohibited commit/push. Evidence is therefore tied to the recorded base revision plus the
-disclosed dirty working tree, not an immutable result commit. User-owned untracked `research/` and
-`scripts/research/` remained untouched and are excluded from release formatting scope.
+The original closeout was recorded against the disclosed dirty tree because commit/push was then prohibited. The user later authorized CP11 promotion. The identical reviewed implementation was rechecked and committed to `main` at `a6109bb`; promotion checks included workspace/type/lint/build/secret/DB/diff gates and the full socket-enabled test suite with zero skips. User-owned untracked `research/` and `scripts/research/` remained untouched and excluded from release scope.
 
 Environment: Node `22.22.2`, npm `10.9.7`, Docker `29.3.1`, Compose `5.1.1`, local PostgreSQL client
 `16.14`, Docker PostgreSQL `16.13`, Flyway OSS `12.10.0` pinned by tag and image digest.

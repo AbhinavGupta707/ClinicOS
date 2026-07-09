@@ -1,6 +1,6 @@
 # 20 - Orchestration Checkpoint Plan
 
-> **Historical CP0-CP10 plan; superseded for new execution on 2026-07-09.** The user selected one persistent master session with sequential checkpoints. Use `23_PRODUCTION_READINESS_REMEDIATION_PLAN.md` and `../docs/implementation/POST_CP10_SINGLE_SESSION_EXECUTION_PROGRAM.md` for CP11 onward. Worktrees require a later explicit user decision; the historical lane/merge record below is retained for traceability only.
+> **Historical CP0-CP10 plan.** CP11 was executed in one master session. The user explicitly restored worktree orchestration for CP12-CP18; use `23_PRODUCTION_READINESS_REMEDIATION_PLAN.md` and `../docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`. The historical lane/merge record below remains valuable integration context.
 
 **Date:** 2026-07-06  
 **Status:** Historical CP0-CP10 orchestration plan

@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 **Status:** Canonical post-CP10 implementation plan
-**Execution model:** One persistent master Codex session, sequential checkpoints, no worktree orchestration by default
+**Execution model:** CP11 complete; CP12-CP18 use a `gpt-5.6-sol` `xhigh` master plus two to four isolated visible worktree workers
 **Release posture:** Local/synthetic development only; production and pilot are **NO-GO** until the applicable gates pass
 
 ## 1. Purpose
@@ -29,9 +29,11 @@ Fixtures remain test doubles. They may prove deterministic UI and contract behav
 
 Security is not a final hardening phase. Every checkpoint owns authorization, tenant isolation, runtime validation, audit, idempotency, secrets, logging/redaction, failure behavior, tests, documentation, and rollback for its scope. AI drafts only; a human signs clinical outputs.
 
-### 2.5 One master session executes sequentially
+### 2.5 Master-orchestrated worktrees execute CP12-CP18
 
-The default implementation path uses the current master session for architecture, code, tests, browser/device checks, integration, and documentation. Each checkpoint is still an independently reviewable increment with a clean scope and completion gate. Do not begin a later checkpoint to hide a failing earlier one. Worktrees or parallel agents require a later explicit user decision and a genuinely independent ownership boundary.
+CP11 was completed and verified in one master session. The user then explicitly selected worktree orchestration for CP12-CP18. One `gpt-5.6-sol` master at `xhigh` owns architecture, worker launch/monitoring, integration, testing, evidence and release judgment. Each checkpoint launches two to four visible project-scoped worktree workers from the same verified `main` commit with non-overlapping paths. High-risk lanes use `xhigh`; bounded UI/QA/docs lanes use `high`. The master integrates on `codex/integration/checkpoint-N` and promotes only after the full exit gate.
+
+The canonical control loop, heartbeat, model policy, shared-file rules and packets are in `../docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`.
 
 ## 3. Target Production Architecture
 
@@ -110,7 +112,7 @@ Web (Next.js BFF/session)             Mobile (Expo, PKCE, secure storage)
 
 ## 4. Sequential Checkpoints
 
-### CP11 — Verification Integrity and Durable Data Foundation
+### CP11 — Verification Integrity and Durable Data Foundation — Complete at E3
 
 **Goal:** make every subsequent claim reproducible against a clean, migrated, durable local stack.
 
@@ -135,6 +137,8 @@ Web (Next.js BFF/session)             Mobile (Expo, PKCE, secure storage)
 
 **Goal:** make public boundaries reviewable, validated and drift-resistant without a big-bang rewrite.
 
+**Packet:** `../docs/orchestration/CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md`.
+
 **Owns:** PRR-012, 017, 028, 030 contract foundations.
 
 **Deliverables:**
@@ -151,6 +155,8 @@ Web (Next.js BFF/session)             Mobile (Expo, PKCE, secure storage)
 ### CP13 — Durable Clinic-Day Vertical Slices
 
 **Goal:** prove the actual source-of-truth clinic workflows across database, API, worker and UI.
+
+**Packet:** `../docs/orchestration/CHECKPOINT_13_DURABLE_CLINIC_DAY.md`.
 
 **Owns:** PRR-014 and the complete durable product path; closes remaining PRR-027 behavior.
 
@@ -170,6 +176,8 @@ Each slice includes Postgres persistence, RLS, audit/outbox, worker recovery, ge
 ### CP14 — Deployable Cloud, Security Operations, Media, Observability and Recovery
 
 **Goal:** create and operate a production-equivalent environment rather than a posture-only profile.
+
+**Packet:** `../docs/orchestration/CHECKPOINT_14_CLOUD_SECURITY_OPERATIONS.md`.
 
 **Owns:** PRR-006, 007, 009, 013, 015, 016 infrastructure, 017 edge, 018, 019, 020, 024.
 
@@ -191,6 +199,8 @@ Each slice includes Postgres persistence, RLS, audit/outbox, worker recovery, ge
 
 **Goal:** activate only complete official provider workflows.
 
+**Packet:** `../docs/orchestration/CHECKPOINT_15_OFFICIAL_PROVIDER_INTEGRATIONS.md`.
+
 **Owns:** PRR-008 and 026 for Meta, Razorpay and selected telephony provider.
 
 **Deliverables:**
@@ -208,6 +218,8 @@ Each slice includes Postgres persistence, RLS, audit/outbox, worker recovery, ge
 
 **Goal:** complete selected boundary capabilities without exposing partial clinical behavior.
 
+**Packet:** `../docs/orchestration/CHECKPOINT_16_NATIVE_AI_INTEROPERABILITY.md`.
+
 **Owns:** PRR-004, 005, 021, 022, 023.
 
 **Deliverables:**
@@ -223,6 +235,8 @@ Each slice includes Postgres persistence, RLS, audit/outbox, worker recovery, ge
 ### CP17 — Pilot-Production Validation and Controlled Clinic Launch
 
 **Goal:** demonstrate production operation with approved people, process and data before clinical reliance expands.
+
+**Packet:** `../docs/orchestration/CHECKPOINT_17_CONTROLLED_PILOT_LAUNCH.md`.
 
 **Owns:** PRR-030 and final closure confirmation for all in-scope P1/P2 release gates.
 
@@ -241,6 +255,8 @@ Each slice includes Postgres persistence, RLS, audit/outbox, worker recovery, ge
 ### CP18 — Multi-Clinic General Production Readiness
 
 **Goal:** convert the controlled first-clinic deployment into a repeatable, supportable production service.
+
+**Packet:** `../docs/orchestration/CHECKPOINT_18_MULTI_CLINIC_GA.md`.
 
 **Deliverables:**
 
@@ -271,22 +287,22 @@ Every checkpoint must include, for its scope:
 - evidence record containing revision, environment, command/test, timestamp and result;
 - updated register, changelog, memory, checkpoint log and release truth.
 
-## 6. Single-Session Execution Protocol
+## 6. Worktree Orchestration Protocol
 
-For each checkpoint, the master session follows this loop:
+For CP12-CP18:
 
-1. Re-read this plan, the remediation register, threat model, evidence standard and the checkpoint packet.
-2. Confirm the current clean base, preserve user-owned/untracked work and record pre-existing failures.
-3. Create one checkpoint branch only if the user asks; otherwise work on the current authorized branch without destructive commands.
-4. Implement the smallest complete dependency-ordered slice. Shared manifests/lockfile are reconciled once per checkpoint.
-5. Run narrow tests immediately after each material change.
-6. Run database/API/worker/browser/device/provider evidence at the required tier.
-7. Run full repository/security/build gates.
-8. Inspect the diff, generated files, schema and release claims; record residual risks.
-9. Commit only when explicitly authorized or when the active execution request includes commits.
-10. Do not start the next checkpoint while the current exit gate is failing.
+1. Re-read this plan, the remediation register, threat model, evidence standard, orchestration program and active packet.
+2. Confirm `main` is the clean verified prior checkpoint; preserve user-owned research.
+3. Create the checkpoint integration branch and a path-level conflict matrix.
+4. Resolve the ClinicOS project and create two to four visible project worktree threads with the packet’s explicit `gpt-5.6-sol` reasoning effort.
+5. Record IDs, paths, base commit, ownership and tests; create/verify the 90-second master heartbeat.
+6. Monitor quietly through thread reads; fix real blockers without conflicting with running workers.
+7. Review each committed handoff/diff and merge in dependency order.
+8. Reconcile migrations, root manifests/lockfile, shared contracts/exports/routes/navigation and evidence once in master integration.
+9. Run full database/API/worker/browser/device/provider/cloud/security evidence at the required tier.
+10. Update truth/evidence, promote to `main`, run post-promotion smoke and only then launch the next checkpoint.
 
-Context compaction does not change the execution model: the docs and checkpoint record are durable state. The session resumes from the last verified checkpoint rather than restarting or batching unreviewed changes.
+External authority still limits cloud apply, provider registration, real traffic/PHI and destructive recovery. The master must not manufacture E4-E7 evidence or skip a blocked gate.
 
 ## 7. Inputs and External Authorities
 
@@ -305,4 +321,4 @@ Missing authority blocks activation, not foundational implementation. The affect
 
 ## 8. Start Here
 
-Execution begins with `../docs/implementation/CHECKPOINT_11_VERIFICATION_AND_DURABLE_DATA_FOUNDATION.md`. CP11 is intentionally narrow: until the database and test evidence are trustworthy, work on later cloud/provider/mobile features would multiply uncertainty.
+CP11 is complete at result commit `a6109bb`; evidence is in `../docs/orchestration/CHECKPOINT_11_FINAL_REPORT.md`. Execution resumes with `../docs/orchestration/CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md` under the worktree orchestration program.

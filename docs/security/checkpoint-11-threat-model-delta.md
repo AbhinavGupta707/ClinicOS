@@ -1,7 +1,7 @@
 # Checkpoint 11 Threat-Model Delta
 
 **Scope:** CP11 E3 durable local verification foundation
-**Base revision:** `1332d3c4391874e40ba35b76192a9472b3d541bf` plus the recorded dirty CP11 working tree
+**Base revision:** `1332d3c4391874e40ba35b76192a9472b3d541bf`; promoted result commit `a6109bb`
 **Data:** explicit synthetic-only, no real PHI or provider traffic
 **Production decision:** **NO-GO**
 

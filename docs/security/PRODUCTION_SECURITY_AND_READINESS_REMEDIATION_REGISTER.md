@@ -281,7 +281,7 @@ A finding closes only when all of the following exist:
 
 ### CP11 E3 status delta — 2026-07-09
 
-Evidence: `docs/qa/checkpoint-11-evidence.md`. Threat delta:
+Result commit: `a6109bb`. Evidence: `docs/qa/checkpoint-11-evidence.md`. Threat delta:
 `docs/security/checkpoint-11-threat-model-delta.md`.
 
 - PRR-002, PRR-011 and PRR-029 are closed for their CP11 E3 scope: deterministic critical-path

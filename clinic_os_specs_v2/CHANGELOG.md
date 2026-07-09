@@ -1,5 +1,21 @@
 # CHANGELOG
 
+## 2026-07-09 — CP12-CP18 worktree orchestration transition
+
+Changed:
+
+- Promoted the fully verified CP11 durable-local foundation to `main` at `a6109bb`.
+- Restored explicit master-orchestrated worktrees for CP12-CP18 at the user's direction.
+- Set the master to `gpt-5.6-sol` `xhigh`; worker lanes use `gpt-5.6-sol` `high` or `xhigh` according to boundary risk.
+- Added a canonical orchestration program covering visible project worktrees, a verified 90-second heartbeat request/fallback, quiet monitoring, path-level conflict prevention, worker handoffs, integration branches, merge review, testing and sequential promotion.
+- Added launch packets with non-overlapping lane ownership for CP12 modular API/contracts, CP13 durable clinic day, CP14 cloud/security operations, CP15 official providers, CP16 mobile/AI/interoperability, CP17 controlled pilot and CP18 multi-clinic GA.
+- Reclassified the prior single-session runbook as CP11 history only and updated AGENTS, indexes, memory and checkpoint state.
+
+Unchanged:
+
+- Release remains **NO-GO** until the required E4-E7 cloud, provider, device, recovery, clinic and production evidence exists.
+- External state changes and real PHI still require explicit authority; orchestration cannot manufacture evidence.
+
 ## 2026-07-09 — CP11 durable local verification foundation
 
 Changed:

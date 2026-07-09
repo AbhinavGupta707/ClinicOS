@@ -1,6 +1,6 @@
 # Orchestration Checkpoint Log
 
-This file records historical CP0-CP10 worktree execution and current post-CP10 checkpoint state. CP11 onward defaults to one persistent master session.
+This file records historical CP0-CP10 worktrees, the single-session CP11 foundation, and the master-orchestrated CP12-CP18 program.
 
 ## Baseline
 
@@ -10,7 +10,9 @@ This file records historical CP0-CP10 worktree execution and current post-CP10 c
 - Historical checkpoint plan: `clinic_os_specs_v2/20_ORCHESTRATION_CHECKPOINT_PLAN.md`
 - Current checkpoint plan: `clinic_os_specs_v2/23_PRODUCTION_READINESS_REMEDIATION_PLAN.md`
 - Current release decision: **NO-GO**
-- Current orchestration base: `447206a18e951ec7e55b2ccccf22d694c5c75b11`
+- CP11 result commit: `a6109bb`
+- Current orchestration program: `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`
+- CP12 launch base: exact clean `main` HEAD must be recorded after this planning change is committed
 
 ## Credential And Input Preflight - 2026-07-06
 
@@ -39,8 +41,8 @@ This file records historical CP0-CP10 worktree execution and current post-CP10 c
 | 8 - Mobile capture and AI scribe/action proposals | Complete |       `983cca5` |     `8ac2dae` | CP8 visible project-scoped lanes merged into `codex/integration/checkpoint-8` and promoted to `main`. Master integration reconciled AI safety route contracts, consent blocking semantics, review-role browser gates, and fixture/live evidence boundaries.                    |
 | 9 - Interoperability/security/ops hardening       | Complete |       `0dc9f91` |     `131300b` | CP9 visible project-scoped lanes merged into `codex/integration/checkpoint-9` and promoted to `main`; master integration reconciled Security route contracts, FHIR projection-only evidence, restore/load fixtures, and CP9 registered-unavailable browser smoke.              |
 | 10 - Local/fixture release-candidate evidence     | Historical E1/E2 | `a2d6501` | `226a7b0` | CP10 implementation was merged and remains regression evidence. The 2026-07-09 audit supersedes all pilot/production-readiness inference; current decision is NO-GO. |
-| 11 - Verification and durable data foundation     | E3 complete, uncommitted | `1332d3c` + dirty CP11 tree | Not committed by user instruction | Clean migration 014 database, 96 forced-RLS tenant tables, deterministic clock/type gates, atomic API/audit/outbox, least-privilege durable worker, truthful dependency readiness, two-pass runtime-ID smoke and rendered/Playwright evidence. Production remains NO-GO. |
-| 12 - Modular API and generated contracts          | Planned | CP11 working tree | Pending | May start only after the final CP11 rerun remains green; one master session. |
+| 11 - Verification and durable data foundation     | E3 complete | `1332d3c` | `a6109bb` | Clean migration 014 database, 96 forced-RLS tenant tables, deterministic clock/type gates, atomic API/audit/outbox, least-privilege durable worker, truthful dependency readiness, two-pass runtime-ID smoke and rendered/Playwright evidence. Production remains NO-GO. |
+| 12 - Modular API and generated contracts          | Planned | clean planning-complete `main` | Pending | Four visible worktrees under one `gpt-5.6-sol` `xhigh` master; packet and conflict-safe ownership defined. |
 
 ## Checkpoint 1 Closeout - 2026-07-06
 
@@ -518,7 +520,7 @@ This file records historical CP0-CP10 worktree execution and current post-CP10 c
   - `docs/qa/PRODUCTION_READINESS_EVIDENCE_STANDARD.md`;
   - `docs/implementation/POST_CP10_SINGLE_SESSION_EXECUTION_PROGRAM.md`;
   - `docs/implementation/CHECKPOINT_11_VERIFICATION_AND_DURABLE_DATA_FOUNDATION.md`.
-- User execution decision: one persistent master session, sequential verified checkpoints, no default worktree orchestration. A later worktree choice requires explicit user approval.
+- Historical decision at that time: one persistent master session for CP11. This was later superseded for CP12-CP18 by the explicit worktree transition recorded below.
 - Next safe action: execute CP11 and do not begin CP12 until the E3 exit gate is fully green.
 
 ## Checkpoint 11 E3 Closeout - 2026-07-09
@@ -563,3 +565,14 @@ This file records historical CP0-CP10 worktree execution and current post-CP10 c
   `docs/security/checkpoint-11-threat-model-delta.md`.
 - Decision: CP11 E3 durable-local boundary complete; overall pilot/production decision remains
   **NO-GO**. CP12 is next.
+
+## CP11 Promotion And CP12-CP18 Orchestration Transition - 2026-07-09
+
+- CP11 implementation/evidence was independently rechecked before promotion: `npm run check`, `npm run typecheck`, `npm run lint`, `npm run build`, `npm run security:secrets`, `npm run db:verify`, `git diff --check`, and the full socket-enabled `npm run test` passed with zero skips.
+- CP11 result commit on `main`: `a6109bb` (`feat(cp11): establish durable data and verification foundation`). User-owned `research/` and `scripts/research/` remained untracked and untouched.
+- User explicitly changed CP12-CP18 from a single-session implementation model to one master orchestrator plus two to four visible isolated project worktrees per checkpoint.
+- Master policy: `gpt-5.6-sol` at `xhigh`; worker policy: `gpt-5.6-sol` at `xhigh` for architecture/schema/security/clinical/cloud/provider/AI/interoperability and `high` for bounded UI/QA/docs/evidence.
+- Monitoring policy: create and verify a thread-attached 90-second heartbeat at orchestration start. If rejected, use an active roughly 90-second thread-read loop plus the shortest supported sub-hour heartbeat; do not fake schedule evidence.
+- Canonical program: `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`.
+- Active packet: `docs/orchestration/CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md`.
+- CP12 launch is not part of this planning session. The future master must record the clean planning-complete `main` HEAD, create `codex/integration/checkpoint-12`, resolve the ClinicOS project through `list_projects`, create/verify the heartbeat, and only then launch four worktrees.

@@ -4,7 +4,7 @@
 **Status:** Canonical planning index
 **Purpose:** Keep the project documentation lean, remove duplicated planning paths, and give implementation agents a clear execution map.
 
-> **Post-CP10 authority (2026-07-09):** The independent readiness audit found that CP10 is local/fixture evidence, not pilot or production readiness. Plan 23, plan 24, the remediation register, and the production evidence standard now govern execution. The user selected one persistent master session with sequential checkpoints; worktree orchestration is historical/optional rather than the default.
+> **Current authority (2026-07-09):** CP11 is complete at E3. Plan 23, plan 24, the remediation register, evidence standard, and `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md` govern CP12-CP18. The user explicitly selected one `gpt-5.6-sol` `xhigh` master plus two to four visible isolated worktree workers per checkpoint.
 
 ## 1. Executive Decision
 
@@ -21,7 +21,7 @@ Post-CP10 remediation adds two canonical plans without duplicating the domain re
 6. `23_PRODUCTION_READINESS_REMEDIATION_PLAN.md` - current target architecture and CP11-CP18 implementation sequence.
 7. `24_PRODUCTION_SECURITY_THREAT_MODEL_AND_CONTROLS.md` - security architecture and control baseline.
 
-Plan 20 is retained as the historical CP0-CP10 record. New execution uses the single-session runbook under `docs/implementation/`.
+Plan 20 is retained as the historical CP0-CP10 record. CP11’s historical single-session runbook is retained for traceability. New execution uses the worktree program and CP12-CP18 packets under `docs/orchestration/`.
 
 This is better than one massive implementation plan because ClinicOS has three different execution surfaces:
 
@@ -61,8 +61,17 @@ These files are active and should be treated as current context.
 | `24_PRODUCTION_SECURITY_THREAT_MODEL_AND_CONTROLS.md` | Current security baseline | Threat model, invariants, control matrix, and hard security gate. |
 | `../docs/security/PRODUCTION_SECURITY_AND_READINESS_REMEDIATION_REGISTER.md` | Independent audit register | Findings, severity, remediation, dependencies, and closure evidence. |
 | `../docs/qa/PRODUCTION_READINESS_EVIDENCE_STANDARD.md` | Evidence standard | E0-E7 tiers, claim rules, freshness, and go/no-go criteria. |
-| `../docs/implementation/POST_CP10_SINGLE_SESSION_EXECUTION_PROGRAM.md` | Execution runbook | Current sequential master-session control loop. |
-| `../docs/implementation/CHECKPOINT_11_VERIFICATION_AND_DURABLE_DATA_FOUNDATION.md` | Active checkpoint packet | First remediation implementation unit. |
+| `../docs/implementation/POST_CP10_SINGLE_SESSION_EXECUTION_PROGRAM.md` | Historical CP11 runbook | Explains the completed single-session CP11 execution only. |
+| `../docs/implementation/CHECKPOINT_11_VERIFICATION_AND_DURABLE_DATA_FOUNDATION.md` | Completed checkpoint packet | CP11 requirements and E3 closeout context. |
+| `../docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md` | Current execution runbook | Master heartbeat, model policy, conflict-safe workers, merge and verification loop. |
+| `../docs/orchestration/CP12_TO_CP18_AUTONOMOUS_KICKOFF.md` | Master launcher | Copy/paste prompt for the autonomous `gpt-5.6-sol` `xhigh` orchestrator. |
+| `../docs/orchestration/CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md` | Active checkpoint packet | CP12 four-lane modular API/contract execution. |
+| `../docs/orchestration/CHECKPOINT_13_DURABLE_CLINIC_DAY.md` | Future packet | CP13 four vertical durable workflow lanes. |
+| `../docs/orchestration/CHECKPOINT_14_CLOUD_SECURITY_OPERATIONS.md` | Future packet | CP14 cloud/security/media/telemetry/recovery lanes. |
+| `../docs/orchestration/CHECKPOINT_15_OFFICIAL_PROVIDER_INTEGRATIONS.md` | Future packet | CP15 Meta/Razorpay/telephony/provider-ops lanes. |
+| `../docs/orchestration/CHECKPOINT_16_NATIVE_AI_INTEROPERABILITY.md` | Future packet | CP16 mobile/AI/FHIR-ABDM/safety-QA lanes. |
+| `../docs/orchestration/CHECKPOINT_17_CONTROLLED_PILOT_LAUNCH.md` | Future packet | CP17 E5/E6 release assurance lanes. |
+| `../docs/orchestration/CHECKPOINT_18_MULTI_CLINIC_GA.md` | Future packet | CP18 E7 multi-clinic production lanes. |
 | `00_SOURCE_REGISTER.md` | Source register | Evidence, references, and research traceability. |
 | `CHANGELOG.md` | Change history | What changed across planning passes. |
 | `COMBINED_BUILD_PACK.md` | Pointer only | Explains why the old combined pack is archived. |
@@ -101,8 +110,8 @@ Read in this order:
 4. `24_PRODUCTION_SECURITY_THREAT_MODEL_AND_CONTROLS.md`
 5. `../docs/security/PRODUCTION_SECURITY_AND_READINESS_REMEDIATION_REGISTER.md`
 6. `../docs/qa/PRODUCTION_READINESS_EVIDENCE_STANDARD.md`
-7. `../docs/implementation/POST_CP10_SINGLE_SESSION_EXECUTION_PROGRAM.md`
-8. The active checkpoint packet, beginning with CP11
+7. `../docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`
+8. The active checkpoint packet, beginning with CP12
 9. The relevant focused implementation plan: `17`, `18`, or `19`
 10. The reference docs cited by that plan
 

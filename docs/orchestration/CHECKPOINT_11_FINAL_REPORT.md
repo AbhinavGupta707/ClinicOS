@@ -4,12 +4,13 @@
 **Overall release decision:** **NO-GO**
 **Executed:** 2026-07-09T21:58:14Z
 **Base revision:** `1332d3c4391874e40ba35b76192a9472b3d541bf`
-**Working tree:** intentionally dirty and uncommitted; commit/push prohibited by user
+**Result commit:** `a6109bb` on `main`
+**Promotion review:** rerun 2026-07-09 before commit; check, typecheck, lint, build, secret scan, DB verify and full socket-enabled zero-skip tests passed
 **Execution model:** one persistent master session; no subagents, worktrees or CP12 work
 
 ## Outcome
 
-CP11's E3 exit gate is complete. ClinicOS now has a reproducible local durable foundation rather
+CP11's E3 exit gate is complete and committed at `a6109bb`. ClinicOS now has a reproducible local durable foundation rather
 than fixture-derived readiness:
 
 - deterministic clocks and clinic-local calendar behavior at critical API/database boundaries;
@@ -88,7 +89,4 @@ signed build/container provenance.
 
 ## Handoff state
 
-CP12 has not begun. The next session must start by reading this report and the evidence record,
-confirming the same working-tree state, and rerunning any invalidated CP11 gates before changing the
-API boundary. Do not weaken migration 014, the database-role split, atomic unit of work, health
-semantics, runtime-ID smoke or research exclusions during modularization.
+CP12 has not begun. CP12 now uses the worktree orchestration program and `CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md`. The master must launch from a clean planning-complete `main`, record the exact base, and rerun invalidated CP11 gates. Do not weaken migration 014, the database-role split, atomic unit of work, health semantics, runtime-ID smoke or research exclusions during modularization.
