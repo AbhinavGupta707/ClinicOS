@@ -1,6 +1,6 @@
 # 22 - Credential Setup Guide
 
-**Date:** 2026-07-09
+**Date:** 2026-07-10
 **Status:** Current local presence/activation tracker; secrets remain external
 **Purpose:** Give the autonomous implementation run a concrete, provider-by-provider credential handoff path without committing secrets.
 
@@ -20,16 +20,24 @@ docs/orchestration/orchestration.env.example
 
 Never commit the real `.secrets/orchestration.env` file.
 
+Keep it readable only by the local user:
+
+```text
+chmod 600 .secrets/orchestration.env
+```
+
+The master task may use this file for authorized integration checks. Worker worktrees must never copy, read, source or print it. Workers use deterministic fixtures/contracts and honest unavailable states; the master performs live AWS/provider verification after reviewed integration.
+
 Credential **presence is not readiness**. Track every integration through `absent`, `registered`, `configured`, `sandbox_verified`, `production_verified`, `degraded`, and `disabled`. Diagnose provider registration/discovery and official activation before permissions/runtime. The 2026-07-09 audit found no provider at `production_verified`.
 
 ## 2. Verified Local Execution Surface
 
-Verified through 2026-07-07:
+Verified through 2026-07-10:
 
 | Surface | Status | Notes |
 |---|---|---|
 | GitHub remote | Ready | `origin` points to `https://github.com/AbhinavGupta707/ClinicOS.git`. |
-| GitHub CLI | Ready | Authenticated as `AbhinavGupta707`; token has `repo` and `workflow` scopes. |
+| GitHub CLI | Blocked | `gh auth status -h github.com` reports the active token for `AbhinavGupta707` is invalid. Run `gh auth login -h github.com`, then recheck before CP12 worker launch. |
 | npm/package network | Ready | `npm ping` succeeded. |
 | Node/npm | Ready | Node `v22.22.2`, npm `10.9.7`. |
 | Playwright CLI | Available | `npx --yes playwright --version` resolved `1.61.1`; project dependency and browser install still belong in Checkpoint 1. |
@@ -37,7 +45,9 @@ Verified through 2026-07-07:
 | Expo CLI | Available | `npx --yes expo --version` resolved `57.0.4`; actual Expo app setup belongs in the mobile checkpoint. |
 | Xcode | Ready | Xcode `26.4`. |
 | iOS simulators | Ready | iOS `26.4` simulators are available; XcodeBuildMCP project/scheme defaults will be configured after an app exists. |
-| AWS CLI | Ready | AWS CLI `2.35.11`; local `clinicos` profile is authenticated. |
+| AWS CLI | Ready | AWS CLI `2.35.11`; `clinicos-human` resolved on 2026-07-10 to account `222634407676`. |
+| AWS console/MFA | User-confirmed ready | Console access and both configured MFA methods were reported working on 2026-07-10; CLI STS was verified separately. |
+| Terraform CLI | Absent | Install/activate and version-pin during CP14 preflight before Terraform validation/plan/apply evidence. |
 | AWS Terraform backend | Ready | S3 state bucket and DynamoDB lock table are created in `ap-south-1`; names are stored only in `.secrets/orchestration.env`. |
 | AWS cost controls | Ready for alerts | AWS Budgets near-zero alert is configured. This warns on spend; it is not a hard usage stop and cannot guarantee credits are used before card billing in every AWS billing path. |
 | Razorpay sandbox API | Ready | Test key ID and secret are present locally and API auth has been verified. |
@@ -79,7 +89,7 @@ RAZORPAY_WEBHOOK_SECRET=...
 RAZORPAY_WEBHOOK_URL=https://.../webhooks/razorpay
 ```
 
-Keep `PAYMENT_PROVIDER=simulator` until sandbox credentials are ready.
+Keep `PAYMENT_PROVIDER=simulator` even while credentials are stored. Select `razorpay` only when CP15 has deployed the canonical HTTPS callback and begins explicitly authorized sandbox verification.
 
 Current local status:
 
@@ -119,7 +129,7 @@ WHATSAPP_WEBHOOK_VERIFY_TOKEN=...
 WHATSAPP_WEBHOOK_APP_SECRET_PROOF_REQUIRED=false
 ```
 
-Keep `WHATSAPP_PROVIDER=simulator` until sandbox credentials are ready.
+Keep `WHATSAPP_PROVIDER=simulator` even while credentials are stored. Select `meta_cloud` only when CP15 has deployed the canonical HTTPS callback and begins explicitly authorized sandbox verification.
 
 Current local status:
 
@@ -138,12 +148,12 @@ Best default for ClinicOS:
 - Prefer GitHub Actions OIDC -> AWS role assumption for CI/CD.
 - Avoid long-lived access keys where possible.
 
-For the local autonomous run, either refresh the existing `default` profile or provide short-lived env credentials.
+For the local autonomous run, use the human-controlled `clinicos-human` profile. Never silently fall back to the older `clinicos` profile or long-lived environment credentials.
 
 Recommended local SSO route:
 
 ```text
-aws login
+aws login --profile clinicos-human --region ap-south-1
 ```
 
 or, for IAM Identity Center profiles:
@@ -155,7 +165,7 @@ aws sso login --profile <profile>
 Environment fields:
 
 ```text
-AWS_PROFILE=default
+AWS_PROFILE=clinicos-human
 AWS_REGION=ap-south-1
 AWS_DR_REGION=ap-south-2
 AWS_ACCOUNT_ID=...
@@ -172,14 +182,27 @@ AWS_SECRET_ACCESS_KEY=...
 AWS_SESSION_TOKEN=...
 ```
 
-Infra apply should not run until `aws sts get-caller-identity` succeeds.
+Before every AWS-dependent checkpoint or mutation, run:
+
+```text
+aws sts get-caller-identity --profile clinicos-human
+```
+
+Require account `222634407676`. If the session is expired, stop and request:
+
+```text
+aws login --profile clinicos-human --region ap-south-1
+```
+
+Infra plan/apply, provider registration and recovery mutations remain master-only and still require the checkpoint's explicit authority.
 
 Current local status:
 
-- `aws sts get-caller-identity --profile clinicos` has succeeded.
+- `aws sts get-caller-identity --profile clinicos-human` succeeded on 2026-07-10 for account `222634407676`.
 - Terraform backend bucket and lock table values are present in `.secrets/orchestration.env`.
 - `AWS_KMS_KEY_ALIAS` is not yet present and pilot-prod Terraform currently declares no providers/resources.
-- Use the `clinicos` profile for local infrastructure commands unless the checkpoint run deliberately switches to GitHub Actions OIDC.
+- `.secrets/orchestration.env` is mode `0600`, selects `clinicos-human`, and keeps Meta/Razorpay adapters on `simulator` until CP15.
+- Do not use or silently fall back to `clinicos`. CP14 should define GitHub Actions OIDC and KMS resources before the master requests apply authority.
 
 ## 6. Webhook Registration Readiness
 

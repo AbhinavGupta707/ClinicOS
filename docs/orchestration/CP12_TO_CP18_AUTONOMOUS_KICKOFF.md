@@ -28,10 +28,19 @@ Read completely before acting:
 Baseline requirements:
 
 - CP11 result commit is a6109bb. Confirm current clean main contains it and the orchestration planning commit.
+- Treat e36a7f1 as the reviewed preflight ancestor, not an immutable launch hash. Record the actual current clean main HEAD immediately before creating the integration branch and initial workers; all initial workers use that exact commit.
 - Preserve untracked user-owned research/ and scripts/research/; never stage, edit, format or delete them.
 - Rerun CP11 invalidation-sensitive gates before launch.
 - Resolve the saved ClinicOS project with list_projects.
 - Create codex/integration/checkpoint-12 from the recorded main launch commit.
+
+Credential and historical-worktree preflight:
+
+- Run gh auth status -h github.com. If invalid, stop before worker creation and request gh auth login -h github.com; recheck after login.
+- Confirm .secrets/orchestration.env is ignored, mode 0600, selects AWS_PROFILE=clinicos-human, WHATSAPP_PROVIDER=simulator and PAYMENT_PROVIDER=simulator. Inspect only named non-secret selectors/presence; never print secret values.
+- Do not copy, read, source or expose .secrets/orchestration.env in worker worktrees. Authenticated CLI/browser state, AWS/provider commands, live credentials and dashboard operations are master-only. Workers use deterministic contract tests and honest unavailable states.
+- Before any AWS-dependent checkpoint or command, run aws sts get-caller-identity --profile clinicos-human and require account 222634407676. If expired, stop and request aws login --profile clinicos-human --region ap-south-1. Never fall back to clinicos.
+- Inspect git worktree list --porcelain. Existing CP8-CP10-era worktrees are historical: do not reuse or delete them unless their base/status and unique unmerged work have been checked.
 
 Monitoring:
 

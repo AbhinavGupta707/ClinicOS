@@ -1,6 +1,6 @@
 # Post-CP11 Worktree Orchestration Program
 
-**Date:** 2026-07-09
+**Date:** 2026-07-10
 **Status:** Canonical CP12-CP18 execution runbook
 **Master:** one project-scoped Codex master task on `gpt-5.6-sol` with `xhigh` reasoning
 **Workers:** adaptive visible project-scoped worktree tasks; no fixed count or padding
@@ -56,7 +56,9 @@ At the beginning of the orchestration task and before each checkpoint:
 5. Resolve the saved ClinicOS project with `list_projects`; use the returned project ID, not a guessed projectless target.
 6. Create `codex/integration/checkpoint-N` from the verified `main` launch commit and record both.
 7. Confirm external authorities, installed tools and official activation state. Diagnose absent/unregistered tools or providers before permissions/runtime.
-8. Create and verify the monitoring heartbeat described below.
+8. Run the credential boundary preflight below. Do not launch workers while required GitHub authentication is invalid or the ignored secret handoff is unsafe/misconfigured.
+9. Classify existing worktrees as historical or active from their recorded checkpoint/base. Never reuse or delete an old worktree without checking for unique unmerged work.
+10. Create and verify the monitoring heartbeat described below.
 
 If the previous checkpoint exists only as uncommitted changes, stop lane launch. Review, test and commit/promote it first so every worktree starts from the same immutable state.
 
@@ -76,6 +78,16 @@ Do not use hidden subagents, projectless tasks, raw `git worktree add`, or a sam
 Workers must commit their lane changes before handoff. They must not push or merge. A clean handoff includes the commit hash, `git status`, changed paths, commands/results/skips, contract/schema/env changes, residual risks and exact integration instructions.
 
 A dependent second-wave worker is allowed only after its producer lanes are reviewed and merged to a stable integration commit. Record that integration commit as its base, rerun the adaptive lane-count gate, and do not keep the producer lane active against the same surfaces. Second waves are optional; the master should do small integration/QA work directly.
+
+### 4.1 Credential and external-state boundary
+
+- `.secrets/orchestration.env` exists only as an ignored, mode-`0600` handoff in the primary checkout. Workers must not copy, read, source, print or receive its values.
+- Authenticated GitHub/AWS/Chrome sessions, live credentials, AWS commands, provider API tests and provider-dashboard operations are master-only.
+- Worker prompts explicitly require deterministic contract tests, sanitized fixtures and honest `unconfigured`/unavailable behavior. Provider success cannot be claimed from a simulator.
+- Before CP12 launch, the master runs `gh auth status -h github.com`. If invalid, stop before worker creation and request `gh auth login -h github.com`; verify status again.
+- The local secret selectors remain `WHATSAPP_PROVIDER=simulator` and `PAYMENT_PROVIDER=simulator` until CP15 has deployed signed HTTPS callback routes and the user authorizes official sandbox activation.
+- Before every AWS-dependent checkpoint or mutation, the master runs `aws sts get-caller-identity --profile clinicos-human` and requires account `222634407676`. If expired, stop and request `aws login --profile clinicos-human --region ap-south-1`. Never fall back to `clinicos` or long-lived environment keys.
+- Terraform plan/apply, DNS/TLS, KMS, GitHub OIDC, provider registration, real traffic and recovery mutations remain gated by the active checkpoint and explicit authority.
 
 ## 5. Model and Reasoning Policy
 

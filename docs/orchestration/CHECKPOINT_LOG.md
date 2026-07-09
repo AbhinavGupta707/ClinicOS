@@ -11,20 +11,25 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 - Current checkpoint plan: `clinic_os_specs_v2/23_PRODUCTION_READINESS_REMEDIATION_PLAN.md`
 - Current release decision: **NO-GO**
 - CP11 result commit: `a6109bb`
+- Credential-preflight ancestor: `e36a7f1`; actual CP12 launch base is the clean `main` HEAD recorded immediately before worker creation
 - Current orchestration program: `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`
 - CP12 launch base: exact clean `main` HEAD must be recorded after this planning change is committed
 
-## Credential And Input Preflight - 2026-07-06
+## Credential And Input Preflight - Updated 2026-07-10
 
-- `.secrets/orchestration.env`: present and ignored by Git.
+- `.secrets/orchestration.env`: present, ignored by Git, and mode `0600`.
 - Non-secret provider selections: `WHATSAPP_PROVIDER=simulator`, `PAYMENT_PROVIDER=simulator`, `TELEPHONY_PROVIDER=simulator`, `LLM_PROVIDER=simulator`, `TRANSCRIPTION_PROVIDER=simulator`.
 - Synthetic input paths are configured for patients, appointments, pricebook, templates, X-ray sample directory, and synthetic-only pilot data.
 - Local workspace check: `npm run check` passed.
 - Node/npm: Node `v22.22.2`, npm `10.9.7`.
 - Browser/mobile tooling: Playwright CLI `1.61.1` and Expo CLI `57.0.4` resolve with approved npm network access; Xcode `26.4` is installed.
 - GitHub CLI: `gh auth status` reports the local token for `AbhinavGupta707` is invalid. GitHub push/Actions checks are a live verification gap until reauthenticated.
-- AWS: initial sandboxed `aws sts get-caller-identity` did not authenticate; subsequent local setup authenticated the `clinicos` profile and recorded backend bucket/lock table names only in `.secrets/orchestration.env`.
-- Live provider credentials for WhatsApp and Razorpay sandbox are now partly present locally per `clinic_os_specs_v2/22_CREDENTIAL_SETUP_GUIDE.md`, but dashboard webhook registration must wait for deployed HTTPS callbacks with signature verification. Later checkpoints should keep simulator providers unless the checkpoint explicitly owns live-provider activation.
+- AWS: `aws sts get-caller-identity --profile clinicos-human` verified account `222634407676` on 2026-07-10. Never fall back to the older `clinicos` profile. Backend bucket/lock-table identifiers remain only in the ignored secret handoff.
+- Terraform CLI remains absent; CP14 must install/activate and version-pin it before Terraform evidence.
+- Meta sandbox and Razorpay test credentials are stored locally, while both non-secret provider selectors remain `simulator`. Dashboard registration and official sandbox execution wait for CP15's deployed signed HTTPS callbacks and explicit authority.
+- Worker credential boundary: existing and future workers never copy/read/source the secret handoff and never own live AWS/provider/dashboard operations; the master performs authorized external verification after integration.
+- Historical worktrees: 12 CP8-CP10-era worktrees were checked on 2026-07-10; all were clean, all heads were ancestors of `main`, and none had a unique commit. They are excluded from CP12. Recheck before any reuse or deletion.
+- Synthetic fixture paths for patients, appointments, pricebook, templates and X-ray/media samples were rechecked and exist.
 
 ## Checkpoints
 

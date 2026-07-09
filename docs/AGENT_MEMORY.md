@@ -1,6 +1,6 @@
 # ClinicOS Agent Memory
 
-Last updated: 2026-07-09
+Last updated: 2026-07-10
 
 This file captures durable execution memory for future Codex sessions. Treat `clinic_os_specs_v2/` as the product source of truth and this file as operational memory about how to work in this repository.
 
@@ -11,6 +11,9 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 - **Monitoring decision:** the future master creates and verifies a thread-attached heartbeat at the requested 90-second cadence. If the app rejects that interval, use an active roughly 90-second status-read loop plus the shortest supported sub-hour heartbeat and record the limitation.
 - **Current checkpoint state:** CP11 E3 is committed on `main` at `a6109bb`; final report and evidence are `docs/orchestration/CHECKPOINT_11_FINAL_REPORT.md` and `docs/qa/checkpoint-11-evidence.md`. Any material CP11 code/schema change invalidates its evidence and requires rerun.
 - **Next checkpoint:** CP12 provisionally starts with three independent contract-generation, repository-seam and security/parity-foundation workers. The API framework consumes those interfaces in a later worktree or the master after interface freeze. Launch packet: `docs/orchestration/CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md`. Resolve the project through `list_projects`, launch only from clean verified `main`, integrate on `codex/integration/checkpoint-12`, and do not start CP13 until CP12 is promoted.
+- **Credential preflight:** `.secrets/orchestration.env` is ignored, mode `0600`, selects `AWS_PROFILE=clinicos-human`, and keeps Meta/Razorpay providers on `simulator`. AWS STS verified account `222634407676` on 2026-07-10. GitHub CLI authentication remains invalid and must be repaired with `gh auth login -h github.com` before CP12 worker launch.
+- **Credential boundary:** workers never copy/read/source the secret handoff and never run live AWS/provider/dashboard operations. The master owns authenticated external state and live verification. Never fall back to the older `clinicos` AWS profile.
+- **Historical worktrees:** 12 CP8-CP10-era worktrees were checked on 2026-07-10. Every tree was clean, every head was an ancestor of `main`, and none had a unique commit. They are historical and excluded from CP12; do not reuse or delete them without a fresh status check. New CP12 workers start from the newly recorded clean `main` launch commit.
 - Remaining blockers include validation-only Terraform, console-only telemetry, no production media
   adapter, incomplete provider registration/routes, unavailable native capture/in-memory mobile
   cache, no live restore/security/clinic evidence, and higher-tier portions of

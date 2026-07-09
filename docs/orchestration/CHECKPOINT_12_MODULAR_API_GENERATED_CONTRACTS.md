@@ -1,6 +1,6 @@
 # Checkpoint 12 — Modular API and Generated Contracts
 
-**Status:** Launch-ready after orchestration planning commit
+**Status:** Preflight-ready; worker launch is blocked only on GitHub CLI reauthentication
 **Evidence target:** E3 durable local
 **Workers:** provisionally three initial foundation worktrees; optional API-framework worker only after interface freeze
 **Primary findings:** PRR-012, PRR-017 application layer, PRR-028; CP13 lane-safety prerequisite
@@ -15,6 +15,8 @@ Replace the concentrated handwritten API boundary incrementally with a NestJS mo
 - Working tree is clean except user-owned research.
 - CP11 `check`, typecheck, zero-skip tests, build, `db:verify` and `git diff --check` pass.
 - Master creates `codex/integration/checkpoint-12` and records the exact launch commit.
+- GitHub CLI authentication is valid; the ignored secret handoff is mode `0600`, uses `clinicos-human`, and keeps Meta/Razorpay selectors on `simulator`.
+- Historical worktrees are classified and excluded from CP12; workers never read/source/copy the secret handoff or execute live AWS/provider operations.
 - Master owns root dependency/lockfile reconciliation, aggregate route/bootstrap composition, shared export barrels and final generated artifacts.
 
 ## 3. Lanes

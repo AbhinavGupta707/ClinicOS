@@ -1,6 +1,6 @@
 # 21 - Execution Inputs and Credentials Checklist
 
-**Date:** 2026-07-09
+**Date:** 2026-07-10
 **Status:** Current CP11-CP18 external-input checklist
 **Purpose:** List the information, accounts, and credentials needed for autonomous end-to-end implementation and verification.
 
@@ -35,6 +35,9 @@ For provider-specific setup steps, use `22_CREDENTIAL_SETUP_GUIDE.md`.
 
 Rules:
 
+- Keep `.secrets/orchestration.env` at mode `0600`.
+- The master owns this secret file and authenticated CLI/browser sessions. Worker worktrees must not copy, read, source or print it.
+- Workers use deterministic contract tests and honest unavailable states. The master runs authorized live AWS/provider checks only after integration.
 - Use sandbox/test credentials wherever possible.
 - Use production credentials only when explicitly needed and revocable.
 - Prefer already-authenticated CLI/browser sessions for GitHub/AWS where practical.
@@ -69,7 +72,7 @@ Useful inputs:
 
 ### WhatsApp / Messaging
 
-Needed by Checkpoint 7 for live sandbox testing:
+Needed by Checkpoint 15 for live sandbox testing:
 
 - Meta Business account access or chosen BSP account.
 - WhatsApp Business phone number or test number.
@@ -86,7 +89,7 @@ Can proceed earlier with:
 
 ### Razorpay / Payments
 
-Needed by Checkpoint 5 or 7 for sandbox/live payment verification:
+Needed by Checkpoint 15 for sandbox/live payment verification:
 
 - Razorpay sandbox account.
 - Key ID and key secret.
@@ -101,7 +104,7 @@ Can proceed earlier with:
 
 ### Telephony / Missed Calls
 
-Needed by Checkpoint 7 if live missed-call capture is required:
+Needed by Checkpoint 15 for full telephony completion:
 
 - Exotel/Knowlarity/Twilio-like sandbox or account.
 - Virtual number.
@@ -115,7 +118,7 @@ Can proceed earlier with:
 
 ### Google Business Profile
 
-Needed by Checkpoint 7+ for live Google integration:
+Needed by a later explicitly scoped live Google integration checkpoint:
 
 - Google Cloud project.
 - OAuth client credentials.
@@ -143,7 +146,7 @@ Can proceed earlier with:
 
 ## 5. Needed Before AI / Scribe Checkpoint
 
-Needed by Checkpoint 8 for live AI testing:
+Needed by Checkpoint 16 for live AI testing:
 
 - AI provider choice and API key, such as OpenAI or another approved provider.
 - LLM provider choice and API key, such as Fireworks AI, OpenAI, or another approved provider.
@@ -162,7 +165,7 @@ Can proceed earlier with:
 
 ## 6. Needed Before Mobile / App Checks
 
-Needed by Checkpoint 8:
+Needed by Checkpoint 16:
 
 - Target devices: iOS, Android, or both.
 - Whether the pilot uses clinic-owned phones/tablets or staff personal devices.
@@ -178,7 +181,7 @@ Can proceed earlier with:
 
 ## 7. Needed Before Cloud / Pilot-Prod Hardening
 
-Needed by Checkpoint 9:
+Needed by Checkpoint 14:
 
 - AWS account access.
 - Permission model: IAM user/role or SSO access.
@@ -195,7 +198,7 @@ Can proceed earlier with:
 
 ## 8. Needed Before ABDM / FHIR Live Work
 
-Needed by Checkpoint 9+:
+Needed by Checkpoint 16 if ABDM is enabled:
 
 - ABDM sandbox access.
 - HPR/HFR/provider/facility details if available.
@@ -250,7 +253,7 @@ Live end-to-end provider verification needs the relevant sandbox/live credential
 
 ## 11. Full Autonomous Launch Inputs
 
-Before launching Checkpoint 1 through Checkpoint 10 unattended, provide as much of this as possible:
+Before launching the CP12-CP18 autonomous chain, provide as much of this as possible. Missing external authority remains a hard checkpoint gate rather than an accepted gap:
 
 | Category | Required for full live verification? | Can use simulator if missing? |
 |---|---:|---:|
