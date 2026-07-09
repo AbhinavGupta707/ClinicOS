@@ -1,8 +1,10 @@
 # Checkpoint 10 Evidence Matrix
 
+> **Historical evidence notice (2026-07-09):** This matrix records CP10 E1/E2 package, fixture, dry-run and browser evidence at the time it ran. It does not establish current E3+ durability, pilot readiness or production readiness. The independent audit later reproduced failing date-dependent tests, an unapplied local schema and a live smoke tenant-ID failure. Current truth is `docs/security/PRODUCTION_SECURITY_AND_READINESS_REMEDIATION_REGISTER.md` and `docs/qa/PRODUCTION_READINESS_EVIDENCE_STANDARD.md`.
+
 Date: 2026-07-07
 
-Status: Master verified on `codex/integration/checkpoint-10`
+Status: Historical CP10 verification; superseded for readiness claims
 
 Scope: CP10 release-candidate and pilot-readiness gates.
 

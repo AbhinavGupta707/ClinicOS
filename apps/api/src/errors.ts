@@ -4,6 +4,8 @@ export type ApiErrorCode =
   | "NOT_FOUND"
   | "VALIDATION_ERROR"
   | "CONFLICT"
+  | "AI_PROVIDER_UNAVAILABLE"
+  | "DEPENDENCY_UNAVAILABLE"
   | "CONFIGURATION_ERROR";
 
 export interface ApiErrorBody {
@@ -20,7 +22,12 @@ export class ApiError extends Error {
   readonly code: ApiErrorCode;
   readonly details: Record<string, unknown>;
 
-  constructor(status: number, code: ApiErrorCode, message: string, details: Record<string, unknown> = {}) {
+  constructor(
+    status: number,
+    code: ApiErrorCode,
+    message: string,
+    details: Record<string, unknown> = {}
+  ) {
     super(message);
     this.name = "ApiError";
     this.status = status;

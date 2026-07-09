@@ -509,7 +509,9 @@ export function buildOwnerDashboardProjection(input: {
   let recallCompleted = 0;
   let recallOverdue = 0;
   for (const recall of recallRows) {
-    const source = normalizeDashboardSource(recall.source ?? patients.get(recall.patientId ?? "")?.source);
+    const source = normalizeDashboardSource(
+      recall.source ?? (recall.patientId ? patients.get(recall.patientId)?.source : undefined)
+    );
     const metric = recallSourceMetric(source);
     recallDue += 1;
     metric.due += 1;

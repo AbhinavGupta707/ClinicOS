@@ -42,9 +42,7 @@ export class PostgresOutboxRepository implements OutboxRepository {
 
   async claimDueEvents(request: OutboxClaimRequest): Promise<readonly OutboxEventRecord[]> {
     const eventTypeFilter =
-      request.eventTypes && request.eventTypes.length > 0
-        ? "AND event_type = ANY($5::text[])"
-        : "";
+      request.eventTypes && request.eventTypes.length > 0 ? "AND event_type = ANY($5::text[])" : "";
     const values =
       request.eventTypes && request.eventTypes.length > 0
         ? [request.workerId, request.leaseUntil, request.batchSize, request.now, request.eventTypes]
@@ -52,7 +50,7 @@ export class PostgresOutboxRepository implements OutboxRepository {
 
     const sql = `
       WITH due AS (
-        SELECT event_id
+        SELECT id
         FROM outbox_events
         WHERE status IN ('pending', 'retry_scheduled')
           AND (next_attempt_at IS NULL OR next_attempt_at <= $4::timestamptz)
@@ -67,7 +65,7 @@ export class PostgresOutboxRepository implements OutboxRepository {
           locked_until = $2::timestamptz,
           updated_at = now()
       FROM due
-      WHERE event.event_id = due.event_id
+      WHERE event.id = due.id
       RETURNING event.*
     `;
 
@@ -88,7 +86,7 @@ export class PostgresOutboxRepository implements OutboxRepository {
           UPDATE outbox_events
           SET attempt_count = attempt_count + 1,
               updated_at = now()
-          WHERE event_id = $1
+          WHERE id = $1
           RETURNING attempt_count
         `,
         [event.eventId]
@@ -101,15 +99,25 @@ export class PostgresOutboxRepository implements OutboxRepository {
           INSERT INTO outbox_attempts (
             attempt_id,
             event_id,
+            tenant_id,
+            clinic_id,
             attempt_number,
             worker_id,
             status,
             started_at
           )
-          VALUES ($1, $2, $3, $4, 'started', $5::timestamptz)
+          VALUES ($1, $2, $3, $4, $5, $6, 'started', $7::timestamptz)
           RETURNING *
         `,
-        [attemptId, event.eventId, attemptNumber, workerId, startedAt]
+        [
+          attemptId,
+          event.eventId,
+          event.tenantId,
+          event.clinicId,
+          attemptNumber,
+          workerId,
+          startedAt
+        ]
       );
       await client.query("COMMIT");
       return mapOutboxAttemptRow(attemptResult.rows[0]);
@@ -139,10 +147,11 @@ export class PostgresOutboxRepository implements OutboxRepository {
         UPDATE outbox_events
         SET status = 'processed',
             processed_at = $2::timestamptz,
+            published_at = $2::timestamptz,
             locked_by = NULL,
             locked_until = NULL,
             updated_at = now()
-        WHERE event_id = $1
+        WHERE id = $1
       `,
       [eventId, processedAt]
     );
@@ -176,7 +185,7 @@ export class PostgresOutboxRepository implements OutboxRepository {
               locked_by = NULL,
               locked_until = NULL,
               updated_at = now()
-          WHERE event_id = $1
+          WHERE id = $1
         `,
         [event.eventId, retry.nextAttemptAt]
       );
@@ -268,7 +277,7 @@ export class PostgresOutboxRepository implements OutboxRepository {
               locked_by = NULL,
               locked_until = NULL,
               updated_at = now()
-          WHERE event_id = $1
+          WHERE id = $1
         `,
         [event.eventId]
       );
@@ -319,14 +328,14 @@ export class PostgresOutboxRepository implements OutboxRepository {
 
 function mapOutboxEventRow(row: Record<string, unknown>): OutboxEventRecord {
   return {
-    eventId: String(row.event_id),
+    eventId: String(row.id),
     eventType: String(row.event_type),
     schemaVersion: String(row.schema_version),
     tenantId: String(row.tenant_id),
     clinicId: String(row.clinic_id),
     aggregateType: String(row.aggregate_type),
     aggregateId: String(row.aggregate_id),
-    actor: mapOutboxActor(row.actor),
+    actor: mapOutboxActor(row),
     correlationId: String(row.correlation_id),
     idempotencyKey: String(row.idempotency_key),
     ...(row.source ? { source: mapOutboxSource(row.source) } : {}),
@@ -381,14 +390,13 @@ function mapJsonObject(value: unknown): Record<string, unknown> {
   return value as Record<string, unknown>;
 }
 
-function mapOutboxActor(value: unknown): OutboxActor {
-  const actor = mapJsonObject(value);
-  if (typeof actor.type !== "string" || typeof actor.id !== "string") {
-    throw new Error("outbox_events.actor must include string type and id");
+function mapOutboxActor(value: Record<string, unknown>): OutboxActor {
+  if (typeof value.actor_type !== "string" || typeof value.actor_id !== "string") {
+    throw new Error("outbox_events actor_type and actor_id must be strings");
   }
   return {
-    type: actor.type as OutboxActor["type"],
-    id: actor.id
+    type: value.actor_type as OutboxActor["type"],
+    id: value.actor_id
   };
 }
 

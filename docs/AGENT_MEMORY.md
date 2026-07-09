@@ -1,10 +1,55 @@
 # ClinicOS Agent Memory
 
-Last updated: 2026-07-07
+Last updated: 2026-07-09
 
 This file captures durable execution memory for future Codex sessions. Treat `clinic_os_specs_v2/` as the product source of truth and this file as operational memory about how to work in this repository.
 
 ## Current Orchestration State
+
+- **Current release truth:** the independent post-CP10 audit is **NO-GO** for pilot, production PHI and live production providers. CP10 remains historical E1/E2 local/fixture evidence only. Read plans 23/24, the remediation register and the production evidence standard before new implementation.
+- **Current execution decision:** the user selected one persistent master session with sequential CP11-CP18 checkpoints. Do not launch worktree lanes by default. Use `docs/implementation/POST_CP10_SINGLE_SESSION_EXECUTION_PROGRAM.md`; worktrees require a later explicit user decision.
+- **Current checkpoint state:** CP11 has an E3 durable-local technical closeout in
+  `docs/orchestration/CHECKPOINT_11_FINAL_REPORT.md` and `docs/qa/checkpoint-11-evidence.md`; its
+  changes remain intentionally uncommitted because the user prohibited commits. Any material change
+  invalidates the evidence and requires rerun.
+- **Next checkpoint:** CP12 modular NestJS API, centralized security/validation pipeline and generated
+  OpenAPI/clients. Do not start CP13 until CP12's own exit gate passes.
+- Remaining blockers include validation-only Terraform, console-only telemetry, no production media
+  adapter, incomplete provider registration/routes, unavailable native capture/in-memory mobile
+  cache, no live restore/security/clinic evidence, and higher-tier portions of PRR-001/003/010/025-
+  027.
+
+## CP11 Durable Foundation Memory
+
+- Canonical database state is migration `014`, 96 tenant-owned tables with forced RLS, and three
+  non-super/non-bypass roles: `clinic_os_migrator`, `clinic_os_runtime` and `clinic_os_worker`.
+- The API uses `clinic_os_runtime` with transaction-local tenant/clinic/user context. The worker must
+  use `WORKER_DATABASE_URL`/`clinic_os_worker`; that role can process only outbox events, attempts and
+  dead letters and is denied product-table reads.
+- API domain, audit, timeline and outbox writes share `PostgresClinicUnitOfWork`. Do not reintroduce
+  nested/independent transactions for a routed mutation.
+- Worker durability was a real integration trap: unit tests passed while its expected outbox schema
+  did not exist. Keep `worker:test:persistence` and the two-cycle worker health/restart smoke in any
+  migration or worker closeout.
+- Worker startup/runtime errors must close the health listener and database resources; requested
+  SIGINT/SIGTERM shutdown exits cleanly and must not be logged as a crash.
+- `/health/live`, `/health/startup` and `/health/ready` have separate meanings. Durable readiness
+  probes schema version 014 and, under real auth, Keycloak JWKS. Fixture mode is reported as E2 and
+  never counts as durable readiness.
+- CP11 live smoke discovers tenant/clinic/user/resource IDs through `/v1/me` and runtime reads. It
+  runs twice, rejects fixture repository fallback, checks validation/role/cross-tenant denials, and
+  reconciles audit/outbox evidence.
+- Critical API/Postgres time uses injected `Clock` and clinic IANA timezone. Remaining current-time
+  boundaries are explicit in `scripts/check-clock-usage.mjs` and must not grow without ownership.
+- All 14 production TypeScript workspaces use `tsc`; the negative branded-ID fixture proves the gate
+  is semantic rather than syntax-only.
+- Browser fixture smoke is E2 only. In-app Browser and Playwright caught a real `@clinic-os/ui`
+  module-resolution problem, but neither upgrades fixture UI to durable/provider/device evidence.
+- Tool discovery state at CP11 closeout: Terraform CLI absent; Docker Scout installed but requires
+  Docker ID activation; Trivy/Syft absent. npm CycloneDX SBOM, high-severity audit and secret scan
+  pass. Keep IaC/container/provenance gates open.
+- `research/` and `scripts/research/` are user-owned. `.prettierignore` excludes them; never modify or
+  stage them.
 
 - Branch: `main` includes CP10 via merge commit `226a7b0`; post-promotion `git diff --check` and `npm run check` passed.
 - Checkpoint 1 code is complete through `be619cd`.

@@ -307,7 +307,9 @@ export function createConversionSourceSnapshot(
 export function preserveConversionSource(input: PreserveConversionSourceInput): ConversionSourceSnapshot {
   const preservedAt = toIsoString(input.preservedAt, "preservedAt");
   const previous = isConversionSourceSnapshot(input.from) ? input.from : null;
-  const sourceAttribution = previous ? previous.sourceAttribution : asSourceAttribution(input.from);
+  const sourceAttribution = previous
+    ? previous.sourceAttribution
+    : asSourceAttribution(input.from as SourceAttributionInput | SourceAttribution);
   const bookingTouch =
     input.bookingTouch === null
       ? null

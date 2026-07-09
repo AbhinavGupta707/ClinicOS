@@ -86,6 +86,16 @@ services:
     volumes:
       - ./infra/docker/keycloak/realm-import:/opt/keycloak/data/import:ro
 
+  flyway:
+    image: flyway/flyway:12.10.0-alpine@sha256:2e9890a54428c4f11697ea38ce01d96901fb55af6efe47029bfc9c64d3e60b64
+    profiles: ["tools"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - ./infra/docker/flyway/flyway.conf:/flyway/conf/flyway.conf:ro
+      - ./packages/db/migrations:/flyway/sql:ro
+
 volumes:
   clinic_os_postgres_data:
   clinic_os_redis_data:

@@ -1,7 +1,7 @@
 # 22 - Credential Setup Guide
 
-**Date:** 2026-07-07
-**Status:** Live local setup tracker and pre-orchestration guide
+**Date:** 2026-07-09
+**Status:** Current local presence/activation tracker; secrets remain external
 **Purpose:** Give the autonomous implementation run a concrete, provider-by-provider credential handoff path without committing secrets.
 
 ## 1. Local Secret File
@@ -19,6 +19,8 @@ docs/orchestration/orchestration.env.example
 ```
 
 Never commit the real `.secrets/orchestration.env` file.
+
+Credential **presence is not readiness**. Track every integration through `absent`, `registered`, `configured`, `sandbox_verified`, `production_verified`, `degraded`, and `disabled`. Diagnose provider registration/discovery and official activation before permissions/runtime. The 2026-07-09 audit found no provider at `production_verified`.
 
 ## 2. Verified Local Execution Surface
 
@@ -40,7 +42,11 @@ Verified through 2026-07-07:
 | AWS cost controls | Ready for alerts | AWS Budgets near-zero alert is configured. This warns on spend; it is not a hard usage stop and cannot guarantee credits are used before card billing in every AWS billing path. |
 | Razorpay sandbox API | Ready | Test key ID and secret are present locally and API auth has been verified. |
 | Razorpay webhook secret | Ready locally | Secret is generated and stored locally; dashboard webhook URL must wait for a deployed HTTPS API endpoint. |
-| Meta WhatsApp sandbox | Mostly ready | App ID, phone number ID, WABA ID, access token, and verify token are present locally; app secret capture still requires Meta password confirmation. |
+| Meta WhatsApp sandbox | Config present; not registered/verified | Core IDs, token, app secret, and verify token are present locally. No inbound API route/public callback/provider-side registration or sandbox event evidence exists. |
+| Telephony | Absent | Required provider credentials/callback registration are not present. |
+| AI/STT | Absent for live use | No approved live keys/model/base URL plus residency/retention/no-training authorization. Keep disabled/simulator-only. |
+| ABDM | Absent | Credential fields are empty and official sandbox/compliance activation is not complete. |
+| Production media | Absent | No S3/KMS runtime adapter or deployed storage resources. |
 
 ## 3. Razorpay Sandbox
 
@@ -119,7 +125,7 @@ Current local status:
 
 - Meta Cloud API sandbox identifiers and access token are present in `.secrets/orchestration.env`.
 - `WHATSAPP_WEBHOOK_VERIFY_TOKEN` is present in `.secrets/orchestration.env`.
-- `WHATSAPP_APP_SECRET` still needs to be captured after Meta password confirmation.
+- `WHATSAPP_APP_SECRET` is present locally; presence does not prove signature handling or provider registration.
 - Do not configure the Meta webhook callback URL until the API has a public HTTPS endpoint that supports Meta verification challenge handling and signed webhook processing.
 
 ## 5. AWS
@@ -172,16 +178,12 @@ Current local status:
 
 - `aws sts get-caller-identity --profile clinicos` has succeeded.
 - Terraform backend bucket and lock table values are present in `.secrets/orchestration.env`.
+- `AWS_KMS_KEY_ALIAS` is not yet present and pilot-prod Terraform currently declares no providers/resources.
 - Use the `clinicos` profile for local infrastructure commands unless the checkpoint run deliberately switches to GitHub Actions OIDC.
 
 ## 6. Webhook Registration Readiness
 
-The provider dashboards should not be connected to webhook URLs until the product exposes deployed HTTPS callbacks with production-grade verification. The routes specified for the implementation checkpoints are:
-
-```text
-POST /v1/webhooks/whatsapp/{accountId}
-POST /v1/webhooks/razorpay/{accountId}
-```
+The provider dashboards must not be connected until CP15 exposes deployed HTTPS callbacks with production-grade verification. The current API includes `POST /v1/payment-webhooks/razorpay`; it is not deployed or registered. There is no current Meta WhatsApp inbound route or telephony callback. CP15 must choose one canonical generated-OpenAPI route family and update provider dashboards, adapters, tests, clients and runbooks together; do not add weak aliases for older route examples.
 
 Required before dashboard registration:
 

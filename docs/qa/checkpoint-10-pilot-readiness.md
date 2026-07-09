@@ -1,5 +1,7 @@
 # Checkpoint 10 Pilot Readiness QA Notes
 
+> **Historical CP10 model (superseded 2026-07-09):** This document is E1/E2 fixture/readiness-status evidence, not current pilot readiness. Current go/no-go truth is the production remediation register and active pilot-production checklist; the decision remains **NO-GO**.
+
 Date: 2026-07-07
 
 ## Scope

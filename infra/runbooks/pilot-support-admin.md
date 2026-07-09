@@ -1,8 +1,10 @@
 # Pilot Support And Admin Runbook
 
+> **Pre-production draft (2026-07-09):** Current release posture is NO-GO. CP17 must validate and exercise this runbook against deployed telemetry, paging, recovery, providers, clinic fallback and the exact pilot revision before use.
+
 Date: 2026-07-07
 
-Status: Draft CP10 support runbook
+Status: Historical CP10 draft requiring CP17 validation
 
 Scope: support and admin operations for a selected ClinicOS release-candidate
 pilot

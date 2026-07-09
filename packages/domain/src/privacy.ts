@@ -20,6 +20,12 @@ import type {
   DentalFindingRecord
 } from "./dental.ts";
 import type { UUID } from "./ids.ts";
+import type {
+  InvoiceRecord,
+  PaymentRequestRecord,
+  PaymentTransactionRecord,
+  ReceiptRecord
+} from "./billing.ts";
 import type { PublicMediaAsset } from "./media.ts";
 import type { PatientRecord, PatientTimelineItem } from "./patient.ts";
 
@@ -197,10 +203,10 @@ export interface PatientRecordExportSnapshot {
   };
   mediaAssets: PublicMediaAsset[];
   billing: {
-    invoices: Record<string, unknown>[];
-    paymentRequests: Record<string, unknown>[];
-    paymentTransactions: Record<string, unknown>[];
-    receipts: Record<string, unknown>[];
+    invoices: InvoiceRecord[];
+    paymentRequests: PaymentRequestRecord[];
+    paymentTransactions: PaymentTransactionRecord[];
+    receipts: ReceiptRecord[];
   };
   aiEvidence: PatientRecordExportAiEvidence;
   privacyAuditTrail: AuditEventForReviewRecord[];

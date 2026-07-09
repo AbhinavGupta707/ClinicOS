@@ -1,8 +1,10 @@
 # Checkpoint 10 Final Report
 
+> **Historical report notice (2026-07-09):** This report accurately records the fixture/local checks that passed at CP10, but it is not a current pilot or production readiness decision. A later independent audit found a zero-table local database, current date-dependent test failures, a failing live contract smoke, validation-only cloud posture, and unimplemented live/device/storage/observability controls. See `docs/security/PRODUCTION_SECURITY_AND_READINESS_REMEDIATION_REGISTER.md`. Current release posture is **NO-GO**.
+
 Date: 2026-07-07
 
-Status: Complete; verified on `codex/integration/checkpoint-10` and promoted to
+Status: Historical checkpoint complete; superseded for readiness claims; verified on `codex/integration/checkpoint-10` and promoted to
 `main` via merge commit `226a7b0`.
 
 Integration branch: `codex/integration/checkpoint-10`

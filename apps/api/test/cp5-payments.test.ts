@@ -39,11 +39,16 @@ test("CP5 payment request creates provider QR without marking the invoice paid",
   const receptionist = await operationsContext("seed-receptionist");
   const invoice = await prepareIssuedInvoice(repository, dependencies);
 
-  const response = await createInvoicePaymentRequest(receptionist, dependencies, invoice.body.invoice.id, {
-    requestType: "invoice_qr",
-    amountMinor: 6_000,
-    description: "Synthetic checkout payment"
-  });
+  const response = await createInvoicePaymentRequest(
+    receptionist,
+    dependencies,
+    invoice.body.invoice.id,
+    {
+      requestType: "invoice_qr",
+      amountMinor: 6_000,
+      description: "Synthetic checkout payment"
+    }
+  );
 
   assert.equal(response.status, 201);
   assert.equal(response.body.paymentRequest.requestType, "dynamic_qr");
@@ -56,27 +61,41 @@ test("CP5 payment request creates provider QR without marking the invoice paid",
 test("CP5 manual payment requires audited evidence and supports idempotent replay", async () => {
   const repository = new LocalFixtureClinicOperationsRepository();
   const auditSink = new InMemoryAuditSink();
-  const dependencies: OperationsDependencies = { repository, auditSink, paymentRepository: repository };
+  const dependencies: OperationsDependencies = {
+    repository,
+    auditSink,
+    paymentRepository: repository
+  };
   const receptionist = {
     ...(await operationsContext("seed-receptionist")),
     idempotencyKey: "manual-payment-1"
   };
   const invoice = await prepareIssuedInvoice(repository, dependencies);
 
-  const first = await recordInvoiceManualPayment(receptionist, dependencies, invoice.body.invoice.id, {
-    amountMinor: 4_000,
-    currency: "INR",
-    method: "cash",
-    reason: "Patient paid cash at reception.",
-    reference: "CASH-RCPT-1"
-  });
-  const replay = await recordInvoiceManualPayment(receptionist, dependencies, invoice.body.invoice.id, {
-    amountMinor: 4_000,
-    currency: "INR",
-    method: "cash",
-    reason: "Patient paid cash at reception.",
-    reference: "CASH-RCPT-1"
-  });
+  const first = await recordInvoiceManualPayment(
+    receptionist,
+    dependencies,
+    invoice.body.invoice.id,
+    {
+      amountMinor: 4_000,
+      currency: "INR",
+      method: "cash",
+      reason: "Patient paid cash at reception.",
+      reference: "CASH-RCPT-1"
+    }
+  );
+  const replay = await recordInvoiceManualPayment(
+    receptionist,
+    dependencies,
+    invoice.body.invoice.id,
+    {
+      amountMinor: 4_000,
+      currency: "INR",
+      method: "cash",
+      reason: "Patient paid cash at reception.",
+      reference: "CASH-RCPT-1"
+    }
+  );
 
   assert.equal(first.body.invoice.paidMinor, 4_000);
   assert.equal(first.body.invoice.paymentStatus, "partially_paid");
@@ -233,7 +252,8 @@ test("CP5 local HTTP webhook route uses raw body signature verification", async 
       keySecret: "rzp_test_secret",
       webhookSecret
     }),
-    useLocalAuthFixture: true
+    useLocalAuthFixture: true,
+    repositoryMode: "fixture"
   });
 
   try {
@@ -243,7 +263,9 @@ test("CP5 local HTTP webhook route uses raw body signature verification", async 
     });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "EPERM") {
-      t.skip("Socket binding is blocked in this sandbox; run API payment webhook smoke outside it.");
+      t.skip(
+        "Socket binding is blocked in this sandbox; run API payment webhook smoke outside it."
+      );
       return;
     }
     throw error;
@@ -406,7 +428,12 @@ function createClaims(subject: string) {
   };
 }
 
-function razorpayPayload(input: { eventId: string; paymentId: string; amount: number; invoiceId: string }) {
+function razorpayPayload(input: {
+  eventId: string;
+  paymentId: string;
+  amount: number;
+  invoiceId: string;
+}) {
   return {
     id: input.eventId,
     event: "payment.captured",

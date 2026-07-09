@@ -40,6 +40,10 @@ const checkpoint9Migration = readFileSync(
   resolve(import.meta.dirname, "../migrations/0010_security_privacy_ops.sql"),
   "utf8"
 );
+const checkpoint11OutboxMigration = readFileSync(
+  resolve(import.meta.dirname, "../migrations/0014_durable_outbox_worker.sql"),
+  "utf8"
+);
 const checkpoint1Seed = readFileSync(
   resolve(import.meta.dirname, "../seeds/checkpoint1_identity_auth.sql"),
   "utf8"
@@ -72,10 +76,34 @@ test("migration includes core identity and authorization tables", () => {
   }
 });
 
+test("checkpoint 11 migration aligns the durable worker with the canonical outbox", () => {
+  assert.match(checkpoint11OutboxMigration, /add column if not exists status text not null/u);
+  assert.match(checkpoint11OutboxMigration, /create table if not exists outbox_attempts/u);
+  assert.match(checkpoint11OutboxMigration, /create table if not exists dead_letter_events/u);
+  assert.match(checkpoint11OutboxMigration, /outbox_events_worker_processing/u);
+  assert.match(checkpoint11OutboxMigration, /current_user = 'clinic_os_worker'/u);
+});
+
+test("checkpoint 11 worker tables retain tenant attribution and forced RLS", () => {
+  for (const table of ["outbox_attempts", "dead_letter_events"]) {
+    assert.match(
+      checkpoint11OutboxMigration,
+      new RegExp(`alter table ${table} force row level security`, "u")
+    );
+    assert.match(checkpoint11OutboxMigration, new RegExp(`${table}_tenant_clinic_isolation`, "u"));
+  }
+});
+
 test("migration enforces tenant-clinic consistency with composite foreign keys", () => {
-  assert.match(migration, /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i);
+  assert.match(
+    migration,
+    /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i
+  );
   assert.match(migration, /foreign key \(tenant_id, role_id\) references roles\(tenant_id, id\)/i);
-  assert.match(migration, /foreign key \(tenant_id, patient_id\)\s+references patients\(tenant_id, id\)/i);
+  assert.match(
+    migration,
+    /foreign key \(tenant_id, patient_id\)\s+references patients\(tenant_id, id\)/i
+  );
   assert.match(migration, /user_role_assignments_tenant_wide_unique_idx/i);
 });
 
@@ -121,19 +149,31 @@ test("checkpoint 2 migration enforces RLS and tenant-clinic scope on operational
     "attribution_touches",
     "outbox_events"
   ]) {
-    assert.match(checkpoint2Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
+    assert.match(
+      checkpoint2Migration,
+      new RegExp(`alter table ${table} enable row level security`, "i")
+    );
     assert.match(checkpoint2Migration, new RegExp(`${table}_tenant_clinic_isolation`, "i"));
   }
 
-  assert.match(checkpoint2Migration, /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i);
-  assert.match(checkpoint2Migration, /foreign key \(tenant_id, patient_id\) references patients\(tenant_id, id\)/i);
+  assert.match(
+    checkpoint2Migration,
+    /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i
+  );
+  assert.match(
+    checkpoint2Migration,
+    /foreign key \(tenant_id, patient_id\) references patients\(tenant_id, id\)/i
+  );
 });
 
 test("checkpoint 2 migration protects appointment provider and chair conflicts at the database layer", () => {
   assert.match(checkpoint2Migration, /create extension if not exists btree_gist/i);
   assert.match(checkpoint2Migration, /appointments_provider_no_overlap exclude using gist/i);
   assert.match(checkpoint2Migration, /appointments_chair_no_overlap exclude using gist/i);
-  assert.match(checkpoint2Migration, /status in \('requested', 'booked', 'confirmed', 'checked_in', 'in_consult'\)/i);
+  assert.match(
+    checkpoint2Migration,
+    /status in \('requested', 'booked', 'confirmed', 'checked_in', 'in_consult'\)/i
+  );
 });
 
 test("checkpoint 3 migration includes intake consent encounter note and prescription tables", () => {
@@ -163,7 +203,10 @@ test("checkpoint 3 migration enforces RLS and signed clinical artifact immutabil
     "clinical_note_versions",
     "prescriptions"
   ]) {
-    assert.match(checkpoint3Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
+    assert.match(
+      checkpoint3Migration,
+      new RegExp(`alter table ${table} enable row level security`, "i")
+    );
     assert.match(checkpoint3Migration, new RegExp(`${table}_tenant_clinic_isolation`, "i"));
   }
 
@@ -229,12 +272,21 @@ test("checkpoint 5 migration enforces RLS and tenant-clinic scope on billing tab
     "receipts",
     "patient_instruction_requests"
   ]) {
-    assert.match(checkpoint5Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
-    assert.match(checkpoint5Migration, new RegExp(`alter table ${table} force row level security`, "i"));
+    assert.match(
+      checkpoint5Migration,
+      new RegExp(`alter table ${table} enable row level security`, "i")
+    );
+    assert.match(
+      checkpoint5Migration,
+      new RegExp(`alter table ${table} force row level security`, "i")
+    );
     assert.match(checkpoint5Migration, new RegExp(`${table}_tenant_clinic_isolation`, "i"));
   }
 
-  assert.match(checkpoint5Migration, /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i);
+  assert.match(
+    checkpoint5Migration,
+    /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i
+  );
 });
 
 test("checkpoint 5 migration derives invoices from completed procedure evidence", () => {
@@ -243,16 +295,16 @@ test("checkpoint 5 migration derives invoices from completed procedure evidence"
   assert.match(checkpoint5Migration, /status = 'completed'/i);
   assert.match(checkpoint5Migration, /create table if not exists invoice_items/i);
   assert.match(checkpoint5Migration, /unique \(tenant_id, procedure_performed_id\)/i);
-  assert.match(checkpoint5Migration, /foreign key \(tenant_id, procedure_performed_id\) references procedure_performed_records/i);
+  assert.match(
+    checkpoint5Migration,
+    /foreign key \(tenant_id, procedure_performed_id\) references procedure_performed_records/i
+  );
   assert.match(checkpoint5Migration, /invoice lines derived from performed procedure records/i);
 });
 
 test("checkpoint 5 migration requires verified payment evidence before receipts", () => {
   assert.match(checkpoint5Migration, /payment_transactions_verified_success_check/i);
-  assert.match(
-    checkpoint5Migration,
-    /status = 'succeeded' and verification_status = 'verified'/i
-  );
+  assert.match(checkpoint5Migration, /status = 'succeeded' and verification_status = 'verified'/i);
   assert.match(
     checkpoint5Migration,
     /status = 'manually_recorded' and verification_status = 'not_required_manual'/i
@@ -267,7 +319,10 @@ test("checkpoint 5 migration records patient instructions without fake delivery 
   assert.match(checkpoint5Migration, /provider_confirmation_received = false/i);
   assert.match(checkpoint5Migration, /delivered_at is null/i);
   assert.match(checkpoint5Migration, /read_at is null/i);
-  assert.match(checkpoint5Migration, /\('patient_instruction\.write', 'Write patient instructions'/i);
+  assert.match(
+    checkpoint5Migration,
+    /\('patient_instruction\.write', 'Write patient instructions'/i
+  );
   assert.match(checkpoint5Migration, /\('receptionist', 'patient_instruction\.write'\)/i);
   assert.doesNotMatch(checkpoint5Migration, /\('accountant', 'patient_instruction\.write'\)/i);
 });
@@ -290,7 +345,10 @@ test("checkpoint 6 migration includes continuity task recall and SOP tables", ()
     "sop_runs",
     "sop_run_items"
   ]) {
-    assert.match(checkpoint6ContinuityMigration, new RegExp(`create table if not exists ${table}`, "i"));
+    assert.match(
+      checkpoint6ContinuityMigration,
+      new RegExp(`create table if not exists ${table}`, "i")
+    );
   }
 
   for (const column of [
@@ -300,15 +358,24 @@ test("checkpoint 6 migration includes continuity task recall and SOP tables", ()
     "idempotency_key",
     "procedure_performed_id"
   ]) {
-    assert.match(checkpoint6ContinuityMigration, new RegExp(`add column if not exists ${column}`, "i"));
+    assert.match(
+      checkpoint6ContinuityMigration,
+      new RegExp(`add column if not exists ${column}`, "i")
+    );
   }
 });
 
 test("checkpoint 6 migration enforces idempotent due generation and completion evidence", () => {
   assert.match(checkpoint6ContinuityMigration, /tasks_idempotency_unique_idx/i);
   assert.match(checkpoint6ContinuityMigration, /recalls_generated_procedure_unique_idx/i);
-  assert.match(checkpoint6ContinuityMigration, /unique \(tenant_id, clinic_id, schedule_id, due_at\)/i);
-  assert.match(checkpoint6ContinuityMigration, /unique \(tenant_id, clinic_id, generated_from_key\)/i);
+  assert.match(
+    checkpoint6ContinuityMigration,
+    /unique \(tenant_id, clinic_id, schedule_id, due_at\)/i
+  );
+  assert.match(
+    checkpoint6ContinuityMigration,
+    /unique \(tenant_id, clinic_id, generated_from_key\)/i
+  );
   assert.match(checkpoint6ContinuityMigration, /tasks_completion_consistent_check/i);
   assert.match(checkpoint6ContinuityMigration, /sop_run_items_required_evidence_check/i);
   assert.doesNotMatch(checkpoint6ContinuityMigration, /provider_delivery_confirmed_at/i);
@@ -324,13 +391,28 @@ test("checkpoint 6 migration enforces RLS and tenant-clinic scope on continuity 
     "sop_runs",
     "sop_run_items"
   ]) {
-    assert.match(checkpoint6ContinuityMigration, new RegExp(`alter table ${table} enable row level security`, "i"));
-    assert.match(checkpoint6ContinuityMigration, new RegExp(`alter table ${table} force row level security`, "i"));
-    assert.match(checkpoint6ContinuityMigration, new RegExp(`${table}_tenant_clinic_isolation`, "i"));
+    assert.match(
+      checkpoint6ContinuityMigration,
+      new RegExp(`alter table ${table} enable row level security`, "i")
+    );
+    assert.match(
+      checkpoint6ContinuityMigration,
+      new RegExp(`alter table ${table} force row level security`, "i")
+    );
+    assert.match(
+      checkpoint6ContinuityMigration,
+      new RegExp(`${table}_tenant_clinic_isolation`, "i")
+    );
   }
 
-  assert.match(checkpoint6ContinuityMigration, /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i);
-  assert.match(checkpoint6ContinuityMigration, /foreign key \(tenant_id, patient_id\) references patients\(tenant_id, id\)/i);
+  assert.match(
+    checkpoint6ContinuityMigration,
+    /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i
+  );
+  assert.match(
+    checkpoint6ContinuityMigration,
+    /foreign key \(tenant_id, patient_id\) references patients\(tenant_id, id\)/i
+  );
 });
 
 test("checkpoint 6 grants operational continuity permissions without accountant PHI task access", () => {
@@ -362,7 +444,10 @@ test("checkpoint 6 migration includes lab inventory incident and CAPA operationa
     "incidents",
     "corrective_actions"
   ]) {
-    assert.match(checkpoint6OperationsMigration, new RegExp(`create table if not exists ${table}`, "i"));
+    assert.match(
+      checkpoint6OperationsMigration,
+      new RegExp(`create table if not exists ${table}`, "i")
+    );
   }
 
   for (const itemType of [
@@ -397,29 +482,56 @@ test("checkpoint 6 migration enforces RLS and tenant-clinic scope on operations 
     "incidents",
     "corrective_actions"
   ]) {
-    assert.match(checkpoint6OperationsMigration, new RegExp(`alter table ${table} enable row level security`, "i"));
-    assert.match(checkpoint6OperationsMigration, new RegExp(`alter table ${table} force row level security`, "i"));
-    assert.match(checkpoint6OperationsMigration, new RegExp(`${table}_tenant_clinic_isolation`, "i"));
+    assert.match(
+      checkpoint6OperationsMigration,
+      new RegExp(`alter table ${table} enable row level security`, "i")
+    );
+    assert.match(
+      checkpoint6OperationsMigration,
+      new RegExp(`alter table ${table} force row level security`, "i")
+    );
+    assert.match(
+      checkpoint6OperationsMigration,
+      new RegExp(`${table}_tenant_clinic_isolation`, "i")
+    );
   }
 
-  assert.match(checkpoint6OperationsMigration, /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i);
-  assert.match(checkpoint6OperationsMigration, /foreign key \(tenant_id, patient_id\) references patients\(tenant_id, id\)/i);
+  assert.match(
+    checkpoint6OperationsMigration,
+    /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i
+  );
+  assert.match(
+    checkpoint6OperationsMigration,
+    /foreign key \(tenant_id, patient_id\) references patients\(tenant_id, id\)/i
+  );
 });
 
 test("checkpoint 6 migration keeps procurement as evidenced suggestions, not purchase execution", () => {
-  assert.match(checkpoint6OperationsMigration, /create table if not exists procurement_suggestions/i);
+  assert.match(
+    checkpoint6OperationsMigration,
+    /create table if not exists procurement_suggestions/i
+  );
   assert.match(checkpoint6OperationsMigration, /suggested_quantity numeric\(12, 2\) not null/i);
   assert.match(checkpoint6OperationsMigration, /task_id uuid/i);
   assert.match(checkpoint6OperationsMigration, /suggestion evidence only/i);
-  assert.match(checkpoint6OperationsMigration, /does not execute purchase orders or vendor procurement/i);
-  assert.doesNotMatch(checkpoint6OperationsMigration, /create table if not exists purchase_orders/i);
+  assert.match(
+    checkpoint6OperationsMigration,
+    /does not execute purchase orders or vendor procurement/i
+  );
+  assert.doesNotMatch(
+    checkpoint6OperationsMigration,
+    /create table if not exists purchase_orders/i
+  );
 });
 
 test("checkpoint 6 migration makes status and stock evidence append-only", () => {
   assert.match(checkpoint6OperationsMigration, /prevent_cp6_evidence_mutation/i);
   assert.match(checkpoint6OperationsMigration, /lab_case_status_history_immutable/i);
   assert.match(checkpoint6OperationsMigration, /stock_ledger_entries_immutable/i);
-  assert.match(checkpoint6OperationsMigration, /before update or delete on lab_case_status_history/i);
+  assert.match(
+    checkpoint6OperationsMigration,
+    /before update or delete on lab_case_status_history/i
+  );
   assert.match(checkpoint6OperationsMigration, /before update or delete on stock_ledger_entries/i);
 });
 
@@ -439,7 +551,10 @@ test("checkpoint 6 grants operational roles without broadening accountant access
   assert.doesNotMatch(checkpoint6OperationsMigration, /\('accountant', 'lab\.manage'\)/i);
   assert.doesNotMatch(checkpoint6OperationsMigration, /\('accountant', 'inventory\.manage'\)/i);
   assert.doesNotMatch(checkpoint6OperationsMigration, /\('accountant', 'incident\.manage'\)/i);
-  assert.doesNotMatch(checkpoint6OperationsMigration, /\('accountant', 'corrective_action\.manage'\)/i);
+  assert.doesNotMatch(
+    checkpoint6OperationsMigration,
+    /\('accountant', 'corrective_action\.manage'\)/i
+  );
 });
 
 test("checkpoint 7 migration includes migration review and imported record tables", () => {
@@ -504,11 +619,20 @@ test("checkpoint 7 migration enforces RLS and tenant-clinic scope on migration a
     "normalized_integration_events",
     "integration_dead_letters"
   ]) {
-    assert.match(checkpoint7Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
-    assert.match(checkpoint7Migration, new RegExp(`alter table ${table} force row level security`, "i"));
+    assert.match(
+      checkpoint7Migration,
+      new RegExp(`alter table ${table} enable row level security`, "i")
+    );
+    assert.match(
+      checkpoint7Migration,
+      new RegExp(`alter table ${table} force row level security`, "i")
+    );
   }
 
-  assert.match(checkpoint7Migration, /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i);
+  assert.match(
+    checkpoint7Migration,
+    /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i
+  );
   assert.match(checkpoint7Migration, /migration_batches_tenant_clinic_isolation/i);
   assert.match(checkpoint7Migration, /raw_webhook_events_tenant_clinic_isolation/i);
 });
@@ -535,7 +659,10 @@ test("checkpoint 8 migration includes consent-gated AI scribe persistence", () =
     assert.match(checkpoint8Migration, new RegExp(`create table if not exists ${table}`, "i"));
   }
 
-  assert.match(checkpoint8Migration, /provider_mode in \('simulator', 'unconfigured', 'live_disabled'\)/i);
+  assert.match(
+    checkpoint8Migration,
+    /provider_mode in \('simulator', 'unconfigured', 'live_disabled'\)/i
+  );
   assert.match(checkpoint8Migration, /providerTrainingAllowed/i);
   assert.match(checkpoint8Migration, /providerRawPayloadStorage/i);
   assert.match(checkpoint8Migration, /text_quote_digest/i);
@@ -552,8 +679,14 @@ test("checkpoint 8 migration enforces RLS, review-only approvals, and AI timelin
     "ai_action_proposals",
     "ai_review_decisions"
   ]) {
-    assert.match(checkpoint8Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
-    assert.match(checkpoint8Migration, new RegExp(`alter table ${table} force row level security`, "i"));
+    assert.match(
+      checkpoint8Migration,
+      new RegExp(`alter table ${table} enable row level security`, "i")
+    );
+    assert.match(
+      checkpoint8Migration,
+      new RegExp(`alter table ${table} force row level security`, "i")
+    );
     assert.match(checkpoint8Migration, new RegExp(`${table}_tenant_clinic_isolation`, "i"));
   }
 
@@ -570,7 +703,10 @@ test("checkpoint 8 grants AI scribe permissions only to clinical/admin roles", (
     assert.match(checkpoint8Migration, new RegExp(`\\('${permission}'`, "i"));
     assert.match(checkpoint8Migration, new RegExp(`\\('doctor', '${permission}'\\)`, "i"));
     assert.match(checkpoint8Migration, new RegExp(`\\('assistant', '${permission}'\\)`, "i"));
-    assert.doesNotMatch(checkpoint8Migration, new RegExp(`\\('accountant', '${permission}'\\)`, "i"));
+    assert.doesNotMatch(
+      checkpoint8Migration,
+      new RegExp(`\\('accountant', '${permission}'\\)`, "i")
+    );
     assert.doesNotMatch(checkpoint8Migration, new RegExp(`\\('auditor', '${permission}'\\)`, "i"));
   }
 });
@@ -586,7 +722,10 @@ test("checkpoint 9 migration includes security privacy operations tables", () =>
     assert.match(checkpoint9Migration, new RegExp(`create table if not exists ${table}`, "i"));
   }
 
-  assert.match(checkpoint9Migration, /alter table break_glass_accesses\s+[\s\S]*access_categories/i);
+  assert.match(
+    checkpoint9Migration,
+    /alter table break_glass_accesses\s+[\s\S]*access_categories/i
+  );
   assert.match(checkpoint9Migration, /alter table break_glass_accesses\s+[\s\S]*access_scope/i);
   assert.match(checkpoint9Migration, /audit_events_immutable/i);
   assert.match(checkpoint9Migration, /audit_event_reviews_immutable/i);
@@ -601,13 +740,25 @@ test("checkpoint 9 migration enforces RLS and tenant-clinic scope", () => {
     "retention_actions",
     "break_glass_accesses"
   ]) {
-    assert.match(checkpoint9Migration, new RegExp(`alter table ${table} enable row level security`, "i"));
-    assert.match(checkpoint9Migration, new RegExp(`alter table ${table} force row level security`, "i"));
+    assert.match(
+      checkpoint9Migration,
+      new RegExp(`alter table ${table} enable row level security`, "i")
+    );
+    assert.match(
+      checkpoint9Migration,
+      new RegExp(`alter table ${table} force row level security`, "i")
+    );
     assert.match(checkpoint9Migration, new RegExp(`${table}_tenant_clinic_isolation`, "i"));
   }
 
-  assert.match(checkpoint9Migration, /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i);
-  assert.match(checkpoint9Migration, /foreign key \(tenant_id, patient_id\) references patients\(tenant_id, id\)/i);
+  assert.match(
+    checkpoint9Migration,
+    /foreign key \(tenant_id, clinic_id\) references clinics\(tenant_id, id\)/i
+  );
+  assert.match(
+    checkpoint9Migration,
+    /foreign key \(tenant_id, patient_id\) references patients\(tenant_id, id\)/i
+  );
 });
 
 test("checkpoint 9 grants privacy and audit review permissions conservatively", () => {

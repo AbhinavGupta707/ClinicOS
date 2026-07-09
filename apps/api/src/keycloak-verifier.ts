@@ -1,8 +1,13 @@
-import { createPublicKey, createVerify, type KeyObject } from "node:crypto";
+import {
+  createPublicKey,
+  createVerify,
+  type KeyObject,
+  type webcrypto
+} from "node:crypto";
 import type { KeycloakAccessTokenClaims } from "@clinic-os/auth";
 import { ApiError } from "./errors.ts";
 
-type JsonWebKey = Record<string, unknown> & { kid?: string };
+type JsonWebKey = webcrypto.JsonWebKey & { kid?: string };
 
 interface JsonWebKeySet {
   keys: JsonWebKey[];

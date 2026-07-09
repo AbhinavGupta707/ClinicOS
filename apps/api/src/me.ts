@@ -10,6 +10,8 @@ import type { IdentityRepository } from "@clinic-os/db";
 import { createAuditEvent, type AuditEventRecord } from "@clinic-os/security";
 import { ApiError } from "./errors.ts";
 
+export type { MeResponse } from "@clinic-os/auth";
+
 export interface MeRequestContext {
   requestId: string;
   verifiedKeycloakClaims: KeycloakAccessTokenClaims | null;

@@ -8,9 +8,9 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "find src -name '*.ts' -exec node --check {} \\;",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "find src test -name '*.ts' -exec node --check {} \\;",
     "test": "node --test test/*.test.ts",
-    "build": "find src -name '*.ts' -exec node --check {} \\;"
+    "build": "tsc --noEmit -p tsconfig.json"
   }
 }

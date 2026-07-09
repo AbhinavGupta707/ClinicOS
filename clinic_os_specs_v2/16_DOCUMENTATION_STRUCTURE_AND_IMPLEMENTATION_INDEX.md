@@ -1,12 +1,14 @@
 # 16 - Documentation Structure and Implementation Index
 
-**Date:** 2026-07-06  
-**Status:** Canonical planning index  
+**Date:** 2026-07-09
+**Status:** Canonical planning index
 **Purpose:** Keep the project documentation lean, remove duplicated planning paths, and give implementation agents a clear execution map.
+
+> **Post-CP10 authority (2026-07-09):** The independent readiness audit found that CP10 is local/fixture evidence, not pilot or production readiness. Plan 23, plan 24, the remediation register, and the production evidence standard now govern execution. The user selected one persistent master session with sequential checkpoints; worktree orchestration is historical/optional rather than the default.
 
 ## 1. Executive Decision
 
-Use one implementation index plus three focused implementation plans:
+The original build-pack structure used one implementation index plus three focused implementation plans and a CP0-CP10 worktree plan:
 
 1. `16_DOCUMENTATION_STRUCTURE_AND_IMPLEMENTATION_INDEX.md` - this document; explains doc structure, archived material, workstream boundaries, and execution sequence.
 2. `20_ORCHESTRATION_CHECKPOINT_PLAN.md` - sequential worktree checkpoint plan, lane shape, verification gates, and execution prompts.
@@ -14,13 +16,20 @@ Use one implementation index plus three focused implementation plans:
 4. `18_IMPLEMENTATION_PLAN_CLINIC_OS_DENTAL.md` - web product, clinic workflow, dental operating layer, billing, tasks, lab, inventory, analytics.
 5. `19_IMPLEMENTATION_PLAN_INTEGRATIONS_AI_MOBILE.md` - WhatsApp, payments, telephony, Practo/Google, migration, mobile capture, AI/scribe, FHIR/ABDM, imaging.
 
+Post-CP10 remediation adds two canonical plans without duplicating the domain reference material:
+
+6. `23_PRODUCTION_READINESS_REMEDIATION_PLAN.md` - current target architecture and CP11-CP18 implementation sequence.
+7. `24_PRODUCTION_SECURITY_THREAT_MODEL_AND_CONTROLS.md` - security architecture and control baseline.
+
+Plan 20 is retained as the historical CP0-CP10 record. New execution uses the single-session runbook under `docs/implementation/`.
+
 This is better than one massive implementation plan because ClinicOS has three different execution surfaces:
 
 - A platform surface: infra, auth, tenancy, database, workflows, security, observability.
 - A clinic product surface: assistant, doctor, receptionist, owner workflows.
 - A boundary surface: external integrations, mobile capture, AI, interoperability.
 
-Putting all of that into one document would create a second build pack and make agents lose the thread. Splitting more granularly would create coordination drift. This four-document structure is the lean middle.
+The focused plans remain domain references; plans 23/24 provide the current remediation and security control plane without copying those requirements.
 
 ## 2. Active Canonical Docs
 
@@ -42,11 +51,18 @@ These files are active and should be treated as current context.
 | `14_STACK_AND_VENDOR_DECISIONS.md` | Current stack/vendor defaults | Temporal, Keycloak, AWS India, Razorpay, WhatsApp, ABDM, mobile capture. |
 | `15_PILOT_FIELD_NOTE_DENTAL_WORKFLOW.md` | Field evidence | Real dental clinic workflow and pilot archetype. |
 | `16_DOCUMENTATION_STRUCTURE_AND_IMPLEMENTATION_INDEX.md` | Current execution index | Implementation sequencing and doc hygiene. |
-| `20_ORCHESTRATION_CHECKPOINT_PLAN.md` | Worktree orchestration plan | Sequential checkpoints, lane design, verification gates, handoff prompts. |
+| `20_ORCHESTRATION_CHECKPOINT_PLAN.md` | Historical CP0-CP10 plan | Prior worktree sequence and handoff record; not the default for CP11 onward. |
 | `17_IMPLEMENTATION_PLAN_PLATFORM_INFRA.md` | Platform execution plan | Platform/infrastructure workstream. |
 | `18_IMPLEMENTATION_PLAN_CLINIC_OS_DENTAL.md` | Clinic product execution plan | Core clinic/dental workstream. |
 | `19_IMPLEMENTATION_PLAN_INTEGRATIONS_AI_MOBILE.md` | Boundary execution plan | Integrations/mobile/AI/interoperability workstream. |
 | `21_EXECUTION_INPUTS_AND_CREDENTIALS.md` | Inputs checklist | Credentials, sandbox accounts, clinic details, and live verification requirements. |
+| `22_CREDENTIAL_SETUP_GUIDE.md` | Credential activation guide | Official registration and configuration steps; presence alone is not activation evidence. |
+| `23_PRODUCTION_READINESS_REMEDIATION_PLAN.md` | Current post-CP10 execution plan | Target production architecture, CP11-CP18 sequence, and definition of done. |
+| `24_PRODUCTION_SECURITY_THREAT_MODEL_AND_CONTROLS.md` | Current security baseline | Threat model, invariants, control matrix, and hard security gate. |
+| `../docs/security/PRODUCTION_SECURITY_AND_READINESS_REMEDIATION_REGISTER.md` | Independent audit register | Findings, severity, remediation, dependencies, and closure evidence. |
+| `../docs/qa/PRODUCTION_READINESS_EVIDENCE_STANDARD.md` | Evidence standard | E0-E7 tiers, claim rules, freshness, and go/no-go criteria. |
+| `../docs/implementation/POST_CP10_SINGLE_SESSION_EXECUTION_PROGRAM.md` | Execution runbook | Current sequential master-session control loop. |
+| `../docs/implementation/CHECKPOINT_11_VERIFICATION_AND_DURABLE_DATA_FOUNDATION.md` | Active checkpoint packet | First remediation implementation unit. |
 | `00_SOURCE_REGISTER.md` | Source register | Evidence, references, and research traceability. |
 | `CHANGELOG.md` | Change history | What changed across planning passes. |
 | `COMBINED_BUILD_PACK.md` | Pointer only | Explains why the old combined pack is archived. |
@@ -81,10 +97,14 @@ Read in this order:
 
 1. `../AGENTS.md`
 2. `README.md`
-3. `16_DOCUMENTATION_STRUCTURE_AND_IMPLEMENTATION_INDEX.md`
-4. `20_ORCHESTRATION_CHECKPOINT_PLAN.md`
-5. The relevant focused implementation plan: `17`, `18`, or `19`
-6. The reference docs cited by that plan
+3. `23_PRODUCTION_READINESS_REMEDIATION_PLAN.md`
+4. `24_PRODUCTION_SECURITY_THREAT_MODEL_AND_CONTROLS.md`
+5. `../docs/security/PRODUCTION_SECURITY_AND_READINESS_REMEDIATION_REGISTER.md`
+6. `../docs/qa/PRODUCTION_READINESS_EVIDENCE_STANDARD.md`
+7. `../docs/implementation/POST_CP10_SINGLE_SESSION_EXECUTION_PROGRAM.md`
+8. The active checkpoint packet, beginning with CP11
+9. The relevant focused implementation plan: `17`, `18`, or `19`
+10. The reference docs cited by that plan
 
 ### Platform Agent
 

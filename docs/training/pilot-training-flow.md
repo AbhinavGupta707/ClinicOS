@@ -1,11 +1,13 @@
 # Pilot Training Flow
 
+> **Pre-production draft (2026-07-09):** No pilot is authorized. This CP10-era flow may be reused only after CP17 updates it against the exact production workflows, roles, devices, fallback and current go-live checklist.
+
 Date: 2026-07-07
 
-Status: Draft role-training plan
+Status: Historical draft requiring CP17 validation
 
 Training data rule: start with synthetic data; real clinic data requires explicit
-clinic approval and the CP10 go-live gates.
+authorization and every gate in `docs/release/pilot-go-live-checklist.md`.
 
 ## Training Principles
 

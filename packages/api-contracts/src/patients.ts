@@ -64,7 +64,7 @@ export interface PatientCreateRequest extends MutationRequestContext {
   patient: PatientCreatePayload;
 }
 
-export interface PatientUpdatePatch {
+export interface PatientUpdatePatch extends Record<string, unknown> {
   fullName?: string;
   phone?: string | null;
   email?: string | null;

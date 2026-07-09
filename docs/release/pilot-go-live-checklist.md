@@ -1,126 +1,146 @@
-# Pilot Go-Live Checklist
+# ClinicOS Pilot-Production Go-Live Checklist
 
-Date: 2026-07-07
+**Date:** 2026-07-09
+**Status:** Active hard-gate checklist
+**Current decision:** **NO-GO**
+**Decision owners:** Clinic owner, ClinicOS engineering release lead, security/privacy lead, clinical safety lead and operations/support lead
 
-Status: Draft checklist for master and pilot operator completion
+This checklist supersedes the 2026-07-07 CP10 draft. Synthetic dry-runs and fixture browser evidence cannot satisfy production hard gates. Every in-scope gate must pass for the exact revision and environment. If an optional workflow cannot pass, remove it completely from production registration/routes/navigation/configuration and preserve a safe complete manual workflow; do not waive the gate.
 
-Decision owner: pilot clinic owner plus ClinicOS release lead
+## 1. Entry Criteria
 
-This checklist is the release-candidate gate for a selected pilot clinic. A
-pilot may only proceed when every hard gate is either passed with evidence or
-explicitly removed from the pilot scope as a deferred whole workflow.
+Do not schedule go-live until:
 
-## Hard Go/No-Go Gates
+- CP11-CP16 are complete for the selected pilot scope;
+- the remediation register has no open in-scope P0/P1 and no boundary-bypassing P2;
+- the exact pilot-prod artifact/config is frozen and traceable;
+- E5 synthetic pilot-prod rehearsal is complete;
+- external provider, clinic and data authorities required for the selected scope are available;
+- an independent penetration test is complete and release-blocking findings are closed.
 
-| Gate                       | Go condition                                                                                                                                                     | No-go trigger                                                                                                        | Evidence location                                         |
-| -------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------- |
-| Repository checks          | `git diff --check`, `npm run check`, `npm run typecheck`, `npm run lint`, `npm run test`, `npm run build`, and `npm run security:secrets` pass after CP10 merge. | Any failing gate without an accepted non-product blocker.                                                            | `docs/orchestration/CHECKPOINT_10_FINAL_REPORT.md`        |
-| Full clinic-day regression | Lead through owner dashboard passes with synthetic/simulator data and canonical route families.                                                                  | Regression skips an implemented workflow, uses stale routes, or treats fixture-only behavior as live.                | `docs/qa/checkpoint-10-evidence-matrix.md`                |
-| Role and tenant safety     | Owner, doctor, assistant, receptionist, accountant, auditor/support, and platform/admin boundaries pass.                                                         | Unauthorized role can read/write PHI or cross-tenant records, or a required role cannot complete its owned workflow. | CP10 QA evidence                                          |
-| Browser/mobile safety      | Desktop and 390px mobile smoke show reachable controls, no horizontal overflow, and honest loading/error/unavailable states.                                     | Primary controls unreachable, horizontal overflow, fake completion copy, or unsafe PHI exposure.                     | CP10 browser screenshots/spec output                      |
-| Provider posture           | Every provider is either activated with official evidence, intentionally simulator/local, unavailable, or manual.                                                | UI or docs claim live delivery/payment/ABDM/cloud readiness without evidence.                                        | Provider-health evidence and risk register                |
-| Backup/restore             | Synthetic restore dry-run evidence is current; live restore remains deferred unless separately approved.                                                         | Missing restore evidence or unresolved backup failure.                                                               | `infra/runbooks/backup-restore-drill.md` and final report |
-| Migration/data             | Any CP10 migration dry-run or data import review passes, with no silent overwrite of verified records.                                                           | Migration changes lack rollback/evidence or overwrite source-attributed records.                                     | CP10 QA evidence                                          |
-| Training                   | Role training checklist is completed by the pilot clinic team using synthetic/demo data first.                                                                   | Staff cannot complete their day-one tasks without unsafe workarounds.                                                | `docs/training/pilot-training-flow.md`                    |
-| Support readiness          | Pilot support owner, escalation path, outage posture, and manual fallback are assigned.                                                                          | No named support owner or no incident channel for the pilot window.                                                  | `infra/runbooks/pilot-support-admin.md`                   |
-| Real data authorization    | Real clinic data import/use is explicitly approved and scoped, or pilot stays synthetic/manual.                                                                  | Real PHI appears in fixtures, screenshots, logs, or local docs without authorization.                                | Pilot operator sign-off                                   |
+## 2. Technical Hard Gates
 
-## Timeline Checklist
+| Gate                      | Go condition                                                                                                                                        | No-go trigger                                                                                             | Required tier/evidence  |
+| ------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------- | ----------------------- |
+| Revision and supply chain | Reviewed revision; lockfile; scans; SBOM; signed/provenanced artifact built once and promoted through environments.                                 | Unreviewed/rebuilt artifact, critical/high unaccepted finding, expired exception, unsigned image.         | E5 CI/artifact record.  |
+| Repository gates          | Check, real TypeScript typecheck, lint, full tests, build, secret/SCA/SAST/IaC/container/license gates pass with zero unexplained skips.            | Any failing/skipped required gate or syntax-only TypeScript check.                                        | E1 plus exact revision. |
+| Database and migrations   | Clean migration history/checksums, least-privilege roles, RLS inventory, staging/pilot-prod migration rehearsal and forward-fix/rollback plan.      | Drift, failed/dirty history, runtime schema privilege, untested data transform or missing backup.         | E4/E5.                  |
+| Tenant/role safety        | Every tenant-owned operation and table has API authorization and RLS negative evidence; role matrix, MFA, revocation and break-glass pass.          | Cross-tenant access/existence leak, stale privilege, missing privileged audit.                            | E4/E5.                  |
+| Durable clinic day        | Selected lead-to-continuity workflows pass through real repositories, outbox/Temporal, generated clients and UI without fixture fallback.           | Fixture/simulator data used as source of truth, stale route, unreconciled state or fake completion.       | E4/E5.                  |
+| API/web boundary          | Runtime schemas, idempotency/concurrency, bounded requests, rate limits, strict CORS/origin/CSRF, CSP/security headers and PHI cache controls pass. | Bypass, mass assignment, wildcard credentialed CORS, missing deployed policy or unbounded expensive path. | E4/E5.                  |
+| Cloud/IAM/network         | Terraform-applied inventory matches plan; private data paths, KMS/Secrets, least IAM/network, WAF/TLS/DNS, CI OIDC and drift protection pass.       | Public DB/storage, manual untracked resource, broad production identity, missing encryption or drift.     | E5.                     |
+| Media                     | Private S3/KMS upload, validation, quarantine/scan, signed access, audit, lifecycle/deletion and tenant denial pass.                                | Local simulator, public/raw object access, unscanned media or leaked key/path.                            | E4/E5.                  |
+| Telemetry and alerts      | PHI-safe correlated logs/metrics/traces, SLO dashboards, security/provider/queue/DB/backup alerts and real paging route pass.                       | Console-only telemetry, alert not delivered, PHI/secret leakage or no owner/runbook.                      | E5 alert injection.     |
+| Backup and recovery       | Automated backup/PITR/cross-region copy is healthy; timed restore and failover/failback meet approved RPO/RTO and application reconciliation.       | Synthetic dry-run only, failed backup, untested restore, unmet RPO/RTO or destructive ambiguity.          | E5 live drill.          |
+| Load and resilience       | Critical journeys meet latency/availability targets under approved peak/headroom; dependency faults, backpressure and recovery pass.                | Queue runaway, noisy-tenant failure, data loss/duplication or unsafe degraded state.                      | E4/E5.                  |
+| Vulnerability/security    | Independent penetration test and authenticated security checks complete; blocking findings closed; residual risk signed.                            | Open P0/P1 or high boundary risk; no independent test.                                                    | E5 report.              |
 
-### T-14 To T-7 Days
+## 3. Provider and Boundary Gates
 
-- Confirm pilot clinic scope, chairs/operators, working hours, appointment types,
-  and launch window.
-- Confirm whether the pilot uses synthetic-only data, approved real exports, or
-  a clinic-approved manual backfill workflow.
-- Collect clinic-approved pricebook, prescription templates, post-op
-  instructions, recall templates, lab card examples, inventory list, consent
-  language, and current payment/WhatsApp posture.
-- Confirm provider mode for each integration: simulator, unavailable/manual,
-  sandbox, or live. Do not configure dashboards until signed HTTPS callback
-  routes exist.
-- Assign release lead, support lead, data/privacy reviewer, and clinic owner
-  approver.
+Complete only the rows enabled for the pilot.
 
-### T-6 To T-2 Days
+| Capability    | Go condition                                                                                                                                                                   | No-go trigger                                                                                        |
+| ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------- |
+| Meta WhatsApp | Official app/account approved; HTTPS callback registered; challenge/signature, template, consent/opt-out, send/status, retry/replay/reconciliation pass.                       | Credential-only/simulator evidence, unsigned route, missing opt-out or invented delivery/read state. |
+| Razorpay      | Official account/mode; HTTPS callback registered; raw signature, invoice/amount match, duplicates/order/retry/refund/dispute reconciliation pass.                              | Static/manual payment marked provider-paid, missing URL/signature/reconciliation.                    |
+| Telephony     | Official account/API/callback, event validation, missed-call matching/ambiguity and reconciliation pass.                                                                       | Scraping, invented callback or silent patient mislink.                                               |
+| Native mobile | Signed internal iOS/Android builds; camera/audio permissions, consent, encrypted offline queue, revoke/purge, poor network and physical-device matrix pass.                    | Web-only smoke, memory cache, plaintext PHI/token or untested devices.                               |
+| AI/STT        | Approved vendor/region/terms/no-training-retention posture; consent, data minimization, eval thresholds, human review, provenance, kill switch and cost/failure controls pass. | Unapproved PHI path, no evals, autonomous clinical finalization or missing consent.                  |
+| FHIR/ABDM     | Selected scope has official validator/sandbox, identity/consent/provenance/retry/reconciliation and compliance approval.                                                       | Fixture projection represented as live exchange or incomplete national-profile claim.                |
 
-- Run master integration checks and record evidence in the final report.
-- Run CP10 clinic-day regression and role matrix after all lane commits merge.
-- Run browser/user smoke for desktop and 390px mobile.
-- Run backup/restore dry-run evidence and review DR gaps.
-- Train owner, doctor, assistant, receptionist, and accountant roles on synthetic
-  data.
-- Review known risks and remove from pilot scope any workflow without acceptable
-  evidence.
+Disabled capabilities must be unreachable and honestly unavailable. Manual fallbacks cannot fabricate provider-confirmed state.
 
-### T-1 Day
+## 4. Clinic, Privacy and Clinical Safety Gates
 
-- Freeze non-critical changes to the pilot release candidate.
-- Confirm support rota, contact channel, incident severity definitions, and
-  manual fallback supplies.
-- Confirm provider dashboards remain disconnected unless official signed
-  webhook evidence exists.
-- Confirm clinic staff know which workflows are live in ClinicOS, which are
-  manual, and which are not part of the pilot.
-- Confirm no real PHI is in screenshots, fixture files, local logs, or docs.
+| Gate                         | Required evidence                                                                                                                                          |
+| ---------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Legal/data roles             | Executed clinic agreement/DPA; controller/processor and subprocessor responsibilities; approved privacy notices and contact/escalation.                    |
+| Data inventory and lifecycle | Purpose, classification, access, retention, deletion/legal hold, export and backup exception matrix approved.                                              |
+| Clinic configuration         | Facility, timezone/hours, roles, appointment types, pricebook/taxes, templates, consent versions, payment/provider modes and fallback procedures signed.   |
+| Migration                    | Authorized source/export; dry run; patient matching/ambiguity queue; reconciliation totals; sampled clinical review; rollback and source-of-truth cutover. |
+| Clinical safety              | Named clinical safety lead; signed workflow/hazard review; record sign/amend, prescription, wrong-patient, consent and AI boundaries exercised.            |
+| Staff access                 | Named roster, least roles, MFA for privileged users, training completion, test login, offboarding and break-glass procedure.                               |
+| Support/downtime             | On-call rota, severity matrix, contact channel, manual clinic continuity pack, data backfill/reconciliation and stop authority exercised.                  |
+| Patient communication        | Approved templates, consent/opt-out, identity-safe content, response/escalation and outage behavior reviewed.                                              |
+| Real data authorization      | Exact environment, data categories, users, date/window and permitted workflows approved before any PHI enters.                                             |
 
-### Go-Live Day
+## 5. T-14 to T-7 Days
 
-- Start with a clinic huddle: pilot scope, no-go conditions, manual fallback,
-  support channel, and escalation owner.
-- Run a short health check: web/API/worker readiness, provider-health read,
-  support contact test, and manual fallback availability.
-- Allow ClinicOS use only for the approved pilot workflows.
-- Record every incident, manual fallback, provider outage, and data correction in
-  the support log.
-- Do not enable live providers, ABDM, cloud mutations, or physical-device
-  distribution during the pilot window unless separately approved and recorded.
+- Freeze intended pilot scope and explicitly list disabled workflows.
+- Complete clinic configuration and migration rehearsal with synthetic or approved de-identified data.
+- Complete E4 provider/device tests and remediate security/load defects.
+- Run restore/failover and alert delivery; confirm results remain fresh for launch.
+- Train role groups on the exact release and manual downtime workflow.
+- Confirm provider dashboard registrations, callback domains/certificates and rotation owners without recording secrets in docs.
+- Review remediation register and reject any documentation-only closure.
 
-### T+1 To T+7 Days
+## 6. T-6 to T-2 Days
 
-- Review support tickets, dead letters, audit/security events, and manual
-  fallback records daily.
-- Reconcile manual actions back into ClinicOS only through approved workflows
-  with source attribution and audit evidence.
-- Compare owner dashboard metrics with clinic expectations and source records.
-- Decide whether to expand, hold, or roll back the pilot scope.
+- Deploy the signed release candidate to pilot-prod using the production pipeline.
+- Run E5 full synthetic clinic day for all in-scope roles and physical devices.
+- Run tenant-negative, auth revocation, provider adversarial/retry, load/fault and privacy/security tests.
+- Reconcile database, audit, outbox, Temporal, read models, provider state and dashboard totals.
+- Review backup, alert, SLO, cost/capacity and support dashboards.
+- Complete independent security, privacy and clinical safety review.
+- Prepare rollback artifact/config and verify authority to invoke it.
 
-## Rollback And Degraded Mode
+## 7. T-1 Day Change Freeze
 
-Use this posture when a release issue blocks safe operation:
+- Record git revision, artifact digest, Terraform state/plan, migration versions, config version and provider modes.
+- Allow only reviewed release-blocking fixes followed by full invalidated evidence reruns.
+- Confirm named on-call staff, clinic contacts, escalation bridge, decision log and stop conditions.
+- Verify no real PHI in repository, fixtures, local volumes, CI output, screenshots or unrestricted telemetry.
+- Confirm backups healthy and last restore/failover evidence within approved freshness.
+- Obtain conditional technical signatures; clinic/real-data authorization remains required at go-live.
 
-1. Stop expanding use of the affected ClinicOS workflow.
-2. Preserve audit logs, outbox/dead-letter evidence, screenshots, and operator
-   notes before retrying or reverting anything.
-3. Switch to the clinic-approved manual workflow for the affected area.
-4. Keep provider actions unavailable/manual unless official evidence confirms
-   successful provider processing.
-5. If code rollback is needed, roll back the application release before touching
-   data.
-6. If data restore is needed, follow `infra/runbooks/backup-restore-drill.md`
-   and `infra/runbooks/disaster-recovery.md`; do not run destructive restore
-   steps without human approval.
+## 8. Go-Live Day
 
-## Manual Fallbacks
+1. Hold clinic safety huddle: scope, disabled capabilities, manual fallback, stop authority and support channel.
+2. Verify exact artifact/config/migrations and dependency readiness.
+3. Run synthetic canary identity → appointment → encounter → billing/continuity plus provider/device checks.
+4. Verify telemetry, alert route, backup status and audit/outbox/queue health.
+5. Record all required signatures for the exact revision/environment.
+6. Enable only the approved limited cohort/workflows.
+7. Observe the first real workflow end to end with clinic staff and support present.
+8. Reconcile clinical, financial, provider and audit state before expanding.
+9. Stop/rollback on any no-go condition; do not debug through unsafe live use.
 
-Manual fallback is acceptable only when clinic-approved and later reconciled
-with audit/source evidence.
+## 9. Immediate Stop/Rollback Conditions
 
-| Workflow               | Safe fallback                                        | Reconciliation rule                                                                    |
-| ---------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------- |
-| Lead or missed call    | Manual phone/WhatsApp log outside ClinicOS.          | Backfill as manual source-attributed lead/patient/appointment when the system is safe. |
-| Intake and consent     | Clinic paper form or assistant-entered history card. | Attach or transcribe only with patient consent and audit trail.                        |
-| Dental chart and media | Doctor paper note or existing imaging software.      | Backfill findings/media only through CP4 durable media/chart routes.                   |
-| Payment                | Existing clinic UPI/payment process.                 | Record manual payment evidence; never mark provider-paid without provider proof.       |
-| Instructions/recalls   | Printed instructions or approved manual message.     | Record request/evidence; do not invent delivered/read provider state.                  |
-| Lab/inventory/SOP      | Existing register or checklist.                      | Backfill tasks/events with source attribution.                                         |
+- wrong patient, tenant disclosure or authorization bypass;
+- lost, duplicated or silently altered signed clinical/financial state;
+- unverified provider action represented as confirmed;
+- consent failure or AI bypass of required review;
+- database/audit/outbox divergence that cannot be reconciled promptly;
+- backup/readiness/telemetry unavailable beyond the approved window;
+- material PHI/secret exposure;
+- severe latency/outage with unsafe manual fallback;
+- staff cannot safely complete the selected workflow;
+- security/privacy/clinical/clinic approver withdraws authorization.
 
-## Sign-Off
+Preserve evidence, disable affected capability/traffic, invoke clinic downtime, notify the incident owner, roll back application before attempting data changes, and use restore only through the approved destructive-action procedure.
 
-| Role                   | Name    | Decision | Date    | Notes                                     |
-| ---------------------- | ------- | -------- | ------- | ----------------------------------------- |
-| Clinic owner           | Pending | Pending  | Pending | Required before pilot go-live.            |
-| Clinic doctor lead     | Pending | Pending  | Pending | Required for clinical workflow scope.     |
-| Clinic operations lead | Pending | Pending  | Pending | Required for assistant/reception flow.    |
-| ClinicOS release lead  | Pending | Pending  | Pending | Required after evidence review.           |
-| Data/privacy reviewer  | Pending | Pending  | Pending | Required before real PHI or real exports. |
+## 10. Manual Fallback and Reconciliation
+
+| Workflow                  | Safe fallback                             | Reconciliation requirement                                                                |
+| ------------------------- | ----------------------------------------- | ----------------------------------------------------------------------------------------- |
+| Lead/appointment/queue    | Approved paper/phone/source log.          | Named staff backfill with source, original time and duplicate review.                     |
+| Intake/consent            | Approved paper form.                      | Verify identity/consent version; scan/transcribe through audited workflow.                |
+| Encounter/clinical record | Clinic downtime clinical record.          | Authorized clinician reconciles/signs additive record; never silently backdate/overwrite. |
+| Dental/media              | Approved paper/existing imaging software. | Import only through validated private media/chart path with provenance.                   |
+| Payment                   | Existing clinic payment process.          | Record manual evidence; provider-paid only from provider/reconciled proof.                |
+| Messaging/recall          | Approved manual communication.            | Record request/action evidence; do not invent sent/delivered/read.                        |
+| Lab/inventory/tasks       | Existing register/checklist.              | Backfill with source/operator/time and reconcile totals/status.                           |
+
+## 11. Sign-Off
+
+| Role                               | Name    | Decision | UTC/date | Revision/environment | Notes     |
+| ---------------------------------- | ------- | -------- | -------- | -------------------- | --------- |
+| Clinic owner                       | Pending | NO-GO    | Pending  | Pending              | Required. |
+| Clinic doctor/clinical safety lead | Pending | NO-GO    | Pending  | Pending              | Required. |
+| Clinic operations lead             | Pending | NO-GO    | Pending  | Pending              | Required. |
+| ClinicOS engineering release lead  | Pending | NO-GO    | Pending  | Pending              | Required. |
+| Security/privacy lead              | Pending | NO-GO    | Pending  | Pending              | Required. |
+| Support/operations lead            | Pending | NO-GO    | Pending  | Pending              | Required. |
+
+Final **GO** exists only when all rows are completed for the same revision/environment and every hard gate above passes. Until then, the authoritative decision remains **NO-GO**.

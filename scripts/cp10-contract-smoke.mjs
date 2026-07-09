@@ -2,6 +2,7 @@
 import assert from "node:assert/strict";
 import { pathToFileURL } from "node:url";
 import { loadCp10Scenario, validateCp10Scenario } from "./validate-cp10-fixtures.mjs";
+import { runCp11RuntimeSmoke } from "./cp11-runtime-smoke.mjs";
 
 const TOKEN_ENV_BY_ACTOR = {
   accountant: "CLINICOS_CP10_ACCOUNTANT_TOKEN",
@@ -286,12 +287,10 @@ function printRequestRow(type, row) {
 }
 
 async function runLiveReadinessSmoke(scenario, plan, options) {
-  assert.ok(options.baseUrl, "Set --base-url or CLINICOS_CP10_API_BASE_URL for live smoke.");
-
-  for (const request of plan.liveReadinessProbes) {
-    await executeRequest(options.baseUrl, scenario, request, options);
-    console.log(`pass ${request.key}`);
-  }
+  void scenario;
+  void plan;
+  const result = await runCp11RuntimeSmoke(options);
+  console.log(JSON.stringify(result, null, 2));
 }
 
 async function main() {

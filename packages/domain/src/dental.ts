@@ -150,8 +150,8 @@ export interface DentalFindingHistoryRecord {
   changedByUserId: UUID;
   changedAt: string;
   reason: string | null;
-  beforeState: DentalFindingSnapshotFinding | null;
-  afterState: DentalFindingSnapshotFinding;
+  beforeState: DentalChartSnapshotFinding | null;
+  afterState: DentalChartSnapshotFinding;
   provenance: Record<string, unknown>;
 }
 

@@ -29,7 +29,8 @@ npm run dev --workspace apps/worker
 
 Required:
 
-- `DATABASE_URL`
+- `DATABASE_URL` using the dedicated worker credential (local default:
+  `postgresql://clinic_os_worker:clinic_os_worker@localhost:5432/clinic_os`)
 
 Optional:
 
@@ -44,22 +45,23 @@ Optional:
 
 ## Data/Auth Table Contract
 
-This lane intentionally does not edit database migrations. The Postgres repository expects these
-tables and columns:
+Migration `0014_durable_outbox_worker.sql` owns the worker persistence contract. The worker uses
+the dedicated `clinic_os_worker` role, which can process outbox tables across tenants but cannot
+read product or clinical tables.
 
 ### `outbox_events`
 
-- `event_id uuid primary key`
+- `id uuid primary key`
 - `event_type text not null`
 - `schema_version text not null`
 - `tenant_id uuid not null`
 - `clinic_id uuid not null`
 - `aggregate_type text not null`
-- `aggregate_id text not null`
-- `actor jsonb not null`
+- `aggregate_id uuid not null`
+- `actor_type text not null`
+- `actor_id text not null`
 - `correlation_id text not null`
 - `idempotency_key text not null`
-- `source jsonb`
 - `payload jsonb not null`
 - `occurred_at timestamptz not null`
 - `status text not null`
@@ -70,6 +72,7 @@ tables and columns:
 - `processed_at timestamptz`
 - `created_at timestamptz not null default now()`
 - `updated_at timestamptz not null default now()`
+- existing `published_at timestamptz` is set when processing completes
 
 Recommended indexes:
 
@@ -80,7 +83,9 @@ Recommended indexes:
 ### `outbox_attempts`
 
 - `attempt_id uuid primary key`
-- `event_id uuid not null references outbox_events(event_id)`
+- `event_id uuid not null references outbox_events(id)`
+- `tenant_id uuid not null`
+- `clinic_id uuid not null`
 - `attempt_number int not null`
 - `worker_id text not null`
 - `status text not null`
@@ -97,12 +102,12 @@ Recommended index:
 ### `dead_letter_events`
 
 - `dead_letter_id uuid primary key`
-- `event_id uuid not null unique references outbox_events(event_id)`
+- `event_id uuid not null unique references outbox_events(id)`
 - `event_type text not null`
 - `tenant_id uuid not null`
 - `clinic_id uuid not null`
 - `aggregate_type text not null`
-- `aggregate_id text not null`
+- `aggregate_id uuid not null`
 - `correlation_id text not null`
 - `idempotency_key text not null`
 - `failed_attempt_id uuid not null`
@@ -112,8 +117,9 @@ Recommended index:
 - `review_status text not null default 'unreviewed'`
 - `event jsonb not null`
 
-Dead letters are reviewable records, not discarded failures. Later admin tooling can replay,
-ignore, or investigate these rows without changing the processing contract.
+Dead letters are reviewable records, not discarded failures. Admin tooling can later replay,
+ignore, or investigate these rows without changing the processing contract. Runtime application
+credentials cannot mutate attempts or dead letters; worker credentials cannot read product tables.
 
 ## Canonical Event For Sample Temporal Workflow
 

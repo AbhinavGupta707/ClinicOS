@@ -230,7 +230,7 @@ export function permissionsForRoles(roleSlugs: readonly ClinicRoleSlug[]): Permi
 }
 
 export function roleGrantsPermission(roleSlug: ClinicRoleSlug, permission: PermissionKey): boolean {
-  return DEFAULT_ROLE_PERMISSION_GRANTS[roleSlug].includes(permission);
+  return (DEFAULT_ROLE_PERMISSION_GRANTS[roleSlug] as readonly PermissionKey[]).includes(permission);
 }
 
 export function normalizePermissionList(values: readonly string[]): PermissionKey[] {

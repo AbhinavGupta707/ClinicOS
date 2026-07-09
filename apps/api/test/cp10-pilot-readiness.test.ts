@@ -53,7 +53,8 @@ test("CP10 pilot readiness route is registered as a read-only owner surface", as
     config,
     identityRepository: new LocalFixtureIdentityRepository(),
     operationsRepository: new LocalFixtureClinicOperationsRepository(),
-    useLocalAuthFixture: true
+    useLocalAuthFixture: true,
+    repositoryMode: "fixture"
   });
 
   try {
@@ -63,7 +64,9 @@ test("CP10 pilot readiness route is registered as a read-only owner surface", as
     });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "EPERM") {
-      t.skip("Socket binding is blocked in this sandbox; run the CP10 route smoke outside the sandbox.");
+      t.skip(
+        "Socket binding is blocked in this sandbox; run the CP10 route smoke outside the sandbox."
+      );
       return;
     }
     throw error;

@@ -1,8 +1,10 @@
 # 21 - Execution Inputs and Credentials Checklist
 
-**Date:** 2026-07-06  
-**Status:** Pre-orchestration checklist  
+**Date:** 2026-07-09
+**Status:** Current CP11-CP18 external-input checklist
 **Purpose:** List the information, accounts, and credentials needed for autonomous end-to-end implementation and verification.
+
+> Post-CP10 execution uses one persistent master session. This file now tracks external inputs/authority by remediation checkpoint, not worktree launch. Credential presence never equals provider activation; use the E0-E7 evidence standard.
 
 ## 1. Important Secret Handling Rule
 

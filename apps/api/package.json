@@ -9,10 +9,10 @@
   },
   "scripts": {
     "dev": "npm run build --workspace @clinic-os/config --if-present && node src/server.ts",
-    "typecheck": "node --check src/index.ts && node --check src/errors.ts && node --check src/keycloak-verifier.ts && node --check src/local-fixture.ts && node --check src/media-storage.ts && node --check src/me.ts && node --check src/operations.ts && node --check src/server.ts",
-    "lint": "node --check src/index.ts && node --check src/errors.ts && node --check src/keycloak-verifier.ts && node --check src/local-fixture.ts && node --check src/media-storage.ts && node --check src/me.ts && node --check src/operations.ts && node --check src/server.ts && node --check test/*.test.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "node --check src/index.ts && node --check src/errors.ts && node --check src/health.ts && node --check src/keycloak-verifier.ts && node --check src/local-fixture.ts && node --check src/media-storage.ts && node --check src/me.ts && node --check src/operations.ts && node --check src/server.ts && node --check test/*.test.ts",
     "test": "node --test test/*.test.ts",
-    "build": "node --check src/index.ts && node --check src/errors.ts && node --check src/keycloak-verifier.ts && node --check src/local-fixture.ts && node --check src/media-storage.ts && node --check src/me.ts && node --check src/operations.ts && node --check src/server.ts"
+    "build": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
     "pg": "^8.22.0"

@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "node --check src/index.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "node --check src/index.ts",
     "test": "node --test test/*.test.ts"
   }

@@ -141,7 +141,7 @@ export function isAllowedAppointmentStatusTransition(
   from: AppointmentStatus,
   to: AppointmentStatus
 ): boolean {
-  return APPOINTMENT_STATUS_TRANSITIONS[from].includes(to);
+  return (APPOINTMENT_STATUS_TRANSITIONS[from] as readonly AppointmentStatus[]).includes(to);
 }
 
 export function parseAppointmentListRequest(

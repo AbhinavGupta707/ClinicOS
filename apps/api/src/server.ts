@@ -2,7 +2,11 @@ import { randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import { pathToFileURL } from "node:url";
 import { safeParseClinicOsEnv, type ClinicOsConfig } from "@clinic-os/config";
-import { createPaymentProvider, type AiGatewayProvider, type PaymentProvider } from "@clinic-os/integrations";
+import {
+  createPaymentProvider,
+  type AiGatewayProvider,
+  type PaymentProvider
+} from "@clinic-os/integrations";
 import {
   AuthenticationError,
   AuthorizationError,
@@ -14,14 +18,24 @@ import {
 import {
   PostgresAuditEventSink,
   PostgresClinicOperationsRepository,
+  PostgresClinicUnitOfWork,
   PostgresIdentityRepository,
+  LATEST_DATABASE_SCHEMA_VERSION,
   type ClinicOperationsRepository,
   type IdentityRepository
 } from "@clinic-os/db";
-import { isUuid, type UUID } from "@clinic-os/domain";
+import {
+  clinicLocalDateFromClock,
+  isUuid,
+  systemClock,
+  type Clinic,
+  type Clock,
+  type UUID
+} from "@clinic-os/domain";
 import type { AuditEventRecord } from "@clinic-os/security";
 import { Pool } from "pg";
 import { ApiError, toApiErrorBody } from "./errors.ts";
+import { ApiHealthMonitor, type ApiDependencyProbe, type ApiRepositoryMode } from "./health.ts";
 import { KeycloakJwtVerifier } from "./keycloak-verifier.ts";
 import {
   createLocalFixtureClaims,
@@ -170,6 +184,15 @@ interface TokenVerifier {
   ): Promise<KeycloakAccessTokenClaims>;
 }
 
+interface OperationsUnitOfWork {
+  run<T>(
+    callback: (context: {
+      repository: ClinicOperationsRepository;
+      auditSink: AuditSink;
+    }) => Promise<T>
+  ): Promise<T>;
+}
+
 export interface ClinicOsApiServerOptions {
   config: ClinicOsConfig;
   identityRepository: IdentityRepository;
@@ -181,6 +204,10 @@ export interface ClinicOsApiServerOptions {
   tokenVerifier?: TokenVerifier;
   useLocalAuthFixture?: boolean;
   fixtureSubject?: string;
+  dependencyProbes?: readonly ApiDependencyProbe[];
+  repositoryMode?: ApiRepositoryMode;
+  operationsUnitOfWork?: OperationsUnitOfWork;
+  clock?: Clock;
 }
 
 interface RuntimeOptions {
@@ -200,6 +227,11 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
       expectedIssuer,
       jwksUri: `${expectedIssuer}/protocol/openid-connect/certs`
     });
+  const healthMonitor = new ApiHealthMonitor({
+    repositoryMode: options.repositoryMode ?? "injected",
+    authMode: options.useLocalAuthFixture ? "local_synthetic_fixture" : "keycloak_jwks",
+    probes: options.dependencyProbes
+  });
 
   return createServer(async (request, response) => {
     const requestId = getRequestId(request);
@@ -215,12 +247,28 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
       }
 
       if (request.method === "GET" && request.url === "/health/ready") {
-        return sendJson(response, 200, {
-          status: "ready",
-          auth: options.useLocalAuthFixture ? "local_synthetic_fixture" : "keycloak_jwks",
-          repository: "identity_repository_configured",
+        const report = await healthMonitor.readiness();
+        return sendJson(response, report.status === "ready" ? 200 : 503, {
+          ...report,
           request_id: requestId
         });
+      }
+
+      if (request.method === "GET" && request.url === "/health/startup") {
+        const report = await healthMonitor.startup();
+        return sendJson(response, report.status === "ready" ? 200 : 503, {
+          ...report,
+          request_id: requestId
+        });
+      }
+
+      if (request.url?.startsWith("/v1/") && !(await healthMonitor.admitTraffic())) {
+        throw new ApiError(
+          503,
+          "DEPENDENCY_UNAVAILABLE",
+          "ClinicOS API startup dependencies are unavailable.",
+          { reason: "startup_dependencies_unavailable" }
+        );
       }
 
       if (request.method === "GET" && request.url === "/v1/me") {
@@ -268,23 +316,31 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
         }
 
         const rawBody = (await readRawBody(request, 1024 * 1024)).toString("utf8");
-        const result = await processPaymentWebhook(
-          {
-            repository: options.operationsRepository,
-            auditSink: options.auditSink,
-            paymentProvider: options.paymentProvider ?? createRuntimePaymentProvider(options.config),
-            paymentRepository: paymentRepositoryFromOperationsRepository(options.operationsRepository)
-          },
-          {
-            requestId,
-            providerKey: "razorpay",
-            rawBody,
-            receivedAt: new Date().toISOString(),
-            headers: requestHeadersRecord(request),
-            ipAddress: request.socket.remoteAddress ?? null,
-            userAgent: headerValue(request, "user-agent") ?? null
-          }
-        );
+        const webhookInput = {
+          requestId,
+          providerKey: "razorpay" as const,
+          rawBody,
+          receivedAt: (options.clock ?? systemClock).now().toISOString(),
+          headers: requestHeadersRecord(request),
+          ipAddress: request.socket.remoteAddress ?? null,
+          userAgent: headerValue(request, "user-agent") ?? null
+        };
+        const handleWebhook = (repository: ClinicOperationsRepository, auditSink?: AuditSink) =>
+          processPaymentWebhook(
+            {
+              repository,
+              auditSink,
+              paymentProvider:
+                options.paymentProvider ?? createRuntimePaymentProvider(options.config),
+              paymentRepository: paymentRepositoryFromOperationsRepository(repository)
+            },
+            webhookInput
+          );
+        const result = options.operationsUnitOfWork
+          ? await options.operationsUnitOfWork.run(({ repository, auditSink }) =>
+              handleWebhook(repository, auditSink)
+            )
+          : await handleWebhook(options.operationsRepository, options.auditSink);
 
         return sendJson(response, result.status, result.body);
       }
@@ -298,7 +354,7 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
           );
         }
 
-        const result = await routeOperationsRequest({
+        const routeInput = {
           request,
           requestId,
           tokenVerifier,
@@ -306,14 +362,22 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
           acceptedAudience,
           config: options.config,
           identityRepository: options.identityRepository,
-          repository: options.operationsRepository,
-          auditSink: options.auditSink,
           mediaStorage: options.mediaStorage,
           paymentProvider: options.paymentProvider ?? createRuntimePaymentProvider(options.config),
           aiGatewayProvider: options.aiGatewayProvider,
           useLocalAuthFixture: options.useLocalAuthFixture ?? false,
-          fixtureSubject: options.fixtureSubject
-        });
+          fixtureSubject: options.fixtureSubject,
+          clock: options.clock
+        };
+        const result = options.operationsUnitOfWork
+          ? await options.operationsUnitOfWork.run(({ repository, auditSink }) =>
+              routeOperationsRequest({ ...routeInput, repository, auditSink })
+            )
+          : await routeOperationsRequest({
+              ...routeInput,
+              repository: options.operationsRepository,
+              auditSink: options.auditSink
+            });
 
         return sendJson(response, result.status, result.body);
       }
@@ -342,22 +406,25 @@ export function createRuntimeApiServer(env: NodeJS.ProcessEnv = process.env): Ru
   }
 
   const useLocalAuthFixture = parseBoolean(env.CLINIC_OS_API_USE_DEV_AUTH_FIXTURE);
+  const useFixtureRepository = parseBoolean(env.CLINIC_OS_API_USE_FIXTURE_REPOSITORY);
 
-  if (parsed.data.isProductionLike && useLocalAuthFixture) {
+  if (parsed.data.isProductionLike && (useLocalAuthFixture || useFixtureRepository)) {
     throw new ApiError(
       503,
       "CONFIGURATION_ERROR",
-      "CLINIC_OS_API_USE_DEV_AUTH_FIXTURE is forbidden outside local/dev environments."
+      "Local auth and repository fixtures are forbidden outside local/dev environments."
     );
   }
 
-  const repositorySet = useLocalAuthFixture
+  let pool: Pool | undefined;
+  const repositorySet = useFixtureRepository
     ? {
         identityRepository: new LocalFixtureIdentityRepository(),
         operationsRepository: new LocalFixtureClinicOperationsRepository(),
         auditSink: new InMemoryAuditSink()
       }
     : createPostgresRepositorySet(parsed.data);
+  if ("pool" in repositorySet) pool = repositorySet.pool;
   const port = parsePort(env.PORT ?? env.API_PORT);
 
   const serverOptions: ClinicOsApiServerOptions = {
@@ -367,16 +434,33 @@ export function createRuntimeApiServer(env: NodeJS.ProcessEnv = process.env): Ru
     auditSink: repositorySet.auditSink,
     mediaStorage: createRuntimeMediaStorage(parsed.data, env),
     paymentProvider: createRuntimePaymentProvider(parsed.data),
-    useLocalAuthFixture
+    useLocalAuthFixture,
+    repositoryMode: useFixtureRepository ? "fixture" : "postgres",
+    dependencyProbes: pool
+      ? createRuntimeDependencyProbes({
+          pool,
+          config: parsed.data,
+          useLocalAuthFixture
+        })
+      : undefined
   };
+  if ("operationsUnitOfWork" in repositorySet) {
+    serverOptions.operationsUnitOfWork = repositorySet.operationsUnitOfWork;
+  }
 
   if (env.CLINIC_OS_API_DEV_SUBJECT) {
     serverOptions.fixtureSubject = env.CLINIC_OS_API_DEV_SUBJECT;
   }
 
+  const server = createClinicOsApiServer(serverOptions);
+  if (pool) {
+    server.once("close", () => {
+      void pool.end();
+    });
+  }
   return {
     port,
-    server: createClinicOsApiServer(serverOptions)
+    server
   };
 }
 
@@ -395,20 +479,32 @@ async function routeOperationsRequest(input: {
   aiGatewayProvider?: AiGatewayProvider;
   useLocalAuthFixture: boolean;
   fixtureSubject?: string | undefined;
+  clock?: Clock | undefined;
 }) {
   const url = new URL(input.request.url ?? "/", "http://clinic-os.local");
   const pathname = url.pathname;
-  const accessContext = await resolveAccessContext(input);
+  const resolvedAccess = await resolveAccessContext(input);
+  const accessContext = resolvedAccess.context;
+  const clinicId = resolveClinicId(input.request, accessContext);
+  const clinic = resolvedAccess.clinics.find((candidate) => candidate.id === clinicId);
+  if (!clinic) {
+    throw new ApiError(403, "PERMISSION_DENIED", "Clinic timezone is unavailable for this user.", {
+      reason: "clinic_mismatch"
+    });
+  }
   const operationsContext: OperationsRequestContext = {
     requestId: input.requestId,
     accessContext,
-    clinicId: resolveClinicId(input.request, accessContext),
+    clinicId,
+    clinicTimeZone: clinic.timezone,
     ipAddress: input.request.socket.remoteAddress ?? null,
     userAgent: headerValue(input.request, "user-agent") ?? null,
     idempotencyKey: headerValue(input.request, "idempotency-key") ?? null
   };
+  const clinicToday = clinicLocalDateFromClock(input.clock ?? systemClock, clinic.timezone);
   const dependencies = {
     repository: input.repository,
+    clock: input.clock,
     auditSink: input.auditSink,
     mediaStorage: input.mediaStorage,
     paymentProvider: input.paymentProvider,
@@ -421,8 +517,8 @@ async function routeOperationsRequest(input: {
   const body =
     ["POST", "PATCH"].includes(input.request.method ?? "") ||
     (input.request.method === "PUT" && !isMediaContentUpload)
-    ? await readJsonBody(input.request)
-    : undefined;
+      ? await readJsonBody(input.request)
+      : undefined;
 
   if (input.request.method === "GET" && pathname === "/v1/form-templates") {
     return listIntakeFormTemplates(operationsContext, dependencies);
@@ -492,9 +588,7 @@ async function routeOperationsRequest(input: {
     }
   }
 
-  const deletionReviewMatch = pathname.match(
-    /^\/v1\/privacy\/deletion-requests\/([^/]+)\/review$/
-  );
+  const deletionReviewMatch = pathname.match(/^\/v1\/privacy\/deletion-requests\/([^/]+)\/review$/);
   if (deletionReviewMatch && input.request.method === "POST") {
     return reviewDeletionRequest(
       operationsContext,
@@ -591,7 +685,9 @@ async function routeOperationsRequest(input: {
     );
   }
 
-  const migrationBatchRollbackMatch = pathname.match(/^\/v1\/migration-batches\/([^/]+)\/rollback$/);
+  const migrationBatchRollbackMatch = pathname.match(
+    /^\/v1\/migration-batches\/([^/]+)\/rollback$/
+  );
   if (migrationBatchRollbackMatch && input.request.method === "POST") {
     return rollbackMigrationBatch(
       operationsContext,
@@ -715,9 +811,7 @@ async function routeOperationsRequest(input: {
       return createPatientConsent(operationsContext, dependencies, patientId, body);
   }
 
-  const consentRevokeMatch = pathname.match(
-    /^\/v1\/patients\/([^/]+)\/consents\/([^/]+)\/revoke$/
-  );
+  const consentRevokeMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/consents\/([^/]+)\/revoke$/);
   if (consentRevokeMatch && input.request.method === "POST") {
     return revokePatientConsent(
       operationsContext,
@@ -801,9 +895,7 @@ async function routeOperationsRequest(input: {
     return listPricebookProcedures(operationsContext, dependencies);
   }
 
-  const patientTreatmentPlansMatch = pathname.match(
-    /^\/v1\/patients\/([^/]+)\/treatment-plans$/
-  );
+  const patientTreatmentPlansMatch = pathname.match(/^\/v1\/patients\/([^/]+)\/treatment-plans$/);
   if (patientTreatmentPlansMatch && input.request.method === "POST") {
     return createPatientTreatmentPlan(
       operationsContext,
@@ -839,11 +931,7 @@ async function routeOperationsRequest(input: {
 
   const invoiceMatch = pathname.match(/^\/v1\/invoices\/([^/]+)$/);
   if (invoiceMatch && input.request.method === "GET") {
-    return getInvoice(
-      operationsContext,
-      dependencies,
-      pathUuid(invoiceMatch[1], "invoiceId")
-    );
+    return getInvoice(operationsContext, dependencies, pathUuid(invoiceMatch[1], "invoiceId"));
   }
 
   const invoiceReceiptMatch = pathname.match(/^\/v1\/invoices\/([^/]+)\/receipts$/);
@@ -931,11 +1019,7 @@ async function routeOperationsRequest(input: {
   }
 
   if (input.request.method === "GET" && pathname === "/v1/queue") {
-    return listQueue(
-      operationsContext,
-      dependencies,
-      url.searchParams.get("date") ?? todayIsoDate()
-    );
+    return listQueue(operationsContext, dependencies, url.searchParams.get("date") ?? clinicToday);
   }
 
   const queuePatchMatch = pathname.match(/^\/v1\/queue\/([^/]+)$/);
@@ -952,14 +1036,15 @@ async function routeOperationsRequest(input: {
     return getMorningDashboard(
       operationsContext,
       dependencies,
-      url.searchParams.get("date") ?? todayIsoDate()
+      url.searchParams.get("date") ?? clinicToday
     );
   }
 
   if (input.request.method === "GET" && pathname === "/v1/owner-dashboard") {
     return getOwnerDashboard(operationsContext, dependencies, {
       from: url.searchParams.get("from"),
-      to: url.searchParams.get("to")
+      to: url.searchParams.get("to"),
+      defaultDate: clinicToday
     });
   }
 
@@ -977,12 +1062,7 @@ async function routeOperationsRequest(input: {
 
   const taskMatch = pathname.match(/^\/v1\/tasks\/([^/]+)$/);
   if (taskMatch && input.request.method === "PATCH") {
-    return updateTask(
-      operationsContext,
-      dependencies,
-      pathUuid(taskMatch[1], "taskId"),
-      body
-    );
+    return updateTask(operationsContext, dependencies, pathUuid(taskMatch[1], "taskId"), body);
   }
 
   if (input.request.method === "POST" && pathname === "/v1/recall-rules") {
@@ -1068,8 +1148,7 @@ async function routeOperationsRequest(input: {
   }
 
   if (pathname === "/v1/inventory/items") {
-    if (input.request.method === "GET")
-      return listInventoryItems(operationsContext, dependencies);
+    if (input.request.method === "GET") return listInventoryItems(operationsContext, dependencies);
     if (input.request.method === "POST")
       return createInventoryItem(operationsContext, dependencies, body);
   }
@@ -1113,7 +1192,8 @@ async function routeOperationsRequest(input: {
         severity: url.searchParams.get("severity"),
         category: url.searchParams.get("category")
       });
-    if (input.request.method === "POST") return createIncident(operationsContext, dependencies, body);
+    if (input.request.method === "POST")
+      return createIncident(operationsContext, dependencies, body);
   }
 
   if (pathname === "/v1/corrective-actions") {
@@ -1142,15 +1222,12 @@ async function routeOperationsRequest(input: {
     if (input.request.method === "GET")
       return getEncounter(operationsContext, dependencies, encounterId);
     if (input.request.method === "PATCH")
-      return saveEncounterClinicalNoteDraft(
-        operationsContext,
-        dependencies,
-        encounterId,
-        body
-      );
+      return saveEncounterClinicalNoteDraft(operationsContext, dependencies, encounterId, body);
   }
 
-  const encounterAiSessionsMatch = pathname.match(/^\/v1\/encounters\/([^/]+)\/ai-scribe\/sessions$/);
+  const encounterAiSessionsMatch = pathname.match(
+    /^\/v1\/encounters\/([^/]+)\/ai-scribe\/sessions$/
+  );
   if (encounterAiSessionsMatch) {
     const encounterId = pathUuid(encounterAiSessionsMatch[1], "encounterId");
     if (input.request.method === "GET")
@@ -1251,9 +1328,7 @@ async function routeOperationsRequest(input: {
     );
   }
 
-  const encounterPrescriptionMatch = pathname.match(
-    /^\/v1\/encounters\/([^/]+)\/prescriptions$/
-  );
+  const encounterPrescriptionMatch = pathname.match(/^\/v1\/encounters\/([^/]+)\/prescriptions$/);
   if (encounterPrescriptionMatch && input.request.method === "POST") {
     return createEncounterPrescription(
       operationsContext,
@@ -1358,7 +1433,7 @@ async function resolveAccessContext(input: {
   acceptedAudience: string;
   config: ClinicOsConfig;
   identityRepository: IdentityRepository;
-}): Promise<AccessContext> {
+}): Promise<{ context: AccessContext; clinics: Clinic[] }> {
   const verifiedKeycloakClaims = await resolveClaims({
     request: input.request,
     tokenVerifier: input.tokenVerifier,
@@ -1385,14 +1460,17 @@ async function resolveAccessContext(input: {
     );
   }
 
-  return buildAccessContext({
-    principal,
-    tenant: snapshot.tenant,
-    user: snapshot.user,
-    memberships: snapshot.memberships,
-    clinicAssignments: snapshot.clinicAssignments,
-    roleAssignments: snapshot.roleAssignments
-  });
+  return {
+    context: buildAccessContext({
+      principal,
+      tenant: snapshot.tenant,
+      user: snapshot.user,
+      memberships: snapshot.memberships,
+      clinicAssignments: snapshot.clinicAssignments,
+      roleAssignments: snapshot.roleAssignments
+    }),
+    clinics: snapshot.clinics
+  };
 }
 
 function resolveClinicId(request: IncomingMessage, context: AccessContext): UUID {
@@ -1413,23 +1491,95 @@ function createPostgresRepositorySet(config: ClinicOsConfig): {
   identityRepository: IdentityRepository;
   operationsRepository: ClinicOperationsRepository;
   auditSink: AuditSink;
+  operationsUnitOfWork: OperationsUnitOfWork;
+  pool: Pool;
 } {
   const pool = new Pool({
     connectionString: config.services.databaseUrl
+  });
+  pool.on("error", (error) => {
+    const code = "code" in error && typeof error.code === "string" ? error.code : "unknown";
+    console.error(
+      JSON.stringify({
+        level: "error",
+        event: "postgres.pool.idle_client_error",
+        code
+      })
+    );
   });
 
   return {
     identityRepository: new PostgresIdentityRepository(pool),
     operationsRepository: new PostgresClinicOperationsRepository(pool),
-    auditSink: new PostgresAuditEventSink(pool)
+    auditSink: new PostgresAuditEventSink(pool),
+    operationsUnitOfWork: new PostgresClinicUnitOfWork(pool),
+    pool
   };
+}
+
+function createRuntimeDependencyProbes(input: {
+  pool: Pool;
+  config: ClinicOsConfig;
+  useLocalAuthFixture: boolean;
+}): ApiDependencyProbe[] {
+  const probes: ApiDependencyProbe[] = [
+    {
+      name: "postgres_schema",
+      required: true,
+      timeoutMs: 1500,
+      async check() {
+        const result = await input.pool.query<{ version: string; success: boolean }>(
+          `select version, success
+           from flyway_schema_history
+           where type = 'SQL'
+           order by installed_rank desc
+           limit 1`
+        );
+        const latest = result.rows[0];
+        if (!latest?.success || latest.version !== LATEST_DATABASE_SCHEMA_VERSION) {
+          throw new Error("Database schema is not at the required application version.");
+        }
+      }
+    }
+  ];
+
+  if (!input.useLocalAuthFixture) {
+    probes.push({
+      name: "keycloak_jwks",
+      required: true,
+      timeoutMs: 1500,
+      async check() {
+        const issuer = buildExpectedIssuer(input.config);
+        const response = await fetch(`${issuer}/protocol/openid-connect/certs`, {
+          headers: { accept: "application/json" },
+          signal: AbortSignal.timeout(1400)
+        });
+        if (!response.ok) throw new Error("Keycloak JWKS endpoint returned an error status.");
+        const body: unknown = await response.json();
+        if (!hasJwksKeys(body)) throw new Error("Keycloak JWKS endpoint returned no signing keys.");
+      }
+    });
+  }
+
+  return probes;
+}
+
+function hasJwksKeys(value: unknown): value is { keys: unknown[] } {
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    "keys" in value &&
+    Array.isArray((value as { keys?: unknown }).keys) &&
+    (value as { keys: unknown[] }).keys.length > 0
+  );
 }
 
 function createRuntimeMediaStorage(
   config: ClinicOsConfig,
   env: NodeJS.ProcessEnv
 ): MediaStorageProvider | undefined {
-  const provider = env.CLINIC_OS_MEDIA_STORAGE_PROVIDER ?? (config.isProductionLike ? "" : "local_simulator");
+  const provider =
+    env.CLINIC_OS_MEDIA_STORAGE_PROVIDER ?? (config.isProductionLike ? "" : "local_simulator");
 
   if (!provider) return undefined;
 
@@ -1584,7 +1734,11 @@ async function readRawBody(
     totalBytes += buffer.byteLength;
 
     if (totalBytes > maxBytes) {
-      throw new ApiError(400, "VALIDATION_ERROR", "Request body exceeds the configured byte limit.");
+      throw new ApiError(
+        400,
+        "VALIDATION_ERROR",
+        "Request body exceeds the configured byte limit."
+      );
     }
 
     chunks.push(buffer);
@@ -1608,10 +1762,6 @@ function requestHeadersRecord(request: IncomingMessage): Record<string, string |
       Array.isArray(value) ? value[0] : value
     ])
   );
-}
-
-function todayIsoDate(): string {
-  return new Date().toISOString().slice(0, 10);
 }
 
 function sendApiError(response: ServerResponse, error: ApiError, requestId: string) {

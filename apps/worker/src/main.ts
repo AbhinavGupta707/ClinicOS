@@ -55,14 +55,22 @@ async function main(): Promise<void> {
   });
 
   const abortController = new AbortController();
-  const stop = async () => {
-    abortController.abort(new Error("worker shutdown requested"));
-    server.close();
-    await repository.close();
+  let stopPromise: Promise<void> | undefined;
+  const stop = () => {
+    stopPromise ??= (async () => {
+      abortController.abort(new Error("worker shutdown requested"));
+      if (server.listening) {
+        await new Promise<void>((resolve, reject) => {
+          server.close((error) => (error ? reject(error) : resolve()));
+        });
+      }
+      await repository.close();
+    })();
+    return stopPromise;
   };
 
-  process.once("SIGINT", () => void stop());
-  process.once("SIGTERM", () => void stop());
+  process.once("SIGINT", () => void stop().catch(() => undefined));
+  process.once("SIGTERM", () => void stop().catch(() => undefined));
 
   logger.info("worker health server started", {
     event: "worker.health.started",
@@ -70,7 +78,13 @@ async function main(): Promise<void> {
     port: env.healthPort
   });
 
-  await runtime.start(abortController.signal);
+  try {
+    await runtime.start(abortController.signal);
+  } catch (error) {
+    if (!abortController.signal.aborted) throw error;
+  } finally {
+    await stop();
+  }
 }
 
 main().catch((error) => {

@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
 
 const requiredPaths = [
@@ -66,6 +66,7 @@ if (packageJson.packageManager !== "npm@10.9.7") {
 const requiredRootScripts = [
   "check",
   "check:env",
+  "check:clock",
   "ci",
   "typecheck",
   "lint",
@@ -75,6 +76,14 @@ const requiredRootScripts = [
   "security:secrets",
   "local:up",
   "local:down",
+  "db:migrate",
+  "db:migrate:validate",
+  "db:bootstrap",
+  "db:verify",
+  "db:test:migrations",
+  "db:test:repositories",
+  "api:test:readiness",
+  "cp11:smoke:api",
   "dev:web",
   "dev:api",
   "dev:worker",
@@ -94,4 +103,72 @@ if (packageLock.lockfileVersion !== 3) {
   process.exit(1);
 }
 
-console.log("Checkpoint 1 workspace structure is valid.");
+const typescriptWorkspaces = ["apps", "packages"].flatMap((root) =>
+  readdirSync(join(process.cwd(), root), { withFileTypes: true })
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => join(root, entry.name))
+    .filter((workspace) => existsSync(join(process.cwd(), workspace, "package.json")))
+    .filter((workspace) => existsSync(join(process.cwd(), workspace, "src")))
+    .filter((workspace) =>
+      readdirSync(join(process.cwd(), workspace, "src"), { recursive: true }).some(
+        (entry) => String(entry).endsWith(".ts") || String(entry).endsWith(".tsx")
+      )
+    )
+);
+
+const invalidTypecheckWorkspaces = [];
+for (const workspace of typescriptWorkspaces) {
+  const manifestPath = join(process.cwd(), workspace, "package.json");
+  const tsconfigPath = join(process.cwd(), workspace, "tsconfig.json");
+  if (!existsSync(manifestPath) || !existsSync(tsconfigPath)) {
+    invalidTypecheckWorkspaces.push(`${workspace}: missing package.json or tsconfig.json`);
+    continue;
+  }
+  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+  const typecheck = String(manifest.scripts?.typecheck ?? "");
+  if (!/\btsc\b/.test(typecheck) || /node\s+--check/.test(typecheck)) {
+    invalidTypecheckWorkspaces.push(`${workspace}: typecheck must invoke tsc, not node --check`);
+  }
+  const build = String(manifest.scripts?.build ?? "");
+  if (build && /node\s+--check/.test(build)) {
+    invalidTypecheckWorkspaces.push(
+      `${workspace}: build must not claim TypeScript safety via node --check`
+    );
+  }
+}
+
+if (invalidTypecheckWorkspaces.length > 0) {
+  console.error("Production TypeScript workspace coverage is invalid:");
+  for (const issue of invalidTypecheckWorkspaces) console.error(`- ${issue}`);
+  process.exit(1);
+}
+
+const canonicalMigrations = readdirSync(join(process.cwd(), "packages/db/migrations"))
+  .filter((name) => /^\d{4}_.+\.sql$/u.test(name))
+  .sort();
+const migrationVersions = canonicalMigrations.map((name) => Number.parseInt(name.slice(0, 4), 10));
+const expectedMigrationVersions = Array.from(
+  { length: migrationVersions.length },
+  (_, index) => index + 1
+);
+if (
+  canonicalMigrations.length < 14 ||
+  migrationVersions.some((version, index) => version !== expectedMigrationVersions[index])
+) {
+  console.error(
+    "Canonical SQL migrations must be contiguous from 0001 and include CP11 migrations."
+  );
+  process.exit(1);
+}
+
+const prettierIgnore = readFileSync(join(process.cwd(), ".prettierignore"), "utf8");
+for (const userOwnedPath of ["research/", "scripts/research/"]) {
+  if (!prettierIgnore.split(/\r?\n/u).includes(userOwnedPath)) {
+    console.error(`.prettierignore must preserve user-owned ${userOwnedPath}`);
+    process.exit(1);
+  }
+}
+
+console.log(
+  `Workspace structure is valid; ${typescriptWorkspaces.length} production TypeScript workspaces use tsc typechecks and ${canonicalMigrations.length} migrations are contiguous.`
+);

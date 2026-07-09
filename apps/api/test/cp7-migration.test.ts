@@ -75,11 +75,17 @@ test("CP7 migration import separates invalid rows, resolves duplicates, commits 
     /unresolved duplicate/
   );
 
-  const resolved = await resolveMigrationBatchRow(assistant, dependencies, created.body.batch.id, duplicateRow.id, {
-    action: "link_existing",
-    targetPatientId: CHECKPOINT1_SEED_IDS.patients.rheaSynthetic,
-    note: "Confirmed same patient during import review."
-  });
+  const resolved = await resolveMigrationBatchRow(
+    assistant,
+    dependencies,
+    created.body.batch.id,
+    duplicateRow.id,
+    {
+      action: "link_existing",
+      targetPatientId: CHECKPOINT1_SEED_IDS.patients.rheaSynthetic,
+      note: "Confirmed same patient during import review."
+    }
+  );
   assert.equal(resolved.body.row.status, "ready_to_commit");
   assert.equal(resolved.body.row.matchStatus, "resolved");
 
@@ -99,7 +105,9 @@ test("CP7 migration import separates invalid rows, resolves duplicates, commits 
   );
   assert.equal(repository.patients.length, 2);
   assert.equal(
-    repository.patients.find((patient) => patient.id === CHECKPOINT1_SEED_IDS.patients.rheaSynthetic)?.fullName,
+    repository.patients.find(
+      (patient) => patient.id === CHECKPOINT1_SEED_IDS.patients.rheaSynthetic
+    )?.fullName,
     "Rhea Synthetic"
   );
 
@@ -126,7 +134,10 @@ test("CP7 migration import separates invalid rows, resolves duplicates, commits 
   assert.equal(rolledBack.body.batch.state, "rolled_back");
   assert.equal(rolledBack.body.blockedLinks.length, 0);
   assert.equal(repository.patients.length, 1);
-  assert.equal(repository.importedRecordLinks.every((link) => link.verificationStatus === "rolled_back"), true);
+  assert.equal(
+    repository.importedRecordLinks.every((link) => link.verificationStatus === "rolled_back"),
+    true
+  );
 });
 
 test("CP7 integration ops API surfaces provider health, dead-letter replay requests, and migration collection reads", async () => {
@@ -179,7 +190,9 @@ test("CP7 integration ops API surfaces provider health, dead-letter replay reque
   assert.equal(replay.body.replay.status, "accepted");
   assert.equal(replay.body.replay.deadLetterEvent.status, "replay_requested");
   assert.ok(auditSink.events.some((event) => event.action === "integration.dead_letter.replayed"));
-  assert.ok(repository.outboxEvents.some((event) => event.eventType === "integration.dead_letter.replayed"));
+  assert.ok(
+    repository.outboxEvents.some((event) => event.eventType === "integration.dead_letter.replayed")
+  );
 
   const created = await createMigrationBatch(owner, dependencies, {
     importType: "patients",
@@ -200,7 +213,8 @@ test("CP7 migration routes expose create and row listing contract without raw pa
     identityRepository: new LocalFixtureIdentityRepository(),
     operationsRepository: repository,
     auditSink: new InMemoryAuditSink(),
-    useLocalAuthFixture: true
+    useLocalAuthFixture: true,
+    repositoryMode: "fixture"
   });
 
   try {
@@ -210,7 +224,9 @@ test("CP7 migration routes expose create and row listing contract without raw pa
     });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "EPERM") {
-      t.skip("Socket binding is blocked in this sandbox; run the CP7 route smoke outside the sandbox.");
+      t.skip(
+        "Socket binding is blocked in this sandbox; run the CP7 route smoke outside the sandbox."
+      );
       return;
     }
     throw error;

@@ -4,7 +4,6 @@ import type { AdapterCapability, ProviderHealth } from "./provider-contracts.js"
 export type AiGatewayProviderKey = "simulator" | "unconfigured" | "live_disabled";
 export type AiGatewayProviderMode = "simulator" | "unconfigured" | "live_disabled";
 export type UUID = string;
-
 export interface AiGatewayTranscriptSegment {
   readonly id: UUID;
   readonly sequence: number;

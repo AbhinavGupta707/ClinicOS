@@ -11,6 +11,18 @@ export interface SqlStatement {
   values: readonly string[];
 }
 
+export function buildSetLocalIdentityRlsStatements(subject: string): SqlStatement[] {
+  if (!subject.trim()) {
+    throw new Error("Identity RLS context requires a non-empty verified subject.");
+  }
+  return [
+    {
+      sql: "select set_config('app.identity_subject', $1, true)",
+      values: [subject]
+    }
+  ];
+}
+
 export function buildSetLocalRlsStatements(context: TenantRlsContext): SqlStatement[] {
   return [
     {

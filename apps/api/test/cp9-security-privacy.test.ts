@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CHECKPOINT1_SEED_IDS } from "@clinic-os/db";
-import type { ClinicRoleSlug } from "@clinic-os/domain";
+import { FixedClock, type ClinicRoleSlug } from "@clinic-os/domain";
 import {
   createAiScribeSession,
   createAiScribeTranscriptSegment,
@@ -239,7 +239,9 @@ function dependenciesForCp9(): OperationsDependencies & {
   repository: LocalFixtureClinicOperationsRepository;
   auditSink: InMemoryAuditSink;
 } {
-  const repository = new LocalFixtureClinicOperationsRepository();
+  const repository = new LocalFixtureClinicOperationsRepository({
+    clock: new FixedClock("2026-07-07T23:59:00.000Z")
+  });
   const auditSink = new InMemoryAuditSink();
   return { repository, auditSink, runtimeConfig: config };
 }

@@ -21,6 +21,7 @@ import type {
   Clinic,
   ClinicAssignment,
   ClinicUser,
+  Clock,
   ConsentEnforcementState,
   ConsentRecord,
   AcceptTreatmentPlanInput,
@@ -134,6 +135,7 @@ import {
   buildPostOpFollowUpKey,
   buildRecallGenerationKey,
   buildSopRunGenerationKey,
+  clinicLocalDateFromClock,
   calculateBillingLineTotals,
   calculateInvoicePaymentStatus,
   calculateInventoryVariance,
@@ -145,9 +147,10 @@ import {
   mediaAssetStatusForScan,
   normalizeClinicalNoteContent,
   normalizePhone,
-  toDentalFindingSnapshotFinding
+  toDentalFindingSnapshotFinding,
+  systemClock
 } from "@clinic-os/domain";
-import { buildSetLocalRlsStatements } from "./rls.ts";
+import { buildSetLocalIdentityRlsStatements, buildSetLocalRlsStatements } from "./rls.ts";
 import type {
   AppointmentConflictFilter,
   AppointmentSearchFilter,
@@ -223,6 +226,7 @@ import type {
   PatientRecordExportSearchFilter,
   RecordAiReviewDecisionInput,
   RecordPaymentTransactionInput,
+  RecordRecallActionInput,
   RecallSearchFilter,
   RepositoryScope,
   ReplayIntegrationDeadLetterInput,
@@ -261,6 +265,7 @@ export interface SqlQueryClient {
 
 export interface SqlConnectionFactory extends SqlQueryClient {
   connect?(): Promise<SqlQueryClient>;
+  inTransaction?: boolean;
 }
 
 export interface PersistableAuditEvent {
@@ -291,8 +296,12 @@ export class PostgresIdentityRepository implements IdentityRepository {
   }
 
   async findAccessByKeycloakSubject(subject: string): Promise<IdentityAccessSnapshot | null> {
-    const result = await this.#client.query<IdentityAccessRow>(
-      `
+    return withTransaction(this.#client, async (client) => {
+      for (const statement of buildSetLocalIdentityRlsStatements(subject)) {
+        await client.query(statement.sql, statement.values);
+      }
+      const result = await client.query<IdentityAccessRow>(
+        `
         select
           tenants.id as tenant_id,
           tenants.slug as tenant_slug,
@@ -331,71 +340,72 @@ export class PostgresIdentityRepository implements IdentityRepository {
           and memberships.status = 'active'
         order by clinics.slug, roles.slug
       `,
-      [subject]
-    );
+        [subject]
+      );
 
-    if (result.rows.length === 0) return null;
+      if (result.rows.length === 0) return null;
 
-    const first = result.rows[0];
-    const tenant: Tenant = {
-      id: first.tenant_id,
-      slug: first.tenant_slug,
-      legalName: first.tenant_legal_name,
-      displayName: first.tenant_display_name,
-      status: first.tenant_status
-    };
-    const user: ClinicUser = {
-      id: first.user_id,
-      displayName: first.user_display_name,
-      email: first.user_email,
-      phone: first.user_phone,
-      status: first.user_status
-    };
+      const first = result.rows[0];
+      const tenant: Tenant = {
+        id: first.tenant_id,
+        slug: first.tenant_slug,
+        legalName: first.tenant_legal_name,
+        displayName: first.tenant_display_name,
+        status: first.tenant_status
+      };
+      const user: ClinicUser = {
+        id: first.user_id,
+        displayName: first.user_display_name,
+        email: first.user_email,
+        phone: first.user_phone,
+        status: first.user_status
+      };
 
-    const clinicById = new Map<UUID, Clinic>();
-    const clinicAssignmentsById = new Map<UUID, ClinicAssignment>();
-    const roleAssignments: RoleAssignment[] = [];
+      const clinicById = new Map<UUID, Clinic>();
+      const clinicAssignmentsById = new Map<UUID, ClinicAssignment>();
+      const roleAssignments: RoleAssignment[] = [];
 
-    for (const row of result.rows) {
-      clinicById.set(row.clinic_id, {
-        id: row.clinic_id,
-        tenantId: row.tenant_id,
-        slug: row.clinic_slug,
-        displayName: row.clinic_display_name,
-        status: row.clinic_status,
-        timezone: row.clinic_timezone
-      });
-      clinicAssignmentsById.set(row.clinic_id, {
-        tenantId: row.tenant_id,
-        clinicId: row.clinic_id,
-        userId: row.user_id,
-        status: row.clinic_assignment_status
-      });
-
-      if (row.role_slug) {
-        roleAssignments.push({
+      for (const row of result.rows) {
+        clinicById.set(row.clinic_id, {
+          id: row.clinic_id,
           tenantId: row.tenant_id,
-          clinicId: row.role_clinic_id,
-          userId: row.user_id,
-          roleSlug: row.role_slug
+          slug: row.clinic_slug,
+          displayName: row.clinic_display_name,
+          status: row.clinic_status,
+          timezone: row.clinic_timezone
         });
-      }
-    }
+        clinicAssignmentsById.set(row.clinic_id, {
+          tenantId: row.tenant_id,
+          clinicId: row.clinic_id,
+          userId: row.user_id,
+          status: row.clinic_assignment_status
+        });
 
-    return {
-      tenant,
-      user,
-      memberships: [
-        {
-          tenantId: tenant.id,
-          userId: user.id,
-          status: first.membership_status
+        if (row.role_slug) {
+          roleAssignments.push({
+            tenantId: row.tenant_id,
+            clinicId: row.role_clinic_id,
+            userId: row.user_id,
+            roleSlug: row.role_slug
+          });
         }
-      ],
-      clinics: [...clinicById.values()],
-      clinicAssignments: [...clinicAssignmentsById.values()],
-      roleAssignments
-    };
+      }
+
+      return {
+        tenant,
+        user,
+        memberships: [
+          {
+            tenantId: tenant.id,
+            userId: user.id,
+            status: first.membership_status
+          }
+        ],
+        clinics: [...clinicById.values()],
+        clinicAssignments: [...clinicAssignmentsById.values()],
+        roleAssignments
+      };
+    });
   }
 }
 
@@ -464,11 +474,40 @@ export class PostgresAuditEventSink {
   }
 }
 
+export interface PostgresClinicUnitOfWorkContext {
+  repository: PostgresClinicOperationsRepository;
+  auditSink: PostgresAuditEventSink;
+}
+
+export class PostgresClinicUnitOfWork {
+  readonly #client: SqlConnectionFactory;
+  readonly #clock: Clock;
+
+  constructor(client: SqlConnectionFactory, options: { clock?: Clock } = {}) {
+    this.#client = client;
+    this.#clock = options.clock ?? systemClock;
+  }
+
+  async run<T>(callback: (context: PostgresClinicUnitOfWorkContext) => Promise<T>): Promise<T> {
+    return withTransaction(this.#client, async (client) => {
+      const transactionClient = new TransactionBoundSqlClient(client);
+      return callback({
+        repository: new PostgresClinicOperationsRepository(transactionClient, {
+          clock: this.#clock
+        }),
+        auditSink: new PostgresAuditEventSink(transactionClient)
+      });
+    });
+  }
+}
+
 export class PostgresClinicOperationsRepository implements ClinicOperationsRepository {
   readonly #client: SqlConnectionFactory;
+  readonly #clock: Clock;
 
-  constructor(client: SqlConnectionFactory) {
+  constructor(client: SqlConnectionFactory, options: { clock?: Clock } = {}) {
     this.#client = client;
+    this.#clock = options.clock ?? systemClock;
   }
 
   async listPatients(
@@ -695,7 +734,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
   ): Promise<AuditEventForReviewRecord[]> {
     return this.#withRls(scope, async (client) => {
       const values: unknown[] = [scope.tenantId, scope.clinicId];
-      const where = ["audit_events.tenant_id = $1", "(audit_events.clinic_id is null or audit_events.clinic_id = $2)"];
+      const where = [
+        "audit_events.tenant_id = $1",
+        "(audit_events.clinic_id is null or audit_events.clinic_id = $2)"
+      ];
 
       if (filter.patientId) {
         values.push(filter.patientId);
@@ -803,7 +845,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       const patient = await this.#findPatientByIdInTransaction(client, scope, patientId);
       if (!patient) return null;
       const sectionSet = new Set(sections);
-      const now = new Date().toISOString();
+      const now = this.#clock.now().toISOString();
 
       const [
         timeline,
@@ -1239,7 +1281,14 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           where tenant_id = $1 and clinic_id = $2 and id = $3
           returning *
         `,
-        [scope.tenantId, scope.clinicId, requestId, nextStatus, scope.actorUserId, input.reviewReason]
+        [
+          scope.tenantId,
+          scope.clinicId,
+          requestId,
+          nextStatus,
+          scope.actorUserId,
+          input.reviewReason
+        ]
       );
       return result.rows[0] ? mapDeletionRequestRow(result.rows[0]) : null;
     });
@@ -1389,7 +1438,8 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
             protectedTarget,
             input.patientId ?? scope.clinicId,
             JSON.stringify({
-              reason: "Protected clinical and audit records are never deleted by CP9 retention jobs.",
+              reason:
+                "Protected clinical and audit records are never deleted by CP9 retention jobs.",
               deletionRequestId: input.deletionRequestId ?? null
             })
           ]
@@ -1508,7 +1558,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
   ): Promise<BreakGlassAccessRecord | null> {
     return this.#withRls(scope, async (client) => {
       const nextStatus =
-        input.decision === "approve" ? "approved" : input.decision === "revoke" ? "revoked" : "denied";
+        input.decision === "approve"
+          ? "approved"
+          : input.decision === "revoke"
+            ? "revoked"
+            : "denied";
       const result = await client.query<BreakGlassAccessRow>(
         `
           update break_glass_accesses
@@ -1523,7 +1577,14 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           where tenant_id = $1 and clinic_id = $2 and id = $3
           returning *
         `,
-        [scope.tenantId, scope.clinicId, requestId, nextStatus, scope.actorUserId, input.reviewReason]
+        [
+          scope.tenantId,
+          scope.clinicId,
+          requestId,
+          nextStatus,
+          scope.actorUserId,
+          input.reviewReason
+        ]
       );
       return result.rows[0] ? mapBreakGlassAccessRow(result.rows[0]) : null;
     });
@@ -1742,7 +1803,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         `,
         values
       );
-      return this.#attachMigrationRowConflicts(client, scope, result.rows.map((row) => mapMigrationRowRow(row, [])));
+      return this.#attachMigrationRowConflicts(
+        client,
+        scope,
+        result.rows.map((row) => mapMigrationRowRow(row, []))
+      );
     });
   }
 
@@ -1779,8 +1844,8 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           scope.clinicId,
           batchId,
           input.action,
-          input.action === "link_existing" ? input.targetRecordType ?? "patient" : null,
-          input.action === "link_existing" ? input.targetRecordId ?? null : null,
+          input.action === "link_existing" ? (input.targetRecordType ?? "patient") : null,
+          input.action === "link_existing" ? (input.targetRecordId ?? null) : null,
           input.note ?? null,
           input.action === "skip" ? "skipped" : "ready_to_commit",
           input.action === "skip" ? "skipped" : "resolved",
@@ -1840,9 +1905,22 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           commit:
             existing ??
             (await this.#latestMigrationCommitInTransaction(client, scope, batchId, "commit")) ??
-            (await this.#insertMigrationCommitInTransaction(client, scope, batchId, "commit", "succeeded", input.idempotencyKey ?? null, {}, null)),
+            (await this.#insertMigrationCommitInTransaction(
+              client,
+              scope,
+              batchId,
+              "commit",
+              "succeeded",
+              input.idempotencyKey ?? null,
+              {},
+              null
+            )),
           rows: detail.rows,
-          importedRecordLinks: await this.#listImportedRecordLinksInTransaction(client, scope, batchId)
+          importedRecordLinks: await this.#listImportedRecordLinksInTransaction(
+            client,
+            scope,
+            batchId
+          )
         };
       }
 
@@ -1860,13 +1938,23 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
 
       for (const row of readyRows) {
         if (!row.normalizedRecord || row.normalizedRecord.recordType !== "patient") {
-          await this.#markMigrationRowFailed(client, scope, row.id, "Only patient import rows can be committed in CP7.");
+          await this.#markMigrationRowFailed(
+            client,
+            scope,
+            row.id,
+            "Only patient import rows can be committed in CP7."
+          );
           continue;
         }
 
         if (row.resolutionAction === "link_existing") {
           if (!row.resolutionTargetRecordId) {
-            await this.#markMigrationRowFailed(client, scope, row.id, "Resolved existing patient target is missing.");
+            await this.#markMigrationRowFailed(
+              client,
+              scope,
+              row.id,
+              "Resolved existing patient target is missing."
+            );
             continue;
           }
           await this.#createImportedRecordLinkInTransaction(
@@ -1877,11 +1965,22 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
             row.resolutionTargetRecordId,
             "linked_existing"
           );
-          await this.#markMigrationRowCommitted(client, scope, row.id, "patient", row.resolutionTargetRecordId);
+          await this.#markMigrationRowCommitted(
+            client,
+            scope,
+            row.id,
+            "patient",
+            row.resolutionTargetRecordId
+          );
           continue;
         }
 
-        const patient = await this.#insertImportedPatientInTransaction(client, scope, row, batch.sourceSystem);
+        const patient = await this.#insertImportedPatientInTransaction(
+          client,
+          scope,
+          row,
+          batch.sourceSystem
+        );
         await this.#createImportedRecordLinkInTransaction(
           client,
           scope,
@@ -1926,7 +2025,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         batch: mapMigrationBatchRow(batchResult.rows[0]),
         commit,
         rows,
-        importedRecordLinks: await this.#listImportedRecordLinksInTransaction(client, scope, batchId)
+        importedRecordLinks: await this.#listImportedRecordLinksInTransaction(
+          client,
+          scope,
+          batchId
+        )
       };
     });
   }
@@ -1954,9 +2057,22 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           rollback:
             existing ??
             (await this.#latestMigrationCommitInTransaction(client, scope, batchId, "rollback")) ??
-            (await this.#insertMigrationCommitInTransaction(client, scope, batchId, "rollback", "succeeded", input.idempotencyKey ?? null, {}, null)),
+            (await this.#insertMigrationCommitInTransaction(
+              client,
+              scope,
+              batchId,
+              "rollback",
+              "succeeded",
+              input.idempotencyKey ?? null,
+              {},
+              null
+            )),
           rows: detail.rows,
-          importedRecordLinks: await this.#listImportedRecordLinksInTransaction(client, scope, batchId),
+          importedRecordLinks: await this.#listImportedRecordLinksInTransaction(
+            client,
+            scope,
+            batchId
+          ),
           blockedLinks: []
         };
       }
@@ -1977,7 +2093,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       for (const link of links) {
         if (
           link.linkType === "created_from_import" &&
-          (await this.#patientHasRollbackBlockingDependenciesInTransaction(client, scope, link.targetRecordId))
+          (await this.#patientHasRollbackBlockingDependenciesInTransaction(
+            client,
+            scope,
+            link.targetRecordId
+          ))
         ) {
           await client.query(
             `
@@ -1990,8 +2110,9 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
               scope.clinicId,
               link.id,
               JSON.stringify({
-                rollbackBlockedAt: new Date().toISOString(),
-                rollbackBlockedReason: "Imported patient has downstream clinical or billing dependencies."
+                rollbackBlockedAt: this.#clock.now().toISOString(),
+                rollbackBlockedReason:
+                  "Imported patient has downstream clinical or billing dependencies."
               })
             ]
           );
@@ -2070,7 +2191,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         batch: mapMigrationBatchRow(batchResult.rows[0]),
         rollback,
         rows,
-        importedRecordLinks: await this.#listImportedRecordLinksInTransaction(client, scope, batchId),
+        importedRecordLinks: await this.#listImportedRecordLinksInTransaction(
+          client,
+          scope,
+          batchId
+        ),
         blockedLinks
       };
     });
@@ -2316,8 +2441,12 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       const where = ["tenant_id = $1", "clinic_id = $2"];
 
       if (filter.date) {
-        values.push(`${filter.date}T00:00:00.000Z`, `${filter.date}T23:59:59.999Z`);
-        where.push(`start_at between $${values.length - 1} and $${values.length}`);
+        const { timezone } = await this.#clinicCalendar(client, scope);
+        values.push(filter.date, timezone);
+        where.push(
+          `start_at >= ($${values.length - 1}::date::timestamp at time zone $${values.length})
+           and start_at < (($${values.length - 1}::date + 1)::timestamp at time zone $${values.length})`
+        );
       }
 
       if (filter.providerUserId) {
@@ -2590,6 +2719,8 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     appointment: AppointmentRecord
   ): Promise<QueueEntryRecord> {
     return this.#withRls(scope, async (client) => {
+      const calendar = await this.#clinicCalendar(client, scope);
+      const checkedInAt = this.#clock.now().toISOString();
       const result = await client.query<QueueEntryRow>(
         `
           insert into queue_entries (
@@ -2599,6 +2730,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
             patient_id,
             provider_user_id,
             position,
+            checked_in_at,
             created_by_user_id,
             updated_by_user_id
           )
@@ -2609,9 +2741,15 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
             $4,
             $5,
             coalesce(
-              (select max(position) + 1 from queue_entries where tenant_id = $1 and clinic_id = $2 and checked_in_at::date = now()::date),
+              (select max(position) + 1
+               from queue_entries
+               where tenant_id = $1
+                 and clinic_id = $2
+                 and checked_in_at >= ($8::date::timestamp at time zone $9)
+                 and checked_in_at < (($8::date + 1)::timestamp at time zone $9)),
               1
             ),
+            $7,
             $6,
             $6
           )
@@ -2626,7 +2764,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           appointment.id,
           appointment.patientId,
           appointment.providerUserId,
-          scope.actorUserId
+          scope.actorUserId,
+          checkedInAt,
+          calendar.date,
+          calendar.timezone
         ]
       );
 
@@ -2650,12 +2791,17 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     return this.#withRls(scope, async (client) => {
       const result = await client.query<QueueEntryRow>(
         `
-          select *
+          select queue_entries.*
           from queue_entries
-          where tenant_id = $1 and clinic_id = $2 and checked_in_at between $3 and $4
-          order by position, checked_in_at
+          join clinics on clinics.tenant_id = queue_entries.tenant_id
+            and clinics.id = queue_entries.clinic_id
+          where queue_entries.tenant_id = $1
+            and queue_entries.clinic_id = $2
+            and queue_entries.checked_in_at >= ($3::date::timestamp at time zone clinics.timezone)
+            and queue_entries.checked_in_at < (($3::date + 1)::timestamp at time zone clinics.timezone)
+          order by queue_entries.position, queue_entries.checked_in_at
         `,
-        [scope.tenantId, scope.clinicId, `${date}T00:00:00.000Z`, `${date}T23:59:59.999Z`]
+        [scope.tenantId, scope.clinicId, date]
       );
       return result.rows.map(mapQueueEntryRow);
     });
@@ -2781,7 +2927,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           values (
             $1, $2, $3, $4, $5, $6, $7, $8, $9,
             $10, $11, $12, $13, $14, $15, $16, $17,
-            $18, $19, $20, $21, $21
+            $18, $19, $20, $21, $22, $22
           )
           on conflict (tenant_id, clinic_id, idempotency_key) where idempotency_key is not null
           do update set updated_at = tasks.updated_at
@@ -2840,9 +2986,9 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       const completionEvidence =
         input.completionEvidence ?? (nextStatus === "done" ? existing.completionEvidence : {});
       const completedAt =
-        nextStatus === "done" ? existing.completedAt ?? new Date().toISOString() : null;
+        nextStatus === "done" ? (existing.completedAt ?? this.#clock.now().toISOString()) : null;
       const completedByUserId =
-        nextStatus === "done" ? existing.completedByUserId ?? scope.actorUserId : null;
+        nextStatus === "done" ? (existing.completedByUserId ?? scope.actorUserId) : null;
       assertTaskCompletionEvidence({
         status: nextStatus,
         evidence: completionEvidence,
@@ -2936,7 +3082,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async listRecalls(scope: RepositoryScope, filter: RecallSearchFilter = {}): Promise<RecallRecord[]> {
+  async listRecalls(
+    scope: RepositoryScope,
+    filter: RecallSearchFilter = {}
+  ): Promise<RecallRecord[]> {
     return this.#withRls(scope, async (client) => {
       const values: unknown[] = [scope.tenantId, scope.clinicId];
       const where = ["tenant_id = $1", "clinic_id = $2"];
@@ -3024,7 +3173,13 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
               status_changed_at = now()
             where tenant_id = $1 and clinic_id = $2 and id = $3 and status <> 'done'
           `,
-          [scope.tenantId, scope.clinicId, recall.taskId, scope.actorUserId, JSON.stringify(evidence)]
+          [
+            scope.tenantId,
+            scope.clinicId,
+            recall.taskId,
+            scope.actorUserId,
+            JSON.stringify(evidence)
+          ]
         );
       }
       return recall;
@@ -3072,8 +3227,13 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
 
       for (const rule of rules) {
         for (const procedure of procedureRows) {
-          if (rule.pricebookProcedureId && rule.pricebookProcedureId !== procedure.pricebook_procedure_id) continue;
-          if (rule.procedureCategory && rule.procedureCategory !== procedure.procedure_category) continue;
+          if (
+            rule.pricebookProcedureId &&
+            rule.pricebookProcedureId !== procedure.pricebook_procedure_id
+          )
+            continue;
+          if (rule.procedureCategory && rule.procedureCategory !== procedure.procedure_category)
+            continue;
           const dueAt = addDaysIso(toIso(procedure.performed_at), rule.offsetDays);
           if (new Date(dueAt).getTime() > new Date(asOf).getTime()) continue;
           const idempotencyKey = buildRecallGenerationKey({
@@ -3158,12 +3318,14 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           sourceRecordType: "procedure_performed_record",
           sourceRecordId: procedure.id,
           title: "Post-op follow-up",
-          description: "Manual patient follow-up after completed procedure. Record phone/WhatsApp evidence only after staff action.",
+          description:
+            "Manual patient follow-up after completed procedure. Record phone/WhatsApp evidence only after staff action.",
           priority: "normal",
           dueAt,
           idempotencyKey: key
         });
-        if (task.idempotencyKey === key && task.createdAt === task.updatedAt) followUpTasksCreated.push(task);
+        if (task.idempotencyKey === key && task.createdAt === task.updatedAt)
+          followUpTasksCreated.push(task);
         else skippedExistingKeys.push(key);
       }
 
@@ -3194,12 +3356,14 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           sourceRecordType: "invoice",
           sourceRecordId: invoice.id,
           title: "Payment follow-up",
-          description: "Manual follow-up for invoice balance due. Do not mark paid without verified provider or manual payment evidence.",
+          description:
+            "Manual follow-up for invoice balance due. Do not mark paid without verified provider or manual payment evidence.",
           priority: "high",
           dueAt: toIso(invoice.due_at as Date | string),
           idempotencyKey: key
         });
-        if (task.idempotencyKey === key && task.createdAt === task.updatedAt) followUpTasksCreated.push(task);
+        if (task.idempotencyKey === key && task.createdAt === task.updatedAt)
+          followUpTasksCreated.push(task);
         else skippedExistingKeys.push(key);
       }
 
@@ -3675,17 +3839,19 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
 
   async loadDashboardData(scope: RepositoryScope, date: string): Promise<DashboardDataSet> {
     return this.#withRls(scope, async (client) => {
-      const dayStart = `${date}T00:00:00.000Z`;
-      const dayEnd = `${date}T23:59:59.999Z`;
+      const { timezone } = await this.#clinicCalendar(client, scope);
       const appointments = (
         await client.query<AppointmentRow>(
           `
             select *
             from appointments
-            where tenant_id = $1 and clinic_id = $2 and start_at between $3 and $4
+            where tenant_id = $1
+              and clinic_id = $2
+              and start_at >= ($3::date::timestamp at time zone $4)
+              and start_at < (($3::date + 1)::timestamp at time zone $4)
             order by start_at
           `,
-          [scope.tenantId, scope.clinicId, dayStart, dayEnd]
+          [scope.tenantId, scope.clinicId, date, timezone]
         )
       ).rows.map(mapAppointmentRow);
       const leads = (
@@ -3708,11 +3874,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
             where tenant_id = $1
               and clinic_id = $2
               and status in ('open', 'in_progress')
-              and (due_at is null or due_at <= $3)
+              and (due_at is null or due_at < (($3::date + 1)::timestamp at time zone $4))
             order by due_at nulls last, created_at desc
             limit 50
           `,
-          [scope.tenantId, scope.clinicId, dayEnd]
+          [scope.tenantId, scope.clinicId, date, timezone]
         )
       ).rows.map(mapTaskRow);
       const queue = (
@@ -3720,20 +3886,25 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           `
             select *
             from queue_entries
-            where tenant_id = $1 and clinic_id = $2 and checked_in_at between $3 and $4
+            where tenant_id = $1
+              and clinic_id = $2
+              and checked_in_at >= ($3::date::timestamp at time zone $4)
+              and checked_in_at < (($3::date + 1)::timestamp at time zone $4)
             order by position, checked_in_at
           `,
-          [scope.tenantId, scope.clinicId, dayStart, dayEnd]
+          [scope.tenantId, scope.clinicId, date, timezone]
         )
       ).rows.map(mapQueueEntryRow);
       const returningRows = await client.query<{ patient_id: UUID }>(
         `
           select patient_id
           from appointments
-          where tenant_id = $1 and clinic_id = $2 and start_at < $3
+          where tenant_id = $1
+            and clinic_id = $2
+            and start_at < ($3::date::timestamp at time zone $4)
           group by patient_id
         `,
-        [scope.tenantId, scope.clinicId, dayStart]
+        [scope.tenantId, scope.clinicId, date, timezone]
       );
 
       return {
@@ -3986,8 +4157,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
               "payment_transactions",
               "tasks"
             ],
-            notes:
-              "Live projection uses existing CP2-CP5 durable tables and the CP2 tasks table."
+            notes: "Live projection uses existing CP2-CP5 durable tables and the CP2 tasks table."
           },
           {
             key: "cp6-continuity-operations-tables",
@@ -4152,7 +4322,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           input.source === "assistant_paper_card"
             ? "Assistant-entered paper intake"
             : "Digital intake form submitted",
-        metadata: { templateId: input.templateId, templateVersion: template.version, source: input.source }
+        metadata: {
+          templateId: input.templateId,
+          templateVersion: template.version,
+          source: input.source
+        }
       });
 
       return submission;
@@ -4280,7 +4454,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     return buildConsentEnforcementState(patientId, consents);
   }
 
-  async createEncounter(scope: RepositoryScope, input: CreateEncounterInput): Promise<EncounterRecord> {
+  async createEncounter(
+    scope: RepositoryScope,
+    input: CreateEncounterInput
+  ): Promise<EncounterRecord> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<EncounterRow>(
         `
@@ -4319,14 +4496,20 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         sourceId: encounter.id,
         title: "Encounter created",
         summary: encounter.reason,
-        metadata: { appointmentId: encounter.appointmentId, providerUserId: encounter.providerUserId }
+        metadata: {
+          appointmentId: encounter.appointmentId,
+          providerUserId: encounter.providerUserId
+        }
       });
 
       return encounter;
     });
   }
 
-  async findEncounterById(scope: RepositoryScope, encounterId: UUID): Promise<EncounterRecord | null> {
+  async findEncounterById(
+    scope: RepositoryScope,
+    encounterId: UUID
+  ): Promise<EncounterRecord | null> {
     return this.#withRls(scope, async (client) =>
       this.#findEncounterByIdInTransaction(client, scope, encounterId)
     );
@@ -4357,7 +4540,13 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       );
       const encounter = mapEncounterRow(result.rows[0]);
 
-      await this.#appendEncounterStatusHistory(client, scope, encounter, existing.status, reason ?? null);
+      await this.#appendEncounterStatusHistory(
+        client,
+        scope,
+        encounter,
+        existing.status,
+        reason ?? null
+      );
 
       if (status === "drafting" && existing.status === "scheduled") {
         await this.#appendTimeline(client, scope, {
@@ -4367,7 +4556,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           sourceId: encounter.id,
           title: "Encounter started",
           summary: encounter.reason,
-          metadata: { appointmentId: encounter.appointmentId, providerUserId: encounter.providerUserId }
+          metadata: {
+            appointmentId: encounter.appointmentId,
+            providerUserId: encounter.providerUserId
+          }
         });
       }
 
@@ -4514,7 +4706,13 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       );
       const updatedEncounter = mapEncounterRow(encounterResult.rows[0]);
 
-      await this.#appendEncounterStatusHistory(client, scope, updatedEncounter, encounter.status, "clinical_note_signed");
+      await this.#appendEncounterStatusHistory(
+        client,
+        scope,
+        updatedEncounter,
+        encounter.status,
+        "clinical_note_signed"
+      );
       await this.#appendTimeline(client, scope, {
         patientId: note.patientId,
         itemType: "clinical_note_signed",
@@ -4590,7 +4788,13 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       );
       const updatedEncounter = mapEncounterRow(encounterResult.rows[0]);
 
-      await this.#appendEncounterStatusHistory(client, scope, updatedEncounter, encounter.status, "clinical_note_amended");
+      await this.#appendEncounterStatusHistory(
+        client,
+        scope,
+        updatedEncounter,
+        encounter.status,
+        "clinical_note_amended"
+      );
       await this.#appendTimeline(client, scope, {
         patientId: note.patientId,
         itemType: "clinical_note_amended",
@@ -4694,7 +4898,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         sourceId: prescription.id,
         title: "Prescription signed",
         summary: `${prescription.medications.length} medication(s)`,
-        metadata: { encounterId: prescription.encounterId, signedByUserId: prescription.signedByUserId }
+        metadata: {
+          encounterId: prescription.encounterId,
+          signedByUserId: prescription.signedByUserId
+        }
       });
 
       return prescription;
@@ -4710,10 +4917,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       const patient = await this.#findPatientByIdInTransaction(client, scope, patientId);
       if (!patient) return null;
 
-      const now = new Date().toISOString();
+      const now = this.#clock.now().toISOString();
       const status = input.channel === "print" ? "ready_for_print" : "send_requested";
       const printJobId = input.channel === "print" ? `print_${randomUUID()}` : null;
-      const outboxEventId = input.channel === "whatsapp" ? (input.outboxEventId ?? (randomUUID() as UUID)) : null;
+      const outboxEventId =
+        input.channel === "whatsapp" ? (input.outboxEventId ?? (randomUUID() as UUID)) : null;
       const result = await client.query<PatientInstructionRow>(
         `
           insert into patient_instruction_requests (
@@ -4753,10 +4961,12 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       const instruction = mapPatientInstructionRow(result.rows[0]);
       await this.#appendTimeline(client, scope, {
         patientId,
-        itemType: input.channel === "print" ? "instruction_print_requested" : "instruction_send_requested",
+        itemType:
+          input.channel === "print" ? "instruction_print_requested" : "instruction_send_requested",
         sourceTable: "patient_instruction_requests",
         sourceId: instruction.id,
-        title: input.channel === "print" ? "Instruction print requested" : "Instruction send requested",
+        title:
+          input.channel === "print" ? "Instruction print requested" : "Instruction send requested",
         summary: instruction.templateId,
         metadata: {
           instructionId: instruction.id,
@@ -4771,7 +4981,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async createAiSession(scope: RepositoryScope, input: CreateAiSessionInput): Promise<AiSessionRecord> {
+  async createAiSession(
+    scope: RepositoryScope,
+    input: CreateAiSessionInput
+  ): Promise<AiSessionRecord> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<AiSessionRow>(
         `
@@ -4804,7 +5017,9 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           JSON.stringify(input.consentSnapshot),
           JSON.stringify(input.retentionPolicy),
           input.languageHint ?? null,
-          input.retentionPolicy.rawAudioRetention === "disabled" ? new Date().toISOString() : null,
+          input.retentionPolicy.rawAudioRetention === "disabled"
+            ? this.#clock.now().toISOString()
+            : null,
           JSON.stringify(input.metadata ?? {}),
           scope.actorUserId
         ]
@@ -4827,13 +5042,19 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async findAiSessionById(scope: RepositoryScope, sessionId: UUID): Promise<AiSessionRecord | null> {
+  async findAiSessionById(
+    scope: RepositoryScope,
+    sessionId: UUID
+  ): Promise<AiSessionRecord | null> {
     return this.#withRls(scope, async (client) =>
       this.#findAiSessionByIdInTransaction(client, scope, sessionId)
     );
   }
 
-  async findAiSessionDetail(scope: RepositoryScope, sessionId: UUID): Promise<AiSessionDetail | null> {
+  async findAiSessionDetail(
+    scope: RepositoryScope,
+    sessionId: UUID
+  ): Promise<AiSessionDetail | null> {
     return this.#withRls(scope, async (client) => {
       const session = await this.#findAiSessionByIdInTransaction(client, scope, sessionId);
       if (!session) return null;
@@ -4893,11 +5114,22 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           [scope.tenantId, scope.clinicId, sessionId]
         )
       ).rows.map(mapAiReviewDecisionRow);
-      return { session, transcriptSegments, sourceAnchors, jobs, draftOutputs, actionProposals, reviewDecisions };
+      return {
+        session,
+        transcriptSegments,
+        sourceAnchors,
+        jobs,
+        draftOutputs,
+        actionProposals,
+        reviewDecisions
+      };
     });
   }
 
-  async listAiSessionsForEncounter(scope: RepositoryScope, encounterId: UUID): Promise<AiSessionRecord[]> {
+  async listAiSessionsForEncounter(
+    scope: RepositoryScope,
+    encounterId: UUID
+  ): Promise<AiSessionRecord[]> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<AiSessionRow>(
         `
@@ -5004,7 +5236,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async createAiJob(scope: RepositoryScope, sessionId: UUID, input: CreateAiJobInput): Promise<AiJobRecord | null> {
+  async createAiJob(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiJobInput
+  ): Promise<AiJobRecord | null> {
     return this.#withRls(scope, async (client) => {
       const session = await this.#findAiSessionByIdInTransaction(client, scope, sessionId);
       if (!session) return null;
@@ -5045,7 +5281,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           input.errorCode ?? null,
           input.errorMessage ?? null,
           scope.actorUserId,
-          input.completedAt ?? (input.status === "succeeded" || input.status === "failed" ? new Date().toISOString() : null)
+          input.completedAt ??
+            (input.status === "succeeded" || input.status === "failed"
+              ? this.#clock.now().toISOString()
+              : null)
         ]
       );
       return mapAiJobRow(result.rows[0]);
@@ -5196,7 +5435,8 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     return this.#withRls(scope, async (client) => {
       const session = await this.#findAiSessionByIdInTransaction(client, scope, sessionId);
       if (!session) return null;
-      const targetTable = input.targetType === "draft_output" ? "ai_draft_outputs" : "ai_action_proposals";
+      const targetTable =
+        input.targetType === "draft_output" ? "ai_draft_outputs" : "ai_action_proposals";
       const reviewStatus =
         input.decision === "approve"
           ? "approved_review_only"
@@ -5506,14 +5746,18 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       if (!patient) return null;
 
       if (input.encounterId) {
-        const encounter = await this.#findEncounterByIdInTransaction(client, scope, input.encounterId);
+        const encounter = await this.#findEncounterByIdInTransaction(
+          client,
+          scope,
+          input.encounterId
+        );
         if (!encounter || encounter.patientId !== patientId) return null;
       }
 
       await this.#ensureDentalChartInTransaction(client, scope, patientId);
       const normalized = normalizeCreateDentalFindingInput(input);
       const reviewedAt =
-        normalized.reviewStatus === "reviewed" ? new Date().toISOString() : null;
+        normalized.reviewStatus === "reviewed" ? this.#clock.now().toISOString() : null;
       const result = await client.query<DentalFindingRow>(
         `
           insert into dental_findings (
@@ -5608,18 +5852,20 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       if (!existing) return null;
 
       if (input.encounterId) {
-        const encounter = await this.#findEncounterByIdInTransaction(client, scope, input.encounterId);
+        const encounter = await this.#findEncounterByIdInTransaction(
+          client,
+          scope,
+          input.encounterId
+        );
         if (!encounter || encounter.patientId !== existing.patientId) return null;
       }
 
       const next = normalizeUpdateDentalFindingInput(existing, input);
       const reviewedByUserId =
-        next.reviewStatus === "reviewed"
-          ? existing.reviewedByUserId ?? scope.actorUserId
-          : null;
+        next.reviewStatus === "reviewed" ? (existing.reviewedByUserId ?? scope.actorUserId) : null;
       const reviewedAt =
         next.reviewStatus === "reviewed"
-          ? existing.reviewedAt ?? new Date().toISOString()
+          ? (existing.reviewedAt ?? this.#clock.now().toISOString())
           : null;
       const result = await client.query<DentalFindingRow>(
         `
@@ -5722,7 +5968,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       if (!chart) return null;
 
       if (input.encounterId) {
-        const encounter = await this.#findEncounterByIdInTransaction(client, scope, input.encounterId);
+        const encounter = await this.#findEncounterByIdInTransaction(
+          client,
+          scope,
+          input.encounterId
+        );
         if (!encounter || encounter.patientId !== patientId) return null;
       }
 
@@ -5788,7 +6038,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       const patient = await this.#findPatientByIdInTransaction(client, scope, patientId);
       if (!patient) return null;
       if (input.encounterId) {
-        const encounter = await this.#findEncounterByIdInTransaction(client, scope, input.encounterId);
+        const encounter = await this.#findEncounterByIdInTransaction(
+          client,
+          scope,
+          input.encounterId
+        );
         if (!encounter || encounter.patientId !== patientId) return null;
       }
 
@@ -5859,13 +6113,13 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     input: UpdateTreatmentPlanInput
   ) {
     return this.#withRls(scope, async (client) => {
-      const existing = await this.#findTreatmentPlanRowInTransaction(client, scope, treatmentPlanId);
+      const existing = await this.#findTreatmentPlanRowInTransaction(
+        client,
+        scope,
+        treatmentPlanId
+      );
       if (!existing) return null;
       assertTreatmentPlanMutable(existing);
-
-      if (input.status === "accepted") {
-        throw new Error("Use acceptTreatmentPlan to record patient acceptance evidence.");
-      }
 
       await client.query(
         `
@@ -5886,7 +6140,9 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           scope.clinicId,
           treatmentPlanId,
           input.title?.trim() ?? null,
-          input.clinicalSummary === undefined ? existing.clinicalSummary : input.clinicalSummary?.trim() || null,
+          input.clinicalSummary === undefined
+            ? existing.clinicalSummary
+            : input.clinicalSummary?.trim() || null,
           input.status ?? null,
           scope.actorUserId
         ]
@@ -5904,7 +6160,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         await this.#recalculateTreatmentPlanTotalsInTransaction(client, scope, treatmentPlanId);
       }
 
-      const detail = await this.#findTreatmentPlanDetailInTransaction(client, scope, treatmentPlanId);
+      const detail = await this.#findTreatmentPlanDetailInTransaction(
+        client,
+        scope,
+        treatmentPlanId
+      );
       return detail ? { detail } : null;
     });
   }
@@ -5915,7 +6175,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     input: AcceptTreatmentPlanInput
   ) {
     return this.#withRls(scope, async (client) => {
-      const detail = await this.#findTreatmentPlanDetailInTransaction(client, scope, treatmentPlanId);
+      const detail = await this.#findTreatmentPlanDetailInTransaction(
+        client,
+        scope,
+        treatmentPlanId
+      );
       if (!detail) return null;
       assertTreatmentPlanAcceptable(
         detail.treatmentPlan,
@@ -5952,7 +6216,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         `,
         [scope.tenantId, scope.clinicId, treatmentPlanId]
       );
-      const accepted = await this.#findTreatmentPlanDetailInTransaction(client, scope, treatmentPlanId);
+      const accepted = await this.#findTreatmentPlanDetailInTransaction(
+        client,
+        scope,
+        treatmentPlanId
+      );
       if (!accepted) return null;
 
       await this.#appendTimeline(client, scope, {
@@ -5981,7 +6249,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     return this.#withRls(scope, async (client) => {
       const encounter = await this.#findEncounterByIdInTransaction(client, scope, encounterId);
       if (!encounter) return null;
-      const plan = await this.#findTreatmentPlanDetailInTransaction(client, scope, input.treatmentPlanId);
+      const plan = await this.#findTreatmentPlanDetailInTransaction(
+        client,
+        scope,
+        input.treatmentPlanId
+      );
       if (!plan || plan.treatmentPlan.patientId !== encounter.patientId) return null;
       if (plan.treatmentPlan.status !== "accepted") {
         throw new Error("Procedures can only be completed from an accepted treatment plan.");
@@ -6101,16 +6373,24 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
 
   async createInvoice(scope: RepositoryScope, input: CreateInvoiceInput) {
     return this.#withRls(scope, async (client) => {
-      const procedures = await this.#listCompletedProceduresForInvoiceInTransaction(client, scope, input);
+      const procedures = await this.#listCompletedProceduresForInvoiceInTransaction(
+        client,
+        scope,
+        input
+      );
       if (procedures.length === 0) return null;
       const patientIds = new Set(procedures.map((procedure) => procedure.patientId));
-      if (patientIds.size !== 1) throw new Error("Invoice procedures must belong to exactly one patient.");
+      if (patientIds.size !== 1)
+        throw new Error("Invoice procedures must belong to exactly one patient.");
 
       const subtotalMinor = procedures.reduce(
         (total, procedure) => total + procedure.unitPriceMinor * procedure.quantity,
         0
       );
-      const discountMinor = procedures.reduce((total, procedure) => total + procedure.discountMinor, 0);
+      const discountMinor = procedures.reduce(
+        (total, procedure) => total + procedure.discountMinor,
+        0
+      );
       const taxMinor = procedures.reduce((total, procedure) => total + procedure.taxMinor, 0);
       const totalMinor = procedures.reduce((total, procedure) => total + procedure.totalMinor, 0);
       const invoiceNumber = await this.#nextInvoiceNumber(client, scope);
@@ -6298,7 +6578,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       if (input.status === "succeeded" && input.verificationStatus !== "verified") {
         throw new Error("Provider payment success requires verified provider evidence.");
       }
-      if (input.status === "manually_recorded" && input.verificationStatus !== "not_required_manual") {
+      if (
+        input.status === "manually_recorded" &&
+        input.verificationStatus !== "not_required_manual"
+      ) {
         throw new Error("Manual payment requires not_required_manual verification status.");
       }
       if (input.currency && input.currency !== invoice.currency) {
@@ -6398,11 +6681,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async createReceipt(
-    scope: RepositoryScope,
-    invoiceId: UUID,
-    input: CreateReceiptInput
-  ) {
+  async createReceipt(scope: RepositoryScope, invoiceId: UUID, input: CreateReceiptInput) {
     return this.#withRls(scope, async (client) => {
       const detail = await this.#findInvoiceDetailInTransaction(client, scope, invoiceId);
       if (!detail) return null;
@@ -6499,7 +6778,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     );
   }
 
-  async createLabVendor(scope: RepositoryScope, input: CreateLabVendorInput): Promise<LabVendorRecord> {
+  async createLabVendor(
+    scope: RepositoryScope,
+    input: CreateLabVendorInput
+  ): Promise<LabVendorRecord> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<LabVendorRow>(
         `
@@ -6533,7 +6815,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async listLabCases(scope: RepositoryScope, filter: LabCaseSearchFilter = {}): Promise<LabCaseDetail[]> {
+  async listLabCases(
+    scope: RepositoryScope,
+    filter: LabCaseSearchFilter = {}
+  ): Promise<LabCaseDetail[]> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<LabCaseRow>(
         `
@@ -6571,7 +6856,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     );
   }
 
-  async createLabCase(scope: RepositoryScope, input: CreateLabCaseInput): Promise<LabCaseDetail | null> {
+  async createLabCase(
+    scope: RepositoryScope,
+    input: CreateLabCaseInput
+  ): Promise<LabCaseDetail | null> {
     return this.#withRls(scope, async (client) => {
       const vendor = await this.#findLabVendorByIdInTransaction(client, scope, input.vendorId);
       const patient = await this.#findPatientByIdInTransaction(client, scope, input.patientId);
@@ -6662,9 +6950,17 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         );
       }
 
-      await this.#appendLabCaseStatusHistory(client, scope, labCase, null, "draft", "Lab case created", {
-        slipNumber
-      });
+      await this.#appendLabCaseStatusHistory(
+        client,
+        scope,
+        labCase,
+        null,
+        "draft",
+        "Lab case created",
+        {
+          slipNumber
+        }
+      );
       await this.#appendTimeline(client, scope, {
         patientId: labCase.patientId,
         itemType: "lab_case_created",
@@ -6768,7 +7064,8 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         if (!detail || detail.labCase.vendorId !== input.vendorId) return null;
         const expectedAmountMinor = detail.labCase.expectedCostMinor ?? 0;
         const invoiceAmountMinor = entry.invoiceAmountMinor ?? null;
-        const varianceAmountMinor = (invoiceAmountMinor ?? expectedAmountMinor) - expectedAmountMinor;
+        const varianceAmountMinor =
+          (invoiceAmountMinor ?? expectedAmountMinor) - expectedAmountMinor;
         preparedEntries.push({
           labCase: detail.labCase,
           status:
@@ -6785,7 +7082,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         });
       }
 
-      const expectedAmountMinor = preparedEntries.reduce((sum, entry) => sum + entry.expectedAmountMinor, 0);
+      const expectedAmountMinor = preparedEntries.reduce(
+        (sum, entry) => sum + entry.expectedAmountMinor,
+        0
+      );
       const invoiceAmountMinor = input.invoiceAmountMinor ?? null;
       const varianceAmountMinor = (invoiceAmountMinor ?? expectedAmountMinor) - expectedAmountMinor;
       const reconciliationResult = await client.query<LabReconciliationRow>(
@@ -6924,7 +7224,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async findInventoryItemById(scope: RepositoryScope, itemId: UUID): Promise<InventoryItemRecord | null> {
+  async findInventoryItemById(
+    scope: RepositoryScope,
+    itemId: UUID
+  ): Promise<InventoryItemRecord | null> {
     return this.#withRls(scope, async (client) =>
       this.#findInventoryItemByIdInTransaction(client, scope, itemId)
     );
@@ -7001,15 +7304,20 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     input: CreateStockLedgerEntryInput
   ): Promise<StockLedgerEntryRecord | null> {
     return this.#withRls(scope, async (client) => {
-      const item = await this.#findInventoryItemByIdInTransaction(client, scope, input.itemId, true);
+      const item = await this.#findInventoryItemByIdInTransaction(
+        client,
+        scope,
+        input.itemId,
+        true
+      );
       if (!item) return null;
       return this.#insertStockLedgerEntryInTransaction(client, scope, item, input);
     });
   }
 
-  async listInventoryCheckTemplates(scope: RepositoryScope): Promise<
-    Array<InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }>
-  > {
+  async listInventoryCheckTemplates(
+    scope: RepositoryScope
+  ): Promise<Array<InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }>> {
     return this.#withRls(scope, async (client) => {
       const templates = (
         await client.query<InventoryCheckTemplateRow>(
@@ -7022,7 +7330,9 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           [scope.tenantId, scope.clinicId]
         )
       ).rows.map(mapInventoryCheckTemplateRow);
-      const result: Array<InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }> = [];
+      const result: Array<
+        InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }
+      > = [];
       for (const template of templates) {
         result.push({
           ...template,
@@ -7036,10 +7346,13 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
   async createInventoryCheckTemplate(
     scope: RepositoryScope,
     input: CreateInventoryCheckTemplateInput
-  ): Promise<(InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }) | null> {
+  ): Promise<
+    (InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }) | null
+  > {
     return this.#withRls(scope, async (client) => {
       for (const line of input.lines) {
-        if (!(await this.#findInventoryItemByIdInTransaction(client, scope, line.itemId))) return null;
+        if (!(await this.#findInventoryItemByIdInTransaction(client, scope, line.itemId)))
+          return null;
       }
       const templateResult = await client.query<InventoryCheckTemplateRow>(
         `
@@ -7198,7 +7511,12 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         );
         if (!lineResult.rows[0]) return null;
         const line = mapInventoryCheckRunLineRow(lineResult.rows[0]);
-        const item = await this.#findInventoryItemByIdInTransaction(client, scope, line.itemId, true);
+        const item = await this.#findInventoryItemByIdInTransaction(
+          client,
+          scope,
+          line.itemId,
+          true
+        );
         if (!item) return null;
         const varianceQuantity = calculateInventoryVariance({
           expectedQuantity: line.expectedQuantity,
@@ -7248,7 +7566,14 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           });
         }
         if (exceptionType === "low_stock" || exceptionType === "missing_item") {
-          await this.#ensureProcurementSuggestion(client, scope, item, line.id, checkRunId, exceptionType);
+          await this.#ensureProcurementSuggestion(
+            client,
+            scope,
+            item,
+            line.id,
+            checkRunId,
+            exceptionType
+          );
         }
       }
 
@@ -7339,7 +7664,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async listIncidents(scope: RepositoryScope, filter: IncidentSearchFilter = {}): Promise<IncidentRecord[]> {
+  async listIncidents(
+    scope: RepositoryScope,
+    filter: IncidentSearchFilter = {}
+  ): Promise<IncidentRecord[]> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<IncidentRow>(
         `
@@ -7364,12 +7692,31 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async createIncident(scope: RepositoryScope, input: CreateIncidentInput): Promise<IncidentRecord | null> {
+  async createIncident(
+    scope: RepositoryScope,
+    input: CreateIncidentInput
+  ): Promise<IncidentRecord | null> {
     return this.#withRls(scope, async (client) => {
-      if (input.patientId && !(await this.#findPatientByIdInTransaction(client, scope, input.patientId))) return null;
-      if (input.appointmentId && !(await this.#findAppointmentByIdInTransaction(client, scope, input.appointmentId))) return null;
-      if (input.labCaseId && !(await this.#findLabCaseDetailInTransaction(client, scope, input.labCaseId))) return null;
-      if (input.inventoryItemId && !(await this.#findInventoryItemByIdInTransaction(client, scope, input.inventoryItemId))) return null;
+      if (
+        input.patientId &&
+        !(await this.#findPatientByIdInTransaction(client, scope, input.patientId))
+      )
+        return null;
+      if (
+        input.appointmentId &&
+        !(await this.#findAppointmentByIdInTransaction(client, scope, input.appointmentId))
+      )
+        return null;
+      if (
+        input.labCaseId &&
+        !(await this.#findLabCaseDetailInTransaction(client, scope, input.labCaseId))
+      )
+        return null;
+      if (
+        input.inventoryItemId &&
+        !(await this.#findInventoryItemByIdInTransaction(client, scope, input.inventoryItemId))
+      )
+        return null;
 
       const result = await client.query<IncidentRow>(
         `
@@ -7553,12 +7900,18 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           input.status,
           scope.actorUserId,
           JSON.stringify(input.completionEvidence ?? {}),
-          input.verificationEvidence === undefined ? null : JSON.stringify(input.verificationEvidence)
+          input.verificationEvidence === undefined
+            ? null
+            : JSON.stringify(input.verificationEvidence)
         ]
       );
       const action = mapCorrectiveActionRow(result.rows[0]);
       if (action.status === "completed" && action.incidentId) {
-        const incident = await this.#findIncidentByIdInTransaction(client, scope, action.incidentId);
+        const incident = await this.#findIncidentByIdInTransaction(
+          client,
+          scope,
+          action.incidentId
+        );
         const openSibling = await client.query(
           `
             select id
@@ -8587,8 +8940,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
 
         const quantity = itemInput.quantity ?? 1;
         const unitPriceMinor = itemInput.unitPriceMinor ?? procedure.defaultUnitPriceMinor;
-        const taxRateBasisPoints =
-          itemInput.taxRateBasisPoints ?? procedure.taxRateBasisPoints;
+        const taxRateBasisPoints = itemInput.taxRateBasisPoints ?? procedure.taxRateBasisPoints;
         const totals = calculateBillingLineTotals({
           quantity,
           unitPriceMinor,
@@ -8694,13 +9046,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           and (cardinality($5::uuid[]) = 0 or id = any($5::uuid[]))
         order by performed_at
       `,
-      [
-        scope.tenantId,
-        scope.clinicId,
-        input.patientId ?? null,
-        input.treatmentPlanId ?? null,
-        ids
-      ]
+      [scope.tenantId, scope.clinicId, input.patientId ?? null, input.treatmentPlanId ?? null, ids]
     );
     return result.rows.map(mapProcedurePerformedRow);
   }
@@ -8786,7 +9132,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       `,
       [scope.tenantId, scope.clinicId]
     );
-    return `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(
+    return `INV-${await this.#clinicDateKey(client, scope)}-${String(
       Number(result.rows[0]?.next_sequence ?? 1)
     ).padStart(4, "0")}`;
   }
@@ -8800,7 +9146,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       `,
       [scope.tenantId, scope.clinicId]
     );
-    return `RCT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(
+    return `RCT-${await this.#clinicDateKey(client, scope)}-${String(
       Number(result.rows[0]?.next_sequence ?? 1)
     ).padStart(4, "0")}`;
   }
@@ -9102,7 +9448,24 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       `,
       [scope.tenantId, scope.clinicId]
     );
-    return `LAB-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(result.rows[0]?.next_count ?? 1).padStart(4, "0")}`;
+    return `LAB-${await this.#clinicDateKey(client, scope)}-${String(result.rows[0]?.next_count ?? 1).padStart(4, "0")}`;
+  }
+
+  async #clinicDateKey(client: SqlQueryClient, scope: RepositoryScope): Promise<string> {
+    return (await this.#clinicCalendar(client, scope)).date.replace(/-/g, "");
+  }
+
+  async #clinicCalendar(
+    client: SqlQueryClient,
+    scope: RepositoryScope
+  ): Promise<{ date: string; timezone: string }> {
+    const result = await client.query<{ timezone: string }>(
+      `select timezone from clinics where tenant_id = $1 and id = $2`,
+      [scope.tenantId, scope.clinicId]
+    );
+    const timezone = result.rows[0]?.timezone;
+    if (!timezone) throw new Error("Clinic timezone is required for clinic-local identifiers.");
+    return { date: clinicLocalDateFromClock(this.#clock, timezone), timezone };
   }
 
   async #appendLabCaseStatusHistory(
@@ -9167,7 +9530,14 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     item: InventoryItemRecord,
     input: Pick<
       CreateStockLedgerEntryInput,
-      "movementType" | "quantityDelta" | "unitCostMinor" | "currency" | "sourceTable" | "sourceId" | "reason" | "evidence"
+      | "movementType"
+      | "quantityDelta"
+      | "unitCostMinor"
+      | "currency"
+      | "sourceTable"
+      | "sourceId"
+      | "reason"
+      | "evidence"
     >
   ): Promise<StockLedgerEntryRecord> {
     const quantityAfter = item.currentQuantity + input.quantityDelta;
@@ -9476,6 +9846,9 @@ async function withTransaction<T>(
   connectionFactory: SqlConnectionFactory,
   callback: (client: SqlQueryClient) => Promise<T>
 ): Promise<T> {
+  if (connectionFactory.inTransaction) {
+    return callback(connectionFactory);
+  }
   const client = connectionFactory.connect ? await connectionFactory.connect() : connectionFactory;
 
   try {
@@ -9488,6 +9861,22 @@ async function withTransaction<T>(
     throw error;
   } finally {
     client.release?.();
+  }
+}
+
+class TransactionBoundSqlClient implements SqlConnectionFactory {
+  readonly inTransaction = true;
+  readonly #client: SqlQueryClient;
+
+  constructor(client: SqlQueryClient) {
+    this.#client = client;
+  }
+
+  query<T = Record<string, unknown>>(
+    sql: string,
+    values?: readonly unknown[]
+  ): Promise<SqlQueryResult<T>> {
+    return this.#client.query<T>(sql, values);
   }
 }
 
@@ -10997,12 +11386,16 @@ function mapAuditEventForReviewRow(row: AuditEventReviewJoinedRow): AuditEventFo
       ? {
           id: row.review_id,
           tenantId: row.tenant_id,
-          clinicId: row.review_clinic_id ?? row.clinic_id ?? ("00000000-0000-4000-8000-000000000000" as UUID),
+          clinicId:
+            row.review_clinic_id ??
+            row.clinic_id ??
+            ("00000000-0000-4000-8000-000000000000" as UUID),
           auditEventId: row.id,
           reviewStatus: row.review_status ?? "reviewed",
           disposition: row.disposition ?? "",
           notes: row.review_notes,
-          reviewedByUserId: row.reviewed_by_user_id ?? ("00000000-0000-4000-8000-000000000000" as UUID),
+          reviewedByUserId:
+            row.reviewed_by_user_id ?? ("00000000-0000-4000-8000-000000000000" as UUID),
           reviewedAt: row.reviewed_at ? toIso(row.reviewed_at) : toIso(row.occurred_at),
           createdAt: row.review_created_at ? toIso(row.review_created_at) : toIso(row.occurred_at)
         }
@@ -12339,7 +12732,9 @@ function mapLabReconciliationRow(row: LabReconciliationRow): LabReconciliationRe
   };
 }
 
-function mapLabReconciliationEntryRow(row: LabReconciliationEntryRow): LabReconciliationEntryRecord {
+function mapLabReconciliationEntryRow(
+  row: LabReconciliationEntryRow
+): LabReconciliationEntryRecord {
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -12410,7 +12805,9 @@ function mapStockLedgerEntryRow(row: StockLedgerEntryRow): StockLedgerEntryRecor
   };
 }
 
-function mapInventoryCheckTemplateRow(row: InventoryCheckTemplateRow): InventoryCheckTemplateRecord {
+function mapInventoryCheckTemplateRow(
+  row: InventoryCheckTemplateRow
+): InventoryCheckTemplateRecord {
   return {
     id: row.id,
     tenantId: row.tenant_id,
@@ -12569,7 +12966,9 @@ function toInventoryException(
   };
 }
 
-function normalizeCreateDentalFindingInput(input: CreateDentalFindingInput): Required<CreateDentalFindingInput> {
+function normalizeCreateDentalFindingInput(
+  input: CreateDentalFindingInput
+): Required<CreateDentalFindingInput> {
   const normalized = {
     encounterId: input.encounterId ?? null,
     toothNumber: normalizeDentalToothNumber(input.toothNumber),
@@ -12596,10 +12995,7 @@ function normalizeUpdateDentalFindingInput(
   const normalized = {
     encounterId: input.encounterId === undefined ? existing.encounterId : input.encounterId,
     toothNumber: normalizeDentalToothNumber(input.toothNumber ?? existing.toothNumber),
-    surface:
-      input.surface === undefined
-        ? existing.surface
-        : normalizeDentalSurface(input.surface),
+    surface: input.surface === undefined ? existing.surface : normalizeDentalSurface(input.surface),
     findingType: input.findingType ?? existing.findingType,
     severity: input.severity === undefined ? existing.severity : input.severity?.trim() || null,
     status: input.status ?? existing.status,

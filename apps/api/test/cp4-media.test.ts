@@ -173,7 +173,8 @@ test("CP4 local fixture API returns upload URL payloads without private object k
     operationsRepository,
     auditSink,
     mediaStorage,
-    useLocalAuthFixture: true
+    useLocalAuthFixture: true,
+    repositoryMode: "fixture"
   });
 
   try {

@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "typecheck": "node --check src/index.ts && node --check src/postgres.ts && node --check src/repositories.ts && node --check src/rls.ts && node --check src/seed.ts",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "node --check src/index.ts && node --check src/postgres.ts && node --check src/repositories.ts && node --check src/rls.ts && node --check src/seed.ts && node --check test/*.test.ts",
     "test": "node --test test/*.test.ts"
   }

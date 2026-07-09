@@ -1,54 +1,73 @@
-# Known Risks And Deferred Work Register
+# Known Risks and Deferred Work
 
-Date: 2026-07-07
+**Date:** 2026-07-09
+**Status:** Current release summary
+**Decision:** **NO-GO** for pilot, production PHI and production provider traffic
 
-Status: CP10 draft register for master evidence review
+The authoritative item-level register is `docs/security/PRODUCTION_SECURITY_AND_READINESS_REMEDIATION_REGISTER.md`. This document is the release-facing summary; it must never diverge from that register.
 
-This register separates release-candidate risks from deferred whole workflows.
-Items here must not be quietly converted into partial product behavior to make a
-pilot look more complete.
+## 1. Hard Production Blockers
 
-## Live Verification Gaps
+| Area                     | Current truth                                                                                                                                                              | Owning checkpoint |
+| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
+| Verification integrity   | Current test suite has date/clock failures; CP10 live smoke mixes fixture/runtime clinic IDs; some TypeScript “typechecks” are syntax-only.                                | CP11              |
+| Durable data             | Ten migrations exist but are not wired into startup/deploy; audited local Postgres had zero public tables; durable RLS/outbox behavior is not end-to-end evidenced.        | CP11/CP13         |
+| Readiness                | `/health/ready` reports configuration without probing required dependencies.                                                                                               | CP11              |
+| API boundary             | Large hand-routed API and handwritten contract notes make validation/auth/idempotency drift difficult to prove.                                                            | CP12              |
+| Durable clinic day       | Browser workflow evidence is fixture-based; canonical full workflow is not proven against Postgres/Keycloak/Temporal/outbox.                                               | CP13              |
+| Cloud                    | Pilot-prod Terraform is posture-only and intentionally declares no providers/resources.                                                                                    | CP14              |
+| Media                    | Runtime supports only a local simulator, which production-like config forbids.                                                                                             | CP14              |
+| Auth/security operations | No deployed Keycloak/session/MFA/revocation, edge security headers, comprehensive abuse controls, security toolchain, immutable audit operation or key lifecycle evidence. | CP14              |
+| Observability/resilience | Telemetry defaults to console; no deployed backend, paging, SLO, live restore/failover, capacity or fault evidence.                                                        | CP14              |
+| Providers                | Meta inbound and telephony callbacks are absent; Razorpay public URL/registration is absent; official retry/reconciliation evidence is absent.                             | CP15              |
+| Native mobile            | Camera/audio are unavailable, capture cache is memory-only, and no physical-device signed distribution evidence exists.                                                    | CP16              |
+| AI/interoperability      | AI/STT lacks an approved live data path/evals; FHIR is a projection foundation; ABDM is unactivated. Must stay disabled unless completed.                                  | CP16              |
+| Human/clinic governance  | No real-data authorization, configured clinic sign-off, training completion, production support exercise or cross-functional go-live approval.                             | CP17              |
 
-| Area                                   | Current evidence posture                                                                                     | Pilot decision                                                         | Evidence needed to remove gap                                                                                                        |
-| -------------------------------------- | ------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
-| WhatsApp/Meta live send and webhooks   | Provider contracts and health foundations exist; dashboard callback registration is not claimed.             | Keep simulator/manual unless official signed callback evidence exists. | Deployed HTTPS callback, Meta verification challenge, signature/app-secret handling, approved templates, sandbox/live send evidence. |
-| Razorpay hosted webhook reconciliation | Payment simulator/manual evidence and provider contracts exist; public callback registration is not claimed. | Keep manual/simulator or explicitly scoped sandbox until verified.     | Deployed raw-body webhook route, Razorpay signature verification, dashboard registration, replay/idempotency evidence.               |
-| Telephony/missed-call live capture     | Manual/source attribution foundation exists; live telephony is optional/unavailable unless configured.       | Defer live telephony unless provider owner activates official account. | Provider credentials, callback URL, signed event handling, live missed-call evidence.                                                |
-| Google Business Profile live API       | Manual/source attribution exists; no live Google API dependency claimed.                                     | Defer as whole workflow.                                               | OAuth approval, profile access, official API evidence, privacy review.                                                               |
-| ABDM live exchange                     | FHIR projection and ABDM readiness states exist; live exchange disabled.                                     | Defer as whole workflow.                                               | ABDM credentials, HPR/HFR/facility details, patient consent, compliance sign-off, sandbox exchange evidence.                         |
-| AWS pilot-prod apply                   | Terraform validation-only posture and synthetic restore evidence exist.                                      | Defer cloud mutation unless explicitly approved.                       | Approved apply window, SSO/OIDC identity, managed secrets, backups, alerting, smoke evidence.                                        |
-| Physical-device mobile capture         | Expo/local/mobile contract evidence exists from CP8; physical distribution not claimed.                      | Defer device rollout unless separately scoped.                         | iOS/Android device smoke, consent/audio/camera evidence, distribution account evidence.                                              |
-| GitHub push/Actions verification       | Not owned by this lane.                                                                                      | Record separately if used for CP10 release.                            | Successful push, CI checks, artifact or release branch evidence.                                                                     |
+## 2. Optional Workflows That May Remain Deferred Whole
 
-## Deferred Whole Workflows
+Deferral is allowed only when the route, worker, provider registration, navigation and production configuration are absent/disabled and the remaining clinic workflow is complete and honest.
 
-| Workflow                                                   | Why deferred                                                                             | Safe current posture                                                 | Do not build as partial                                                               |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| External imaging links/DICOM ingest beyond CP4 coexistence | Durable media upload/access exists, but external imaging API/link workflow is not owned. | Keep external imaging reference workflow deferred or manual.         | Do not add ad hoc `/links` or raw URL storage paths.                                  |
-| Bulk multi-tooth dental chart patching                     | CP4 supports complete one-finding-per-row workflow.                                      | Use existing finding create/update/history/snapshot workflow.        | Do not hide partial bulk mutation behind weak endpoint.                               |
-| CP5 aggregate checkout read model                          | Granular checkout/payment/instruction routes exist; aggregate read model is deferred.    | Use explicit fixture/read-unavailable state where applicable.        | Do not call stale aggregate route or fake summary completion.                         |
-| Live accounting export/reconciliation                      | Payment/billing evidence exists; accounting integration is not owned.                    | Manual accountant review and source-attributed export planning only. | Do not scrape accounting tools or emit unverified ledger sync.                        |
-| Google/Practo write-back                                   | Official integration and clinic authorization are not present.                           | Manual/source attribution and authorized import/export only.         | Do not depend on dashboard scraping or brittle browser automation.                    |
-| AI clinical application automation                         | CP8 records review-only decisions.                                                       | Human review/sign-off remains required.                              | Do not auto-mutate signed notes, chart findings, prescriptions, billing, or messages. |
-| Live FHIR API server                                       | CP9 provides package-level FHIR projection helpers and fixture validation.               | Local/synthetic projection evidence only.                            | Do not claim live FHIR API route or national-profile conformance.                     |
-| ABDM production flow                                       | Legal/compliance and sandbox activation absent.                                          | Feature-gated readiness with `liveExchangeAllowed: false`.           | Do not attempt live exchange or ABHA linking without consent/activation.              |
+| Workflow                                           | Safe posture while deferred                                                | Forbidden partial behavior                                                 |
+| -------------------------------------------------- | -------------------------------------------------------------------------- | -------------------------------------------------------------------------- |
+| External imaging/DICOM ingest beyond private media | Existing approved imaging software/manual reference outside ClinicOS.      | Raw external URLs, scraping, unscanned uploads or false DICOM conformance. |
+| Bulk dental chart mutation                         | Complete one-finding-per-row create/update/history/snapshot workflow.      | Weak bulk endpoint without per-item validation/provenance/concurrency.     |
+| Accounting integration/export                      | Manual accountant review and approved bounded export when implemented.     | Scraping or unverified automatic ledger sync.                              |
+| Google/Practo write-back                           | Source attribution plus official API/export/import/manual clinic workflow. | Brittle browser automation or implied provider partnership.                |
+| AI clinical application                            | AI/scribe controls absent; clinicians use normal manual authoring/signing. | Auto-signing or AI mutation of chart, prescription, billing or messages.   |
+| Live FHIR/ABDM                                     | Feature unregistered/unavailable; approved manual export where governed.   | Claiming national-profile/API readiness from package fixtures.             |
+| Telephony provider                                 | Manual missed-call/source entry.                                           | Invented callbacks or “delivered/captured” provider state.                 |
+| Audio recording                                    | Disabled native control and normal manual notes.                           | Recording before consent/provider/device/security completion.              |
 
-## Operational Risks
+Messaging and payment may be removed from an early controlled scope only if the clinic retains a complete approved manual process and ClinicOS does not invent provider-confirmed state. They remain blue-sky production requirements for the intended full product.
 
-| Risk                                                                     | Severity if unmitigated | Mitigation before pilot                                                           |
-| ------------------------------------------------------------------------ | ----------------------- | --------------------------------------------------------------------------------- |
-| Staff confuse simulator/unavailable provider states with live readiness. | High                    | Training drill plus provider-health support runbook.                              |
-| Manual fallback creates records that are not reconciled into ClinicOS.   | Medium                  | Assign fallback owner and reconciliation SLA in support log.                      |
-| Fixture route plans drift from live API route families.                  | High                    | Master reconciles CP10 QA scripts, web loaders, and API routes before closeout.   |
-| Real PHI enters local/dev evidence.                                      | High                    | Synthetic-first training, data/privacy review, redacted screenshots, secret scan. |
-| Backup/DR posture is assumed from dry-run only.                          | High                    | Keep AWS/live restore marked deferred until approved execution evidence exists.   |
-| Role boundaries regress during UX polish.                                | High                    | Role matrix must pass before pilot scope expands.                                 |
+## 3. Evidence and Governance Risks
 
-## Register Maintenance
+- CP10 reports are historical E1/E2 evidence. They do not authorize E3+ claims.
+- A configured credential is not a registered or verified integration.
+- A dry-run restore is not a restore test.
+- A browser fixture smoke is not a durable API/repository test.
+- An unavailable shell is honest UX, not implemented functionality.
+- A provider simulator is a test double, not a production fallback.
+- A hard gate cannot be waived as an “accepted gap.” Remove a whole optional workflow or delay launch.
+- Real PHI is forbidden in local fixtures, repository artifacts, screenshots, logs and unapproved test systems.
 
-- Master updates this file only by adding evidence, closing a risk with a linked
-  verification record, or moving a workflow into a future checkpoint owner.
-- Closing a gap requires evidence, not intent.
-- Deferred whole workflows should remain unavailable/manual in product surfaces
-  until a later lane owns the complete implementation.
+## 4. Current Execution Order
+
+1. CP11 verification and durable data.
+2. CP12 modular validated API/contracts.
+3. CP13 durable clinic-day vertical slices.
+4. CP14 cloud/security/media/observability/recovery.
+5. CP15 official provider integrations.
+6. CP16 native mobile and selected AI/interoperability.
+7. CP17 controlled clinic validation.
+8. CP18 repeatable multi-clinic production.
+
+See `clinic_os_specs_v2/23_PRODUCTION_READINESS_REMEDIATION_PLAN.md` for detailed deliverables and dependency gates.
+
+## 5. Maintenance
+
+- Update this summary only from the authoritative remediation register.
+- Closing an item requires implementation plus evidence at the tier defined in `docs/qa/PRODUCTION_READINESS_EVIDENCE_STANDARD.md`.
+- Record revision, environment, timestamp, result and reviewer.
+- Preserve historical evidence; add a superseding record instead of rewriting history.

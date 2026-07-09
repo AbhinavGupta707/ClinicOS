@@ -34,6 +34,21 @@ jobs:
       - name: Typecheck workspaces
         run: npm run typecheck
 
+      - name: Bootstrap migrated synthetic database
+        run: npm run db:bootstrap
+
+      - name: Migration locking drift and rollback tests
+        run: npm run db:test:migrations
+
+      - name: Durable repository RLS and atomicity tests
+        run: npm run db:test:repositories
+
+      - name: Durable worker outbox retry and dead-letter tests
+        run: npm run worker:test:persistence
+
+      - name: API readiness dependency fault and recovery test
+        run: npm run api:test:readiness
+
       - name: Lint workspaces
         run: npm run lint
 

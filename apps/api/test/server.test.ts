@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { CHECKPOINT1_SEED_IDS } from "@clinic-os/db";
+import { FixedClock } from "@clinic-os/domain";
 import {
   createClinicOsApiServer,
   InMemoryAuditSink,
@@ -44,7 +45,8 @@ test("API health and local synthetic /v1/me fixture boot through HTTP", async (t
     identityRepository: new LocalFixtureIdentityRepository(),
     operationsRepository: new LocalFixtureClinicOperationsRepository(),
     auditSink,
-    useLocalAuthFixture: true
+    useLocalAuthFixture: true,
+    repositoryMode: "fixture"
   });
 
   try {
@@ -94,13 +96,16 @@ test("API health and local synthetic /v1/me fixture boot through HTTP", async (t
 
 test("CP2 local fixture API supports lead to appointment to check-in workflow with isolation and permissions", async (t) => {
   const auditSink = new InMemoryAuditSink();
-  const operationsRepository = new LocalFixtureClinicOperationsRepository();
+  const operationsRepository = new LocalFixtureClinicOperationsRepository({
+    clock: new FixedClock("2026-07-07T10:00:00.000Z")
+  });
   const server = createClinicOsApiServer({
     config,
     identityRepository: new LocalFixtureIdentityRepository(),
     operationsRepository,
     auditSink,
-    useLocalAuthFixture: true
+    useLocalAuthFixture: true,
+    repositoryMode: "fixture"
   });
 
   try {
@@ -180,11 +185,19 @@ test("CP2 local fixture API supports lead to appointment to check-in workflow wi
     assert.equal(conflictResponse.status, 409);
     assert.equal((await conflictResponse.json()).error.code, "CONFLICT");
 
-    const confirmResponse = await postJson(baseUrl, `/v1/appointments/${appointmentBody.appointment.id}/confirm`, {});
+    const confirmResponse = await postJson(
+      baseUrl,
+      `/v1/appointments/${appointmentBody.appointment.id}/confirm`,
+      {}
+    );
     assert.equal(confirmResponse.status, 200);
     assert.equal((await confirmResponse.json()).appointment.status, "confirmed");
 
-    const checkInResponse = await postJson(baseUrl, `/v1/appointments/${appointmentBody.appointment.id}/check-in`, {});
+    const checkInResponse = await postJson(
+      baseUrl,
+      `/v1/appointments/${appointmentBody.appointment.id}/check-in`,
+      {}
+    );
     assert.equal(checkInResponse.status, 200);
     const checkInBody = await checkInResponse.json();
     assert.equal(checkInBody.appointment.status, "checked_in");
@@ -215,7 +228,9 @@ test("CP2 local fixture API supports lead to appointment to check-in workflow wi
     assert.equal((await deniedResponse.json()).error.details.required_permission, "schedule.write");
 
     assert.equal(operationsRepository.queueEntries.length, 1);
-    assert.ok(operationsRepository.outboxEvents.some((event) => event.eventType === "patient.checked_in"));
+    assert.ok(
+      operationsRepository.outboxEvents.some((event) => event.eventType === "patient.checked_in")
+    );
     assert.ok(auditSink.events.some((event) => event.action === "patient.checked_in"));
   } finally {
     await new Promise((resolve, reject) => {

@@ -15,7 +15,7 @@ export interface WorkerEnvironment {
 }
 
 export function parseWorkerEnvironment(env: NodeJS.ProcessEnv): WorkerEnvironment {
-  const databaseUrl = requiredEnv(env, "DATABASE_URL");
+  const databaseUrl = env.WORKER_DATABASE_URL ?? requiredEnv(env, "DATABASE_URL");
 
   return {
     nodeEnv: env.NODE_ENV ?? "development",

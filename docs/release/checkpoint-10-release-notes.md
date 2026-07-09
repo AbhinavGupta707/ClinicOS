@@ -1,8 +1,10 @@
 # Checkpoint 10 Release Notes
 
+> **Historical release-candidate notes (superseded 2026-07-09):** CP10 remains local/fixture regression context only. It is not a current pilot or production package. The current decision is **NO-GO** and the active release gate is `docs/release/pilot-go-live-checklist.md`, backed by the production readiness remediation register.
+
 Date: 2026-07-07
 
-Status: Draft for master integration closeout
+Status: Historical CP10 draft; superseded for readiness claims
 
 Release scope: release-candidate operations package for a selected pilot clinic
 

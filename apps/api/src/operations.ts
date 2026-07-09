@@ -149,6 +149,7 @@ import {
   type ConsentPurpose,
   type CreateDentalFindingInput,
   type Cp10PilotReadinessInput,
+  type DentalChartSnapshotFinding,
   type DomainEventType,
   type EncounterStatus,
   type IntakeFormType,
@@ -178,6 +179,7 @@ import {
   type PricebookProcedureRecord,
   type PrescriptionMedication,
   type QueueStatus,
+  type Clock,
   type RecallRecord,
   type SopRunDetail,
   type SopScheduleRecord,
@@ -186,6 +188,7 @@ import {
   type TreatmentPlanDetail,
   type UUID
 } from "@clinic-os/domain";
+import { systemClock } from "@clinic-os/domain";
 import {
   createMessagingProvider,
   createAiGatewayProvider,
@@ -214,6 +217,7 @@ export interface OperationsRequestContext {
   requestId: string;
   accessContext: AccessContext;
   clinicId: UUID;
+  clinicTimeZone?: string;
   ipAddress?: string | null;
   userAgent?: string | null;
   idempotencyKey?: string | null;
@@ -221,6 +225,7 @@ export interface OperationsRequestContext {
 
 export interface OperationsDependencies {
   repository: ClinicOperationsRepository;
+  clock?: Clock;
   auditSink?: {
     appendAuditEvent(event: AuditEventRecord): Promise<void>;
   };
@@ -490,7 +495,7 @@ export async function createPatient(
       leadId: sourceLead?.id ?? null,
       source: attributionSource,
       touchType: "first_touch",
-      occurredAt: new Date().toISOString(),
+      occurredAt: nowIso(dependencies),
       metadata: input.sourceDetail ?? {}
     });
   }
@@ -631,7 +636,11 @@ export async function reviewAuditEvent(
 ) {
   authorize(context, { permission: "audit.review" });
   const input = parseAuditReviewInput(body);
-  const review = await dependencies.repository.createAuditReview(scopeFrom(context), auditEventId, input);
+  const review = await dependencies.repository.createAuditReview(
+    scopeFrom(context),
+    auditEventId,
+    input
+  );
   if (!review) throw notFound("Audit event not found.", { audit_event_id: auditEventId });
 
   await audit(context, dependencies, "audit_event.reviewed", {
@@ -808,7 +817,11 @@ export async function reviewDeletionRequest(
 ) {
   authorize(context, { permission: "retention.manage" });
   const input = parseReviewDeletionRequest(body);
-  const request = await dependencies.repository.reviewDeletionRequest(scopeFrom(context), requestId, input);
+  const request = await dependencies.repository.reviewDeletionRequest(
+    scopeFrom(context),
+    requestId,
+    input
+  );
   if (!request) throw notFound("Deletion request not found.", { deletion_request_id: requestId });
 
   await audit(context, dependencies, "deletion.request.reviewed", {
@@ -844,7 +857,7 @@ export async function runRetentionJob(
   body: unknown
 ) {
   authorize(context, { permission: "retention.manage" });
-  const input = parseRunRetentionJob(body);
+  const input = parseRunRetentionJob(body, nowIso(dependencies));
   const scope = scopeFrom(context);
   const deletionRequest = input.deletionRequestId
     ? await dependencies.repository.findDeletionRequestById(scope, input.deletionRequestId)
@@ -865,9 +878,10 @@ export async function runRetentionJob(
       patient_id: input.patientId
     });
   }
-  const runInput = deletionRequest && !input.patientId
-    ? { ...input, patientId: deletionRequest.patientId }
-    : input;
+  const runInput =
+    deletionRequest && !input.patientId
+      ? { ...input, patientId: deletionRequest.patientId }
+      : input;
   const result = await dependencies.repository.runRetentionJob(scope, runInput);
 
   await audit(context, dependencies, "retention.job.completed", {
@@ -910,7 +924,10 @@ export async function createBreakGlassAccessRequest(
 ) {
   authorize(context, { permission: "break_glass.request" });
   const input = parseCreateBreakGlassAccessRequest(body);
-  const access = await dependencies.repository.createBreakGlassAccessRequest(scopeFrom(context), input);
+  const access = await dependencies.repository.createBreakGlassAccessRequest(
+    scopeFrom(context),
+    input
+  );
   if (!access) throw notFound("Patient not found.", { patient_id: input.patientId });
 
   await audit(context, dependencies, "break_glass.requested", {
@@ -944,13 +961,20 @@ export async function createBreakGlassAccessRequest(
 export async function listBreakGlassAccessRequests(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
-  filter: { patientId?: string | null; status?: string | null; requestedByUserId?: string | null; limit?: string | null }
+  filter: {
+    patientId?: string | null;
+    status?: string | null;
+    requestedByUserId?: string | null;
+    limit?: string | null;
+  }
 ) {
   authorize(context, { permission: "break_glass.approve" });
   const accesses = await dependencies.repository.listBreakGlassAccessRequests(scopeFrom(context), {
     patientId: filter.patientId ? uuidField(filter.patientId, "patientId") : null,
     status: parseOptionalBreakGlassStatus(filter.status),
-    requestedByUserId: filter.requestedByUserId ? uuidField(filter.requestedByUserId, "requestedByUserId") : null,
+    requestedByUserId: filter.requestedByUserId
+      ? uuidField(filter.requestedByUserId, "requestedByUserId")
+      : null,
     limit: parseOptionalLimit(filter.limit, 50, 100)
   });
   return ok({ breakGlassAccesses: accesses });
@@ -969,7 +993,8 @@ export async function reviewBreakGlassAccessRequest(
     requestId,
     input
   );
-  if (!access) throw notFound("Break-glass access request not found.", { break_glass_access_id: requestId });
+  if (!access)
+    throw notFound("Break-glass access request not found.", { break_glass_access_id: requestId });
 
   const action: KnownAuditAction =
     input.decision === "approve"
@@ -1095,6 +1120,7 @@ export async function listProviderHealth(
         providerKey: "exotel"
       }),
       manualProviderCard({
+        checkedAt: nowIso(dependencies),
         activationChecks: [
           "Google Business Profile OAuth/account variables are not configured in CP7.",
           "Manual source attribution remains ClinicOS-owned and auditable.",
@@ -1109,6 +1135,7 @@ export async function listProviderHealth(
         status: "not_configured"
       }),
       manualProviderCard({
+        checkedAt: nowIso(dependencies),
         activationChecks: [
           "Clinic-approved import batches use durable migration review routes.",
           "Rows are marked imported/unverified until review.",
@@ -1150,11 +1177,11 @@ export async function getPilotReadiness(
       whatsapp: {
         credentialsPresent: Boolean(
           config.providers.whatsapp.accessToken &&
-            config.providers.whatsapp.appId &&
-            config.providers.whatsapp.appSecret &&
-            config.providers.whatsapp.businessAccountId &&
-            config.providers.whatsapp.phoneNumberId &&
-            config.providers.whatsapp.webhookVerifyToken
+          config.providers.whatsapp.appId &&
+          config.providers.whatsapp.appSecret &&
+          config.providers.whatsapp.businessAccountId &&
+          config.providers.whatsapp.phoneNumberId &&
+          config.providers.whatsapp.webhookVerifyToken
         ),
         provider: config.providers.whatsapp.provider,
         signedWebhookConfigured: false
@@ -1162,22 +1189,22 @@ export async function getPilotReadiness(
       payment: {
         credentialsPresent: Boolean(
           config.providers.payment.razorpayKeyId &&
-            config.providers.payment.razorpayKeySecret &&
-            config.providers.payment.razorpayWebhookSecret
+          config.providers.payment.razorpayKeySecret &&
+          config.providers.payment.razorpayWebhookSecret
         ),
         provider: config.providers.payment.provider,
         signedWebhookConfigured: Boolean(
           config.providers.payment.razorpayWebhookUrl &&
-            config.providers.payment.razorpayWebhookSecret
+          config.providers.payment.razorpayWebhookSecret
         )
       },
       telephony: {
         credentialsPresent: Boolean(
           config.providers.telephony.accountSid &&
-            config.providers.telephony.apiKey &&
-            config.providers.telephony.apiToken &&
-            config.providers.telephony.virtualNumber &&
-            config.providers.telephony.webhookSecret
+          config.providers.telephony.apiKey &&
+          config.providers.telephony.apiToken &&
+          config.providers.telephony.virtualNumber &&
+          config.providers.telephony.webhookSecret
         ),
         provider: config.providers.telephony.provider,
         signedWebhookConfigured: false
@@ -1189,18 +1216,18 @@ export async function getPilotReadiness(
             config.providers.ai.fireworksApiKey &&
             config.providers.ai.llmBaseUrl &&
             config.providers.ai.llmModelPrimary) ||
-            (config.providers.ai.llmProvider === "openai" &&
-              config.providers.ai.openaiApiKey &&
-              config.providers.ai.llmModelPrimary)
+          (config.providers.ai.llmProvider === "openai" &&
+            config.providers.ai.openaiApiKey &&
+            config.providers.ai.llmModelPrimary)
         ),
         llmProvider: config.providers.ai.llmProvider,
         transcriptionCredentialsPresent: Boolean(
           (config.providers.ai.transcriptionProvider === "openai" &&
             config.providers.ai.openaiApiKey &&
             config.providers.ai.transcriptionModel) ||
-            (config.providers.ai.transcriptionProvider === "deepgram" &&
-              config.providers.ai.deepgramApiKey &&
-              config.providers.ai.transcriptionModel)
+          (config.providers.ai.transcriptionProvider === "deepgram" &&
+            config.providers.ai.deepgramApiKey &&
+            config.providers.ai.transcriptionModel)
         ),
         transcriptionProvider: config.providers.ai.transcriptionProvider
       }
@@ -1219,17 +1246,16 @@ export async function getPilotReadiness(
         kmsConfigured: Boolean(config.operations.cloud.kmsKeyAlias),
         primaryRegion: config.operations.cloud.primaryRegion,
         terraformBackendConfigured: Boolean(
-          config.operations.cloud.terraformStateBucket &&
-            config.operations.cloud.terraformLockTable
+          config.operations.cloud.terraformStateBucket && config.operations.cloud.terraformLockTable
         )
       },
       alerting: {
         destinationConfigured: Boolean(
           (config.operations.alerting.provider === "email" &&
             config.operations.alerting.contactEmail) ||
-            (config.operations.alerting.provider === "slack" &&
-              config.operations.alerting.slackWebhookUrl) ||
-            (config.operations.alerting.provider === "sentry" && config.operations.alerting.sentryDsn)
+          (config.operations.alerting.provider === "slack" &&
+            config.operations.alerting.slackWebhookUrl) ||
+          (config.operations.alerting.provider === "sentry" && config.operations.alerting.sentryDsn)
         ),
         provider: config.operations.alerting.provider
       },
@@ -1303,9 +1329,10 @@ export async function replayDeadLetterEvent(
       reviewedByUserId: context.accessContext.user.id
     }
   );
-  if (!replay) throw notFound("Dead-letter event not found or replay is not available.", {
-    dead_letter_event_id: deadLetterId
-  });
+  if (!replay)
+    throw notFound("Dead-letter event not found or replay is not available.", {
+      dead_letter_event_id: deadLetterId
+    });
 
   await audit(context, dependencies, "integration.dead_letter.replayed", {
     resourceType: "integration_dead_letter",
@@ -1345,11 +1372,17 @@ export async function resolveMigrationBatchRow(
 ) {
   authorize(context, { permission: "migration.manage" });
   const input = parseResolveMigrationRowInput(body);
-  const row = await dependencies.repository.resolveMigrationRow(scopeFrom(context), batchId, rowId, input);
-  if (!row) throw notFound("Migration row not found or resolution target is unavailable.", {
-    batch_id: batchId,
-    row_id: rowId
-  });
+  const row = await dependencies.repository.resolveMigrationRow(
+    scopeFrom(context),
+    batchId,
+    rowId,
+    input
+  );
+  if (!row)
+    throw notFound("Migration row not found or resolution target is unavailable.", {
+      batch_id: batchId,
+      row_id: rowId
+    });
 
   await audit(context, dependencies, "migration.row.resolved", {
     resourceType: "migration_row",
@@ -1388,7 +1421,10 @@ export async function commitMigrationBatch(
   if (!detail) throw notFound("Migration batch not found.", { batch_id: batchId });
   if (!["committed", "partially_committed"].includes(detail.batch.state)) {
     const unresolvedRows = detail.rows.filter(
-      (row) => row.status === "needs_review" || row.matchStatus === "duplicate_candidate" || row.matchStatus === "conflict"
+      (row) =>
+        row.status === "needs_review" ||
+        row.matchStatus === "duplicate_candidate" ||
+        row.matchStatus === "conflict"
     );
     if (unresolvedRows.length > 0) {
       throw validation("Migration batch has unresolved duplicate or conflict rows.", {
@@ -1402,7 +1438,11 @@ export async function commitMigrationBatch(
   }
 
   const commitInput = parseMigrationActionInput(body, context);
-  const result = await dependencies.repository.commitMigrationBatch(scopeFrom(context), batchId, commitInput);
+  const result = await dependencies.repository.commitMigrationBatch(
+    scopeFrom(context),
+    batchId,
+    commitInput
+  );
   if (!result) throw notFound("Migration batch not found.", { batch_id: batchId });
 
   await audit(context, dependencies, "migration.batch.committed", {
@@ -1425,7 +1465,9 @@ export async function commitMigrationBatch(
       failedRows: result.batch.failedRowCount
     }
   });
-  for (const link of result.importedRecordLinks.filter((candidate) => candidate.targetRecordType === "patient")) {
+  for (const link of result.importedRecordLinks.filter(
+    (candidate) => candidate.targetRecordType === "patient"
+  )) {
     await appendOutbox(context, dependencies, {
       eventType: "patient.imported",
       aggregateType: "imported_record_link",
@@ -1457,7 +1499,11 @@ export async function rollbackMigrationBatch(
 ) {
   authorize(context, { permission: "migration.manage" });
   const actionInput = parseMigrationActionInput(body, context);
-  const result = await dependencies.repository.rollbackMigrationBatch(scopeFrom(context), batchId, actionInput);
+  const result = await dependencies.repository.rollbackMigrationBatch(
+    scopeFrom(context),
+    batchId,
+    actionInput
+  );
   if (!result) throw notFound("Migration batch not found.", { batch_id: batchId });
 
   await audit(context, dependencies, "migration.batch.rolled_back", {
@@ -1530,7 +1576,8 @@ export async function getPatientPrepSummary(
   let appointment: AppointmentRecord | null = null;
   if (input.appointmentId) {
     appointment = await dependencies.repository.findAppointmentById(scope, input.appointmentId);
-    if (!appointment) throw notFound("Appointment not found.", { appointment_id: input.appointmentId });
+    if (!appointment)
+      throw notFound("Appointment not found.", { appointment_id: input.appointmentId });
     if (appointment.patientId !== patientId) {
       throw validation("Appointment does not belong to the requested patient.", {
         appointment_id: appointment.id,
@@ -1548,7 +1595,7 @@ export async function getPatientPrepSummary(
   const timeline = timelineItems.map(toPublicPatientTimelineItem);
   const latestIntake = intakeSubmissions[0] ?? null;
   const priorClinicalTimeline = timeline.filter((item) =>
-    ["clinical_note", "prescription", "appointment"].includes(item.type)
+    ["clinical_note", "prescription", "appointment"].includes(item.itemType)
   );
   const prepSummary = {
     patient: {
@@ -1568,7 +1615,7 @@ export async function getPatientPrepSummary(
           reason: appointment.reason
         }
       : null,
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(dependencies),
     latestIntakeResponse: latestIntake,
     consentEnforcementState: enforcementState,
     activeConsentPurposes: consents
@@ -1990,7 +2037,11 @@ export async function updateTask(
   body: unknown
 ) {
   authorize(context, { permission: "task.manage" });
-  const task = await dependencies.repository.updateTask(scopeFrom(context), taskId, parseUpdateTask(body));
+  const task = await dependencies.repository.updateTask(
+    scopeFrom(context),
+    taskId,
+    parseUpdateTask(body)
+  );
   if (!task) throw notFound("Task not found.", { task_id: taskId });
   const eventType = task.status === "done" ? "task.completed" : "task.status_changed";
   await audit(context, dependencies, eventType, {
@@ -2018,7 +2069,7 @@ export async function generateDueContinuityTasks(
   authorize(context, { permission: "recall.manage" });
   const result = await dependencies.repository.generateDueContinuityTasks(
     scopeFrom(context),
-    parseGenerateDueContinuity(body)
+    parseGenerateDueContinuity(body, nowIso(dependencies))
   );
   for (const recall of result.recallsCreated) {
     await audit(context, dependencies, "recall.due", {
@@ -2064,7 +2115,10 @@ export async function createRecallRule(
   body: unknown
 ) {
   authorize(context, { permission: "recall.manage" });
-  const rule = await dependencies.repository.createRecallRule(scopeFrom(context), parseCreateRecallRule(body));
+  const rule = await dependencies.repository.createRecallRule(
+    scopeFrom(context),
+    parseCreateRecallRule(body)
+  );
   await audit(context, dependencies, "recall.rule_created", {
     resourceType: "recall_rule",
     resourceId: rule.id,
@@ -2097,7 +2151,10 @@ export async function listRecalls(
   query: URLSearchParams = new URLSearchParams()
 ) {
   authorize(context, { permission: "recall.manage" });
-  const recalls = await dependencies.repository.listRecalls(scopeFrom(context), parseRecallSearch(query));
+  const recalls = await dependencies.repository.listRecalls(
+    scopeFrom(context),
+    parseRecallSearch(query)
+  );
   return ok({ recalls: recalls.map(publicRecall) });
 }
 
@@ -2109,7 +2166,11 @@ export async function recordRecallAction(
 ) {
   authorize(context, { permission: "recall.manage" });
   const input = parseRecallAction(body);
-  const recall = await dependencies.repository.recordRecallAction(scopeFrom(context), recallId, input);
+  const recall = await dependencies.repository.recordRecallAction(
+    scopeFrom(context),
+    recallId,
+    input
+  );
   if (!recall) throw notFound("Recall not found.", { recall_id: recallId });
   const eventType =
     recall.status === "completed"
@@ -2190,7 +2251,7 @@ export async function generateDueSopRuns(
   authorize(context, { permission: "sop.manage" });
   const result = await dependencies.repository.generateDueSopRuns(
     scopeFrom(context),
-    parseGenerateDueSopRuns(body)
+    parseGenerateDueSopRuns(body, nowIso(dependencies))
   );
   for (const detail of result.runsCreated) {
     await audit(context, dependencies, "sop_run.created", {
@@ -2217,7 +2278,10 @@ export async function listSopRuns(
   query: URLSearchParams = new URLSearchParams()
 ) {
   authorize(context, { permission: "sop.manage" });
-  const runs = await dependencies.repository.listSopRuns(scopeFrom(context), parseSopRunSearch(query));
+  const runs = await dependencies.repository.listSopRuns(
+    scopeFrom(context),
+    parseSopRunSearch(query)
+  );
   return ok({ sopRuns: runs.map(publicSopRunDetail) });
 }
 
@@ -2308,10 +2372,11 @@ export async function createLabCase(
   authorize(context, { permission: "lab.manage" });
   const input = parseCreateLabCase(body);
   const result = await dependencies.repository.createLabCase(scopeFrom(context), input);
-  if (!result) throw notFound("Lab vendor, patient, or clinical linkage not found.", {
-    vendor_id: input.vendorId,
-    patient_id: input.patientId
-  });
+  if (!result)
+    throw notFound("Lab vendor, patient, or clinical linkage not found.", {
+      vendor_id: input.vendorId,
+      patient_id: input.patientId
+    });
 
   await audit(context, dependencies, "lab_case.created", {
     patientId: result.labCase.patientId,
@@ -2370,7 +2435,11 @@ export async function updateLabCase(
 
   let result;
   try {
-    result = await dependencies.repository.updateLabCaseStatus(scopeFrom(context), labCaseId, input);
+    result = await dependencies.repository.updateLabCaseStatus(
+      scopeFrom(context),
+      labCaseId,
+      input
+    );
   } catch (error) {
     throw conflict(error instanceof Error ? error.message : "Invalid lab case transition.", {
       lab_case_id: labCaseId,
@@ -2410,9 +2479,10 @@ export async function createLabReconciliation(
   authorize(context, { permission: "lab.manage" });
   const input = parseCreateLabReconciliation(body);
   const result = await dependencies.repository.createLabReconciliation(scopeFrom(context), input);
-  if (!result) throw notFound("Lab vendor or lab case not found for reconciliation.", {
-    vendor_id: input.vendorId
-  });
+  if (!result)
+    throw notFound("Lab vendor or lab case not found for reconciliation.", {
+      vendor_id: input.vendorId
+    });
 
   await audit(context, dependencies, "lab_reconciliation.created", {
     resourceType: "lab_reconciliation",
@@ -2562,7 +2632,10 @@ export async function createInventoryCheckTemplate(
 ) {
   authorize(context, { permission: "inventory.manage" });
   const input = parseCreateInventoryCheckTemplate(body);
-  const template = await dependencies.repository.createInventoryCheckTemplate(scopeFrom(context), input);
+  const template = await dependencies.repository.createInventoryCheckTemplate(
+    scopeFrom(context),
+    input
+  );
   if (!template) throw notFound("Inventory item not found for check template.", {});
   return created({ template });
 }
@@ -2575,7 +2648,8 @@ export async function createInventoryCheckRun(
   authorize(context, { permission: "inventory.manage" });
   const input = parseCreateInventoryCheckRun(body);
   const run = await dependencies.repository.createInventoryCheckRun(scopeFrom(context), input);
-  if (!run) throw notFound("Inventory check template not found.", { template_id: input.templateId });
+  if (!run)
+    throw notFound("Inventory check template not found.", { template_id: input.templateId });
 
   await audit(context, dependencies, "inventory_check.created", {
     resourceType: "inventory_check_run",
@@ -2605,9 +2679,10 @@ export async function updateInventoryCheckRun(
     checkRunId,
     input
   );
-  if (!run) throw conflict("Inventory check run cannot be updated for this state or payload.", {
-    check_run_id: checkRunId
-  });
+  if (!run)
+    throw conflict("Inventory check run cannot be updated for this state or payload.", {
+      check_run_id: checkRunId
+    });
 
   if (run.run.status === "completed") {
     const exceptionLines = run.lines.filter((line) => line.exceptionType);
@@ -2750,9 +2825,9 @@ export async function listCorrectiveActions(
   dependencies: OperationsDependencies
 ) {
   authorize(context, { permission: "corrective_action.manage" });
-  const correctiveActions = (await dependencies.repository.listCorrectiveActions(scopeFrom(context))).map(
-    publicCorrectiveAction
-  );
+  const correctiveActions = (
+    await dependencies.repository.listCorrectiveActions(scopeFrom(context))
+  ).map(publicCorrectiveAction);
   return ok({ correctiveActions });
 }
 
@@ -2763,8 +2838,12 @@ export async function createCorrectiveAction(
 ) {
   authorize(context, { permission: "corrective_action.manage" });
   const input = parseCreateCorrectiveAction(body);
-  const correctiveAction = await dependencies.repository.createCorrectiveAction(scopeFrom(context), input);
-  if (!correctiveAction) throw notFound("Incident not found.", { incident_id: input.incidentId ?? null });
+  const correctiveAction = await dependencies.repository.createCorrectiveAction(
+    scopeFrom(context),
+    input
+  );
+  if (!correctiveAction)
+    throw notFound("Incident not found.", { incident_id: input.incidentId ?? null });
 
   await audit(context, dependencies, "corrective_action.created", {
     resourceType: "corrective_action",
@@ -2802,9 +2881,10 @@ export async function updateCorrectiveAction(
     correctiveActionId,
     input
   );
-  if (!correctiveAction) throw notFound("Corrective action not found or already closed.", {
-    corrective_action_id: correctiveActionId
-  });
+  if (!correctiveAction)
+    throw notFound("Corrective action not found or already closed.", {
+      corrective_action_id: correctiveActionId
+    });
 
   const action =
     correctiveAction.status === "completed"
@@ -2837,10 +2917,13 @@ export async function updateCorrectiveAction(
 export async function getOwnerDashboard(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
-  filter: { from?: string | null; to?: string | null }
+  filter: { from?: string | null; to?: string | null; defaultDate?: string }
 ) {
   authorize(context, { permission: "analytics.read" });
-  const range = parseOwnerDashboardRange(filter);
+  const range = parseOwnerDashboardRange(
+    filter,
+    filter.defaultDate ?? nowIso(dependencies).slice(0, 10)
+  );
   const data = await dependencies.repository.loadOwnerDashboardProjectionData(
     scopeFrom(context),
     range
@@ -2848,7 +2931,7 @@ export async function getOwnerDashboard(
   const dashboard = buildOwnerDashboardProjection({
     from: range.startAt,
     to: range.endAt,
-    generatedAt: new Date().toISOString(),
+    generatedAt: nowIso(dependencies),
     data
   });
 
@@ -2936,12 +3019,7 @@ export async function updateTreatmentPlan(
   authorize(context, { permission: "dental.chart.write" });
   const input = parseUpdateTreatmentPlan(body);
   const result = await billingRepositoryOperation(
-    () =>
-      dependencies.repository.updateTreatmentPlan(
-        scopeFrom(context),
-        treatmentPlanId,
-        input
-      ),
+    () => dependencies.repository.updateTreatmentPlan(scopeFrom(context), treatmentPlanId, input),
     { treatment_plan_id: treatmentPlanId }
   );
   if (!result) throw notFound("Treatment plan not found.", { treatment_plan_id: treatmentPlanId });
@@ -2967,12 +3045,7 @@ export async function acceptTreatmentPlan(
   authorize(context, { permission: "dental.chart.write" });
   const input = parseAcceptTreatmentPlan(body);
   const result = await billingRepositoryOperation(
-    () =>
-      dependencies.repository.acceptTreatmentPlan(
-        scopeFrom(context),
-        treatmentPlanId,
-        input
-      ),
+    () => dependencies.repository.acceptTreatmentPlan(scopeFrom(context), treatmentPlanId, input),
     { treatment_plan_id: treatmentPlanId }
   );
   if (!result) throw notFound("Treatment plan not found.", { treatment_plan_id: treatmentPlanId });
@@ -3010,21 +3083,17 @@ export async function createEncounterProcedurePerformed(
   authorize(context, { permission: "clinical.note.write" });
   const input = parseCreateProcedurePerformed(body);
   const result = await billingRepositoryOperation(
-    () =>
-      dependencies.repository.createProcedurePerformed(
-        scopeFrom(context),
-        encounterId,
-        input
-      ),
+    () => dependencies.repository.createProcedurePerformed(scopeFrom(context), encounterId, input),
     {
       encounter_id: encounterId,
       treatment_plan_id: input.treatmentPlanId,
       treatment_plan_estimate_item_id: input.treatmentPlanEstimateItemId
     }
   );
-  if (!result) throw notFound("Encounter or accepted treatment plan item not found.", {
-    encounter_id: encounterId
-  });
+  if (!result)
+    throw notFound("Encounter or accepted treatment plan item not found.", {
+      encounter_id: encounterId
+    });
 
   await audit(context, dependencies, "procedure.completed", {
     patientId: result.procedure.patientId,
@@ -3204,7 +3273,10 @@ export async function submitPatientIntakeForm(
   if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
 
   const input = parseCreateIntakeFormSubmission(body, patientId);
-  const template = await dependencies.repository.findIntakeFormTemplateById(scope, input.templateId);
+  const template = await dependencies.repository.findIntakeFormTemplateById(
+    scope,
+    input.templateId
+  );
   if (!template || !template.active) {
     throw notFound("Intake form template not found.", { template_id: input.templateId });
   }
@@ -3245,7 +3317,10 @@ export async function listPatientConsents(
   if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
 
   const consents = await dependencies.repository.listPatientConsents(scope, patientId);
-  const enforcementState = await dependencies.repository.getConsentEnforcementState(scope, patientId);
+  const enforcementState = await dependencies.repository.getConsentEnforcementState(
+    scope,
+    patientId
+  );
 
   await audit(context, dependencies, "consent.enforcement.checked", {
     patientId,
@@ -3284,7 +3359,10 @@ export async function createPatientConsent(
   }
 
   const consent = await dependencies.repository.createConsent(scope, input);
-  const enforcementState = await dependencies.repository.getConsentEnforcementState(scope, patientId);
+  const enforcementState = await dependencies.repository.getConsentEnforcementState(
+    scope,
+    patientId
+  );
 
   await audit(context, dependencies, "consent.created", {
     patientId,
@@ -3333,7 +3411,10 @@ export async function revokePatientConsent(
   });
   if (!consent) throw notFound("Consent not found.", { consent_id: consentId });
 
-  const enforcementState = await dependencies.repository.getConsentEnforcementState(scope, patientId);
+  const enforcementState = await dependencies.repository.getConsentEnforcementState(
+    scope,
+    patientId
+  );
 
   await audit(context, dependencies, "consent.revoked", {
     patientId,
@@ -3491,7 +3572,10 @@ export async function createAiScribeTranscriptSegment(
     ...input,
     sourceHash: sha256Text(input.text)
   });
-  if (!result) throw conflict("AI scribe session is not accepting transcript segments.", { session_id: sessionId });
+  if (!result)
+    throw conflict("AI scribe session is not accepting transcript segments.", {
+      session_id: sessionId
+    });
 
   await audit(context, dependencies, "ai.transcript.segment_created", {
     patientId: session.patientId,
@@ -3531,7 +3615,11 @@ export async function createAiScribeSourceAnchor(
 ) {
   authorize(context, { permission: "ai.scribe.write" });
   const input = parseCreateAiSourceAnchorInput(body);
-  const anchor = await dependencies.repository.createAiSourceAnchor(scopeFrom(context), sessionId, input);
+  const anchor = await dependencies.repository.createAiSourceAnchor(
+    scopeFrom(context),
+    sessionId,
+    input
+  );
   if (!anchor) throw notFound("AI scribe session not found.", { session_id: sessionId });
   return created({ sourceAnchor: anchor });
 }
@@ -3552,7 +3640,9 @@ export async function generateAiScribeDrafts(
     requireRawAudioRetention: detail.session.retentionPolicy.rawAudioRetention === "retain_until"
   });
   if (detail.transcriptSegments.length === 0) {
-    throw validation("Transcript segments are required before draft generation.", { session_id: sessionId });
+    throw validation("Transcript segments are required before draft generation.", {
+      session_id: sessionId
+    });
   }
 
   const input = parseGenerateAiDraftsInput(body);
@@ -3562,9 +3652,13 @@ export async function generateAiScribeDrafts(
       : detail.sourceAnchors
           .filter((anchor) => anchor.anchorType === "transcript_segment")
           .map((anchor) => anchor.id);
-  const selectedAnchors = detail.sourceAnchors.filter((anchor) => sourceAnchorIds.includes(anchor.id));
+  const selectedAnchors = detail.sourceAnchors.filter((anchor) =>
+    sourceAnchorIds.includes(anchor.id)
+  );
   if (selectedAnchors.length !== sourceAnchorIds.length) {
-    throw validation("Every sourceAnchorId must belong to the AI scribe session.", { sourceAnchorIds });
+    throw validation("Every sourceAnchorId must belong to the AI scribe session.", {
+      sourceAnchorIds
+    });
   }
   const unsupportedAnchors = selectedAnchors.filter((anchor) => !anchor.supported);
   if (unsupportedAnchors.length > 0) {
@@ -3597,7 +3691,7 @@ export async function generateAiScribeDrafts(
         outputSummary: { providerStatus: error.status },
         errorCode: error.status,
         errorMessage: error.message,
-        completedAt: new Date().toISOString()
+        completedAt: nowIso(dependencies)
       });
       throw new ApiError(503, "AI_PROVIDER_UNAVAILABLE", error.message, {
         providerKey: error.providerKey,
@@ -3617,9 +3711,30 @@ export async function generateAiScribeDrafts(
       outputTypes: ["clinical_note_draft", "dental_chart_patch_draft"],
       actionProposalCount: providerResult.actionProposals.length
     },
-    completedAt: new Date().toISOString()
+    completedAt: nowIso(dependencies)
   });
   if (!job) throw notFound("AI scribe session not found.", { session_id: sessionId });
+
+  const clinicalSourceAnchorIds = providerResult.clinicalNoteDraft.sourceAnchorIds.map((value) =>
+    uuidField(value, "providerResult.clinicalNoteDraft.sourceAnchorIds")
+  );
+  const dentalSourceAnchorIds = providerResult.dentalChartPatchDraft.sourceAnchorIds.map((value) =>
+    uuidField(value, "providerResult.dentalChartPatchDraft.sourceAnchorIds")
+  );
+  const dentalChartPatchContent = {
+    ...providerResult.dentalChartPatchDraft.content,
+    encounterId: uuidField(
+      providerResult.dentalChartPatchDraft.content.encounterId,
+      "providerResult.dentalChartPatchDraft.content.encounterId"
+    ),
+    findings: providerResult.dentalChartPatchDraft.content.findings.map((finding) => ({
+      ...finding,
+      sourceAnchorIds: finding.sourceAnchorIds.map((value) =>
+        uuidField(value, "providerResult.dentalChartPatchDraft.content.findings.sourceAnchorIds")
+      )
+    })),
+    warnings: [...providerResult.dentalChartPatchDraft.content.warnings]
+  };
 
   const clinicalOutput = await dependencies.repository.createAiDraftOutput(scope, sessionId, {
     jobId: job.id,
@@ -3627,7 +3742,7 @@ export async function generateAiScribeDrafts(
     content: providerResult.clinicalNoteDraft.content,
     confidence: providerResult.clinicalNoteDraft.confidence,
     warnings: providerResult.clinicalNoteDraft.warnings,
-    sourceAnchorIds: [...providerResult.clinicalNoteDraft.sourceAnchorIds],
+    sourceAnchorIds: clinicalSourceAnchorIds,
     schemaVersion: "ClinicalNoteDraft.v1",
     providerMode: providerResult.providerMode,
     providerRequestDigest: providerResult.providerRequestDigest
@@ -3635,10 +3750,10 @@ export async function generateAiScribeDrafts(
   const chartOutput = await dependencies.repository.createAiDraftOutput(scope, sessionId, {
     jobId: job.id,
     outputType: "dental_chart_patch_draft",
-    content: providerResult.dentalChartPatchDraft.content,
+    content: dentalChartPatchContent,
     confidence: providerResult.dentalChartPatchDraft.confidence,
     warnings: providerResult.dentalChartPatchDraft.warnings,
-    sourceAnchorIds: [...providerResult.dentalChartPatchDraft.sourceAnchorIds],
+    sourceAnchorIds: dentalSourceAnchorIds,
     schemaVersion: "DentalChartPatchDraft.v1",
     providerMode: providerResult.providerMode,
     providerRequestDigest: providerResult.providerRequestDigest
@@ -3656,7 +3771,9 @@ export async function generateAiScribeDrafts(
       description: proposal.description,
       proposedPayload: proposal.proposedPayload,
       requiredPermission: proposal.requiredPermission,
-      sourceAnchorIds: [...proposal.sourceAnchorIds],
+      sourceAnchorIds: proposal.sourceAnchorIds.map((value) =>
+        uuidField(value, "providerResult.actionProposals.sourceAnchorIds")
+      ),
       providerMode: providerResult.providerMode
     });
     if (createdProposal) {
@@ -3730,8 +3847,16 @@ export async function recordAiScribeReviewDecision(
   authorize(context, { permission: "patient.read" });
   authorize(context, { permission: "patient.phi.read" });
   const input = parseRecordAiReviewDecisionInput(body);
-  const decision = await dependencies.repository.recordAiReviewDecision(scopeFrom(context), sessionId, input);
-  if (!decision) throw notFound("AI review target not found.", { session_id: sessionId, target_id: input.targetId });
+  const decision = await dependencies.repository.recordAiReviewDecision(
+    scopeFrom(context),
+    sessionId,
+    input
+  );
+  if (!decision)
+    throw notFound("AI review target not found.", {
+      session_id: sessionId,
+      target_id: input.targetId
+    });
   const session = await dependencies.repository.findAiSessionById(scopeFrom(context), sessionId);
   if (!session) throw notFound("AI scribe session not found.", { session_id: sessionId });
 
@@ -3779,12 +3904,15 @@ export async function deleteAiScribeRetainedPayloads(
     status: "succeeded",
     providerMode: result.session.providerMode,
     providerKey: result.session.llmProviderKey,
-    inputDigest: sha256Json({ sessionId, deletedTranscriptSegments: result.deletedTranscriptSegments }),
+    inputDigest: sha256Json({
+      sessionId,
+      deletedTranscriptSegments: result.deletedTranscriptSegments
+    }),
     outputSummary: {
       deletedTranscriptSegments: result.deletedTranscriptSegments,
       deletedRawAudioReferences: result.deletedRawAudioReferences
     },
-    completedAt: new Date().toISOString()
+    completedAt: nowIso(dependencies)
   });
   await audit(context, dependencies, "ai.retention.deleted", {
     patientId: result.session.patientId,
@@ -3820,8 +3948,12 @@ export async function createEncounter(
   if (!patient) throw notFound("Patient not found.", { patient_id: input.patientId });
 
   if (input.appointmentId) {
-    const appointment = await dependencies.repository.findAppointmentById(scope, input.appointmentId);
-    if (!appointment) throw notFound("Appointment not found.", { appointment_id: input.appointmentId });
+    const appointment = await dependencies.repository.findAppointmentById(
+      scope,
+      input.appointmentId
+    );
+    if (!appointment)
+      throw notFound("Appointment not found.", { appointment_id: input.appointmentId });
     if (appointment.patientId !== input.patientId) {
       throw validation("Appointment does not belong to the encounter patient.", {
         appointment_id: appointment.id,
@@ -3995,7 +4127,11 @@ export async function signEncounterClinicalNote(
     aggregateType: "clinical_note",
     aggregateId: result.note.id,
     patientId: result.note.patientId,
-    payload: { encounterId, noteVersionId: result.note.id, versionNumber: result.note.versionNumber }
+    payload: {
+      encounterId,
+      noteVersionId: result.note.id,
+      versionNumber: result.note.versionNumber
+    }
   });
 
   return ok(result);
@@ -4116,7 +4252,10 @@ export async function signPrescription(
     patientId: prescription.patientId,
     resourceType: "prescription",
     resourceId: prescription.id,
-    metadata: { encounterId: prescription.encounterId, medicationCount: prescription.medications.length }
+    metadata: {
+      encounterId: prescription.encounterId,
+      medicationCount: prescription.medications.length
+    }
   });
   await appendOutbox(context, dependencies, {
     eventType: "prescription.signed",
@@ -4336,7 +4475,8 @@ export async function createDentalChartSnapshot(
     patientId,
     input
   );
-  if (!snapshot) throw notFound("Patient or dental chart context not found.", { patient_id: patientId });
+  if (!snapshot)
+    throw notFound("Patient or dental chart context not found.", { patient_id: patientId });
 
   await audit(context, dependencies, "dental_chart.snapshot_created", {
     patientId: snapshot.patientId,
@@ -4389,7 +4529,7 @@ export async function requestMediaUploadUrl(
   }
 
   const uploadId = randomUUID() as UUID;
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000).toISOString();
+  const expiresAt = new Date(nowDate(dependencies).getTime() + 10 * 60 * 1000).toISOString();
   const objectKey = storage.buildObjectKey({
     tenantId: scope.tenantId,
     clinicId: scope.clinicId,
@@ -4467,7 +4607,7 @@ export async function receiveMediaUploadContent(
     uploadId
   );
   if (!reservation) throw notFound("Media upload reservation not found.", { upload_id: uploadId });
-  assertMediaUploadOpen(reservation);
+  assertMediaUploadOpen(reservation, nowDate(dependencies).getTime());
   if (input.body.byteLength !== reservation.expectedFileSizeBytes) {
     throw validation("Uploaded object size does not match the reserved media metadata.", {
       upload_id: uploadId,
@@ -4527,7 +4667,7 @@ export async function completeMediaUpload(
   const scope = scopeFrom(context);
   const reservation = await dependencies.repository.findMediaUploadReservationById(scope, uploadId);
   if (!reservation) throw notFound("Media upload reservation not found.", { upload_id: uploadId });
-  assertMediaUploadOpen(reservation);
+  assertMediaUploadOpen(reservation, nowDate(dependencies).getTime());
   if (input.patientId !== reservation.patientId) {
     throw validation("Complete-upload patient context does not match the upload reservation.", {
       upload_id: uploadId,
@@ -4557,7 +4697,8 @@ export async function completeMediaUpload(
     quarantineReason: input.quarantineReason,
     dicomMetadata: input.dicomMetadata
   });
-  if (!asset) throw conflict("Media upload reservation is no longer completable.", { upload_id: uploadId });
+  if (!asset)
+    throw conflict("Media upload reservation is no longer completable.", { upload_id: uploadId });
 
   await audit(context, dependencies, "media.upload_completed", {
     patientId: asset.patientId,
@@ -4622,7 +4763,9 @@ export async function createSignedMediaAccess(
     });
   }
   const expiresInSeconds = Math.min(requested.expiresInSeconds ?? 300, 300);
-  const expiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
+  const expiresAt = new Date(
+    nowDate(dependencies).getTime() + expiresInSeconds * 1000
+  ).toISOString();
   const access = await storage.createSignedReadAccess({
     objectKey: asset.objectKey,
     mimeType: asset.mimeType,
@@ -4668,17 +4811,26 @@ export async function createInvoicePaymentRequest(
 
   const input = parsePaymentRequest(body, invoice);
   const health = await provider.healthCheck();
-  if (!health.capabilities.includes(input.requestType === "invoice_qr" ? "CREATE_PAYMENT_QR" : "CREATE_PAYMENT_LINKS")) {
+  if (
+    !health.capabilities.includes(
+      input.requestType === "invoice_qr" ? "CREATE_PAYMENT_QR" : "CREATE_PAYMENT_LINKS"
+    )
+  ) {
     await audit(context, dependencies, "payment.provider.unavailable", {
       patientId: invoice.patientId,
       resourceType: "invoice",
       resourceId: invoice.id,
       metadata: { providerKey: provider.providerKey, providerHealth: health }
     });
-    throw new ApiError(503, "CONFIGURATION_ERROR", "Payment provider is unavailable for this request type.", {
-      provider_health: health,
-      request_type: input.requestType
-    });
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Payment provider is unavailable for this request type.",
+      {
+        provider_health: health,
+        request_type: input.requestType
+      }
+    );
   }
 
   const providerInput = {
@@ -4737,7 +4889,8 @@ export async function createInvoicePaymentRequest(
     });
   }
   const updatedInvoiceDetail = await dependencies.repository.findInvoiceById(scope, invoice.id);
-  if (!updatedInvoiceDetail) throw notFound("Invoice not found after payment request.", { invoice_id: invoice.id });
+  if (!updatedInvoiceDetail)
+    throw notFound("Invoice not found after payment request.", { invoice_id: invoice.id });
 
   await audit(context, dependencies, "payment.requested", {
     patientId: invoice.patientId,
@@ -4816,7 +4969,7 @@ export async function recordInvoiceManualPayment(
     status: "manually_recorded",
     verificationStatus: "not_required_manual",
     reconciliationStatus: "matched",
-    receivedAt: input.receivedAt ?? new Date().toISOString(),
+    receivedAt: input.receivedAt ?? nowIso(dependencies),
     idempotencyKey,
     recordedByUserId: scope.actorUserId,
     metadata: {
@@ -4827,7 +4980,8 @@ export async function recordInvoiceManualPayment(
   });
   if (!transaction) throw notFound("Invoice not found.", { invoice_id: invoiceId });
   const updatedInvoiceDetail = await dependencies.repository.findInvoiceById(scope, invoice.id);
-  if (!updatedInvoiceDetail) throw notFound("Invoice not found after payment recording.", { invoice_id: invoice.id });
+  if (!updatedInvoiceDetail)
+    throw notFound("Invoice not found after payment recording.", { invoice_id: invoice.id });
   const replayed = existing?.id === transaction.id;
 
   await audit(context, dependencies, "payment.manually_recorded", {
@@ -4891,7 +5045,10 @@ export async function processPaymentWebhook(
       verification.status === "invalid_signature" ? 403 : 400,
       verification.status === "invalid_signature" ? "PERMISSION_DENIED" : "VALIDATION_ERROR",
       verification.message,
-      { verification_status: verification.status, provider_event_id: verification.providerEventId ?? null }
+      {
+        verification_status: verification.status,
+        provider_event_id: verification.providerEventId ?? null
+      }
     );
   }
 
@@ -4910,7 +5067,11 @@ export async function processPaymentWebhook(
       replayed: false,
       invoice: null,
       transaction: null,
-      reconciliationItem: providerReconciliationItem(event, "missing_invoice_reference", event.amountPaise ?? 0),
+      reconciliationItem: providerReconciliationItem(
+        event,
+        "missing_invoice_reference",
+        event.amountPaise ?? 0
+      ),
       providerEvent: publicProviderWebhookEvent(event)
     });
   }
@@ -4922,7 +5083,11 @@ export async function processPaymentWebhook(
       replayed: false,
       invoice: null,
       transaction: null,
-      reconciliationItem: providerReconciliationItem(event, "missing_invoice_reference", event.amountPaise ?? 0),
+      reconciliationItem: providerReconciliationItem(
+        event,
+        "missing_invoice_reference",
+        event.amountPaise ?? 0
+      ),
       providerEvent: publicProviderWebhookEvent(event)
     });
   }
@@ -4957,7 +5122,7 @@ export async function processPaymentWebhook(
       providerPaymentId: event.providerPaymentId ?? null,
       providerOrderId: event.providerPaymentRequestId ?? null,
       amountMinor: positiveProviderAmountMinor(event.amountPaise),
-      currency: event.currency ?? invoice.currency,
+      currency: invoice.currency,
       method: event.method ?? "provider_failure",
       status: "failed",
       verificationStatus: "verified",
@@ -4986,7 +5151,7 @@ export async function processPaymentWebhook(
         providerPaymentId: event.providerPaymentId ?? null,
         providerOrderId: event.providerPaymentRequestId ?? null,
         amountMinor: appliedAmountMinor,
-        currency: event.currency,
+        currency: invoice.currency,
         method: event.method ?? "provider",
         status: "succeeded",
         verificationStatus: "verified",
@@ -5013,7 +5178,7 @@ export async function processPaymentWebhook(
         providerPaymentId: event.providerPaymentId ?? null,
         providerOrderId: event.providerPaymentRequestId ?? null,
         amountMinor: event.amountPaise,
-        currency: event.currency,
+        currency: invoice.currency,
         method: event.method ?? "provider",
         status: "reconciliation_required",
         verificationStatus: "verified",
@@ -5032,8 +5197,12 @@ export async function processPaymentWebhook(
     }
   }
 
-  const updatedInvoiceDetail = await dependencies.repository.findInvoiceById(eventScope, invoice.id);
-  if (!updatedInvoiceDetail) throw notFound("Invoice not found after webhook processing.", { invoice_id: invoice.id });
+  const updatedInvoiceDetail = await dependencies.repository.findInvoiceById(
+    eventScope,
+    invoice.id
+  );
+  if (!updatedInvoiceDetail)
+    throw notFound("Invoice not found after webhook processing.", { invoice_id: invoice.id });
 
   if (transaction) {
     const eventType =
@@ -5047,6 +5216,7 @@ export async function processPaymentWebhook(
       aggregateType: "payment_transaction",
       aggregateId: transaction.id,
       patientId: invoice.patientId,
+      occurredAt: event.occurredAt,
       payload: {
         invoiceId: invoice.id,
         paymentTransactionId: transaction.id,
@@ -5339,8 +5509,12 @@ function labCaseEventType(status: LabCaseStatus): DomainEventType {
   }
 }
 
-function publicCorrectiveAction<TAction extends { status: string; dueAt: string }>(action: TAction) {
-  const effectiveStatus = correctiveActionEffectiveStatus(action as Parameters<typeof correctiveActionEffectiveStatus>[0]);
+function publicCorrectiveAction<TAction extends { status: string; dueAt: string }>(
+  action: TAction
+) {
+  const effectiveStatus = correctiveActionEffectiveStatus(
+    action as Parameters<typeof correctiveActionEffectiveStatus>[0]
+  );
   return {
     ...action,
     effectiveStatus,
@@ -5406,6 +5580,10 @@ function publicTimelineItemType(
     case "queue_entry_created":
       return "queue";
     case "task_created":
+    case "task_status_changed":
+    case "task_completed":
+    case "recall_due":
+    case "recall_action_recorded":
       return "task";
     case "form_response_submitted":
       return "clinical_note";
@@ -5461,6 +5639,11 @@ function publicTimelineItemType(
     case "corrective_action_created":
     case "corrective_action_completed":
       return "quality";
+    case "ai_session_started":
+    case "ai_draft_generated":
+    case "ai_review_decision_recorded":
+    case "ai_retention_deleted":
+      return "clinical_note";
   }
 }
 
@@ -5486,6 +5669,14 @@ function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): Dom
       return "appointment.no_show";
     case "task_created":
       return "task.created";
+    case "task_status_changed":
+      return "task.status_changed";
+    case "task_completed":
+      return "task.completed";
+    case "recall_due":
+      return "recall.due";
+    case "recall_action_recorded":
+      return "recall.action_recorded";
     case "form_response_submitted":
       return "form_response.submitted";
     case "consent_created":
@@ -5558,6 +5749,14 @@ function timelineEventType(itemType: DomainPatientTimelineItem["itemType"]): Dom
       return "corrective_action.created";
     case "corrective_action_completed":
       return "corrective_action.completed";
+    case "ai_session_started":
+      return "ai.session.started";
+    case "ai_draft_generated":
+      return "ai.draft.generated";
+    case "ai_review_decision_recorded":
+      return "ai.review_decision.recorded";
+    case "ai_retention_deleted":
+      return "ai.retention.deleted";
   }
 }
 
@@ -5586,7 +5785,8 @@ async function audit(
       metadata: input.metadata,
       ipAddress: context.ipAddress ?? null,
       userAgent: context.userAgent ?? null,
-      correlationId: context.requestId
+      correlationId: context.requestId,
+      occurredAt: nowDate(dependencies)
     })
   );
 }
@@ -5606,8 +5806,16 @@ async function appendOutbox(
     ...input,
     idempotencyKey: context.idempotencyKey,
     correlationId: context.requestId,
-    occurredAt: new Date().toISOString()
+    occurredAt: nowIso(dependencies)
   });
+}
+
+function nowDate(dependencies: OperationsDependencies): Date {
+  return (dependencies.clock ?? systemClock).now();
+}
+
+function nowIso(dependencies: OperationsDependencies): string {
+  return nowDate(dependencies).toISOString();
 }
 
 function parseCreatePatient(body: unknown): CreatePatientInput & { leadId?: UUID | null } {
@@ -5631,7 +5839,10 @@ function parseCreateAiScribeSessionInput(body: unknown): {
 } {
   const input = objectBody(body);
   return {
-    requireRawAudioRetention: booleanField(input.requireRawAudioRetention ?? false, "requireRawAudioRetention"),
+    requireRawAudioRetention: booleanField(
+      input.requireRawAudioRetention ?? false,
+      "requireRawAudioRetention"
+    ),
     languageHint: optionalNullableString(input.languageHint, "languageHint") ?? null,
     captureSurface: optionalString(input.captureSurface, "captureSurface") ?? "unknown"
   };
@@ -5675,14 +5886,16 @@ function parseCreateAiSourceAnchorInput(body: unknown): CreateAiSourceAnchorInpu
     startsAtMs: optionalInteger(input.startsAtMs, "startsAtMs"),
     endsAtMs: optionalInteger(input.endsAtMs, "endsAtMs"),
     textQuoteDigest: optionalSha256Digest(input.textQuoteDigest, "textQuoteDigest") ?? null,
-    supported: input.supported === undefined ? undefined : booleanField(input.supported, "supported"),
+    supported:
+      input.supported === undefined ? undefined : booleanField(input.supported, "supported"),
     unsupportedReason: optionalNullableString(input.unsupportedReason, "unsupportedReason") ?? null
   };
 }
 
 function parseGenerateAiDraftsInput(body: unknown): { sourceAnchorIds: UUID[] } {
   const input = objectBody(body ?? {});
-  const values = input.sourceAnchorIds === undefined ? [] : arrayField(input.sourceAnchorIds, "sourceAnchorIds");
+  const values =
+    input.sourceAnchorIds === undefined ? [] : arrayField(input.sourceAnchorIds, "sourceAnchorIds");
   return {
     sourceAnchorIds: values.map((value, index) => uuidField(value, `sourceAnchorIds[${index}]`))
   };
@@ -5732,7 +5945,9 @@ async function parseCreateMigrationBatchInput(
   const rowsValue = input.rows;
   const rowDrafts = csv
     ? parsePatientMigrationCsv(csv)
-    : coercePatientImportRows(arrayField(rowsValue, "rows").map((value, index) => objectField(value, `rows[${index}]`)));
+    : coercePatientImportRows(
+        arrayField(rowsValue, "rows").map((value, index) => objectField(value, `rows[${index}]`))
+      );
 
   if (rowDrafts.length === 0) {
     throw validation("Migration batch must include at least one row.", {});
@@ -5785,13 +6000,16 @@ async function parseCreateMigrationBatchInput(
 
   const readyRows = migrationRows.filter((row) => row.status === "ready_to_commit").length;
   const invalidRows = migrationRows.filter((row) => row.status === "invalid").length;
-  const conflictRows = migrationRows.filter((row) => row.matchStatus === "duplicate_candidate").length;
+  const conflictRows = migrationRows.filter(
+    (row) => row.matchStatus === "duplicate_candidate"
+  ).length;
 
   return {
     importType: importTypeValue,
     sourceSystem,
     sourceFileName,
-    sourceChecksum: optionalSha256Digest(input.sourceChecksum, "sourceChecksum") ?? sha256Json(csv ?? rowsValue),
+    sourceChecksum:
+      optionalSha256Digest(input.sourceChecksum, "sourceChecksum") ?? sha256Json(csv ?? rowsValue),
     state: summarizeMigrationBatchState({
       totalRows: migrationRows.length,
       invalidRows,
@@ -5809,18 +6027,24 @@ function parseResolveMigrationRowInput(body: unknown): ResolveMigrationRowInput 
     throw validation("action is not a supported migration row resolution.", { action });
   }
 
-  const targetRecordId = optionalUuid(input.targetRecordId ?? input.targetPatientId, "targetRecordId");
+  const targetRecordId = optionalUuid(
+    input.targetRecordId ?? input.targetPatientId,
+    "targetRecordId"
+  );
   if (action === "link_existing" && !targetRecordId) {
-    throw validation("targetRecordId is required when linking an imported row to an existing record.", {
-      action
-    });
+    throw validation(
+      "targetRecordId is required when linking an imported row to an existing record.",
+      {
+        action
+      }
+    );
   }
 
   return {
     action,
     targetRecordType:
       action === "link_existing"
-        ? optionalString(input.targetRecordType, "targetRecordType") ?? "patient"
+        ? (optionalString(input.targetRecordType, "targetRecordType") ?? "patient")
         : null,
     targetRecordId,
     note: optionalNullableString(input.note, "note") ?? null
@@ -5840,7 +6064,9 @@ function parseMigrationActionInput(
   };
 }
 
-function parseOptionalMigrationMatchStatus(value: string | null | undefined): MigrationRowRecord["matchStatus"] | null {
+function parseOptionalMigrationMatchStatus(
+  value: string | null | undefined
+): MigrationRowRecord["matchStatus"] | null {
   if (!value) return null;
   if (!["none", "duplicate_candidate", "conflict", "resolved", "skipped"].includes(value)) {
     throw validation("matchStatus is not supported.", { matchStatus: value });
@@ -5848,15 +6074,29 @@ function parseOptionalMigrationMatchStatus(value: string | null | undefined): Mi
   return value as MigrationRowRecord["matchStatus"];
 }
 
-function parseOptionalMigrationRowStatus(value: string | null | undefined): MigrationRowRecord["status"] | null {
+function parseOptionalMigrationRowStatus(
+  value: string | null | undefined
+): MigrationRowRecord["status"] | null {
   if (!value) return null;
-  if (!["invalid", "needs_review", "ready_to_commit", "committed", "skipped", "rolled_back", "failed"].includes(value)) {
+  if (
+    ![
+      "invalid",
+      "needs_review",
+      "ready_to_commit",
+      "committed",
+      "skipped",
+      "rolled_back",
+      "failed"
+    ].includes(value)
+  ) {
     throw validation("status is not supported.", { status: value });
   }
   return value as MigrationRowRecord["status"];
 }
 
-function parseOptionalMigrationBatchState(value: string | null | undefined): MigrationBatchState | null {
+function parseOptionalMigrationBatchState(
+  value: string | null | undefined
+): MigrationBatchState | null {
   if (!value) return null;
   if (
     ![
@@ -5891,7 +6131,11 @@ function parseOptionalIntegrationDeadLetterStatus(
   throw validation("status is not supported for dead-letter events.", { status: value });
 }
 
-function parseOptionalLimit(value: string | null | undefined, fallback: number, max: number): number {
+function parseOptionalLimit(
+  value: string | null | undefined,
+  fallback: number,
+  max: number
+): number {
   if (!value) return fallback;
   const parsed = Number.parseInt(value, 10);
   if (!Number.isFinite(parsed) || parsed <= 0) {
@@ -5948,20 +6192,12 @@ function parseOptionalDataExportStatus(value: string | null | undefined) {
 function parseOptionalDeletionRequestStatus(value: string | null | undefined) {
   if (!value) return null;
   if (
-    [
-      "requested",
-      "approved_pending_retention_job",
-      "rejected",
-      "completed",
-      "cancelled"
-    ].includes(value)
+    ["requested", "approved_pending_retention_job", "rejected", "completed", "cancelled"].includes(
+      value
+    )
   ) {
     return value as
-      | "requested"
-      | "approved_pending_retention_job"
-      | "rejected"
-      | "completed"
-      | "cancelled";
+      "requested" | "approved_pending_retention_job" | "rejected" | "completed" | "cancelled";
   }
   throw validation("Unknown deletion request status.", { status: value });
 }
@@ -6037,13 +6273,13 @@ function parseReviewDeletionRequest(body: unknown): ReviewDeletionRequestInput {
   };
 }
 
-function parseRunRetentionJob(body: unknown): RunRetentionJobInput {
+function parseRunRetentionJob(body: unknown, defaultAsOf: string): RunRetentionJobInput {
   const input = objectBody(body);
   const mode = optionalString(input.mode, "mode") ?? "dry_run";
   if (!isRetentionJobMode(mode)) throw validation("mode must be dry_run or execute.", { mode });
   const parsed = {
     mode,
-    asOf: optionalString(input.asOf, "asOf") ?? new Date().toISOString(),
+    asOf: optionalString(input.asOf, "asOf") ?? defaultAsOf,
     policyCode: optionalString(input.policyCode, "policyCode") ?? "cp9-ai-transient-payloads-v1",
     patientId: optionalUuid(input.patientId, "patientId"),
     deletionRequestId: optionalUuid(input.deletionRequestId, "deletionRequestId"),
@@ -6127,7 +6363,10 @@ function toPublicDeadLetterEvent(deadLetter: IntegrationDeadLetterRecord) {
     replayAvailable,
     ...(replayAvailable
       ? {}
-      : { replayBlockedReason: "Replay requires a retained raw or normalized provider event reference." }),
+      : {
+          replayBlockedReason:
+            "Replay requires a retained raw or normalized provider event reference."
+        }),
     status: publicDeadLetterStatus(deadLetter)
   };
 }
@@ -6157,7 +6396,6 @@ function createRuntimeMessagingProvider(config: ClinicOsConfig) {
   return createMessagingProvider({
     provider: config.providers.whatsapp.provider,
     accessToken: config.providers.whatsapp.accessToken,
-    appId: config.providers.whatsapp.appId,
     appSecret: config.providers.whatsapp.appSecret,
     businessAccountId: config.providers.whatsapp.businessAccountId,
     phoneNumberId: config.providers.whatsapp.phoneNumberId,
@@ -6189,7 +6427,8 @@ function providerCardFromHealth(input: {
   id: string;
   label: string;
   mode: string;
-  providerKey: "exotel" | "google_business_profile" | "manual_import" | "razorpay" | "whatsapp_cloud";
+  providerKey:
+    "exotel" | "google_business_profile" | "manual_import" | "razorpay" | "whatsapp_cloud";
 }) {
   const status = publicProviderStatus(input.providerKey, input.health);
   return {
@@ -6211,19 +6450,20 @@ function providerCardFromHealth(input: {
 function manualProviderCard(input: {
   activationChecks: string[];
   category: "messaging" | "migration" | "payments" | "source" | "telephony";
+  checkedAt: string;
   evidence: string;
   id: string;
   label: string;
   mode: string;
-  providerKey: "exotel" | "google_business_profile" | "manual_import" | "razorpay" | "whatsapp_cloud";
+  providerKey:
+    "exotel" | "google_business_profile" | "manual_import" | "razorpay" | "whatsapp_cloud";
   status: "available" | "degraded" | "not_configured" | "unavailable";
 }) {
-  const checkedAt = new Date().toISOString();
   return {
     activationChecks: input.activationChecks,
     capabilities: [],
     category: input.category,
-    checkedAt,
+    checkedAt: input.checkedAt,
     evidence: input.evidence,
     id: input.id,
     label: input.label,
@@ -6234,7 +6474,8 @@ function manualProviderCard(input: {
 }
 
 function publicProviderStatus(
-  providerKey: "exotel" | "google_business_profile" | "manual_import" | "razorpay" | "whatsapp_cloud",
+  providerKey:
+    "exotel" | "google_business_profile" | "manual_import" | "razorpay" | "whatsapp_cloud",
   health: ProviderHealth
 ): "available" | "degraded" | "not_configured" | "unavailable" {
   if (providerKey === "razorpay" && health.providerKey === "simulator") return "not_configured";
@@ -6247,7 +6488,11 @@ function providerCapability(
   providerStatus: "available" | "degraded" | "not_configured" | "unavailable"
 ) {
   const status =
-    providerStatus === "available" ? "available" : providerStatus === "degraded" ? "degraded" : "unavailable";
+    providerStatus === "available"
+      ? "available"
+      : providerStatus === "degraded"
+        ? "degraded"
+        : "unavailable";
   return {
     detail: `${capabilityLabel(capability)} is ${status.replace("_", " ")} for this provider boundary.`,
     key: capability.toLowerCase(),
@@ -6312,16 +6557,20 @@ function telephonyProviderMode(config: ClinicOsConfig, health: ProviderHealth) {
 function publicProviderKey(
   providerKey: string
 ): "exotel" | "google_business_profile" | "manual_import" | "razorpay" | "whatsapp_cloud" {
-  if (providerKey === "meta_whatsapp_cloud" || providerKey === "whatsapp_cloud") return "whatsapp_cloud";
+  if (providerKey === "meta_whatsapp_cloud" || providerKey === "whatsapp_cloud")
+    return "whatsapp_cloud";
   if (providerKey === "telephony" || providerKey === "exotel") return "exotel";
-  if (providerKey === "google_business_profile" || providerKey === "google_business") return "google_business_profile";
+  if (providerKey === "google_business_profile" || providerKey === "google_business")
+    return "google_business_profile";
   if (providerKey === "manual_import") return "manual_import";
   if (providerKey === "razorpay") return "razorpay";
   return "manual_import";
 }
 
 function sha256Json(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value ?? null)).digest("hex");
+  return createHash("sha256")
+    .update(JSON.stringify(value ?? null))
+    .digest("hex");
 }
 
 function parseCreateLead(body: unknown): CreateLeadInput {
@@ -6402,7 +6651,9 @@ function parseCreateTask(body: unknown): CreateTaskInput {
         ? "normal"
         : parseTaskPriority(requiredString(input.priority, "priority")),
     status:
-      input.status === undefined ? undefined : parseTaskStatus(requiredString(input.status, "status")),
+      input.status === undefined
+        ? undefined
+        : parseTaskStatus(requiredString(input.status, "status")),
     dueAt: optionalNullableString(input.dueAt, "dueAt"),
     assignedToUserId: optionalUuid(input.assignedToUserId, "assignedToUserId"),
     idempotencyKey: optionalNullableString(input.idempotencyKey, "idempotencyKey")
@@ -6413,7 +6664,9 @@ function parseUpdateTask(body: unknown): UpdateTaskInput {
   const input = objectBody(body);
   const parsed = {
     status:
-      input.status === undefined ? undefined : parseTaskStatus(requiredString(input.status, "status")),
+      input.status === undefined
+        ? undefined
+        : parseTaskStatus(requiredString(input.status, "status")),
     assignedToUserId:
       input.assignedToUserId === undefined
         ? undefined
@@ -6438,7 +6691,9 @@ function parseUpdateTask(body: unknown): UpdateTaskInput {
         : optionalNullableString(input.cancelledReason, "cancelledReason")
   };
   if (parsed.status === "done" && !parsed.completionEvidence) {
-    throw validation("Completed tasks require completionEvidence.", { field: "completionEvidence" });
+    throw validation("Completed tasks require completionEvidence.", {
+      field: "completionEvidence"
+    });
   }
   if (parsed.status === "cancelled" && !parsed.cancelledReason) {
     throw validation("Cancelled tasks require cancelledReason.", { field: "cancelledReason" });
@@ -6446,17 +6701,22 @@ function parseUpdateTask(body: unknown): UpdateTaskInput {
   return parsed;
 }
 
-function parseGenerateDueContinuity(body: unknown): GenerateDueContinuityInput {
+function parseGenerateDueContinuity(
+  body: unknown,
+  defaultAsOf: string
+): GenerateDueContinuityInput {
   const input = body === undefined ? {} : objectBody(body);
   return {
-    asOf: requiredString(input.asOf ?? new Date().toISOString(), "asOf")
+    asOf: requiredString(input.asOf ?? defaultAsOf, "asOf")
   };
 }
 
 function parseCreateRecallRule(body: unknown): CreateRecallRuleInput {
   const input = objectBody(body);
   const anchor =
-    input.anchor === undefined ? undefined : parseRecallRuleAnchor(requiredString(input.anchor, "anchor"));
+    input.anchor === undefined
+      ? undefined
+      : parseRecallRuleAnchor(requiredString(input.anchor, "anchor"));
   return {
     code: requiredString(input.code, "code"),
     title: requiredString(input.title, "title"),
@@ -6519,7 +6779,9 @@ function parseCreateSopTemplate(body: unknown): CreateSopTemplateInput {
 
 function parseCreateSopSchedule(body: unknown): CreateSopScheduleInput {
   const input = objectBody(body);
-  const recurrenceType = parseSopRecurrenceType(requiredString(input.recurrenceType, "recurrenceType"));
+  const recurrenceType = parseSopRecurrenceType(
+    requiredString(input.recurrenceType, "recurrenceType")
+  );
   const parsed = {
     templateId: uuidField(input.templateId, "templateId"),
     title: requiredString(input.title, "title"),
@@ -6550,10 +6812,10 @@ function parseCreateSopSchedule(body: unknown): CreateSopScheduleInput {
   return parsed;
 }
 
-function parseGenerateDueSopRuns(body: unknown): GenerateDueSopRunsInput {
+function parseGenerateDueSopRuns(body: unknown, defaultAsOf: string): GenerateDueSopRunsInput {
   const input = body === undefined ? {} : objectBody(body);
   return {
-    asOf: requiredString(input.asOf ?? new Date().toISOString(), "asOf")
+    asOf: requiredString(input.asOf ?? defaultAsOf, "asOf")
   };
 }
 
@@ -6572,15 +6834,14 @@ function parseUpdateSopRun(body: unknown): UpdateSopRunInput {
   const items = input.items;
   const parsed = {
     status:
-      input.status === undefined ? undefined : parseSopRunStatus(requiredString(input.status, "status")),
+      input.status === undefined
+        ? undefined
+        : parseSopRunStatus(requiredString(input.status, "status")),
     completionEvidence:
       input.completionEvidence === undefined
         ? undefined
         : recordField(input.completionEvidence, "completionEvidence"),
-    items:
-      items === undefined
-        ? undefined
-        : parseSopRunItemUpdates(items)
+    items: items === undefined ? undefined : parseSopRunItemUpdates(items)
   };
   if (parsed.status === "completed" && !parsed.completionEvidence) {
     throw validation("Completed SOP runs require completionEvidence.", {
@@ -6668,7 +6929,9 @@ function parseSaveClinicalNoteDraft(body: unknown): {
   return {
     content: parseClinicalNoteContent(input.content ?? input.sections),
     readyForSign:
-      input.readyForSign === undefined ? undefined : booleanField(input.readyForSign, "readyForSign")
+      input.readyForSign === undefined
+        ? undefined
+        : booleanField(input.readyForSign, "readyForSign")
   };
 }
 
@@ -6712,17 +6975,16 @@ function parseCreateDentalFinding(
 ): CreateDentalFindingInput {
   const input = objectBody(body);
   const bodyEncounterId = optionalUuid(input.encounterId, "encounterId");
-  if (
-    defaults.encounterId &&
-    bodyEncounterId &&
-    bodyEncounterId !== defaults.encounterId
-  ) {
+  if (defaults.encounterId && bodyEncounterId && bodyEncounterId !== defaults.encounterId) {
     throw validation("Dental finding encounter context does not match the route.", {
       expected_encounter_id: defaults.encounterId,
       received_encounter_id: bodyEncounterId
     });
   }
-  const statusFields = parseDentalStatusFields(input.status, input.reviewStatus ?? input.reviewState);
+  const statusFields = parseDentalStatusFields(
+    input.status,
+    input.reviewStatus ?? input.reviewState
+  );
 
   return {
     encounterId: defaults.encounterId ?? bodyEncounterId,
@@ -6732,7 +6994,10 @@ function parseCreateDentalFinding(
     severity: optionalNullableString(input.severity, "severity"),
     status: statusFields.status,
     reviewStatus: statusFields.reviewStatus,
-    source: input.source === undefined ? undefined : parseDentalFindingSource(requiredString(input.source, "source")),
+    source:
+      input.source === undefined
+        ? undefined
+        : parseDentalFindingSource(requiredString(input.source, "source")),
     confidence: optionalUnitNumber(input.confidence, "confidence"),
     notes: optionalNullableString(input.notes ?? input.note ?? input.doctorNote, "notes"),
     provenance: recordField(input.provenance, "provenance"),
@@ -6742,13 +7007,18 @@ function parseCreateDentalFinding(
 
 function parseUpdateDentalFinding(body: unknown): UpdateDentalFindingRepositoryInput {
   const input = objectBody(body);
-  const statusFields = parseDentalStatusFields(input.status, input.reviewStatus ?? input.reviewState);
+  const statusFields = parseDentalStatusFields(
+    input.status,
+    input.reviewStatus ?? input.reviewState
+  );
 
   return {
     encounterId:
       input.encounterId === undefined ? undefined : optionalUuid(input.encounterId, "encounterId"),
     toothNumber:
-      input.toothNumber === undefined ? undefined : requiredString(input.toothNumber, "toothNumber"),
+      input.toothNumber === undefined
+        ? undefined
+        : requiredString(input.toothNumber, "toothNumber"),
     surface:
       input.surface === undefined && input.surfaces === undefined
         ? undefined
@@ -6766,7 +7036,9 @@ function parseUpdateDentalFinding(body: unknown): UpdateDentalFindingRepositoryI
         ? undefined
         : parseDentalFindingSource(requiredString(input.source, "source")),
     confidence:
-      input.confidence === undefined ? undefined : optionalUnitNumber(input.confidence, "confidence"),
+      input.confidence === undefined
+        ? undefined
+        : optionalUnitNumber(input.confidence, "confidence"),
     notes:
       input.notes === undefined && input.note === undefined && input.doctorNote === undefined
         ? undefined
@@ -6896,21 +7168,33 @@ function parseTreatmentPlanPhases(value: unknown): CreateTreatmentPlanInput["pha
       estimatedStartAfterDays:
         phase.estimatedStartAfterDays === undefined || phase.estimatedStartAfterDays === null
           ? null
-          : integerField(phase.estimatedStartAfterDays, `phases[${phaseIndex}].estimatedStartAfterDays`, {
-              min: 0
-            }),
+          : integerField(
+              phase.estimatedStartAfterDays,
+              `phases[${phaseIndex}].estimatedStartAfterDays`,
+              {
+                min: 0
+              }
+            ),
       items: items.map((itemValue, itemIndex) => {
         const item = objectField(itemValue, `phases[${phaseIndex}].items[${itemIndex}]`);
-        const quantity = integerField(item.quantity ?? 1, `phases[${phaseIndex}].items[${itemIndex}].quantity`, {
-          min: 1,
-          max: 999
-        });
+        const quantity = integerField(
+          item.quantity ?? 1,
+          `phases[${phaseIndex}].items[${itemIndex}].quantity`,
+          {
+            min: 1,
+            max: 999
+          }
+        );
         const unitPriceMinor =
           item.unitPriceMinor === undefined || item.unitPriceMinor === null
             ? null
-            : integerField(item.unitPriceMinor, `phases[${phaseIndex}].items[${itemIndex}].unitPriceMinor`, {
-                min: 0
-              });
+            : integerField(
+                item.unitPriceMinor,
+                `phases[${phaseIndex}].items[${itemIndex}].unitPriceMinor`,
+                {
+                  min: 0
+                }
+              );
         const discountMinor = integerField(
           item.discountMinor ?? 0,
           `phases[${phaseIndex}].items[${itemIndex}].discountMinor`,
@@ -6934,9 +7218,12 @@ function parseTreatmentPlanPhases(value: unknown): CreateTreatmentPlanInput["pha
               taxRateBasisPoints: taxRateBasisPoints ?? 0
             });
           } catch (error) {
-            throw validation(error instanceof Error ? error.message : "Invalid estimate item total.", {
-              field: `phases[${phaseIndex}].items[${itemIndex}]`
-            });
+            throw validation(
+              error instanceof Error ? error.message : "Invalid estimate item total.",
+              {
+                field: `phases[${phaseIndex}].items[${itemIndex}]`
+              }
+            );
           }
         }
 
@@ -7109,7 +7396,9 @@ function parseManualPayment(body: unknown): {
 } {
   const input = objectBody(body);
   const method = parseManualPaymentMethod(requiredString(input.method, "method"));
-  const amountMinor = integerField(input.amountMinor ?? input.amountPaise, "amountMinor", { min: 1 });
+  const amountMinor = integerField(input.amountMinor ?? input.amountPaise, "amountMinor", {
+    min: 1
+  });
   const parsed = {
     amountPaise: amountMinor,
     currency: requiredString(input.currency ?? "INR", "currency").toUpperCase(),
@@ -7123,9 +7412,12 @@ function parseManualPayment(body: unknown): {
   try {
     assertManualPaymentEvidence(parsed);
   } catch (error) {
-    throw validation(error instanceof Error ? error.message : "Manual payment evidence is invalid.", {
-      field: "manualPayment"
-    });
+    throw validation(
+      error instanceof Error ? error.message : "Manual payment evidence is invalid.",
+      {
+        field: "manualPayment"
+      }
+    );
   }
 
   return {
@@ -7158,7 +7450,10 @@ function parseCreateLabVendor(body: unknown): CreateLabVendorInput {
     phone: optionalNullableString(input.phone, "phone"),
     email: optionalNullableString(input.email, "email"),
     address: recordField(input.address, "address"),
-    taxRegistrationNumber: optionalNullableString(input.taxRegistrationNumber, "taxRegistrationNumber"),
+    taxRegistrationNumber: optionalNullableString(
+      input.taxRegistrationNumber,
+      "taxRegistrationNumber"
+    ),
     paymentTermsDays:
       input.paymentTermsDays === undefined
         ? undefined
@@ -7182,13 +7477,17 @@ function parseCreateLabCase(body: unknown): CreateLabCaseInput {
       notes: optionalNullableString(item.notes, `items[${index}].notes`)
     };
   });
-  if (items.length === 0) throw validation("Lab case requires at least one item.", { field: "items" });
+  if (items.length === 0)
+    throw validation("Lab case requires at least one item.", { field: "items" });
   return {
     vendorId: uuidField(input.vendorId, "vendorId"),
     patientId: uuidField(input.patientId, "patientId"),
     encounterId: optionalUuid(input.encounterId, "encounterId"),
     treatmentPlanId: optionalUuid(input.treatmentPlanId, "treatmentPlanId"),
-    treatmentPlanEstimateItemId: optionalUuid(input.treatmentPlanEstimateItemId, "treatmentPlanEstimateItemId"),
+    treatmentPlanEstimateItemId: optionalUuid(
+      input.treatmentPlanEstimateItemId,
+      "treatmentPlanEstimateItemId"
+    ),
     procedurePerformedId: optionalUuid(input.procedurePerformedId, "procedurePerformedId"),
     title: requiredString(input.title, "title"),
     priority: parseLabPriority(input.priority ?? "routine"),
@@ -7222,11 +7521,15 @@ function parseCreateLabReconciliation(body: unknown): CreateLabReconciliationInp
       status:
         entry.status === undefined
           ? undefined
-          : parseLabReconciliationEntryStatus(requiredString(entry.status, `entries[${index}].status`)),
+          : parseLabReconciliationEntryStatus(
+              requiredString(entry.status, `entries[${index}].status`)
+            ),
       invoiceAmountMinor:
         entry.invoiceAmountMinor === undefined || entry.invoiceAmountMinor === null
           ? null
-          : integerField(entry.invoiceAmountMinor, `entries[${index}].invoiceAmountMinor`, { min: 0 }),
+          : integerField(entry.invoiceAmountMinor, `entries[${index}].invoiceAmountMinor`, {
+              min: 0
+            }),
       notes: optionalNullableString(entry.notes, `entries[${index}].notes`)
     };
   });
@@ -7269,7 +7572,10 @@ function parseCreateInventoryItem(body: unknown): CreateInventoryItemInput {
     displayName: requiredString(input.displayName, "displayName"),
     unitOfMeasure: requiredString(input.unitOfMeasure, "unitOfMeasure"),
     storageLocation: requiredString(input.storageLocation, "storageLocation"),
-    trackQuantity: input.trackQuantity === undefined ? undefined : booleanField(input.trackQuantity, "trackQuantity"),
+    trackQuantity:
+      input.trackQuantity === undefined
+        ? undefined
+        : booleanField(input.trackQuantity, "trackQuantity"),
     minimumQuantity:
       input.minimumQuantity === undefined
         ? undefined
@@ -7318,7 +7624,10 @@ function parseCreateInventoryCheckTemplate(body: unknown): CreateInventoryCheckT
         line.expectedQuantity === undefined || line.expectedQuantity === null
           ? null
           : nonNegativeNumberField(line.expectedQuantity, `lines[${index}].expectedQuantity`),
-      required: line.required === undefined ? true : booleanField(line.required, `lines[${index}].required`),
+      required:
+        line.required === undefined
+          ? true
+          : booleanField(line.required, `lines[${index}].required`),
       instructions: optionalNullableString(line.instructions, `lines[${index}].instructions`)
     };
   });
@@ -7358,7 +7667,10 @@ function parseUpdateInventoryCheckRun(body: unknown): UpdateInventoryCheckRunInp
                 line.countedQuantity,
                 `lines[${index}].countedQuantity`
               ),
-              exceptionNotes: optionalNullableString(line.exceptionNotes, `lines[${index}].exceptionNotes`)
+              exceptionNotes: optionalNullableString(
+                line.exceptionNotes,
+                `lines[${index}].exceptionNotes`
+              )
             };
           })
   };
@@ -7389,7 +7701,9 @@ function parseCreateCorrectiveAction(body: unknown): CreateCorrectiveActionInput
   const input = objectBody(body);
   return {
     incidentId: optionalUuid(input.incidentId, "incidentId"),
-    actionType: parseCorrectiveActionType(requiredString(input.actionType ?? "corrective", "actionType")),
+    actionType: parseCorrectiveActionType(
+      requiredString(input.actionType ?? "corrective", "actionType")
+    ),
     title: requiredString(input.title, "title"),
     description: requiredString(input.description, "description"),
     ownerUserId: uuidField(input.ownerUserId, "ownerUserId"),
@@ -7538,10 +7852,13 @@ function parseMutableTreatmentPlanStatus(
   value: string
 ): "draft" | "presented" | "declined" | "deferred" | "cancelled" {
   if (!isTreatmentPlanStatus(value) || value === "accepted") {
-    throw validation("Treatment plan status must be draft, presented, declined, deferred, or cancelled.", {
-      field: "status",
-      value
-    });
+    throw validation(
+      "Treatment plan status must be draft, presented, declined, deferred, or cancelled.",
+      {
+        field: "status",
+        value
+      }
+    );
   }
   return value;
 }
@@ -7564,7 +7881,8 @@ function parseTaskType(value: string) {
 }
 
 function parseTaskPriority(value: string) {
-  if (!isTaskPriority(value)) throw validation("Invalid task priority.", { field: "priority", value });
+  if (!isTaskPriority(value))
+    throw validation("Invalid task priority.", { field: "priority", value });
   return value;
 }
 
@@ -7576,12 +7894,14 @@ function parseTaskSourceWorkflow(value: string) {
 }
 
 function parseRecallRuleAnchor(value: string) {
-  if (!isRecallRuleAnchor(value)) throw validation("Invalid recall rule anchor.", { field: "anchor", value });
+  if (!isRecallRuleAnchor(value))
+    throw validation("Invalid recall rule anchor.", { field: "anchor", value });
   return value;
 }
 
 function parseRecallStatus(value: string) {
-  if (!isRecallStatus(value)) throw validation("Invalid recall status.", { field: "status", value });
+  if (!isRecallStatus(value))
+    throw validation("Invalid recall status.", { field: "status", value });
   return value;
 }
 
@@ -7600,7 +7920,8 @@ function parseSopRecurrenceType(value: string) {
 }
 
 function parseSopRunStatus(value: string) {
-  if (!isSopRunStatus(value)) throw validation("Invalid SOP run status.", { field: "status", value });
+  if (!isSopRunStatus(value))
+    throw validation("Invalid SOP run status.", { field: "status", value });
   return value;
 }
 
@@ -7677,7 +7998,10 @@ function parseDentalFindingSource(
   return value;
 }
 
-function parseDentalStatusFields(status: unknown, reviewStatus: unknown): {
+function parseDentalStatusFields(
+  status: unknown,
+  reviewStatus: unknown
+): {
   status?: UpdateDentalFindingRepositoryInput["status"];
   reviewStatus?: UpdateDentalFindingRepositoryInput["reviewStatus"];
 } {
@@ -7698,7 +8022,9 @@ function parseDentalStatusFields(status: unknown, reviewStatus: unknown): {
   }
 
   if (reviewStatus !== undefined) {
-    parsed.reviewStatus = parseDentalFindingReviewStatus(requiredString(reviewStatus, "reviewStatus"));
+    parsed.reviewStatus = parseDentalFindingReviewStatus(
+      requiredString(reviewStatus, "reviewStatus")
+    );
   }
 
   return parsed;
@@ -7740,7 +8066,9 @@ function parseLabCaseStatus(value: string): LabCaseStatus {
   return value;
 }
 
-function parseLabReconciliationStatus(value: string): NonNullable<CreateLabReconciliationInput["status"]> {
+function parseLabReconciliationStatus(
+  value: string
+): NonNullable<CreateLabReconciliationInput["status"]> {
   if (!isLabReconciliationStatus(value)) {
     throw validation("Invalid lab reconciliation status.", { field: "status", value });
   }
@@ -7807,7 +8135,9 @@ function parseIncidentSeverity(value: string): CreateIncidentInput["severity"] {
   return value;
 }
 
-function parseIncidentStatus(value: string): NonNullable<Parameters<ClinicOperationsRepository["listIncidents"]>[1]>["status"] {
+function parseIncidentStatus(
+  value: string
+): NonNullable<Parameters<ClinicOperationsRepository["listIncidents"]>[1]>["status"] {
   if (!isIncidentStatus(value)) {
     throw validation("Invalid incident status.", { field: "status", value });
   }
@@ -7907,7 +8237,7 @@ function providerReconciliationItem(
     amountPaise: amountMinor,
     currency: event.currency ?? null,
     status: "open",
-    createdAt: new Date().toISOString(),
+    createdAt: event.occurredAt,
     metadata: providerPaymentMetadata(event, {})
   };
 }
@@ -7954,18 +8284,21 @@ function paymentRepositoryFrom(dependencies: OperationsDependencies): PaymentOpe
   return dependencies.paymentRepository;
 }
 
-function assertMediaUploadOpen(input: {
-  id: UUID;
-  status: string;
-  expiresAt: string;
-}): void {
+function assertMediaUploadOpen(
+  input: {
+    id: UUID;
+    status: string;
+    expiresAt: string;
+  },
+  nowMs: number
+): void {
   if (input.status !== "reserved") {
     throw conflict("Media upload reservation is not open.", {
       upload_id: input.id,
       status: input.status
     });
   }
-  if (new Date(input.expiresAt).getTime() <= Date.now()) {
+  if (new Date(input.expiresAt).getTime() <= nowMs) {
     throw conflict("Media upload reservation has expired.", {
       upload_id: input.id,
       expires_at: input.expiresAt
@@ -7988,7 +8321,11 @@ function validateCompletedMediaObject(
       upload_id: reservation.id
     });
   }
-  if (input.contentLength !== undefined && input.contentLength !== null && input.contentLength !== object.contentLength) {
+  if (
+    input.contentLength !== undefined &&
+    input.contentLength !== null &&
+    input.contentLength !== object.contentLength
+  ) {
     throw validation("Complete-upload size does not match stored object metadata.", {
       upload_id: reservation.id
     });
@@ -8003,7 +8340,10 @@ function validateCompletedMediaObject(
       upload_id: reservation.id
     });
   }
-  if (reservation.expectedSha256Digest && object.sha256Digest !== reservation.expectedSha256Digest) {
+  if (
+    reservation.expectedSha256Digest &&
+    object.sha256Digest !== reservation.expectedSha256Digest
+  ) {
     throw validation("Stored media object digest does not match the upload reservation.", {
       upload_id: reservation.id
     });
@@ -8035,7 +8375,10 @@ async function assertAiConsentStillActive(
   session: AiSessionRecord,
   input: { requireRawAudioRetention: boolean }
 ): Promise<void> {
-  const consents = await dependencies.repository.listPatientConsents(scopeFrom(context), session.patientId);
+  const consents = await dependencies.repository.listPatientConsents(
+    scopeFrom(context),
+    session.patientId
+  );
   const readiness = evaluateAiAudioReadiness(consents, {
     requireRawAudioRetention: input.requireRawAudioRetention
   });
@@ -8162,10 +8505,12 @@ function publicDentalFinding<T extends { numberingSystem: string; surface?: stri
   };
 }
 
-function publicDentalFindingHistory<T extends {
-  beforeState: Record<string, unknown> | null;
-  afterState: Record<string, unknown>;
-}>(history: T) {
+function publicDentalFindingHistory<
+  T extends {
+    beforeState: DentalChartSnapshotFinding | null;
+    afterState: DentalChartSnapshotFinding;
+  }
+>(history: T) {
   return {
     ...history,
     beforeState: history.beforeState ? publicDentalSnapshotFinding(history.beforeState) : null,
@@ -8173,12 +8518,9 @@ function publicDentalFindingHistory<T extends {
   };
 }
 
-function publicDentalSnapshotFinding<T extends Record<string, unknown>>(finding: T) {
-  const numberingSystem =
-    typeof finding.numberingSystem === "string"
-      ? publicDentalNumberingSystem(finding.numberingSystem)
-      : "FDI";
-  const surface = typeof finding.surface === "string" ? finding.surface : null;
+function publicDentalSnapshotFinding<T extends DentalChartSnapshotFinding>(finding: T) {
+  const numberingSystem = publicDentalNumberingSystem(finding.numberingSystem);
+  const surface = finding.surface;
 
   return {
     ...finding,
@@ -8411,17 +8753,19 @@ function publicPatientInstruction(instruction: PatientInstructionRecord) {
   };
 }
 
-function publicReceipt<T extends {
-  id: UUID;
-  invoiceId: UUID;
-  patientId: UUID;
-  receiptNumber: string;
-  status: string;
-  amountMinor: number;
-  currency: string;
-  paymentAllocations: readonly unknown[];
-  generatedAt: string;
-}>(receipt: T) {
+function publicReceipt<
+  T extends {
+    id: UUID;
+    invoiceId: UUID;
+    patientId: UUID;
+    receiptNumber: string;
+    status: string;
+    amountMinor: number;
+    currency: string;
+    paymentAllocations: readonly unknown[];
+    generatedAt: string;
+  }
+>(receipt: T) {
   return {
     id: receipt.id,
     invoiceId: receipt.invoiceId,
@@ -8665,13 +9009,12 @@ function optionalString(value: unknown, field: string): string | undefined {
   return requiredString(value, field);
 }
 
-function parseOwnerDashboardRange(filter: {
-  from?: string | null;
-  to?: string | null;
-}): { startAt: string; endAt: string } {
-  const today = new Date().toISOString().slice(0, 10);
-  const startAt = parseDateBoundary(filter.from ?? today, "from", "start");
-  const endAt = parseDateBoundary(filter.to ?? today, "to", "end");
+function parseOwnerDashboardRange(
+  filter: { from?: string | null; to?: string | null },
+  defaultDate: string
+): { startAt: string; endAt: string } {
+  const startAt = parseDateBoundary(filter.from ?? defaultDate, "from", "start");
+  const endAt = parseDateBoundary(filter.to ?? defaultDate, "to", "end");
 
   if (Date.parse(startAt) > Date.parse(endAt)) {
     throw validation("Owner dashboard from date must be on or before to date.", {
@@ -8683,16 +9026,10 @@ function parseOwnerDashboardRange(filter: {
   return { startAt, endAt };
 }
 
-function parseDateBoundary(
-  value: string,
-  field: "from" | "to",
-  boundary: "start" | "end"
-): string {
+function parseDateBoundary(value: string, field: "from" | "to", boundary: "start" | "end"): string {
   const trimmed = value.trim();
   if (/^\d{4}-\d{2}-\d{2}$/.test(trimmed)) {
-    return boundary === "start"
-      ? `${trimmed}T00:00:00.000Z`
-      : `${trimmed}T23:59:59.999Z`;
+    return boundary === "start" ? `${trimmed}T00:00:00.000Z` : `${trimmed}T23:59:59.999Z`;
   }
 
   const timestamp = Date.parse(trimmed);

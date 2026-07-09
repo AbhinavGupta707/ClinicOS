@@ -1,9 +1,15 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
 
-const trackedFiles = execFileSync("git", ["ls-files", "-z"], { encoding: "utf8" })
+const releaseScopeFiles = execFileSync(
+  "git",
+  ["ls-files", "-z", "--cached", "--others", "--exclude-standard"],
+  { encoding: "utf8" }
+)
   .split("\0")
-  .filter(Boolean);
+  .filter(Boolean)
+  .filter((file) => file !== "research" && !file.startsWith("research/"))
+  .filter((file) => file !== "scripts/research" && !file.startsWith("scripts/research/"));
 
 const ignoredPathFragments = [
   "package-lock.json",
@@ -43,7 +49,7 @@ const patterns = [
 
 const findings = [];
 
-for (const file of trackedFiles) {
+for (const file of releaseScopeFiles) {
   if (ignoredPathFragments.some((fragment) => file.includes(fragment))) continue;
 
   let contents;
@@ -64,4 +70,6 @@ if (findings.length > 0) {
   process.exit(1);
 }
 
-console.log("Tracked-file secret scan passed.");
+console.log(
+  "Release-scope tracked and untracked file secret scan passed; user-owned research excluded."
+);

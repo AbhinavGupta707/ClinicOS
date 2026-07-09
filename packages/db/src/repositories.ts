@@ -143,6 +143,26 @@ import type {
 } from "@clinic-os/domain";
 import type { LeadIntent, LeadRecord, LeadSource, LeadStatus } from "@clinic-os/domain";
 
+export type {
+  AcceptTreatmentPlanInput,
+  CreateAuditReviewInput,
+  CreateBreakGlassAccessInput,
+  CreateDeletionRequestInput,
+  CreateDentalFindingInput,
+  CreateInvoiceInput,
+  CreatePaymentRequestInput,
+  CreateProcedurePerformedInput,
+  CreateReceiptInput,
+  CreateTreatmentPlanInput,
+  OwnerDashboardProjectionData,
+  RecordPaymentTransactionInput,
+  RetentionRunResult,
+  ReviewBreakGlassAccessInput,
+  ReviewDeletionRequestInput,
+  RunRetentionJobInput,
+  UpdateTreatmentPlanInput
+} from "@clinic-os/domain";
+
 export interface IdentityAccessSnapshot {
   tenant: Tenant;
   user: ClinicUser;

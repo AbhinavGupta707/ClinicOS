@@ -8,6 +8,11 @@
     ".": "./src/index.ts"
   },
   "types": "./src/index.ts",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc --noEmit -p tsconfig.json"
+  },
   "peerDependencies": {
     "react": "^19.0.0"
   }

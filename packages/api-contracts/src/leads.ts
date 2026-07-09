@@ -132,7 +132,7 @@ export interface LeadMutationResponse {
 }
 
 export function isAllowedLeadStatusTransition(from: LeadStatus, to: LeadStatus): boolean {
-  return LEAD_STATUS_TRANSITIONS[from].includes(to);
+  return (LEAD_STATUS_TRANSITIONS[from] as readonly LeadStatus[]).includes(to);
 }
 
 export function parseLeadCreateRequest(input: unknown): ContractParseResult<LeadCreateRequest> {

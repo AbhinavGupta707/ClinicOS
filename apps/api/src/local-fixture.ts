@@ -4,6 +4,7 @@ import {
   CHECKPOINT1_SEED_IDS,
   CHECKPOINT1_SEED_USERS,
   type AppointmentSearchFilter,
+  type AcceptTreatmentPlanInput,
   type AmendClinicalNoteInput,
   type AmendClinicalNoteResult,
   type ActiveBreakGlassAccessFilter,
@@ -126,6 +127,7 @@ import {
   buildPostOpFollowUpKey,
   buildRecallGenerationKey,
   buildSopRunGenerationKey,
+  clinicLocalDateFromClock,
   calculateBillingLineTotals,
   calculateInvoicePaymentStatus,
   calculateInventoryVariance,
@@ -155,6 +157,7 @@ import {
   type AttributionTouchRecord,
   type BreakGlassAccessRecord,
   type ChairOrRoomRecord,
+  type Clock,
   type ClinicalNoteVersionRecord,
   type ConsentRecord,
   correctiveActionEffectiveStatus,
@@ -164,6 +167,8 @@ import {
   type DentalChartSnapshotRecord,
   type DentalFindingHistoryRecord,
   type DentalFindingRecord,
+  type DentalSurface,
+  type DentalToothNumber,
   type EncounterRecord,
   type InvoiceDetail,
   type InvoiceItemRecord,
@@ -238,6 +243,7 @@ import {
   type TreatmentPlanRecord,
   type UUID
 } from "@clinic-os/domain";
+import { systemClock } from "@clinic-os/domain";
 import type { AuditEventRecord } from "@clinic-os/security";
 
 const tenant = {
@@ -683,6 +689,14 @@ export class InMemoryAuditSink {
 }
 
 export class LocalFixtureClinicOperationsRepository implements ClinicOperationsRepository {
+  readonly #clock: Clock;
+  readonly #clinicTimeZone: string;
+
+  constructor(options: { clock?: Clock; clinicTimeZone?: string } = {}) {
+    this.#clock = options.clock ?? systemClock;
+    this.#clinicTimeZone = options.clinicTimeZone ?? clinic.timezone;
+  }
+
   readonly patients: PatientRecord[] = [
     {
       id: CHECKPOINT1_SEED_IDS.patients.rheaSynthetic,
@@ -1052,7 +1066,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async createPatient(scope: RepositoryScope, input: CreatePatientInput): Promise<PatientRecord> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const patient: PatientRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -1081,7 +1095,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       updatedAt: now
     });
     this.timelineItems.push(
-      timeline(scope, patient.id, "patient_created", "patients", patient.id, "Patient registered")
+      this.#timeline(scope, patient.id, "patient_created", "patients", patient.id, "Patient registered")
     );
     return patient;
   }
@@ -1100,7 +1114,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       email: input.email === undefined ? patient.email : input.email,
       dateOfBirth: input.dateOfBirth === undefined ? patient.dateOfBirth : input.dateOfBirth,
       gender: input.gender ?? patient.gender,
-      updatedAt: new Date().toISOString()
+      updatedAt: this.#nowIso()
     });
 
     return patient;
@@ -1138,7 +1152,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
     if (!event) return null;
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const review: AuditReviewRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -1198,7 +1212,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return {
       manifest: {
         schemaVersion: "cp9.patient_record_export.v1",
-        generatedAt: new Date().toISOString(),
+        generatedAt: this.#nowIso(),
         tenantId: scope.tenantId,
         clinicId: scope.clinicId,
         patientId,
@@ -1302,7 +1316,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     scope: RepositoryScope,
     input: PatientRecordExportInput
   ): Promise<PatientRecordExportRecord> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const record: PatientRecordExportRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -1344,7 +1358,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   ): Promise<DeletionRequestRecord | null> {
     const patient = await this.findPatientById(scope, input.patientId);
     if (!patient) return null;
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const request: DeletionRequestRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -1402,7 +1416,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       (candidate) => matchesScope(candidate, scope) && candidate.id === requestId
     );
     if (!request) return null;
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     request.status =
       input.decision === "approve"
         ? "approved_pending_retention_job"
@@ -1422,7 +1436,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   ): Promise<RetentionRunResult> {
     const asOf = new Date(input.asOf);
     const cutoff = new Date(asOf.getTime() - input.transcriptDeleteAfterDays * 24 * 60 * 60 * 1000);
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const runId = uuid();
     const actions: RetentionActionRecord[] = [];
     const eligibleSessions = this.aiSessions.filter((session) => {
@@ -1528,7 +1542,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   ): Promise<BreakGlassAccessRecord | null> {
     const patient = await this.findPatientById(scope, input.patientId);
     if (!patient) return null;
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const access: BreakGlassAccessRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -1578,7 +1592,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       (candidate) => matchesScope(candidate, scope) && candidate.id === requestId
     );
     if (!access) return null;
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     access.status =
       input.decision === "approve" ? "approved" : input.decision === "revoke" ? "revoked" : "denied";
     access.reviewedByUserId = scope.actorUserId;
@@ -1612,7 +1626,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     scope: RepositoryScope,
     input: CreateMigrationBatchInput
   ): Promise<MigrationBatchDetail> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const batch: MigrationBatchRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -1774,7 +1788,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     row.resolutionNote = input.note ?? null;
     row.status = input.action === "skip" ? "skipped" : "ready_to_commit";
     row.matchStatus = input.action === "skip" ? "skipped" : "resolved";
-    row.updatedAt = new Date().toISOString();
+    row.updatedAt = this.#nowIso();
 
     for (const conflict of this.migrationConflicts.filter(
       (candidate) => matchesScope(candidate, scope) && candidate.batchId === batchId && candidate.rowId === rowId
@@ -1854,7 +1868,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       row.committedRecordType = "patient";
       row.committedRecordId = patient.id;
       row.status = "committed";
-      row.updatedAt = new Date().toISOString();
+      row.updatedAt = this.#nowIso();
       linksCreated.push(this.#createImportedRecordLink(scope, batch, row, patient.id, "created_from_import"));
     }
 
@@ -1863,7 +1877,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
     this.#refreshMigrationBatchCounts(batch);
     batch.committedByUserId = scope.actorUserId;
-    batch.committedAt = new Date().toISOString();
+    batch.committedAt = this.#nowIso();
     batch.state =
       failedRows.length > 0 || batch.invalidRowCount > 0 || batch.conflictRowCount > 0
         ? "partially_committed"
@@ -1924,7 +1938,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       if (link.linkType === "created_from_import" && this.#patientHasRollbackBlockingDependencies(scope, link.targetRecordId)) {
         link.metadata = {
           ...link.metadata,
-          rollbackBlockedAt: new Date().toISOString(),
+          rollbackBlockedAt: this.#nowIso(),
           rollbackBlockedReason: "Imported patient has downstream clinical or billing dependencies."
         };
         blockedLinks.push(link);
@@ -1938,7 +1952,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       }
 
       link.verificationStatus = "rolled_back";
-      link.updatedAt = new Date().toISOString();
+      link.updatedAt = this.#nowIso();
       rolledBackLinks.push(link);
 
       const row = this.migrationRows.find(
@@ -1953,7 +1967,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     this.#refreshMigrationBatchCounts(batch);
     batch.rolledBackByUserId = scope.actorUserId;
-    batch.rolledBackAt = new Date().toISOString();
+    batch.rolledBackAt = this.#nowIso();
     batch.state = blockedLinks.length > 0 ? "partially_committed" : "rolled_back";
     batch.updatedAt = batch.rolledBackAt;
 
@@ -2011,7 +2025,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       return null;
     }
 
-    const requestedAt = new Date().toISOString();
+    const requestedAt = this.#nowIso();
     deadLetter.status = "retry_scheduled";
     deadLetter.retryCount += 1;
     deadLetter.nextRetryAt = requestedAt;
@@ -2038,7 +2052,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async createLead(scope: RepositoryScope, input: CreateLeadInput): Promise<LeadRecord> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const lead: LeadRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -2066,7 +2080,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     const lead = await this.findLeadById(scope, leadId);
     if (!lead) return null;
     lead.status = status;
-    lead.lastActivityAt = new Date().toISOString();
+    lead.lastActivityAt = this.#nowIso();
     return lead;
   }
 
@@ -2079,9 +2093,9 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     if (!lead) return null;
     lead.patientId = patientId;
     lead.status = "matched";
-    lead.lastActivityAt = new Date().toISOString();
+    lead.lastActivityAt = this.#nowIso();
     this.timelineItems.push(
-      timeline(scope, patientId, "lead_matched", "leads", leadId, "Lead matched to patient")
+      this.#timeline(scope, patientId, "lead_matched", "leads", leadId, "Lead matched to patient")
     );
     return lead;
   }
@@ -2162,7 +2176,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     scope: RepositoryScope,
     input: CreateAppointmentInput
   ): Promise<AppointmentRecord> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const appointment: AppointmentRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -2184,7 +2198,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     this.appointments.push(appointment);
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         appointment.patientId,
         "appointment_created",
@@ -2204,7 +2218,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     const appointment = await this.findAppointmentById(scope, appointmentId);
     if (!appointment) return null;
     appointment.status = status;
-    appointment.updatedAt = new Date().toISOString();
+    appointment.updatedAt = this.#nowIso();
 
     const timelineType =
       status === "confirmed"
@@ -2217,7 +2231,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     if (timelineType) {
       this.timelineItems.push(
-        timeline(
+        this.#timeline(
           scope,
           appointment.patientId,
           timelineType,
@@ -2249,14 +2263,14 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       providerUserId: appointment.providerUserId,
       status: "waiting",
       position: this.queueEntries.filter((entry) => matchesScope(entry, scope)).length + 1,
-      checkedInAt: new Date().toISOString(),
+      checkedInAt: this.#nowIso(),
       calledAt: null,
       completedAt: null
     };
 
     this.queueEntries.push(queueEntry);
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         appointment.patientId,
         "queue_entry_created",
@@ -2284,9 +2298,9 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
     if (!queueEntry) return null;
     queueEntry.status = status;
-    if (status === "called") queueEntry.calledAt = queueEntry.calledAt ?? new Date().toISOString();
+    if (status === "called") queueEntry.calledAt = queueEntry.calledAt ?? this.#nowIso();
     if (status === "completed")
-      queueEntry.completedAt = queueEntry.completedAt ?? new Date().toISOString();
+      queueEntry.completedAt = queueEntry.completedAt ?? this.#nowIso();
     return queueEntry;
   }
 
@@ -2326,7 +2340,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     assertTaskTransition(task.status, nextStatus);
     const completionEvidence =
       input.completionEvidence ?? (nextStatus === "done" ? task.completionEvidence : {});
-    const completedAt = nextStatus === "done" ? task.completedAt ?? new Date().toISOString() : null;
+    const completedAt = nextStatus === "done" ? task.completedAt ?? this.#nowIso() : null;
     const completedByUserId =
       nextStatus === "done" ? task.completedByUserId ?? scope.actorUserId : null;
     assertTaskCompletionEvidence({
@@ -2353,12 +2367,12 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       completionEvidence,
       cancelledReason: input.cancelledReason ?? task.cancelledReason,
       updatedByUserId: scope.actorUserId,
-      statusChangedAt: nextStatus === task.status ? task.statusChangedAt : new Date().toISOString(),
-      updatedAt: new Date().toISOString()
+      statusChangedAt: nextStatus === task.status ? task.statusChangedAt : this.#nowIso(),
+      updatedAt: this.#nowIso()
     });
     if (task.patientId) {
       this.timelineItems.push(
-        timeline(
+        this.#timeline(
           scope,
           task.patientId,
           nextStatus === "done" ? "task_completed" : "task_status_changed",
@@ -2376,7 +2390,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     scope: RepositoryScope,
     input: CreateRecallRuleInput
   ): Promise<RecallRuleRecord> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const rule: RecallRuleRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -2438,9 +2452,9 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       status: statusByAction[input.actionType],
       appointmentId: input.appointmentId ?? recall.appointmentId,
       actionEvidence: evidence,
-      lastActionAt: new Date().toISOString(),
+      lastActionAt: this.#nowIso(),
       updatedByUserId: scope.actorUserId,
-      updatedAt: new Date().toISOString()
+      updatedAt: this.#nowIso()
     });
     if (recall.taskId && ["booked", "completed", "skipped"].includes(recall.status)) {
       await this.updateTask(scope, recall.taskId, {
@@ -2449,7 +2463,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       });
     }
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         recall.patientId,
         "recall_action_recorded",
@@ -2501,7 +2515,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
           skippedExistingKeys.push(key);
           continue;
         }
-        const now = new Date().toISOString();
+        const now = this.#nowIso();
         const recall: RecallRecord = {
           id: uuid(),
           tenantId: scope.tenantId,
@@ -2539,10 +2553,10 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
           idempotencyKey: key
         });
         recall.taskId = task.id;
-        recall.updatedAt = new Date().toISOString();
+        recall.updatedAt = this.#nowIso();
         recallTasksCreated.push(task);
         this.timelineItems.push(
-          timeline(scope, recall.patientId, "recall_due", "recalls", recall.id, "Recall due", {
+          this.#timeline(scope, recall.patientId, "recall_due", "recalls", recall.id, "Recall due", {
             recallRuleId: rule.id,
             taskId: task.id
           })
@@ -2615,7 +2629,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async createSopTemplate(scope: RepositoryScope, input: CreateSopTemplateInput): Promise<SopTemplateDetail> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const template: SopTemplateRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -2657,7 +2671,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       (candidate) => matchesScope(candidate, scope) && candidate.id === input.templateId && candidate.status === "active"
     );
     if (!template) return null;
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const schedule: SopScheduleRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -2702,7 +2716,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         skippedExistingKeys.push(key);
         continue;
       }
-      const now = new Date().toISOString();
+      const now = this.#nowIso();
       const run: SopRunRecord = {
         id: uuid(),
         tenantId: scope.tenantId,
@@ -2796,19 +2810,19 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         status: itemInput.status,
         evidence: itemInput.evidence ?? item.evidence,
         completedByUserId: itemInput.status === "done" ? scope.actorUserId : null,
-        completedAt: itemInput.status === "done" ? new Date().toISOString() : null,
-        updatedAt: new Date().toISOString()
+        completedAt: itemInput.status === "done" ? this.#nowIso() : null,
+        updatedAt: this.#nowIso()
       });
     }
     Object.assign(run, {
       status: input.status ?? run.status,
       startedByUserId:
         input.status === "in_progress" && !run.startedByUserId ? scope.actorUserId : run.startedByUserId,
-      startedAt: input.status === "in_progress" && !run.startedAt ? new Date().toISOString() : run.startedAt,
+      startedAt: input.status === "in_progress" && !run.startedAt ? this.#nowIso() : run.startedAt,
       completedByUserId: input.status === "completed" ? scope.actorUserId : null,
-      completedAt: input.status === "completed" ? new Date().toISOString() : null,
+      completedAt: input.status === "completed" ? this.#nowIso() : null,
       completionEvidence: input.completionEvidence ?? run.completionEvidence,
-      updatedAt: new Date().toISOString()
+      updatedAt: this.#nowIso()
     });
     const detail = this.sopRunDetail(scope, run.id);
     if (detail) assertSopRunCompletion(detail);
@@ -2828,7 +2842,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       );
       if (existing) return existing;
     }
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const task: TaskRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -2866,7 +2880,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     this.tasks.push(task);
     if (task.patientId) {
       this.timelineItems.push(
-        timeline(scope, task.patientId, "task_created", "tasks", task.id, "Task created", {
+        this.#timeline(scope, task.patientId, "task_created", "tasks", task.id, "Task created", {
           taskType: task.taskType,
           sourceWorkflow: task.sourceWorkflow
         })
@@ -2897,7 +2911,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async createLabVendor(scope: RepositoryScope, input: CreateLabVendorInput): Promise<LabVendorRecord> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const vendor: LabVendorRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -2959,7 +2973,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       return null;
     }
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const labCase: LabCaseRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -3017,7 +3031,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       })
     );
     this.timelineItems.push(
-      timeline(scope, labCase.patientId, "lab_case_created", "lab_cases", labCase.id, "Lab case created")
+      this.#timeline(scope, labCase.patientId, "lab_case_created", "lab_cases", labCase.id, "Lab case created")
     );
 
     return this.labCaseDetail(scope, labCase.id);
@@ -3033,7 +3047,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     assertLabCaseTransition(labCase.status, input.status);
     const fromStatus = labCase.status;
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     labCase.status = input.status;
     labCase.updatedAt = now;
     labCase.updatedByUserId = scope.actorUserId;
@@ -3060,7 +3074,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
             : null;
     if (timelineType) {
       this.timelineItems.push(
-        timeline(scope, labCase.patientId, timelineType, "lab_cases", labCase.id, `Lab case ${input.status.replace(/_/g, " ")}`)
+        this.#timeline(scope, labCase.patientId, timelineType, "lab_cases", labCase.id, `Lab case ${input.status.replace(/_/g, " ")}`)
       );
     }
 
@@ -3074,7 +3088,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     const vendor = await this.findLabVendorById(scope, input.vendorId);
     if (!vendor) return null;
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const entries: LabReconciliationEntryRecord[] = [];
     for (const entryInput of input.entries) {
       const detail = await this.findLabCaseById(scope, entryInput.labCaseId);
@@ -3145,7 +3159,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     scope: RepositoryScope,
     input: CreateInventoryCategoryInput
   ): Promise<InventoryCategoryRecord> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const category: InventoryCategoryRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -3182,7 +3196,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     const openingQuantity = input.openingQuantity ?? 0;
     assertFiniteQuantity(openingQuantity, "openingQuantity");
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const item: InventoryItemRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -3246,7 +3260,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       reason: input.reason,
       evidence: input.evidence ?? {},
       recordedByUserId: scope.actorUserId,
-      recordedAt: new Date().toISOString()
+      recordedAt: this.#nowIso()
     };
     item.currentQuantity = quantityAfter;
     item.updatedAt = entry.recordedAt;
@@ -3275,7 +3289,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     for (const line of input.lines) {
       if (!(await this.findInventoryItemById(scope, line.itemId))) return null;
     }
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const template: InventoryCheckTemplateRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -3317,7 +3331,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
     if (!template) return null;
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const run: InventoryCheckRunRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -3368,7 +3382,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     if (!run) return null;
     if (run.status === "completed" || run.status === "cancelled") return null;
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     for (const lineInput of input.lines ?? []) {
       const line = this.inventoryCheckRunLines.find(
         (candidate) => matchesScope(candidate, scope) && candidate.id === lineInput.lineId && candidate.checkRunId === run.id
@@ -3502,7 +3516,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     if (input.labCaseId && !(await this.findLabCaseById(scope, input.labCaseId))) return null;
     if (input.inventoryItemId && !(await this.findInventoryItemById(scope, input.inventoryItemId))) return null;
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const incident: IncidentRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -3532,7 +3546,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     this.incidents.push(incident);
     if (incident.patientId) {
       this.timelineItems.push(
-        timeline(scope, incident.patientId, "incident_created", "incidents", incident.id, "Incident recorded")
+        this.#timeline(scope, incident.patientId, "incident_created", "incidents", incident.id, "Incident recorded")
       );
     }
     return incident;
@@ -3553,7 +3567,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       : null;
     if (input.incidentId && !incident) return null;
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const action: CorrectiveActionRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -3580,7 +3594,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       incident.updatedAt = now;
       if (incident.patientId) {
         this.timelineItems.push(
-          timeline(
+          this.#timeline(
             scope,
             incident.patientId,
             "corrective_action_created",
@@ -3604,7 +3618,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
     if (!action || action.status === "completed" || action.status === "cancelled") return null;
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     action.status = input.status;
     action.updatedAt = now;
     action.updatedByUserId = scope.actorUserId;
@@ -3634,7 +3648,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         }
         if (incident.patientId) {
           this.timelineItems.push(
-            timeline(
+            this.#timeline(
               scope,
               incident.patientId,
               "corrective_action_completed",
@@ -3674,7 +3688,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     this.attributionTouches.push(touch);
     if (touch.patientId) {
       this.timelineItems.push(
-        timeline(
+        this.#timeline(
           scope,
           touch.patientId,
           "attribution_touch_created",
@@ -3909,7 +3923,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     scope: RepositoryScope,
     input: CreateIntakeFormTemplateInput
   ): Promise<IntakeFormTemplateRecord> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const template: IntakeFormTemplateRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -3934,7 +3948,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   ): Promise<IntakeFormSubmissionRecord> {
     const template = await this.findIntakeFormTemplateById(scope, input.templateId);
     if (!template) throw new Error("Intake form template not found.");
-    const submittedAt = new Date().toISOString();
+    const submittedAt = this.#nowIso();
     const submission: IntakeFormSubmissionRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -3952,7 +3966,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     this.intakeFormSubmissions.push(submission);
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         input.patientId,
         "form_response_submitted",
@@ -3982,7 +3996,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async createConsent(scope: RepositoryScope, input: CreateConsentInput): Promise<ConsentRecord> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const consent: ConsentRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -4006,7 +4020,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     this.consents.push(consent);
     this.timelineItems.push(
-      timeline(scope, input.patientId, "consent_created", "consents", consent.id, "Consent recorded")
+      this.#timeline(scope, input.patientId, "consent_created", "consents", consent.id, "Consent recorded")
     );
     return consent;
   }
@@ -4023,10 +4037,10 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     consent.status = "revoked";
     consent.revokedByUserId = scope.actorUserId;
-    consent.revokedAt = new Date().toISOString();
+    consent.revokedAt = this.#nowIso();
     consent.revocationReason = input.revocationReason;
     this.timelineItems.push(
-      timeline(scope, consent.patientId, "consent_revoked", "consents", consent.id, "Consent revoked")
+      this.#timeline(scope, consent.patientId, "consent_revoked", "consents", consent.id, "Consent revoked")
     );
     return consent;
   }
@@ -4036,7 +4050,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async createEncounter(scope: RepositoryScope, input: CreateEncounterInput): Promise<EncounterRecord> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const encounter: EncounterRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -4055,7 +4069,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     this.encounters.push(encounter);
     this.timelineItems.push(
-      timeline(scope, input.patientId, "encounter_created", "encounters", encounter.id, "Encounter created")
+      this.#timeline(scope, input.patientId, "encounter_created", "encounters", encounter.id, "Encounter created")
     );
     return encounter;
   }
@@ -4080,13 +4094,13 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     assertEncounterTransition(encounter.status, status);
     const previous = encounter.status;
     encounter.status = status;
-    encounter.updatedAt = new Date().toISOString();
+    encounter.updatedAt = this.#nowIso();
     if (status === "drafting") encounter.startedAt = encounter.startedAt ?? encounter.updatedAt;
     if (status === "closed") encounter.closedAt = encounter.closedAt ?? encounter.updatedAt;
 
     if (previous === "scheduled" && status === "drafting") {
       this.timelineItems.push(
-        timeline(
+        this.#timeline(
           scope,
           encounter.patientId,
           "encounter_started",
@@ -4121,7 +4135,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     if (existingDraft) {
       existingDraft.content = content;
       encounter.status = input.readyForSign ? "ready_for_sign" : "drafting";
-      encounter.updatedAt = new Date().toISOString();
+      encounter.updatedAt = this.#nowIso();
       return existingDraft;
     }
 
@@ -4139,12 +4153,12 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       signedByUserId: null,
       signedAt: null,
       createdByUserId: scope.actorUserId,
-      createdAt: new Date().toISOString()
+      createdAt: this.#nowIso()
     };
 
     this.clinicalNoteVersions.push(note);
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         encounter.patientId,
         "clinical_note_draft_created",
@@ -4181,11 +4195,11 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     assertClinicalNoteCanBeSigned(draft);
     draft.status = "signed";
     draft.signedByUserId = scope.actorUserId;
-    draft.signedAt = new Date().toISOString();
+    draft.signedAt = this.#nowIso();
     encounter.status = "signed";
     encounter.updatedAt = draft.signedAt;
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         encounter.patientId,
         "clinical_note_signed",
@@ -4211,7 +4225,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     if (!amendedFrom) return null;
 
     assertClinicalNoteCanBeAmended(amendedFrom);
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const note: ClinicalNoteVersionRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -4233,7 +4247,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     encounter.status = "amended";
     encounter.updatedAt = now;
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         encounter.patientId,
         "clinical_note_amended",
@@ -4263,14 +4277,14 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       medications: input.medications,
       notes: input.notes ?? null,
       createdByUserId: scope.actorUserId,
-      createdAt: new Date().toISOString(),
+      createdAt: this.#nowIso(),
       signedByUserId: null,
       signedAt: null
     };
 
     this.prescriptions.push(prescription);
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         encounter.patientId,
         "prescription_draft_created",
@@ -4303,9 +4317,9 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     assertPrescriptionCanBeSigned(prescription);
     prescription.status = "signed";
     prescription.signedByUserId = scope.actorUserId;
-    prescription.signedAt = new Date().toISOString();
+    prescription.signedAt = this.#nowIso();
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         prescription.patientId,
         "prescription_signed",
@@ -4325,7 +4339,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     const patient = await this.findPatientById(scope, patientId);
     if (!patient) return null;
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const instruction: PatientInstructionRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -4350,7 +4364,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     };
     this.patientInstructions.push(instruction);
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         patientId,
         input.channel === "print" ? "instruction_print_requested" : "instruction_send_requested",
@@ -4370,7 +4384,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async createAiSession(scope: RepositoryScope, input: CreateAiSessionInput): Promise<AiSessionRecord> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const session: AiSessionRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -4393,7 +4407,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     };
     this.aiSessions.push(session);
     this.timelineItems.push(
-      timeline(scope, input.patientId, "ai_session_started", "ai_sessions", session.id, "AI scribe session started", {
+      this.#timeline(scope, input.patientId, "ai_session_started", "ai_sessions", session.id, "AI scribe session started", {
         encounterId: input.encounterId,
         providerMode: input.providerMode,
         rawAudioRetention: input.retentionPolicy.rawAudioRetention
@@ -4443,7 +4457,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   ): Promise<{ segment: AiTranscriptSegmentRecord; sourceAnchor: AiSourceAnchorRecord } | null> {
     const session = await this.findAiSessionById(scope, sessionId);
     if (!session || session.status === "retention_deleted") return null;
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const sequence =
       this.aiTranscriptSegments.filter((segment) => matchesScope(segment, scope) && segment.sessionId === sessionId)
         .length + 1;
@@ -4510,7 +4524,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       textQuoteDigest: input.textQuoteDigest ?? null,
       supported: input.supported ?? input.anchorType === "transcript_segment",
       unsupportedReason: input.unsupportedReason ?? (input.anchorType === "transcript_segment" ? null : "unsupported_source_anchor"),
-      createdAt: new Date().toISOString()
+      createdAt: this.#nowIso()
     };
     this.aiSourceAnchors.push(anchor);
     return anchor;
@@ -4519,7 +4533,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   async createAiJob(scope: RepositoryScope, sessionId: UUID, input: CreateAiJobInput): Promise<AiJobRecord | null> {
     const session = await this.findAiSessionById(scope, sessionId);
     if (!session) return null;
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const job: AiJobRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -4570,14 +4584,14 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       providerMode: input.providerMode,
       providerRequestDigest: input.providerRequestDigest,
       createdByUserId: scope.actorUserId,
-      createdAt: new Date().toISOString(),
+      createdAt: this.#nowIso(),
       reviewedByUserId: null,
       reviewedAt: null
     };
     this.aiDraftOutputs.push(output);
     session.status = "ready_for_review";
     this.timelineItems.push(
-      timeline(scope, session.patientId, "ai_draft_generated", "ai_draft_outputs", output.id, "AI draft generated", {
+      this.#timeline(scope, session.patientId, "ai_draft_generated", "ai_draft_outputs", output.id, "AI draft generated", {
         encounterId: session.encounterId,
         outputType: output.outputType,
         reviewStatus: output.reviewStatus
@@ -4612,7 +4626,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       unsupportedSourceAnchorIds: input.unsupportedSourceAnchorIds ?? [],
       providerMode: input.providerMode,
       createdByUserId: scope.actorUserId,
-      createdAt: new Date().toISOString(),
+      createdAt: this.#nowIso(),
       reviewedByUserId: null,
       reviewedAt: null
     };
@@ -4633,7 +4647,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         : this.aiActionProposals.find((proposal) => matchesScope(proposal, scope) && proposal.id === input.targetId);
     if (!target) return null;
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     target.reviewStatus =
       input.decision === "approve"
         ? "approved_review_only"
@@ -4676,8 +4690,8 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       (segment) => matchesScope(segment, scope) && segment.sessionId === sessionId
     );
     session.status = "retention_deleted";
-    session.rawAudioDeletedAt = session.rawAudioDeletedAt ?? new Date().toISOString();
-    session.transcriptDeletedAt = new Date().toISOString();
+    session.rawAudioDeletedAt = session.rawAudioDeletedAt ?? this.#nowIso();
+    session.transcriptDeletedAt = this.#nowIso();
     return { session, deletedTranscriptSegments, deletedRawAudioReferences: true };
   }
 
@@ -4685,7 +4699,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     scope: RepositoryScope,
     input: CreateMediaUploadReservationInput
   ): Promise<MediaUploadReservationRecord> {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const reservation: MediaUploadReservationRecord = {
       id: input.id,
       tenantId: scope.tenantId,
@@ -4735,7 +4749,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     const reservation = await this.findMediaUploadReservationById(scope, uploadId);
     if (!reservation || reservation.status !== "reserved") return null;
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const asset: MediaAssetRecord = {
       id: uuid(),
       tenantId: reservation.tenantId,
@@ -4771,7 +4785,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     reservation.mediaAssetId = asset.id;
     this.mediaAssets.push(asset);
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         asset.patientId,
         "media_uploaded",
@@ -4842,7 +4856,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     }
 
     const normalized = normalizeFixtureCreateDentalFindingInput(input);
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const finding: DentalFindingRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -4876,7 +4890,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       provenance: normalized.provenance
     });
     this.timelineItems.push({
-      ...timeline(
+      ...this.#timeline(
         scope,
         patientId,
         "dental_finding_created",
@@ -4917,7 +4931,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     const beforeState = toDentalFindingSnapshotFinding(finding);
     const next = normalizeFixtureUpdateDentalFindingInput(finding, input);
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     Object.assign(finding, {
       encounterId: next.encounterId,
       toothNumber: next.toothNumber,
@@ -4944,7 +4958,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       provenance: input.provenance ?? {}
     });
     this.timelineItems.push({
-      ...timeline(
+      ...this.#timeline(
         scope,
         finding.patientId,
         "dental_finding_updated",
@@ -4990,7 +5004,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     const findings = this.dentalFindings.filter(
       (finding) => matchesScope(finding, scope) && finding.patientId === patientId
     );
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const snapshot: DentalChartSnapshotRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -5006,7 +5020,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     };
     this.dentalChartSnapshots.push(snapshot);
     this.timelineItems.push({
-      ...timeline(
+      ...this.#timeline(
         scope,
         patientId,
         "dental_chart_snapshot_created",
@@ -5039,7 +5053,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       if (!encounter || encounter.patientId !== patientId) return null;
     }
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const treatmentPlan: TreatmentPlanRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -5069,7 +5083,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     this.replaceTreatmentPlanPhases(scope, treatmentPlan, input.phases);
     this.recalculateTreatmentPlanTotals(treatmentPlan);
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         patientId,
         "treatment_plan_created",
@@ -5110,12 +5124,9 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       plan.clinicalSummary = input.clinicalSummary?.trim() || null;
     }
     if (input.status !== undefined) {
-      if (input.status === "accepted") {
-        throw new Error("Use acceptTreatmentPlan to record patient acceptance evidence.");
-      }
       plan.status = input.status;
       if (input.status === "presented") {
-        plan.presentedAt = plan.presentedAt ?? new Date().toISOString();
+        plan.presentedAt = plan.presentedAt ?? this.#nowIso();
       }
     }
     if (input.phases) {
@@ -5137,7 +5148,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       this.recalculateTreatmentPlanTotals(plan);
     }
     plan.updatedByUserId = scope.actorUserId;
-    plan.updatedAt = new Date().toISOString();
+    plan.updatedAt = this.#nowIso();
 
     return { detail: this.treatmentPlanDetail(scope, treatmentPlanId) };
   }
@@ -5156,7 +5167,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
 
     assertTreatmentPlanAcceptable(plan, items.length);
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     plan.status = "accepted";
     plan.presentedAt = plan.presentedAt ?? now;
     plan.acceptedAt = now;
@@ -5170,7 +5181,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       item.updatedAt = now;
     }
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         plan.patientId,
         "treatment_plan_accepted",
@@ -5210,7 +5221,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       throw new Error("This accepted treatment plan item is already completed.");
     }
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const procedure: ProcedurePerformedRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -5243,7 +5254,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     estimateItem.status = "completed";
     estimateItem.updatedAt = now;
     this.timelineItems.push(
-      timeline(
+      this.#timeline(
         scope,
         procedure.patientId,
         "procedure_completed",
@@ -5299,7 +5310,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       }),
       { subtotalMinor: 0, discountMinor: 0, taxMinor: 0, totalMinor: 0 }
     );
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const invoice: InvoiceRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -5352,7 +5363,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       });
     }
     this.timelineItems.push(
-      timeline(scope, invoice.patientId, "invoice_created", "invoices", invoice.id, "Invoice created", {
+      this.#timeline(scope, invoice.patientId, "invoice_created", "invoices", invoice.id, "Invoice created", {
         invoiceId: invoice.id,
         invoiceNumber: invoice.invoiceNumber,
         totalMinor: invoice.totalMinor,
@@ -5386,7 +5397,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       throw new Error("Payment request amount cannot exceed invoice balance.");
     }
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const request: PaymentRequestRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -5461,7 +5472,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       throw new Error("Manual payment requires not_required_manual verification status.");
     }
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const payment: PaymentTransactionRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -5491,7 +5502,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     this.recalculateInvoicePaymentState(scope, invoice);
     if (isSettledPaymentTransaction(payment)) {
       this.timelineItems.push(
-        timeline(scope, invoice.patientId, "payment_recorded", "payment_transactions", payment.id, "Payment recorded", {
+        this.#timeline(scope, invoice.patientId, "payment_recorded", "payment_transactions", payment.id, "Payment recorded", {
           invoiceId: invoice.id,
           paymentTransactionId: payment.id,
           amountMinor: payment.amountMinor,
@@ -5531,7 +5542,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     const amountMinor = allocations.reduce((sum, allocation) => sum + allocation.amountMinor, 0);
     assertPositiveMinorCurrencyAmount(amountMinor, "receiptAmountMinor");
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const receipt: ReceiptRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -5556,7 +5567,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       payment.updatedAt = now;
     }
     this.timelineItems.push(
-      timeline(scope, invoice.patientId, "receipt_generated", "receipts", receipt.id, "Receipt generated", {
+      this.#timeline(scope, invoice.patientId, "receipt_generated", "receipts", receipt.id, "Receipt generated", {
         invoiceId,
         receiptId: receipt.id,
         receiptNumber: receipt.receiptNumber,
@@ -5584,7 +5595,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         throw new Error("Treatment plan phases require at least one estimate item.");
       }
 
-      const now = new Date().toISOString();
+      const now = this.#nowIso();
       const phase: TreatmentPlanPhaseRecord = {
         id: uuid(),
         tenantId: scope.tenantId,
@@ -5670,7 +5681,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     plan.discountMinor = items.reduce((total, item) => total + item.discountMinor, 0);
     plan.taxMinor = items.reduce((total, item) => total + item.taxMinor, 0);
     plan.totalMinor = items.reduce((total, item) => total + item.totalMinor, 0);
-    plan.updatedAt = new Date().toISOString();
+    plan.updatedAt = this.#nowIso();
   }
 
   labCaseDetail(scope: RepositoryScope, labCaseId: UUID): LabCaseDetail | null {
@@ -5713,13 +5724,13 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       reason,
       evidence,
       changedByUserId: scope.actorUserId,
-      changedAt: new Date().toISOString()
+      changedAt: this.#nowIso()
     };
   }
 
   nextLabSlipNumber(scope: RepositoryScope): string {
     const next = this.labCases.filter((labCase) => matchesScope(labCase, scope)).length + 1;
-    return `LAB-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(next).padStart(4, "0")}`;
+    return `LAB-${this.#clinicDateKey()}-${String(next).padStart(4, "0")}`;
   }
 
   inventoryCheckRunDetail(scope: RepositoryScope, checkRunId: UUID): InventoryCheckRunDetail | null {
@@ -5758,7 +5769,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
     if (existing) return existing;
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const suggestedQuantity = Math.max(item.reorderQuantity, item.minimumQuantity - (line.countedQuantity ?? 0));
     const suggestion: ProcurementSuggestionRecord = {
       id: uuid(),
@@ -5831,13 +5842,42 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   nextInvoiceNumber(scope: RepositoryScope): string {
     const next =
       this.invoices.filter((invoice) => matchesScope(invoice, scope)).length + 1;
-    return `INV-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(next).padStart(4, "0")}`;
+    return `INV-${this.#clinicDateKey()}-${String(next).padStart(4, "0")}`;
   }
 
   nextReceiptNumber(scope: RepositoryScope): string {
     const next =
       this.receipts.filter((receipt) => matchesScope(receipt, scope)).length + 1;
-    return `RCT-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${String(next).padStart(4, "0")}`;
+    return `RCT-${this.#clinicDateKey()}-${String(next).padStart(4, "0")}`;
+  }
+
+  #nowIso(): string {
+    return this.#clock.now().toISOString();
+  }
+
+  #clinicDateKey(): string {
+    return clinicLocalDateFromClock(this.#clock, this.#clinicTimeZone).replace(/-/g, "");
+  }
+
+  #timeline(
+    scope: RepositoryScope,
+    patientId: UUID,
+    itemType: PatientTimelineItem["itemType"],
+    sourceTable: string,
+    sourceId: UUID,
+    title: string,
+    metadata: Record<string, unknown> = {}
+  ): PatientTimelineItem {
+    return timelineAt(
+      scope,
+      patientId,
+      itemType,
+      sourceTable,
+      sourceId,
+      title,
+      this.#nowIso(),
+      metadata
+    );
   }
 
   recalculateInvoicePaymentState(scope: RepositoryScope, invoice: InvoiceRecord): void {
@@ -5870,7 +5910,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       hasReconciliationIssue,
       invoiceStatus: invoice.status
     });
-    invoice.updatedAt = new Date().toISOString();
+    invoice.updatedAt = this.#nowIso();
   }
 
   nextClinicalNoteVersion(scope: RepositoryScope, encounterId: UUID): number {
@@ -5894,7 +5934,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       (candidate) => matchesScope(candidate, scope) && candidate.patientId === patientId
     );
     if (!chart) {
-      const now = new Date().toISOString();
+      const now = this.#nowIso();
       chart = {
         id: uuid(),
         tenantId: scope.tenantId,
@@ -5942,7 +5982,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       encounterId: finding.encounterId,
       changeType: input.changeType,
       changedByUserId: scope.actorUserId,
-      changedAt: new Date().toISOString(),
+      changedAt: this.#nowIso(),
       reason: input.reason,
       beforeState: input.beforeState,
       afterState: toDentalFindingSnapshotFinding(finding),
@@ -6006,7 +6046,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       else if (batch.readyRowCount > 0) batch.state = "ready_to_commit";
       else batch.state = rows.length > 0 ? "validated" : "uploaded";
     }
-    batch.updatedAt = new Date().toISOString();
+    batch.updatedAt = this.#nowIso();
   }
 
   #createMigrationCommit(
@@ -6018,7 +6058,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     summary: Record<string, unknown>,
     errorSummary: Record<string, unknown> | null
   ): MigrationCommitRecord {
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const commit: MigrationCommitRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -6084,7 +6124,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
     if (existing) return existing;
 
-    const now = new Date().toISOString();
+    const now = this.#nowIso();
     const link: ImportedRecordLinkRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -6245,13 +6285,14 @@ function mergeOwnerDashboardProjectionData(
   };
 }
 
-function timeline(
+function timelineAt(
   scope: RepositoryScope,
   patientId: UUID,
   itemType: PatientTimelineItem["itemType"],
   sourceTable: string,
   sourceId: UUID,
   title: string,
+  occurredAt: string,
   metadata: Record<string, unknown> = {}
 ): PatientTimelineItem {
   return {
@@ -6262,14 +6303,24 @@ function timeline(
     itemType,
     sourceTable,
     sourceId,
-    occurredAt: new Date().toISOString(),
+    occurredAt,
     title,
     summary: null,
     metadata
   };
 }
 
-function normalizeFixtureCreateDentalFindingInput(input: CreateDentalFindingInput): Required<CreateDentalFindingInput> {
+type NormalizedDentalFindingInput = Omit<
+  Required<CreateDentalFindingInput>,
+  "surface" | "toothNumber"
+> & {
+  surface: DentalSurface | null;
+  toothNumber: DentalToothNumber;
+};
+
+function normalizeFixtureCreateDentalFindingInput(
+  input: CreateDentalFindingInput
+): NormalizedDentalFindingInput {
   const normalized = {
     encounterId: input.encounterId ?? null,
     toothNumber: normalizeDentalToothNumber(input.toothNumber),
@@ -6292,7 +6343,7 @@ function normalizeFixtureCreateDentalFindingInput(input: CreateDentalFindingInpu
 function normalizeFixtureUpdateDentalFindingInput(
   existing: DentalFindingRecord,
   input: UpdateDentalFindingRepositoryInput
-): Required<CreateDentalFindingInput> {
+): NormalizedDentalFindingInput {
   const normalized = {
     encounterId: input.encounterId === undefined ? existing.encounterId : input.encounterId,
     toothNumber: normalizeDentalToothNumber(input.toothNumber ?? existing.toothNumber),

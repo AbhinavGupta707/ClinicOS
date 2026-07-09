@@ -183,7 +183,9 @@ test("CP3 operations enforce consent state, note immutability, and doctor-only p
     prescription.body.prescription.id
   );
   assert.equal(signedPrescription.body.prescription.status, "signed");
-  assert.ok(operationsRepository.outboxEvents.some((event) => event.eventType === "consent.revoked"));
+  assert.ok(
+    operationsRepository.outboxEvents.some((event) => event.eventType === "consent.revoked")
+  );
   assert.ok(
     operationsRepository.outboxEvents.some((event) => event.eventType === "clinical_note.signed")
   );
@@ -203,7 +205,8 @@ test("CP3 local fixture API supports intake consent encounter note and prescript
     identityRepository: new LocalFixtureIdentityRepository(),
     operationsRepository,
     auditSink,
-    useLocalAuthFixture: true
+    useLocalAuthFixture: true,
+    repositoryMode: "fixture"
   });
 
   try {
@@ -342,7 +345,10 @@ test("CP3 local fixture API supports intake consent encounter note and prescript
       assistantHeaders({ "idempotency-key": "cp3-note-sign-denied" })
     );
     assert.equal(assistantSignResponse.status, 403);
-    assert.equal((await assistantSignResponse.json()).error.details.required_permission, "clinical.note.sign");
+    assert.equal(
+      (await assistantSignResponse.json()).error.details.required_permission,
+      "clinical.note.sign"
+    );
 
     const doctorSignResponse = await postJson(
       baseUrl,
@@ -420,9 +426,15 @@ test("CP3 local fixture API supports intake consent encounter note and prescript
     assert.equal(doctorPrescriptionSignResponse.status, 200);
     assert.equal((await doctorPrescriptionSignResponse.json()).prescription.status, "signed");
 
-    assert.ok(operationsRepository.outboxEvents.some((event) => event.eventType === "consent.revoked"));
-    assert.ok(operationsRepository.outboxEvents.some((event) => event.eventType === "clinical_note.signed"));
-    assert.ok(operationsRepository.outboxEvents.some((event) => event.eventType === "prescription.signed"));
+    assert.ok(
+      operationsRepository.outboxEvents.some((event) => event.eventType === "consent.revoked")
+    );
+    assert.ok(
+      operationsRepository.outboxEvents.some((event) => event.eventType === "clinical_note.signed")
+    );
+    assert.ok(
+      operationsRepository.outboxEvents.some((event) => event.eventType === "prescription.signed")
+    );
     assert.ok(auditSink.events.some((event) => event.action === "clinical_note.signed"));
     assert.ok(auditSink.events.some((event) => event.action === "prescription.signed"));
   } finally {

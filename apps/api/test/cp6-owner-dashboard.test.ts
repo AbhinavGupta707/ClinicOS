@@ -92,7 +92,9 @@ test("CP6 owner dashboard operation returns aggregate source-backed metrics with
 
   assert.ok(auditSink.events.some((event) => event.action === "owner_dashboard.viewed"));
   assert.equal(
-    auditSink.events.some((event) => event.action === "owner_dashboard.viewed" && event.phiInvolved),
+    auditSink.events.some(
+      (event) => event.action === "owner_dashboard.viewed" && event.phiInvolved
+    ),
     false
   );
 });
@@ -104,7 +106,8 @@ test("CP6 owner dashboard route enforces analytics role and clinic scope", async
     identityRepository: new LocalFixtureIdentityRepository(),
     operationsRepository: new LocalFixtureClinicOperationsRepository(),
     auditSink,
-    useLocalAuthFixture: true
+    useLocalAuthFixture: true,
+    repositoryMode: "fixture"
   });
 
   try {
@@ -114,7 +117,9 @@ test("CP6 owner dashboard route enforces analytics role and clinic scope", async
     });
   } catch (error) {
     if (error && typeof error === "object" && "code" in error && error.code === "EPERM") {
-      t.skip("Socket binding is blocked in this sandbox; run the API boot smoke outside the sandbox.");
+      t.skip(
+        "Socket binding is blocked in this sandbox; run the API boot smoke outside the sandbox."
+      );
       return;
     }
     throw error;

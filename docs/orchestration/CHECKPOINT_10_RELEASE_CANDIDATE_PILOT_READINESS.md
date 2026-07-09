@@ -1,5 +1,7 @@
 # Checkpoint 10 - Release Candidate And Pilot Rollout Readiness
 
+> **Historical launch packet (superseded 2026-07-09):** This file records how CP10 was executed. It does not authorize current pilot or production use. Use `clinic_os_specs_v2/23_PRODUCTION_READINESS_REMEDIATION_PLAN.md` and the single-session CP11 packet for new execution. Current release decision is **NO-GO**.
+
 - Launch date: 2026-07-07
 - Launch base: `a2d6501`
 - Worker launch commit: `e41af66`

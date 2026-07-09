@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { buildAccessContext, principalFromVerifiedKeycloakClaims } from "@clinic-os/auth";
 import { CHECKPOINT1_SEED_IDS } from "@clinic-os/db";
-import type { ClinicRoleSlug, UUID } from "@clinic-os/domain";
+import { FixedClock, type ClinicRoleSlug, type UUID } from "@clinic-os/domain";
 import {
   createCorrectiveAction,
   createIncident,
@@ -32,7 +32,9 @@ const clinicId = CHECKPOINT1_SEED_IDS.clinicId;
 const patientId = CHECKPOINT1_SEED_IDS.patients.rheaSynthetic;
 
 test("CP6 lab workflow creates slip evidence, transitions status, and reconciles vendor invoice", async () => {
-  const repository = new LocalFixtureClinicOperationsRepository();
+  const repository = new LocalFixtureClinicOperationsRepository({
+    clock: new FixedClock("2026-07-07T18:29:00.000Z")
+  });
   const auditSink = new InMemoryAuditSink();
   const dependencies: OperationsDependencies = { repository, auditSink };
   const assistant = await operationsContext("seed-assistant");
