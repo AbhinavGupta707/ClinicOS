@@ -1,6 +1,6 @@
 # Checkpoint 12 — Modular API and Generated Contracts
 
-**Status:** Preflight-ready; worker launch is blocked only on GitHub CLI reauthentication
+**Status:** Launch-ready after final clean-base verification
 **Evidence target:** E3 durable local
 **Workers:** provisionally three initial foundation worktrees; optional API-framework worker only after interface freeze
 **Primary findings:** PRR-012, PRR-017 application layer, PRR-028; CP13 lane-safety prerequisite

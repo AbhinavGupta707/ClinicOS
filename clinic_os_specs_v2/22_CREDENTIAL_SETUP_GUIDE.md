@@ -37,7 +37,7 @@ Verified through 2026-07-10:
 | Surface | Status | Notes |
 |---|---|---|
 | GitHub remote | Ready | `origin` points to `https://github.com/AbhinavGupta707/ClinicOS.git`. |
-| GitHub CLI | Blocked | `gh auth status -h github.com` reports the active token for `AbhinavGupta707` is invalid. Run `gh auth login -h github.com`, then recheck before CP12 worker launch. |
+| GitHub CLI | Ready | `gh auth status -h github.com` verified `AbhinavGupta707` through the keyring on 2026-07-10 with `repo` and `workflow` scopes. |
 | npm/package network | Ready | `npm ping` succeeded. |
 | Node/npm | Ready | Node `v22.22.2`, npm `10.9.7`. |
 | Playwright CLI | Available | `npx --yes playwright --version` resolved `1.61.1`; project dependency and browser install still belong in Checkpoint 1. |

@@ -28,7 +28,7 @@ Read completely before acting:
 Baseline requirements:
 
 - CP11 result commit is a6109bb. Confirm current clean main contains it and the orchestration planning commit.
-- Treat e36a7f1 as the reviewed preflight ancestor, not an immutable launch hash. Record the actual current clean main HEAD immediately before creating the integration branch and initial workers; all initial workers use that exact commit.
+- Treat 858ec4c as the reviewed credential-preflight ancestor, not an immutable launch hash. Record the actual current clean main HEAD immediately before creating the integration branch and initial workers; all initial workers use that exact commit.
 - Preserve untracked user-owned research/ and scripts/research/; never stage, edit, format or delete them.
 - Rerun CP11 invalidation-sensitive gates before launch.
 - Resolve the saved ClinicOS project with list_projects.
@@ -36,10 +36,10 @@ Baseline requirements:
 
 Credential and historical-worktree preflight:
 
-- Run gh auth status -h github.com. If invalid, stop before worker creation and request gh auth login -h github.com; recheck after login.
+- Run gh auth status -h github.com. If a sandboxed check reports invalid or cannot reach GitHub/keyring state, rerun with approved external network/keyring access before concluding it failed. Only if that authoritative check is invalid should you stop before worker creation and request gh auth login -h github.com; recheck after login.
 - Confirm .secrets/orchestration.env is ignored, mode 0600, selects AWS_PROFILE=clinicos-human, WHATSAPP_PROVIDER=simulator and PAYMENT_PROVIDER=simulator. Inspect only named non-secret selectors/presence; never print secret values.
 - Do not copy, read, source or expose .secrets/orchestration.env in worker worktrees. Authenticated CLI/browser state, AWS/provider commands, live credentials and dashboard operations are master-only. Workers use deterministic contract tests and honest unavailable states.
-- Before any AWS-dependent checkpoint or command, run aws sts get-caller-identity --profile clinicos-human and require account 222634407676. If expired, stop and request aws login --profile clinicos-human --region ap-south-1. Never fall back to clinicos.
+- Before any AWS-dependent checkpoint or command, run aws sts get-caller-identity --profile clinicos-human with approved network access and require account 222634407676. If expired, stop and request aws login --profile clinicos-human --region ap-south-1. Never fall back to clinicos.
 - Inspect git worktree list --porcelain. Existing CP8-CP10-era worktrees are historical: do not reuse or delete them unless their base/status and unique unmerged work have been checked.
 
 Monitoring:
@@ -57,6 +57,7 @@ Workers:
 - Use project target /Users/abhinavgupta/Desktop/ClinicOS and environment type worktree.
 - Explicitly use model gpt-5.6-sol.
 - Use xhigh for architecture/schema/security/clinical/financial/cloud/provider/AI/interoperability lanes and high for bounded UI/QA/docs/evidence lanes, as specified for active candidates.
+- Use medium only for a substantial spec-frozen mechanical task with exact paths/output and deterministic verification, no unresolved design or security/safety/provider/evidence/release judgment, and a recorded justification. If uncertain, use high; do not create a lane merely to save usage.
 - Start every initial worker from the same clean `main` launch commit. Start an approved dependent second-wave worker only from the exact recorded stable integration commit that contains its producer inputs.
 - Give every worker concrete goal, allowed paths, master-only/forbidden files, tests, early-blocker instruction and mandatory commit/handoff format.
 - Record pending worktree ID, thread ID, worktree path, base, model/effort and ownership in the checkpoint log.

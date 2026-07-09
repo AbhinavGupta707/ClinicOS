@@ -84,22 +84,25 @@ A dependent second-wave worker is allowed only after its producer lanes are revi
 - `.secrets/orchestration.env` exists only as an ignored, mode-`0600` handoff in the primary checkout. Workers must not copy, read, source, print or receive its values.
 - Authenticated GitHub/AWS/Chrome sessions, live credentials, AWS commands, provider API tests and provider-dashboard operations are master-only.
 - Worker prompts explicitly require deterministic contract tests, sanitized fixtures and honest `unconfigured`/unavailable behavior. Provider success cannot be claimed from a simulator.
-- Before CP12 launch, the master runs `gh auth status -h github.com`. If invalid, stop before worker creation and request `gh auth login -h github.com`; verify status again.
+- Before CP12 launch, the master runs `gh auth status -h github.com`. If a sandboxed check reports invalid or cannot reach GitHub/keyring state, rerun it with approved external network/keyring access before concluding authentication failed. Only if that authoritative check fails should the master stop before worker creation and request `gh auth login -h github.com`; verify status again.
 - The local secret selectors remain `WHATSAPP_PROVIDER=simulator` and `PAYMENT_PROVIDER=simulator` until CP15 has deployed signed HTTPS callback routes and the user authorizes official sandbox activation.
-- Before every AWS-dependent checkpoint or mutation, the master runs `aws sts get-caller-identity --profile clinicos-human` and requires account `222634407676`. If expired, stop and request `aws login --profile clinicos-human --region ap-south-1`. Never fall back to `clinicos` or long-lived environment keys.
+- Before every AWS-dependent checkpoint or mutation, the master runs `aws sts get-caller-identity --profile clinicos-human` with approved network access and requires account `222634407676`. If expired, stop and request `aws login --profile clinicos-human --region ap-south-1`. Never fall back to `clinicos` or long-lived environment keys.
 - Terraform plan/apply, DNS/TLS, KMS, GitHub OIDC, provider registration, real traffic and recovery mutations remain gated by the active checkpoint and explicit authority.
 
 ## 5. Model and Reasoning Policy
 
-The current Codex host describes `gpt-5.6-sol` as its latest frontier agentic coding model and supports `high`, `xhigh`, `max`, and `ultra` reasoning. The user selected `xhigh` for the master. The program deliberately uses only `high` and `xhigh` for workers:
+The current Codex host describes `gpt-5.6-sol` as its latest frontier agentic coding model and supports the reasoning settings required here. The user selected `xhigh` for the master. Planned implementation lanes use `high` or `xhigh`; `medium` is available only for later mechanical work that passes the strict gate below:
 
-| Work type                                                                                                                          | Worker effort | Reason                                                                             |
-| ---------------------------------------------------------------------------------------------------------------------------------- | ------------- | ---------------------------------------------------------------------------------- |
-| Architecture, schema/RLS, auth/security, clinical/financial invariants, cloud/DR, provider signatures, AI safety, interoperability | `xhigh`       | Errors cross trust, tenant, safety, money, recovery or public-contract boundaries. |
-| Bounded UI implementation, contract fixtures, browser/device QA, documentation, runbooks, evidence packaging                       | `high`        | Work is substantial but has a narrower decision surface and objective checks.      |
-| Mixed lane with any high-risk boundary                                                                                             | `xhigh`       | Use the highest risk inside the lane.                                              |
+| Work type                                                                                                                          | Worker effort | Reason                                                                                           |
+| ---------------------------------------------------------------------------------------------------------------------------------- | ------------- | ------------------------------------------------------------------------------------------------ |
+| Architecture, schema/RLS, auth/security, clinical/financial invariants, cloud/DR, provider signatures, AI safety, interoperability | `xhigh`       | Errors cross trust, tenant, safety, money, recovery or public-contract boundaries.               |
+| Bounded UI implementation, contract fixtures, browser/device QA, documentation, runbooks, evidence packaging                       | `high`        | Work is substantial but has a narrower decision surface and objective checks.                    |
+| Spec-frozen mechanical transformation with exact expected diff and deterministic verification                                      | `medium`      | No unresolved design, behavior, security/safety, provider, evidence or release judgment remains. |
+| Mixed lane with any high-risk boundary                                                                                             | `xhigh`       | Use the highest risk inside the lane.                                                            |
 
-Do not silently downgrade model or reasoning to save usage. Do not use `max` or `ultra` without a later explicit user decision. A worker follow-up preserves its current model/effort unless the master explicitly changes it.
+Examples that may qualify for `medium` are deterministic regeneration of already-frozen checked-in artifacts, a fully mapped mechanical namespace/file move with no behavior change, or reference/index updates from already verified facts. Schema/contract design, implementation, review, test interpretation, security/privacy/clinical wording, external-provider work, browser/device QA, evidence-tier classification and checkpoint closeout never qualify merely because they look repetitive.
+
+Before creating a `medium` worker, the master records the frozen input, exact allowed paths, expected output, deterministic commands and why no judgment remains. If that proof is weak, the work stays `high`/`xhigh`; if the task is small, the master does it directly. Any ambiguity, unexpected diff or failing check escalates to `high`. Do not silently downgrade to save usage. Do not use `max` or `ultra` without a later explicit user decision. A worker follow-up preserves its current model/effort unless the master explicitly changes it.
 
 ### Capability provenance
 

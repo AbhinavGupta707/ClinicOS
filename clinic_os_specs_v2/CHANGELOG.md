@@ -7,9 +7,10 @@ Changed:
 - Hardened the credential handoff for orchestration: master-only ignored secrets at mode `0600`, `clinicos-human` AWS verification, simulator provider selectors until authorized CP15 activation, explicit GitHub reauthentication gate, and historical-worktree classification before CP12 launch.
 - Verified the AWS account, stored provider-credential presence, Terraform backend identifiers, synthetic fixture paths, and 12 clean historical worktrees without exposing secrets or reusing old lanes.
 
-Current blocker:
+Resolved launch gate:
 
-- GitHub CLI authentication is invalid and must be repaired before CP12 workers launch. Terraform and later external authorities remain checkpoint-specific gates rather than CP12 implementation blockers.
+- GitHub CLI authentication now passes with `repo` and `workflow` scopes. Terraform and later external authorities remain checkpoint-specific gates rather than CP12 implementation blockers.
+- Added a strict `medium`-reasoning exception for substantial spec-frozen mechanical tasks only; no currently planned implementation lane was downgraded.
 
 ## 2026-07-09 — CP12-CP18 worktree orchestration transition
 
