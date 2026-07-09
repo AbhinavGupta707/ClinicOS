@@ -2,14 +2,14 @@
 
 **Status:** Planned; launch only after CP12 promotion
 **Evidence target:** E3 complete durable local, E4 staging where available
-**Workers:** four namespaced vertical worktrees
+**Workers:** provisionally three to four initial vertical worktrees, selected after the CP12 seam audit
 **Primary findings:** PRR-014, remaining PRR-027, durable workflow portion of PRR-025
 
 ## 1. Outcome
 
 Make every selected clinic-day workflow operate through PostgreSQL, RLS, generated contracts/clients, modular API, durable outbox/Temporal, and real web loaders. No claimed product workflow may require a fixture repository or fake aggregate route.
 
-CP12 must first establish namespaced feature/module/repository seams. If it does not, CP13 launch is blocked; do not send four workers into the current monolithic files.
+CP12 must first establish namespaced feature/module/repository seams. If it does not, CP13 launch is blocked; do not send multiple workers into the current monolithic files.
 
 ## 2. Shared Rules
 
@@ -55,7 +55,7 @@ CP12 must first establish namespaced feature/module/repository seams. If it does
 
 ## 4. Master Integration
 
-All four lanes are independent at launch because they edit only their namespaces. The master:
+These four lanes are candidates, not a required launch set. The master launches three or four only after proving that the selected verticals edit their own namespaces and do not share an unfinished CP12 adapter. The master then:
 
 1. reviews schema proposals and produces the single CP13 canonical migration if necessary;
 2. merges lanes in schema/contract dependency order determined from handoffs;

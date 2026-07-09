@@ -2,7 +2,7 @@
 
 **Status:** Planned; E4/E5 external authority required
 **Evidence target:** E4 staging and E5 pilot-production synthetic
-**Workers:** four high-risk worktrees
+**Workers:** provisionally three to four initial worktrees after path and environment exclusivity review
 **Primary findings:** PRR-006, 007, 009, 013, 015-020, 024; remaining PRR-001/003/010
 
 ## 1. Outcome
@@ -51,6 +51,8 @@ Workers may implement local definitions while approval is pending, but the check
 **Verification:** malicious file, cross-tenant, expired URL, incomplete/quarantine, lifecycle and audit tests. Cloud execution waits for applied Lane A resources.
 
 ### Lane D — Observability, Resilience and Recovery (`gpt-5.6-sol`, `xhigh`)
+
+**Launch condition:** instrumentation hooks in API/worker/auth/media are frozen as master-owned integration points. If Lane D would edit Lane B/C implementation files or compete for the same applied environment, sequence it after those lanes instead of launching it concurrently.
 
 **Owns:** `packages/observability/**`, namespaced worker/runtime instrumentation, load/fault/recovery scripts, and operational runbooks outside Terraform.
 

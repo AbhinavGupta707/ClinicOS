@@ -42,17 +42,19 @@ Monitoring:
 
 Workers:
 
-- Launch exactly the two to four visible project-scoped worktree workers in the active checkpoint packet.
+- Derive the worker count at checkpoint launch; do not treat the packet's provisional range as a quota.
+- Launch a worker only when its work is substantial, writable paths are disjoint, inputs are stable, narrow tests are independent, the commit is useful alone, and it does not compete for the same mutable external environment.
+- Combine, sequence or retain work in the master when any condition fails. Dependent UI/QA/integration workers may launch only in a later wave from a recorded stable integration commit.
 - Use project target /Users/abhinavgupta/Desktop/ClinicOS and environment type worktree.
 - Explicitly use model gpt-5.6-sol.
-- Use xhigh for architecture/schema/security/clinical/financial/cloud/provider/AI/interoperability lanes and high for bounded UI/QA/docs/evidence lanes, exactly as specified.
-- Start every worker from the same clean main launch commit.
+- Use xhigh for architecture/schema/security/clinical/financial/cloud/provider/AI/interoperability lanes and high for bounded UI/QA/docs/evidence lanes, as specified for active candidates.
+- Start every initial worker from the same clean `main` launch commit. Start an approved dependent second-wave worker only from the exact recorded stable integration commit that contains its producer inputs.
 - Give every worker concrete goal, allowed paths, master-only/forbidden files, tests, early-blocker instruction and mandatory commit/handoff format.
 - Record pending worktree ID, thread ID, worktree path, base, model/effort and ownership in the checkpoint log.
 
 Conflict prevention:
 
-- Build a path-level conflict matrix before launch.
+- Build a path-level conflict and dependency matrix before launch and record why every selected worker is genuinely parallel-safe.
 - Do not allow two workers to edit the same implementation file.
 - Master alone owns root package.json/package-lock.json, AGENTS.md, shared env/CI/Docker, canonical migrations, aggregate route/export/navigation/OpenAPI composition, memory/log/remediation/release truth unless the packet names one exclusive worker owner.
 - A worker needing a master-only change records it in handoff instead of editing it.

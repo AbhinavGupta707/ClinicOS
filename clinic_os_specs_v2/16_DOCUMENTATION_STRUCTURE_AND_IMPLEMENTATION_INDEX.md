@@ -4,7 +4,7 @@
 **Status:** Canonical planning index
 **Purpose:** Keep the project documentation lean, remove duplicated planning paths, and give implementation agents a clear execution map.
 
-> **Current authority (2026-07-09):** CP11 is complete at E3. Plan 23, plan 24, the remediation register, evidence standard, and `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md` govern CP12-CP18. The user explicitly selected one `gpt-5.6-sol` `xhigh` master plus two to four visible isolated worktree workers per checkpoint.
+> **Current authority (2026-07-09):** CP11 is complete at E3. Plan 23, plan 24, the remediation register, evidence standard, and `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md` govern CP12-CP18. The user explicitly selected one `gpt-5.6-sol` `xhigh` master plus an adaptive number of visible isolated worktree workers justified by path, input, test and environment independence.
 
 ## 1. Executive Decision
 
@@ -65,13 +65,13 @@ These files are active and should be treated as current context.
 | `../docs/implementation/CHECKPOINT_11_VERIFICATION_AND_DURABLE_DATA_FOUNDATION.md` | Completed checkpoint packet | CP11 requirements and E3 closeout context. |
 | `../docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md` | Current execution runbook | Master heartbeat, model policy, conflict-safe workers, merge and verification loop. |
 | `../docs/orchestration/CP12_TO_CP18_AUTONOMOUS_KICKOFF.md` | Master launcher | Copy/paste prompt for the autonomous `gpt-5.6-sol` `xhigh` orchestrator. |
-| `../docs/orchestration/CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md` | Active checkpoint packet | CP12 four-lane modular API/contract execution. |
-| `../docs/orchestration/CHECKPOINT_13_DURABLE_CLINIC_DAY.md` | Future packet | CP13 four vertical durable workflow lanes. |
-| `../docs/orchestration/CHECKPOINT_14_CLOUD_SECURITY_OPERATIONS.md` | Future packet | CP14 cloud/security/media/telemetry/recovery lanes. |
-| `../docs/orchestration/CHECKPOINT_15_OFFICIAL_PROVIDER_INTEGRATIONS.md` | Future packet | CP15 Meta/Razorpay/telephony/provider-ops lanes. |
-| `../docs/orchestration/CHECKPOINT_16_NATIVE_AI_INTEROPERABILITY.md` | Future packet | CP16 mobile/AI/FHIR-ABDM/safety-QA lanes. |
-| `../docs/orchestration/CHECKPOINT_17_CONTROLLED_PILOT_LAUNCH.md` | Future packet | CP17 E5/E6 release assurance lanes. |
-| `../docs/orchestration/CHECKPOINT_18_MULTI_CLINIC_GA.md` | Future packet | CP18 E7 multi-clinic production lanes. |
+| `../docs/orchestration/CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md` | Active checkpoint packet | CP12 three-worker contract/repository/security foundation followed by API modularization. |
+| `../docs/orchestration/CHECKPOINT_13_DURABLE_CLINIC_DAY.md` | Future packet | CP13 three-to-four candidate verticals after seam verification. |
+| `../docs/orchestration/CHECKPOINT_14_CLOUD_SECURITY_OPERATIONS.md` | Future packet | CP14 three-to-four cloud/security candidates with serialized environment tests. |
+| `../docs/orchestration/CHECKPOINT_15_OFFICIAL_PROVIDER_INTEGRATIONS.md` | Future packet | CP15 two-to-three activated provider candidates, then operations QA. |
+| `../docs/orchestration/CHECKPOINT_16_NATIVE_AI_INTEROPERABILITY.md` | Future packet | CP16 two-to-three progressable native/AI/interoperability candidates, then QA. |
+| `../docs/orchestration/CHECKPOINT_17_CONTROLLED_PILOT_LAUNCH.md` | Future packet | CP17 two-to-three independent assurance candidates with serialized execution. |
+| `../docs/orchestration/CHECKPOINT_18_MULTI_CLINIC_GA.md` | Future packet | CP18 two-to-three observed production workstreams, then final QA. |
 | `00_SOURCE_REGISTER.md` | Source register | Evidence, references, and research traceability. |
 | `CHANGELOG.md` | Change history | What changed across planning passes. |
 | `COMBINED_BUILD_PACK.md` | Pointer only | Explains why the old combined pack is archived. |

@@ -2,7 +2,7 @@
 
 **Status:** Planned; devices and approved providers required
 **Evidence target:** E4 physical-device/provider/validator
-**Workers:** four boundary-isolated worktrees
+**Workers:** provisionally two to three initial boundary worktrees; only activated, independently progressable boundaries launch
 **Primary findings:** PRR-004, 005, 021-023
 
 ## 1. Outcome
@@ -35,7 +35,9 @@ Complete the selected native capture, AI/STT and FHIR/ABDM boundaries without ex
 
 **Invariant:** fixture projection cannot be presented as live conformance; ABDM stays unavailable without official activation.
 
-### Lane D — Safety, Device and Boundary QA (`gpt-5.6-sol`, `high`)
+### Optional second wave — Safety, Device and Boundary QA (`gpt-5.6-sol`, `high`)
+
+**Launch condition:** the selected mobile, AI/STT and interoperability boundaries are reviewed and merged with stable consent, provenance and unavailable-state contracts. Otherwise the master owns this work.
 
 **Owns:** CP16 acceptance/e2e/eval orchestration, device/provider evidence templates, privacy manifests/release runbooks and CP16 QA/security delta.
 
@@ -45,7 +47,7 @@ Complete the selected native capture, AI/STT and FHIR/ABDM boundaries without ex
 
 Master owns root manifests/lockfile/env, API route/bootstrap composition, shared consent/audit/capability registry integration, signing/distribution external actions and final physical-device/provider tests.
 
-Merge mobile, AI and FHIR namespaces, then QA. Reconcile any shared consent/audit contract centrally; do not let lanes create parallel consent models.
+Launch only the mobile, AI/STT and FHIR/ABDM candidates that can make material progress with the available activation, provider and device inputs. Merge those namespaces, freeze the shared consent/provenance boundary, then optionally launch QA from that integration commit. Reconcile any shared consent/audit contract centrally; do not let lanes create parallel consent models.
 
 ## 4. Exit Gate
 

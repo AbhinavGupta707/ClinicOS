@@ -9,6 +9,7 @@ Changed:
 - Set the master to `gpt-5.6-sol` `xhigh`; worker lanes use `gpt-5.6-sol` `high` or `xhigh` according to boundary risk.
 - Added a canonical orchestration program covering visible project worktrees, a verified 90-second heartbeat request/fallback, quiet monitoring, path-level conflict prevention, worker handoffs, integration branches, merge review, testing and sequential promotion.
 - Added launch packets with non-overlapping lane ownership for CP12 modular API/contracts, CP13 durable clinic day, CP14 cloud/security operations, CP15 official providers, CP16 mobile/AI/interoperability, CP17 controlled pilot and CP18 multi-clinic GA.
+- Replaced fixed four-worker checkpoint assumptions with an adaptive lane gate. CP12 now starts with three workers; later checkpoints provisionally use three-to-four or two-to-three only when paths, inputs, tests and external environments are genuinely independent. Dependent QA/UI work stays with the master or launches as a later optional wave.
 - Reclassified the prior single-session runbook as CP11 history only and updated AGENTS, indexes, memory and checkpoint state.
 
 Unchanged:

@@ -7,14 +7,14 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 ## Current Orchestration State
 
 - **Current release truth:** the independent post-CP10 audit is **NO-GO** for pilot, production PHI and live production providers. CP10 remains historical E1/E2 local/fixture evidence only. Read plans 23/24, the remediation register and the production evidence standard before new implementation.
-- **Current execution decision:** CP11 was completed in one master session. The user explicitly changed CP12-CP18 to a `gpt-5.6-sol` `xhigh` master plus two to four visible project-scoped worktree workers per checkpoint. Use `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md` and the active checkpoint packet.
+- **Current execution decision:** CP11 was completed in one master session. The user explicitly changed CP12-CP18 to a `gpt-5.6-sol` `xhigh` master plus an adaptive number of visible project-scoped worktree workers. There is no lane quota: every worker must pass the path/input/test/environment independence gate. Use `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md` and the active checkpoint packet.
 - **Monitoring decision:** the future master creates and verifies a thread-attached heartbeat at the requested 90-second cadence. If the app rejects that interval, use an active roughly 90-second status-read loop plus the shortest supported sub-hour heartbeat and record the limitation.
 - **Current checkpoint state:** CP11 E3 is committed on `main` at `a6109bb`; final report and evidence are `docs/orchestration/CHECKPOINT_11_FINAL_REPORT.md` and `docs/qa/checkpoint-11-evidence.md`. Any material CP11 code/schema change invalidates its evidence and requires rerun.
-- **Next checkpoint:** CP12 four-lane modular API/generated contracts orchestration. Launch packet: `docs/orchestration/CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md`. Resolve the project through `list_projects`, launch only from clean verified `main`, integrate on `codex/integration/checkpoint-12`, and do not start CP13 until CP12 is promoted.
+- **Next checkpoint:** CP12 provisionally starts with three independent contract-generation, repository-seam and security/parity-foundation workers. The API framework consumes those interfaces in a later worktree or the master after interface freeze. Launch packet: `docs/orchestration/CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md`. Resolve the project through `list_projects`, launch only from clean verified `main`, integrate on `codex/integration/checkpoint-12`, and do not start CP13 until CP12 is promoted.
 - Remaining blockers include validation-only Terraform, console-only telemetry, no production media
   adapter, incomplete provider registration/routes, unavailable native capture/in-memory mobile
-  cache, no live restore/security/clinic evidence, and higher-tier portions of PRR-001/003/010/025-
-  027.
+  cache, no live restore/security/clinic evidence, and higher-tier portions of
+  PRR-001/003/010/025-027.
 
 ## CP11 Durable Foundation Memory
 

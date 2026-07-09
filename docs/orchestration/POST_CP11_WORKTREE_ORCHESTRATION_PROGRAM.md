@@ -3,7 +3,7 @@
 **Date:** 2026-07-09
 **Status:** Canonical CP12-CP18 execution runbook
 **Master:** one project-scoped Codex master task on `gpt-5.6-sol` with `xhigh` reasoning
-**Workers:** two to four visible project-scoped worktree tasks per checkpoint
+**Workers:** adaptive visible project-scoped worktree tasks; no fixed count or padding
 **Project ID:** `/Users/abhinavgupta/Desktop/ClinicOS`
 
 ## 1. Operating Decision
@@ -18,7 +18,7 @@ Workers are implementation lanes, not independent release authorities. A worker 
 verified main
   -> checkpoint launch packet committed
   -> integration branch created
-  -> 2-4 isolated workers launched from the same main commit
+  -> only independently justified initial workers launched from the same main commit
   -> workers monitored without interference
   -> handoffs and diffs reviewed
   -> lane commits merged in dependency order
@@ -31,6 +31,19 @@ verified main
 ```
 
 Do not launch lanes from a dirty working tree. Do not launch two checkpoints concurrently. Do not let a later checkpoint hide a failing earlier exit gate.
+
+### 2.1 Adaptive lane-count gate
+
+The packet's worker range is a planning recommendation, not a target. Immediately before launch, the master inspects the current repository and launches a candidate lane only when all of these are true:
+
+1. the work is substantial enough to justify a separate task;
+2. its writable paths do not overlap another active lane or a master-owned shared surface;
+3. its input contracts are already stable at the launch commit;
+4. it can run meaningful narrow verification without editing another lane's files;
+5. it can produce a useful standalone commit and handoff;
+6. it does not concurrently mutate the same provider, database, deployment or recovery environment as another lane.
+
+Failing any condition means combine the work, keep it in the master integration pass, or schedule it as a later wave. Never create a QA, UI, documentation or “miscellaneous” worker merely to reach a worker count. The maximum active worker count remains four; fewer is preferred whenever coupling or merge risk outweighs parallel speed.
 
 ## 3. Master Preflight
 
@@ -49,7 +62,7 @@ If the previous checkpoint exists only as uncommitted changes, stop lane launch.
 
 ## 4. Worktree Creation Contract
 
-Every worker is created with the Codex app thread tool using:
+Every initial worker is created with the Codex app thread tool using:
 
 - target type `project`;
 - project ID `/Users/abhinavgupta/Desktop/ClinicOS`, freshly confirmed by `list_projects`;
@@ -61,6 +74,8 @@ Every worker is created with the Codex app thread tool using:
 Do not use hidden subagents, projectless tasks, raw `git worktree add`, or a same-directory fork. Immediately record pending worktree ID, resolved thread ID, worktree path, branch/base commit, model/effort, lane ownership and launch time in `CHECKPOINT_LOG.md`.
 
 Workers must commit their lane changes before handoff. They must not push or merge. A clean handoff includes the commit hash, `git status`, changed paths, commands/results/skips, contract/schema/env changes, residual risks and exact integration instructions.
+
+A dependent second-wave worker is allowed only after its producer lanes are reviewed and merged to a stable integration commit. Record that integration commit as its base, rerun the adaptive lane-count gate, and do not keep the producer lane active against the same surfaces. Second waves are optional; the master should do small integration/QA work directly.
 
 ## 5. Model and Reasoning Policy
 
@@ -149,7 +164,7 @@ If a worker needs a master-only change, it records the exact requested patch in 
 - Route registration, export barrels and navigation composition are master integration work unless a single lane owns the whole file.
 - Workers run narrow tests in isolation. A worker is not required to make another parallel lane’s not-yet-merged API compile.
 
-Before launch, the master builds a path-level conflict matrix. If two lanes need the same implementation file, redesign or sequence those lanes rather than accepting predictable conflicts.
+Before launch, the master builds a path-level conflict and dependency matrix. If two lanes need the same implementation file, consume an interface still being created, or need exclusive access to one external environment, redesign or sequence those lanes rather than accepting predictable conflicts.
 
 ## 9. Review and Merge
 
@@ -209,15 +224,17 @@ CP18 cannot honestly complete immediately after CP17: E7 requires observed multi
 
 ## 12. Checkpoint Map
 
-| Checkpoint | Worker count | Packet                                             | Required higher-tier dependency             |
-| ---------- | -----------: | -------------------------------------------------- | ------------------------------------------- |
-| CP12       |            4 | `CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md` | CP11 commit and clean launch base           |
-| CP13       |            4 | `CHECKPOINT_13_DURABLE_CLINIC_DAY.md`              | CP12 modular/lane-safe boundaries           |
-| CP14       |            4 | `CHECKPOINT_14_CLOUD_SECURITY_OPERATIONS.md`       | AWS/tooling authority for E4/E5             |
-| CP15       |            4 | `CHECKPOINT_15_OFFICIAL_PROVIDER_INTEGRATIONS.md`  | Deployed HTTPS edge and provider accounts   |
-| CP16       |            4 | `CHECKPOINT_16_NATIVE_AI_INTEROPERABILITY.md`      | Devices and approved AI/ABDM/provider paths |
-| CP17       |            4 | `CHECKPOINT_17_CONTROLLED_PILOT_LAUNCH.md`         | Exact E5 environment and clinic approvals   |
-| CP18       |            4 | `CHECKPOINT_18_MULTI_CLINIC_GA.md`                 | Observed CP17 production evidence           |
+| Checkpoint | Provisional initial workers | Why this range is parallel-safe                                           | Dependent work                                               |
+| ---------- | --------------------------: | ------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| CP12       |                           3 | Runtime contracts, repository seams and security foundations are disjoint | API framework consumes them only after interface freeze      |
+| CP13       |                         3-4 | Namespaced clinic-day verticals after CP12 proves the seams               | Cross-domain orchestration and canonical migration by master |
+| CP14       |                         3-4 | Terraform, identity, media and optionally isolated observability surfaces | Applied-cloud tests and shared wiring are serialized         |
+| CP15       |                         2-3 | One lane per activated official provider                                  | Operations UI/QA after provider contracts freeze             |
+| CP16       |                         2-3 | Mobile, AI/STT and FHIR/ABDM only when each can progress independently    | Boundary QA after integration                                |
+| CP17       |                         2-3 | Platform, security and clinic-readiness evidence have distinct artifacts  | Shared-environment destructive/E2E tests are serialized      |
+| CP18       |                         2-3 | Only observed onboarding, SRE or governance workstreams with real inputs  | Final multi-clinic QA after changes stabilize                |
+
+These are provisional ranges, not launch instructions. The master records the actual number and justification after applying the gate to the current commit, activation state and available evidence.
 
 ## 13. Completion Contract
 

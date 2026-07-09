@@ -2,7 +2,7 @@
 
 **Status:** Planned; official accounts and external registration required
 **Evidence target:** E4 official sandbox, production activation still gated
-**Workers:** four provider-isolated worktrees
+**Workers:** provisionally two to three initial provider worktrees; count follows official activation state
 **Primary findings:** PRR-008 and PRR-026
 
 ## 1. Outcome
@@ -37,7 +37,9 @@ Every provider lane owns a separate namespace. The master owns the shared provid
 
 **Activation:** credentials/provider account were absent at CP11. Diagnose registration and request the smallest user action before runtime debugging. Keep the entire workflow disabled if not activated.
 
-### Lane D — Provider Operations, UI and QA (`gpt-5.6-sol`, `high`)
+### Optional second wave — Provider Operations, UI and QA (`gpt-5.6-sol`, `high`)
+
+**Launch condition:** the active provider adapters are reviewed and merged, and their registry/health/event contracts are frozen. Otherwise the master owns this work.
 
 **Owns:** namespaced provider registry/health projections, `apps/web` provider-operations feature paths, CP15 Playwright/acceptance tests and CP15 QA/runbook drafts.
 
@@ -53,7 +55,7 @@ Record provider-side registration, account/mode, callback URL, event subscriptio
 
 ## 4. Merge and Exit
 
-Provider namespaces may merge in any dependency-safe order; merge Lane D after the three provider contracts. Master assembles the registry/routes/env/secrets, reconciles lockfile and runs cross-provider rate/cost/DLQ/health evidence.
+Launch Meta and Razorpay only when their official sandbox paths can make material progress. Launch telephony only after the official provider is selected and registered; do not create an idle telephony worker to satisfy a count. Provider namespaces may merge in any dependency-safe order. The master then freezes shared contracts and either launches the optional operations/UI/QA second wave or owns it directly. Master assembles the registry/routes/env/secrets, reconciles lockfile and runs cross-provider rate/cost/DLQ/health evidence.
 
 Exit requires:
 

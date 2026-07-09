@@ -7,6 +7,7 @@ This runbook optimizes the master orchestration pass after isolated worker lanes
 ## CP12-CP18 Control Addendum
 
 - Master runs on `gpt-5.6-sol` `xhigh`; visible worktree workers use the packet’s explicit `gpt-5.6-sol` `high`/`xhigh` setting.
+- Worker count is adaptive, not a quota. Launch only substantial lanes with disjoint paths, stable inputs, independent narrow tests, standalone commit value and no competing mutable environment. Sequence dependent consumers from a recorded integration commit or keep them with the master.
 - Create and verify the requested 90-second thread heartbeat at orchestration start. If rejected, record it and use the documented active-loop/fallback cadence.
 - Build a path-level conflict matrix before thread creation. Two workers must not own the same implementation file.
 - Use project ID `/Users/abhinavgupta/Desktop/ClinicOS` resolved through `list_projects`; never use hidden/projectless/raw worktrees.

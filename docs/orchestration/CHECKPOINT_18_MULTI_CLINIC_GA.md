@@ -2,7 +2,7 @@
 
 **Status:** Planned; requires observed CP17 operations
 **Evidence target:** E7 repeatable production operations
-**Workers:** four worktrees after CP17 observation gate
+**Workers:** provisionally two to three initial worktrees after CP17 observation gate; only observed workstreams launch
 
 ## 1. Outcome
 
@@ -40,7 +40,9 @@ If this evidence does not exist, CP18 remains blocked. A heartbeat may monitor a
 
 **Goal:** recurring vulnerability/access/key/audit/backup reviews, independent penetration retest, SLA/support/escalation, incident communications and expiring exception governance.
 
-### Lane D — Multi-Clinic E2E and Release QA (`gpt-5.6-sol`, `high`)
+### Optional second wave — Multi-Clinic E2E and Release QA (`gpt-5.6-sol`, `high`)
+
+**Launch condition:** observed CP17 findings have been implemented and the onboarding, SRE and governance behavior under test is stable. Otherwise the master owns this work.
 
 **Owns:** multi-tenant/noisy-neighbor/onboarding/upgrade/rollback/browser/device/provider acceptance and release evidence.
 
@@ -48,7 +50,7 @@ If this evidence does not exist, CP18 remains blocked. A heartbeat may monitor a
 
 ## 4. Master Integration
 
-The master translates observed CP17 findings into owned changes before launch, prevents validation lanes from concurrently editing shared product files, integrates in dependency order, reruns invalidated E7 evidence and updates all operational cadences. Root release/governance files remain master-owned.
+The master translates observed CP17 findings into candidate workstreams and launches only those with real inputs and independently owned paths; it does not create an empty lane for an area with no observed change. The master prevents validation lanes from concurrently editing shared product files, integrates in dependency order, and optionally launches multi-clinic QA only after behavior stabilizes. It reruns invalidated E7 evidence and updates all operational cadences. Root release/governance files remain master-owned.
 
 ## 5. Exit Gate
 

@@ -2,7 +2,7 @@
 
 **Date:** 2026-07-09
 **Status:** Canonical post-CP10 implementation plan
-**Execution model:** CP11 complete; CP12-CP18 use a `gpt-5.6-sol` `xhigh` master plus two to four isolated visible worktree workers
+**Execution model:** CP11 complete; CP12-CP18 use a `gpt-5.6-sol` `xhigh` master plus only the isolated visible worktree workers justified by each checkpoint's dependency analysis
 **Release posture:** Local/synthetic development only; production and pilot are **NO-GO** until the applicable gates pass
 
 ## 1. Purpose
@@ -31,7 +31,7 @@ Security is not a final hardening phase. Every checkpoint owns authorization, te
 
 ### 2.5 Master-orchestrated worktrees execute CP12-CP18
 
-CP11 was completed and verified in one master session. The user then explicitly selected worktree orchestration for CP12-CP18. One `gpt-5.6-sol` master at `xhigh` owns architecture, worker launch/monitoring, integration, testing, evidence and release judgment. Each checkpoint launches two to four visible project-scoped worktree workers from the same verified `main` commit with non-overlapping paths. High-risk lanes use `xhigh`; bounded UI/QA/docs lanes use `high`. The master integrates on `codex/integration/checkpoint-N` and promotes only after the full exit gate.
+CP11 was completed and verified in one master session. The user then explicitly selected worktree orchestration for CP12-CP18. One `gpt-5.6-sol` master at `xhigh` owns architecture, worker launch/monitoring, integration, testing, evidence and release judgment. Worker count is adaptive rather than fixed. Before each launch, the master proves that every proposed lane is substantial, path-disjoint, independently testable, based on stable inputs and able to produce a useful standalone commit. Initial lanes start from the same verified `main` commit. Dependent consumers launch only in a later wave from a recorded integration commit, or remain master integration work. High-risk lanes use `xhigh`; bounded UI/QA/docs lanes use `high`. The master integrates on `codex/integration/checkpoint-N` and promotes only after the full exit gate.
 
 The canonical control loop, heartbeat, model policy, shared-file rules and packets are in `../docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`.
 
@@ -294,8 +294,8 @@ For CP12-CP18:
 1. Re-read this plan, the remediation register, threat model, evidence standard, orchestration program and active packet.
 2. Confirm `main` is the clean verified prior checkpoint; preserve user-owned research.
 3. Create the checkpoint integration branch and a path-level conflict matrix.
-4. Resolve the ClinicOS project and create two to four visible project worktree threads with the packet’s explicit `gpt-5.6-sol` reasoning effort.
-5. Record IDs, paths, base commit, ownership and tests; create/verify the 90-second master heartbeat.
+4. Resolve the ClinicOS project, evaluate every candidate against the adaptive lane gate, and create only the justified visible project worktree threads with the packet’s explicit `gpt-5.6-sol` reasoning effort.
+5. Record why each lane is parallel-safe plus its IDs, paths, base commit, ownership and tests; create/verify the 90-second master heartbeat.
 6. Monitor quietly through thread reads; fix real blockers without conflicting with running workers.
 7. Review each committed handoff/diff and merge in dependency order.
 8. Reconcile migrations, root manifests/lockfile, shared contracts/exports/routes/navigation and evidence once in master integration.

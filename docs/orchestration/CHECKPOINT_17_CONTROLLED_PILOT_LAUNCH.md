@@ -2,7 +2,7 @@
 
 **Status:** Planned; clinic and real-data authority required
 **Evidence target:** E5 synthetic pilot-production, then authorized E6 real-clinic validation
-**Workers:** four validation/remediation worktrees
+**Workers:** provisionally two to three initial evidence worktrees; shared-environment execution remains serialized
 **Primary findings:** PRR-030 and final in-scope P1/P2 confirmation
 
 ## 1. Outcome
@@ -29,7 +29,9 @@ Prove that the exact signed release, deployed environment, providers, devices, p
 
 **Goal:** facility/timezone/hours/roles/pricebook/templates/consents, migration plan/reconciliation, clinical hazard/UAT, staff training, downtime/manual backfill, support/on-call and stop-authority exercise.
 
-### Lane D — End-to-End QA, Providers and Devices (`gpt-5.6-sol`, `high`)
+### Optional second wave — End-to-End QA, Providers and Devices (`gpt-5.6-sol`, `high`)
+
+**Launch condition:** the exact release/environment is stable and Lanes A-C have frozen their evidence procedures and stop conditions. Otherwise the master owns this work.
 
 **Owns:** CP17 end-to-end/load/browser/device/provider regression harness and sanitized evidence.
 
@@ -37,7 +39,7 @@ Prove that the exact signed release, deployed environment, providers, devices, p
 
 ## 3. Defect Routing
 
-Validation lanes should not all patch shared product files. They file exact defects with evidence. The master assigns a single follow-up worktree or patches a small cross-lane integration issue. Any material fix invalidates affected E5 evidence and triggers rerun before sign-off.
+Validation lanes should not all patch shared product files. They file exact defects with evidence. The master assigns a single follow-up worktree or patches a small cross-lane integration issue. Load, DAST, restore, failover, provider and clinic-day tests against the same environment are scheduled serially even when their artifact preparation ran in parallel. Any material fix invalidates affected E5 evidence and triggers rerun before sign-off.
 
 ## 4. E6 Authority and Launch
 
