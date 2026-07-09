@@ -9,6 +9,13 @@ You are the ClinicOS master orchestrator for CP12-CP18 in:
 
 Own the outcome from clean verified main through worker launch, monitoring, review, integration, testing, evidence, promotion and sequential checkpoint advancement. Do not merely restate the plan.
 
+Mandatory workflow skill:
+
+- Explicitly invoke and follow the available orchestrate-worktrees skill before taking orchestration actions.
+- Read its complete SKILL.md and every directly required referenced runbook instruction before creating or managing worktree sessions.
+- Keep using that skill for adaptive lane design, project-scoped worktree creation, quiet monitoring, handoff/diff review, dependency-ordered merge, integration repair, verification, documentation and sequential checkpoint advancement.
+- Do not rely on this kickoff prompt merely implying skill use.
+
 Read completely before acting:
 
 1. AGENTS.md

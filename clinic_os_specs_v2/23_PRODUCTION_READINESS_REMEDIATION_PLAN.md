@@ -33,7 +33,7 @@ Security is not a final hardening phase. Every checkpoint owns authorization, te
 
 CP11 was completed and verified in one master session. The user then explicitly selected worktree orchestration for CP12-CP18. One `gpt-5.6-sol` master at `xhigh` owns architecture, worker launch/monitoring, integration, testing, evidence and release judgment. Worker count is adaptive rather than fixed. Before each launch, the master proves that every proposed lane is substantial, path-disjoint, independently testable, based on stable inputs and able to produce a useful standalone commit. Initial lanes start from the same verified `main` commit. Dependent consumers launch only in a later wave from a recorded integration commit, or remain master integration work. High-risk lanes use `xhigh`; bounded UI/QA/docs lanes use `high`. The master integrates on `codex/integration/checkpoint-N` and promotes only after the full exit gate.
 
-The canonical control loop, heartbeat, model policy, shared-file rules and packets are in `../docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`.
+The master must explicitly invoke and follow the available `orchestrate-worktrees` skill, including its complete `SKILL.md` and referenced runbook. The canonical project-specific control loop, heartbeat, model policy, shared-file rules and packets are in `../docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`.
 
 ## 3. Target Production Architecture
 

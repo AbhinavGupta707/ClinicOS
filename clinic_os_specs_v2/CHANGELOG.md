@@ -11,6 +11,7 @@ Resolved launch gate:
 
 - GitHub CLI authentication now passes with `repo` and `workflow` scopes. Terraform and later external authorities remain checkpoint-specific gates rather than CP12 implementation blockers.
 - Added a strict `medium`-reasoning exception for substantial spec-frozen mechanical tasks only; no currently planned implementation lane was downgraded.
+- Made `orchestrate-worktrees` an explicit mandatory master-start action in AGENTS, the canonical program and the autonomous kickoff instead of relying on implicit skill triggering.
 
 ## 2026-07-09 — CP12-CP18 worktree orchestration transition
 

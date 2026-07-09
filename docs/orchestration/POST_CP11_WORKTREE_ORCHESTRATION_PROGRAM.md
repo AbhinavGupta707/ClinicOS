@@ -49,16 +49,17 @@ Failing any condition means combine the work, keep it in the master integration 
 
 At the beginning of the orchestration task and before each checkpoint:
 
-1. Read `AGENTS.md`, plans 23/24, the remediation register, evidence standard, this program, the active checkpoint packet, memory, checkpoint log, and merge runbook.
-2. Inspect `git status --short`, current branch, recent commits and `git worktree list --porcelain`.
-3. Confirm `main` is clean except explicitly user-owned untracked paths. `research/` and `scripts/research/` remain excluded unless the user changes scope.
-4. Rerun the previous checkpoint’s invalidation-sensitive gates.
-5. Resolve the saved ClinicOS project with `list_projects`; use the returned project ID, not a guessed projectless target.
-6. Create `codex/integration/checkpoint-N` from the verified `main` launch commit and record both.
-7. Confirm external authorities, installed tools and official activation state. Diagnose absent/unregistered tools or providers before permissions/runtime.
-8. Run the credential boundary preflight below. Do not launch workers while required GitHub authentication is invalid or the ignored secret handoff is unsafe/misconfigured.
-9. Classify existing worktrees as historical or active from their recorded checkpoint/base. Never reuse or delete an old worktree without checking for unique unmerged work.
-10. Create and verify the monitoring heartbeat described below.
+1. Explicitly invoke the available `orchestrate-worktrees` skill, read its complete `SKILL.md` and referenced runbook, and use it for the full control loop. Do not treat this program as a replacement for loading the skill.
+2. Read `AGENTS.md`, plans 23/24, the remediation register, evidence standard, this program, the active checkpoint packet, memory, checkpoint log, and merge runbook.
+3. Inspect `git status --short`, current branch, recent commits and `git worktree list --porcelain`.
+4. Confirm `main` is clean except explicitly user-owned untracked paths. `research/` and `scripts/research/` remain excluded unless the user changes scope.
+5. Rerun the previous checkpoint’s invalidation-sensitive gates.
+6. Resolve the saved ClinicOS project with `list_projects`; use the returned project ID, not a guessed projectless target.
+7. Create `codex/integration/checkpoint-N` from the verified `main` launch commit and record both.
+8. Confirm external authorities, installed tools and official activation state. Diagnose absent/unregistered tools or providers before permissions/runtime.
+9. Run the credential boundary preflight below. Do not launch workers while required GitHub authentication is invalid or the ignored secret handoff is unsafe/misconfigured.
+10. Classify existing worktrees as historical or active from their recorded checkpoint/base. Never reuse or delete an old worktree without checking for unique unmerged work.
+11. Create and verify the monitoring heartbeat described below.
 
 If the previous checkpoint exists only as uncommitted changes, stop lane launch. Review, test and commit/promote it first so every worktree starts from the same immutable state.
 
