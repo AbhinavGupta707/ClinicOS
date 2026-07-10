@@ -5,6 +5,11 @@ export {
   ServiceMediaAuthorityFactory,
   type S3ClinicalMediaProviderOptions
 } from "./clinical-media-provider.ts";
+export {
+  PostgresPrivateMediaAtomicPersistence,
+  PostgresPrivateMediaPersistenceError,
+  type PostgresPrivateMediaTransactionContext
+} from "./postgres-private-media-persistence.ts";
 export type {
   MediaAuthorityFactory,
   MediaRequestAuthorityFactory,

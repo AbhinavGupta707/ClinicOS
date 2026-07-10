@@ -185,6 +185,12 @@ async function grantRuntimePrivileges() {
     await client.query(
       "revoke delete, truncate on table api_idempotency_records from clinic_os_runtime"
     );
+    await client.query(
+      "revoke delete, truncate on table private_media_records from clinic_os_runtime"
+    );
+    await client.query(
+      "revoke update, delete, truncate on table private_media_scan_evidence, private_media_operations from clinic_os_runtime"
+    );
     await client.query("revoke all on table flyway_schema_history from clinic_os_runtime");
     await client.query("grant select on table flyway_schema_history to clinic_os_runtime");
     await client.query("revoke all on all tables in schema public from clinic_os_worker");
@@ -211,6 +217,9 @@ async function grantRuntimePrivileges() {
     );
     await client.query(
       "revoke all on table outbox_attempts, dead_letter_events from clinic_os_runtime"
+    );
+    await client.query(
+      "revoke all on table private_media_records, private_media_scan_evidence, private_media_operations from clinic_os_worker"
     );
     await client.query(
       "revoke update, delete, truncate on table outbox_events from clinic_os_runtime"
