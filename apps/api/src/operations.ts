@@ -4071,6 +4071,9 @@ export async function saveEncounterClinicalNoteDraft(
     });
   }
   const updatedEncounter = await dependencies.repository.findEncounterById(scope, encounterId);
+  if (!updatedEncounter) {
+    throw new Error("Encounter could not be reloaded after saving the clinical note draft.");
+  }
 
   await audit(context, dependencies, "clinical_note.draft_created", {
     patientId: encounter.patientId,
@@ -8544,6 +8547,7 @@ function publicDentalChartSnapshot<T extends { chartState: { numberingSystem: st
 function publicTask(task: TaskRecord) {
   return {
     id: task.id,
+    rowVersion: task.rowVersion,
     patientId: task.patientId,
     leadId: task.leadId,
     appointmentId: task.appointmentId,

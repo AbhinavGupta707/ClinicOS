@@ -1,5 +1,4 @@
-import { randomUUID } from "node:crypto";
-import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { type IncomingMessage, type Server } from "node:http";
 import { pathToFileURL } from "node:url";
 import { safeParseClinicOsEnv, type ClinicOsConfig } from "@clinic-os/config";
 import {
@@ -8,9 +7,8 @@ import {
   type PaymentProvider
 } from "@clinic-os/integrations";
 import {
-  AuthenticationError,
-  AuthorizationError,
   buildAccessContext,
+  buildMeResponse,
   principalFromVerifiedKeycloakClaims,
   type AccessContext,
   type KeycloakAccessTokenClaims
@@ -22,7 +20,8 @@ import {
   PostgresIdentityRepository,
   LATEST_DATABASE_SCHEMA_VERSION,
   type ClinicOperationsRepository,
-  type IdentityRepository
+  type IdentityRepository,
+  type ScopedApiRequestGuardsPort
 } from "@clinic-os/db";
 import {
   clinicLocalDateFromClock,
@@ -32,7 +31,7 @@ import {
   type Clock,
   type UUID
 } from "@clinic-os/domain";
-import type { AuditEventRecord } from "@clinic-os/security";
+import { createAuditEvent, type AtomicBudgetStore, type AuditEventRecord } from "@clinic-os/security";
 import { Pool } from "pg";
 import { ApiError, toApiErrorBody } from "./errors.ts";
 import { ApiHealthMonitor, type ApiDependencyProbe, type ApiRepositoryMode } from "./health.ts";
@@ -43,7 +42,6 @@ import {
   LocalFixtureClinicOperationsRepository,
   LocalFixtureIdentityRepository
 } from "./local-fixture.ts";
-import { getMe } from "./me.ts";
 import {
   checkInAppointment,
   acceptTreatmentPlan,
@@ -173,6 +171,24 @@ import {
   type OperationsRequestContext
 } from "./operations.ts";
 import { LocalMediaStorageSimulator, type MediaStorageProvider } from "./media-storage.ts";
+import type {
+  ApiTransactionContext,
+  AtomicMutationCoordinator,
+  ClinicOsNestRuntime,
+  ResolvedAccessContext,
+  VerifiedClinicRequestContext
+} from "./framework/contracts.ts";
+import {
+  InMemoryAtomicBudgetStore,
+  InMemoryAtomicMutationCoordinator
+} from "./framework/in-memory-test-doubles.ts";
+import {
+  createClinicOsNestApplication,
+  createClinicOsNestCompatibilityServer,
+  type ClinicOsNestApplication
+} from "./framework/nest-application.ts";
+import { RedisAtomicBudgetStore } from "./framework/redis-budget-store.ts";
+import { PostgresAtomicMutationCoordinator } from "./framework/postgres-mutation-coordinator.ts";
 
 interface AuditSink {
   appendAuditEvent(event: AuditEventRecord): Promise<void>;
@@ -189,6 +205,7 @@ interface OperationsUnitOfWork {
     callback: (context: {
       repository: ClinicOperationsRepository;
       auditSink: AuditSink;
+      requestGuards: ScopedApiRequestGuardsPort;
     }) => Promise<T>
   ): Promise<T>;
 }
@@ -208,6 +225,9 @@ export interface ClinicOsApiServerOptions {
   repositoryMode?: ApiRepositoryMode;
   operationsUnitOfWork?: OperationsUnitOfWork;
   clock?: Clock;
+  budgetStore?: AtomicBudgetStore;
+  budgetKeySecret?: string;
+  mutationCoordinator?: AtomicMutationCoordinator;
 }
 
 interface RuntimeOptions {
@@ -215,10 +235,25 @@ interface RuntimeOptions {
   port: number;
 }
 
+interface RuntimeNestOptions {
+  app: ClinicOsNestApplication["app"];
+  port: number;
+}
+
 const DEFAULT_PORT = 4000;
 const DEFAULT_API_AUDIENCE = "clinic-os-api";
 
 export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Server {
+  return createClinicOsNestCompatibilityServer(createClinicOsNestRuntime(options));
+}
+
+export function createClinicOsApiNestApplication(
+  options: ClinicOsApiServerOptions
+): Promise<ClinicOsNestApplication> {
+  return createClinicOsNestApplication(createClinicOsNestRuntime(options));
+}
+
+function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsNestRuntime {
   const expectedIssuer = buildExpectedIssuer(options.config);
   const acceptedAudience = process.env.CLINIC_OS_API_AUDIENCE ?? DEFAULT_API_AUDIENCE;
   const tokenVerifier =
@@ -227,172 +262,215 @@ export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Serv
       expectedIssuer,
       jwksUri: `${expectedIssuer}/protocol/openid-connect/certs`
     });
+  const repositoryMode = options.repositoryMode ?? "injected";
+  const fixtureMode = repositoryMode === "fixture";
+  const budgetStore = options.budgetStore ?? (fixtureMode ? new InMemoryAtomicBudgetStore() : null);
+  const budgetKeySecret =
+    options.budgetKeySecret ??
+    (fixtureMode ? "clinicos-cp12-fixture-budget-secret-000000000000" : null);
+  const mutationCoordinator =
+    options.mutationCoordinator ??
+    (fixtureMode ? new InMemoryAtomicMutationCoordinator() : null);
+  if (!budgetStore || !budgetKeySecret || !mutationCoordinator) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "ClinicOS API security persistence dependencies are not configured.",
+      {
+        missing: [
+          ...(!budgetStore ? ["atomic_budget_store"] : []),
+          ...(!budgetKeySecret ? ["budget_key_secret"] : []),
+          ...(!mutationCoordinator ? ["transactional_mutation_coordinator"] : [])
+        ]
+      }
+    );
+  }
+  if (!fixtureMode && mutationCoordinator.durability !== "durable_transactional") {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Non-fixture ClinicOS runtime requires durable transactional mutation coordination."
+    );
+  }
+  const budgetStoreWithReadiness = budgetStore as AtomicBudgetStore & {
+    readiness?: () => Promise<void>;
+  };
   const healthMonitor = new ApiHealthMonitor({
-    repositoryMode: options.repositoryMode ?? "injected",
+    repositoryMode,
     authMode: options.useLocalAuthFixture ? "local_synthetic_fixture" : "keycloak_jwks",
-    probes: options.dependencyProbes
+    probes: [
+      ...(options.dependencyProbes ?? []),
+      {
+        name: "redis_abuse_budget",
+        required: true,
+        check: () => budgetStoreWithReadiness.readiness?.() ?? Promise.resolve()
+      },
+      {
+        name: "transactional_mutation_coordinator",
+        required: true,
+        check: () => mutationCoordinator.readiness()
+      }
+    ]
   });
 
-  return createServer(async (request, response) => {
-    const requestId = getRequestId(request);
-    response.setHeader("x-request-id", requestId);
-
-    try {
-      if (request.method === "GET" && request.url === "/health/live") {
-        return sendJson(response, 200, {
-          status: "ok",
-          service: "clinic-os-api",
-          request_id: requestId
-        });
+  return {
+    clock: options.clock ?? systemClock,
+    budgetStore,
+    budgetKeySecret,
+    mutationCoordinator,
+    repositoryMode,
+    useLocalAuthFixture: options.useLocalAuthFixture ?? false,
+    identityRepository: options.identityRepository,
+    async health(kind, requestId) {
+      if (kind === "liveness") {
+        return {
+          status: 200,
+          body: { status: "ok", service: "clinic-os-api", request_id: requestId }
+        };
       }
-
-      if (request.method === "GET" && request.url === "/health/ready") {
-        const report = await healthMonitor.readiness();
-        return sendJson(response, report.status === "ready" ? 200 : 503, {
-          ...report,
-          request_id: requestId
-        });
-      }
-
-      if (request.method === "GET" && request.url === "/health/startup") {
-        const report = await healthMonitor.startup();
-        return sendJson(response, report.status === "ready" ? 200 : 503, {
-          ...report,
-          request_id: requestId
-        });
-      }
-
-      if (request.url?.startsWith("/v1/") && !(await healthMonitor.admitTraffic())) {
-        throw new ApiError(
-          503,
-          "DEPENDENCY_UNAVAILABLE",
-          "ClinicOS API startup dependencies are unavailable.",
-          { reason: "startup_dependencies_unavailable" }
-        );
-      }
-
-      if (request.method === "GET" && request.url === "/v1/me") {
-        const verifiedKeycloakClaims = await resolveClaims({
-          request,
-          tokenVerifier,
-          useLocalAuthFixture: options.useLocalAuthFixture ?? false,
-          fixtureSubject: options.fixtureSubject,
-          expectedIssuer,
-          acceptedAudience
-        });
-
-        const result = await getMe(
-          {
-            requestId,
-            verifiedKeycloakClaims,
+      const report =
+        kind === "readiness" ? await healthMonitor.readiness() : await healthMonitor.startup();
+      return {
+        status: report.status === "ready" ? 200 : 503,
+        body: { ...report, request_id: requestId }
+      };
+    },
+    admitTraffic: () => healthMonitor.admitTraffic(),
+    resolveAccess: (request) =>
+      resolveAccessContext({
+        request,
+        tokenVerifier,
+        useLocalAuthFixture: options.useLocalAuthFixture ?? false,
+        fixtureSubject: options.fixtureSubject,
+        expectedIssuer,
+        acceptedAudience,
+        config: options.config,
+        identityRepository: options.identityRepository
+      }),
+    async handleIdentity(request, requestId, access) {
+      if (options.auditSink) {
+        await options.auditSink.appendAuditEvent(
+          createAuditEvent({
+            tenantId: access.context.tenant.id,
+            clinicId: null,
+            actor: { type: "user", id: access.context.user.id },
+            action: "auth.session.resolved",
+            resourceType: "user",
+            resourceId: access.context.user.id,
             ipAddress: request.socket.remoteAddress ?? null,
-            userAgent: request.headers["user-agent"] ?? null
-          },
-          {
-            keycloak: {
-              expectedIssuer,
-              acceptedAudiences: [
-                acceptedAudience,
-                options.config.auth.keycloakClientId,
-                "clinicos-api"
-              ],
-              acceptedClientIds: [acceptedAudience, options.config.auth.keycloakClientId]
-            },
-            identityRepository: options.identityRepository,
-            auditSink: options.auditSink
-          }
+            userAgent: headerValue(request, "user-agent") ?? null,
+            correlationId: requestId
+          })
         );
-
-        return sendJson(response, result.status, result.body);
       }
-
-      if (request.method === "POST" && request.url === "/v1/payment-webhooks/razorpay") {
-        if (!options.operationsRepository) {
-          throw new ApiError(
-            503,
-            "CONFIGURATION_ERROR",
-            "ClinicOS operations repository is not configured."
-          );
-        }
-
-        const rawBody = (await readRawBody(request, 1024 * 1024)).toString("utf8");
-        const webhookInput = {
-          requestId,
-          providerKey: "razorpay" as const,
-          rawBody,
-          receivedAt: (options.clock ?? systemClock).now().toISOString(),
-          headers: requestHeadersRecord(request),
-          ipAddress: request.socket.remoteAddress ?? null,
-          userAgent: headerValue(request, "user-agent") ?? null
-        };
-        const handleWebhook = (repository: ClinicOperationsRepository, auditSink?: AuditSink) =>
-          processPaymentWebhook(
-            {
-              repository,
-              auditSink,
-              paymentProvider:
-                options.paymentProvider ?? createRuntimePaymentProvider(options.config),
-              paymentRepository: paymentRepositoryFromOperationsRepository(repository)
-            },
-            webhookInput
-          );
-        const result = options.operationsUnitOfWork
-          ? await options.operationsUnitOfWork.run(({ repository, auditSink }) =>
-              handleWebhook(repository, auditSink)
-            )
-          : await handleWebhook(options.operationsRepository, options.auditSink);
-
-        return sendJson(response, result.status, result.body);
-      }
-
-      if (request.url?.startsWith("/v1/")) {
-        if (!options.operationsRepository) {
-          throw new ApiError(
-            503,
-            "CONFIGURATION_ERROR",
-            "ClinicOS operations repository is not configured."
-          );
-        }
-
-        const routeInput = {
-          request,
-          requestId,
-          tokenVerifier,
-          expectedIssuer,
-          acceptedAudience,
-          config: options.config,
-          identityRepository: options.identityRepository,
-          mediaStorage: options.mediaStorage,
-          paymentProvider: options.paymentProvider ?? createRuntimePaymentProvider(options.config),
-          aiGatewayProvider: options.aiGatewayProvider,
-          useLocalAuthFixture: options.useLocalAuthFixture ?? false,
-          fixtureSubject: options.fixtureSubject,
-          clock: options.clock
-        };
-        const result = options.operationsUnitOfWork
-          ? await options.operationsUnitOfWork.run(({ repository, auditSink }) =>
-              routeOperationsRequest({ ...routeInput, repository, auditSink })
-            )
-          : await routeOperationsRequest({
+      return { status: 200, body: buildMeResponse(access.context, access.clinics) };
+    },
+    async handleWebhook(request, requestId, rawBody, transaction) {
+      const repository = transaction?.repository ?? options.operationsRepository;
+      const auditSink = transaction?.auditSink ?? options.auditSink;
+      if (!repository) throw missingOperationsRepository();
+      const webhookInput = {
+        requestId,
+        providerKey: "razorpay" as const,
+        rawBody: rawBody.toString("utf8"),
+        receivedAt: (options.clock ?? systemClock).now().toISOString(),
+        headers: allowlistedWebhookHeaders(request, options.useLocalAuthFixture ?? false),
+        ipAddress: request.socket.remoteAddress ?? null,
+        userAgent: headerValue(request, "user-agent") ?? null
+      };
+      const handle = (activeRepository: ClinicOperationsRepository, activeAudit?: AuditSink) =>
+        processPaymentWebhook(
+          {
+            repository: activeRepository,
+            auditSink: activeAudit,
+            paymentProvider:
+              options.paymentProvider ?? createRuntimePaymentProvider(options.config),
+            paymentRepository: paymentRepositoryFromOperationsRepository(activeRepository)
+          },
+          webhookInput
+        );
+      if (transaction) return handle(repository, auditSink);
+      return options.operationsUnitOfWork
+        ? options.operationsUnitOfWork.run(({ repository: activeRepository, auditSink: activeAudit }) =>
+            handle(activeRepository, activeAudit)
+          )
+        : handle(repository, auditSink);
+    },
+    async handleLegacyOperation(request, requestId, access, body, rawBody, transaction) {
+      const repository = transaction?.repository ?? options.operationsRepository;
+      const auditSink = transaction?.auditSink ?? options.auditSink;
+      if (!repository) throw missingOperationsRepository();
+      const routeInput = {
+        request,
+        requestId,
+        tokenVerifier,
+        expectedIssuer,
+        acceptedAudience,
+        config: options.config,
+        identityRepository: options.identityRepository,
+        mediaStorage: options.mediaStorage,
+        paymentProvider: options.paymentProvider ?? createRuntimePaymentProvider(options.config),
+        aiGatewayProvider: options.aiGatewayProvider,
+        useLocalAuthFixture: options.useLocalAuthFixture ?? false,
+        fixtureSubject: options.fixtureSubject,
+        clock: options.clock,
+        resolvedAccess: access,
+        preparedBody: body,
+        preparedRawBody: rawBody
+      };
+      if (transaction) return routeOperationsRequest({ ...routeInput, repository, auditSink });
+      return options.operationsUnitOfWork
+        ? options.operationsUnitOfWork.run(({ repository: activeRepository, auditSink: activeAudit }) =>
+            routeOperationsRequest({
               ...routeInput,
-              repository: options.operationsRepository,
-              auditSink: options.auditSink
-            });
-
-        return sendJson(response, result.status, result.body);
-      }
-
-      throw new ApiError(404, "NOT_FOUND", "Route not found.", {
-        method: request.method,
-        path: request.url
-      });
-    } catch (error) {
-      return sendApiError(response, normalizeApiError(error), requestId);
+              repository: activeRepository,
+              auditSink: activeAudit
+            })
+          )
+        : routeOperationsRequest({ ...routeInput, repository, auditSink });
     }
-  });
+  };
 }
 
 export function createRuntimeApiServer(env: NodeJS.ProcessEnv = process.env): RuntimeOptions {
+  const composition = createRuntimeComposition(env);
+  let server: Server;
+  try {
+    server = createClinicOsApiServer(composition.serverOptions);
+  } catch (error) {
+    void composition.close();
+    throw error;
+  }
+  server.once("error", () => {
+    void composition.close();
+  });
+  server.once("close", () => {
+    void composition.close();
+  });
+  return { port: composition.port, server };
+}
+
+export async function createRuntimeApiNestApplication(
+  env: NodeJS.ProcessEnv = process.env
+): Promise<RuntimeNestOptions> {
+  const composition = createRuntimeComposition(env);
+  try {
+    const { app } = await createClinicOsApiNestApplication(composition.serverOptions);
+    app.getHttpServer().once("close", () => {
+      void composition.close();
+    });
+    return { app, port: composition.port };
+  } catch (error) {
+    await composition.close();
+    throw error;
+  }
+}
+
+function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
+  serverOptions: ClinicOsApiServerOptions;
+  port: number;
+  close(): Promise<void>;
+} {
   const parsed = safeParseClinicOsEnv(env);
 
   if (!parsed.success) {
@@ -416,7 +494,22 @@ export function createRuntimeApiServer(env: NodeJS.ProcessEnv = process.env): Ru
     );
   }
 
+  const configuredBudgetKeySecret = parsed.data.security.abuseBudgetKeySecret;
+  const runtimeBudgetKeySecret =
+    configuredBudgetKeySecret ??
+    (parsed.data.isProductionLike
+      ? null
+      : "clinicos-local-synthetic-budget-secret-000000000000");
+  if (!useFixtureRepository && !runtimeBudgetKeySecret) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "The production abuse-budget key secret is not configured."
+    );
+  }
+
   let pool: Pool | undefined;
+  let redisBudgetStore: RedisAtomicBudgetStore | undefined;
   const repositorySet = useFixtureRepository
     ? {
         identityRepository: new LocalFixtureIdentityRepository(),
@@ -444,23 +537,34 @@ export function createRuntimeApiServer(env: NodeJS.ProcessEnv = process.env): Ru
         })
       : undefined
   };
+  if (!useFixtureRepository) {
+    redisBudgetStore = new RedisAtomicBudgetStore({ redisUrl: parsed.data.services.redisUrl });
+    serverOptions.budgetStore = redisBudgetStore;
+    serverOptions.budgetKeySecret = runtimeBudgetKeySecret ?? undefined;
+  }
   if ("operationsUnitOfWork" in repositorySet) {
     serverOptions.operationsUnitOfWork = repositorySet.operationsUnitOfWork;
+    serverOptions.mutationCoordinator = new PostgresAtomicMutationCoordinator({
+      unitOfWork: repositorySet.operationsUnitOfWork,
+      readinessProbe: () => repositorySet.pool.query("select 1")
+    });
   }
 
   if (env.CLINIC_OS_API_DEV_SUBJECT) {
     serverOptions.fixtureSubject = env.CLINIC_OS_API_DEV_SUBJECT;
   }
 
-  const server = createClinicOsApiServer(serverOptions);
-  if (pool) {
-    server.once("close", () => {
-      void pool.end();
-    });
-  }
+  let closePromise: Promise<void> | undefined;
   return {
     port,
-    server
+    serverOptions,
+    close() {
+      closePromise ??= Promise.all([
+        ...(pool ? [pool.end()] : []),
+        ...(redisBudgetStore ? [redisBudgetStore.close()] : [])
+      ]).then(() => undefined);
+      return closePromise;
+    }
   };
 }
 
@@ -480,13 +584,18 @@ async function routeOperationsRequest(input: {
   useLocalAuthFixture: boolean;
   fixtureSubject?: string | undefined;
   clock?: Clock | undefined;
+  resolvedAccess?: VerifiedClinicRequestContext;
+  preparedBody?: unknown;
+  preparedRawBody?: Buffer | undefined;
 }) {
   const url = new URL(input.request.url ?? "/", "http://clinic-os.local");
   const pathname = url.pathname;
-  const resolvedAccess = await resolveAccessContext(input);
+  const resolvedAccess = input.resolvedAccess ?? (await resolveAccessContext(input));
   const accessContext = resolvedAccess.context;
-  const clinicId = resolveClinicId(input.request, accessContext);
-  const clinic = resolvedAccess.clinics.find((candidate) => candidate.id === clinicId);
+  const clinicId = input.resolvedAccess?.clinicId ?? resolveClinicId(input.request, accessContext);
+  const clinic =
+    input.resolvedAccess?.clinic ??
+    resolvedAccess.clinics.find((candidate) => candidate.id === clinicId);
   if (!clinic) {
     throw new ApiError(403, "PERMISSION_DENIED", "Clinic timezone is unavailable for this user.", {
       reason: "clinic_mismatch"
@@ -515,10 +624,12 @@ async function routeOperationsRequest(input: {
   const isMediaContentUpload =
     input.request.method === "PUT" && /^\/v1\/media\/uploads\/[^/]+\/content$/.test(pathname);
   const body =
-    ["POST", "PATCH"].includes(input.request.method ?? "") ||
-    (input.request.method === "PUT" && !isMediaContentUpload)
-      ? await readJsonBody(input.request)
-      : undefined;
+    "preparedBody" in input
+      ? input.preparedBody
+      : ["POST", "PATCH"].includes(input.request.method ?? "") ||
+          (input.request.method === "PUT" && !isMediaContentUpload)
+        ? await readJsonBody(input.request)
+        : undefined;
 
   if (input.request.method === "GET" && pathname === "/v1/form-templates") {
     return listIntakeFormTemplates(operationsContext, dependencies);
@@ -955,7 +1066,10 @@ async function routeOperationsRequest(input: {
       dependencies,
       pathUuid(mediaUploadContentMatch[1], "uploadId"),
       {
-        body: await readRawBody(input.request),
+        body:
+          "preparedRawBody" in input
+            ? (input.preparedRawBody ?? Buffer.alloc(0))
+            : await readRawBody(input.request),
         contentType: headerValue(input.request, "content-type") ?? null
       }
     );
@@ -1497,6 +1611,7 @@ function createPostgresRepositorySet(config: ClinicOsConfig): {
   const pool = new Pool({
     connectionString: config.services.databaseUrl
   });
+  const operationsUnitOfWork = new PostgresClinicUnitOfWork(pool, { clock: systemClock });
   pool.on("error", (error) => {
     const code = "code" in error && typeof error.code === "string" ? error.code : "unknown";
     console.error(
@@ -1512,7 +1627,7 @@ function createPostgresRepositorySet(config: ClinicOsConfig): {
     identityRepository: new PostgresIdentityRepository(pool),
     operationsRepository: new PostgresClinicOperationsRepository(pool),
     auditSink: new PostgresAuditEventSink(pool),
-    operationsUnitOfWork: new PostgresClinicUnitOfWork(pool),
+    operationsUnitOfWork,
     pool
   };
 }
@@ -1616,6 +1731,31 @@ function createRuntimePaymentProvider(config: ClinicOsConfig): PaymentProvider {
   });
 }
 
+function missingOperationsRepository(): ApiError {
+  return new ApiError(
+    503,
+    "CONFIGURATION_ERROR",
+    "ClinicOS operations repository is not configured."
+  );
+}
+
+function allowlistedWebhookHeaders(
+  request: IncomingMessage,
+  useLocalAuthFixture: boolean
+): Record<string, string | undefined> {
+  return {
+    "x-razorpay-signature": headerValue(request, "x-razorpay-signature"),
+    ...(useLocalAuthFixture
+      ? {
+          "x-clinic-os-simulator-signature": headerValue(
+            request,
+            "x-clinic-os-simulator-signature"
+          )
+        }
+      : {})
+  };
+}
+
 function paymentRepositoryFromOperationsRepository(
   repository: ClinicOperationsRepository
 ): PaymentOperationsRepository | undefined {
@@ -1681,21 +1821,11 @@ function parsePort(value: string | undefined): number {
   return parsed;
 }
 
-function getRequestId(request: IncomingMessage): string {
-  return headerValue(request, "x-request-id") ?? randomUUID();
-}
-
 function headerValue(request: IncomingMessage, header: string): string | undefined {
   const value = request.headers[header];
 
   if (Array.isArray(value)) return value[0];
   return value;
-}
-
-function sendJson(response: ServerResponse, status: number, body: unknown) {
-  response.statusCode = status;
-  response.setHeader("content-type", "application/json; charset=utf-8");
-  response.end(`${JSON.stringify(body)}\n`);
 }
 
 async function readJsonBody(request: IncomingMessage): Promise<unknown> {
@@ -1755,43 +1885,20 @@ function pathUuid(value: string, label: string): UUID {
   return value;
 }
 
-function requestHeadersRecord(request: IncomingMessage): Record<string, string | undefined> {
-  return Object.fromEntries(
-    Object.entries(request.headers).map(([key, value]) => [
-      key,
-      Array.isArray(value) ? value[0] : value
-    ])
-  );
-}
-
-function sendApiError(response: ServerResponse, error: ApiError, requestId: string) {
-  sendJson(response, error.status, toApiErrorBody(error, requestId));
-}
-
 function normalizeApiError(error: unknown): ApiError {
   if (error instanceof ApiError) return error;
-  if (error instanceof AuthenticationError)
-    return new ApiError(401, "UNAUTHENTICATED", error.message);
-  if (error instanceof AuthorizationError) {
-    return new ApiError(403, "PERMISSION_DENIED", error.message, {
-      required_permission: error.requiredPermission,
-      reason: error.reason
-    });
-  }
-  if (error instanceof Error) return new ApiError(500, "CONFIGURATION_ERROR", error.message);
-  return new ApiError(500, "CONFIGURATION_ERROR", "Unexpected API error.");
+  return new ApiError(500, "CONFIGURATION_ERROR", "ClinicOS API startup failed.");
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  try {
-    const { server, port } = createRuntimeApiServer();
-
-    server.listen(port, "127.0.0.1", () => {
+  void createRuntimeApiNestApplication()
+    .then(async ({ app, port }) => {
+      await app.listen(port, "127.0.0.1");
       console.log(`ClinicOS API listening on http://127.0.0.1:${port}`);
+    })
+    .catch((error) => {
+      const normalized = normalizeApiError(error);
+      console.error(JSON.stringify(toApiErrorBody(normalized, "startup"), null, 2));
+      process.exitCode = 1;
     });
-  } catch (error) {
-    const normalized = normalizeApiError(error);
-    console.error(JSON.stringify(toApiErrorBody(normalized, "startup"), null, 2));
-    process.exitCode = 1;
-  }
 }

@@ -197,6 +197,47 @@ test("CP3 operations enforce consent state, note immutability, and doctor-only p
   assert.ok(auditSink.events.some((event) => event.action === "prescription.draft_created"));
 });
 
+test("clinical note draft fails closed before audit/outbox when the encounter reload disappears", async () => {
+  const auditSink = new InMemoryAuditSink();
+  const backingRepository = new LocalFixtureClinicOperationsRepository();
+  const assistant = operationsContext("assistant", "assistant", "cp3-reload-failure");
+  const created = await createEncounter(assistant, {
+    repository: backingRepository,
+    auditSink
+  }, {
+    patientId: CHECKPOINT1_SEED_IDS.patients.rheaSynthetic,
+    providerUserId: CHECKPOINT1_SEED_IDS.users.doctor,
+    reason: "Synthetic reload failure"
+  });
+  const auditCount = auditSink.events.length;
+  const outboxCount = backingRepository.outboxEvents.length;
+  let outerFinds = 0;
+  const repository = new Proxy(backingRepository, {
+    get(target, property) {
+      if (property === "findEncounterById") {
+        return async (...args) => {
+          outerFinds += 1;
+          if (outerFinds === 2) return null;
+          return target.findEncounterById(...args);
+        };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    }
+  });
+  await assert.rejects(
+    saveEncounterClinicalNoteDraft(
+      assistant,
+      { repository, auditSink },
+      created.body.encounter.id,
+      { content: { diagnosis: "Synthetic diagnosis" }, readyForSign: false }
+    ),
+    /could not be reloaded/u
+  );
+  assert.equal(auditSink.events.length, auditCount);
+  assert.equal(backingRepository.outboxEvents.length, outboxCount);
+});
+
 test("CP3 local fixture API supports intake consent encounter note and prescription workflow", async (t) => {
   const auditSink = new InMemoryAuditSink();
   const operationsRepository = new LocalFixtureClinicOperationsRepository();
@@ -272,6 +313,7 @@ test("CP3 local fixture API supports intake consent encounter note and prescript
         captureMethod: "clinic_staff",
         grantedByName: "Rhea Synthetic",
         relationshipToPatient: "self",
+        evidence: { recordedBy: "assistant" },
         provenance: {
           kind: "manual_entry"
         }
@@ -332,9 +374,9 @@ test("CP3 local fixture API supports intake consent encounter note and prescript
         },
         readyForSign: true
       },
-      assistantHeaders({ "idempotency-key": "cp3-note-draft" })
+      assistantHeaders({ "idempotency-key": "cp3-note-draft", "if-match": "\"rv-2\"" })
     );
-    assert.equal(draftResponse.status, 200);
+    assert.equal(draftResponse.status, 200, await draftResponse.clone().text());
     const draftBody = await draftResponse.json();
     assert.equal(draftBody.note.status, "draft");
 
@@ -349,6 +391,23 @@ test("CP3 local fixture API supports intake consent encounter note and prescript
       (await assistantSignResponse.json()).error.details.required_permission,
       "clinical.note.sign"
     );
+
+    const accountantSignResponse = await postJson(
+      baseUrl,
+      `/v1/encounters/${encounterBody.encounter.id}/sign-note`,
+      {},
+      accountantHeaders({ "idempotency-key": "cp3-note-sign-accountant-denied" })
+    );
+    assert.equal(accountantSignResponse.status, 403);
+
+    const ownerSignResponse = await postJson(
+      baseUrl,
+      `/v1/encounters/${encounterBody.encounter.id}/sign-note`,
+      {},
+      ownerHeaders({ "idempotency-key": "cp3-note-sign-owner-role-denied" })
+    );
+    assert.equal(ownerSignResponse.status, 403);
+    assert.equal((await ownerSignResponse.json()).error.details.reason, "missing_clinic_role");
 
     const doctorSignResponse = await postJson(
       baseUrl,
@@ -368,7 +427,7 @@ test("CP3 local fixture API supports intake consent encounter note and prescript
           diagnosis: "Silently changed diagnosis"
         }
       },
-      doctorHeaders({ "idempotency-key": "cp3-note-overwrite" })
+      doctorHeaders({ "idempotency-key": "cp3-note-overwrite", "if-match": "\"rv-4\"" })
     );
     assert.equal(overwriteResponse.status, 409);
 
@@ -417,6 +476,26 @@ test("CP3 local fixture API supports intake consent encounter note and prescript
     );
     assert.equal(assistantPrescriptionSignResponse.status, 403);
 
+    const accountantPrescriptionSignResponse = await postJson(
+      baseUrl,
+      `/v1/prescriptions/${prescriptionBody.prescription.id}/sign`,
+      {},
+      accountantHeaders({ "idempotency-key": "cp3-prescription-sign-accountant-denied" })
+    );
+    assert.equal(accountantPrescriptionSignResponse.status, 403);
+
+    const ownerPrescriptionSignResponse = await postJson(
+      baseUrl,
+      `/v1/prescriptions/${prescriptionBody.prescription.id}/sign`,
+      {},
+      ownerHeaders({ "idempotency-key": "cp3-prescription-sign-owner-role-denied" })
+    );
+    assert.equal(ownerPrescriptionSignResponse.status, 403);
+    assert.equal(
+      (await ownerPrescriptionSignResponse.json()).error.details.reason,
+      "missing_clinic_role"
+    );
+
     const doctorPrescriptionSignResponse = await postJson(
       baseUrl,
       `/v1/prescriptions/${prescriptionBody.prescription.id}/sign`,
@@ -460,11 +539,30 @@ function doctorHeaders(extra = {}) {
   };
 }
 
+function accountantHeaders(extra = {}) {
+  return {
+    "content-type": "application/json",
+    "x-clinic-os-dev-subject": "seed-accountant",
+    ...extra
+  };
+}
+
+function ownerHeaders(extra = {}) {
+  return {
+    "content-type": "application/json",
+    "x-clinic-os-dev-subject": "seed-owner",
+    ...extra
+  };
+}
+
 function postJson(baseUrl, path, body, headers = assistantHeaders()) {
+  const bodyless = ["/confirm", "/check-in", "/mark-no-show", "/start", "/sign-note", "/sign", "/retention-delete"].some(
+    (suffix) => path.endsWith(suffix)
+  );
   return fetch(`${baseUrl}${path}`, {
     method: "POST",
     headers,
-    body: JSON.stringify(body)
+    ...(bodyless ? {} : { body: JSON.stringify(body) })
   });
 }
 

@@ -240,7 +240,7 @@ test("CP7 migration routes expose create and row listing contract without raw pa
 
     const createResponse = await postJson(baseUrl, "/v1/migration-batches", {
       importType: "patients",
-      rows: [{ externalReference: "route-1", fullName: "Route Import", phone: "+91 99900 02222" }]
+      rows: [{ externalReference: "route-1", fullName: "Route Import", phone: "+919990002222" }]
     });
     assert.equal(createResponse.status, 201);
     const createBody = await createResponse.json();
@@ -311,7 +311,8 @@ async function postJson(baseUrl: string, path: string, body: unknown) {
     method: "POST",
     headers: {
       "content-type": "application/json",
-      "x-clinic-os-dev-subject": "seed-assistant"
+      "x-clinic-os-dev-subject": "seed-assistant",
+      "idempotency-key": "cp7-route-create-batch"
     },
     body: JSON.stringify(body)
   });

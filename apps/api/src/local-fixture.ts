@@ -702,6 +702,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       id: CHECKPOINT1_SEED_IDS.patients.rheaSynthetic,
       tenantId: CHECKPOINT1_SEED_IDS.tenantId,
       clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      rowVersion: 1,
       fullName: "Rhea Synthetic",
       phone: "+919876543210",
       email: "rhea.synthetic@example.test",
@@ -1071,6 +1072,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       id: uuid(),
       tenantId: scope.tenantId,
       clinicId: scope.clinicId,
+      rowVersion: 1,
       fullName: input.fullName,
       phone: input.phone,
       email: input.email ?? null,
@@ -1107,6 +1109,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   ): Promise<PatientRecord | null> {
     const patient = await this.findPatientById(scope, patientId);
     if (!patient) return null;
+    advanceFixtureRowVersion(patient);
 
     Object.assign(patient, {
       fullName: input.fullName ?? patient.fullName,
@@ -2057,6 +2060,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       id: uuid(),
       tenantId: scope.tenantId,
       clinicId: scope.clinicId,
+      rowVersion: 1,
       patientId: null,
       primaryContact: input.primaryContact,
       status: "new",
@@ -2079,6 +2083,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   ): Promise<LeadRecord | null> {
     const lead = await this.findLeadById(scope, leadId);
     if (!lead) return null;
+    advanceFixtureRowVersion(lead);
     lead.status = status;
     lead.lastActivityAt = this.#nowIso();
     return lead;
@@ -2091,6 +2096,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   ): Promise<LeadRecord | null> {
     const lead = await this.findLeadById(scope, leadId);
     if (!lead) return null;
+    advanceFixtureRowVersion(lead);
     lead.patientId = patientId;
     lead.status = "matched";
     lead.lastActivityAt = this.#nowIso();
@@ -2181,6 +2187,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       id: uuid(),
       tenantId: scope.tenantId,
       clinicId: scope.clinicId,
+      rowVersion: 1,
       patientId: input.patientId,
       leadId: input.leadId ?? null,
       providerUserId: input.providerUserId,
@@ -2217,6 +2224,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   ): Promise<AppointmentRecord | null> {
     const appointment = await this.findAppointmentById(scope, appointmentId);
     if (!appointment) return null;
+    advanceFixtureRowVersion(appointment);
     appointment.status = status;
     appointment.updatedAt = this.#nowIso();
 
@@ -2258,6 +2266,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       id: uuid(),
       tenantId: scope.tenantId,
       clinicId: scope.clinicId,
+      rowVersion: 1,
       appointmentId: appointment.id,
       patientId: appointment.patientId,
       providerUserId: appointment.providerUserId,
@@ -2297,6 +2306,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       (entry) => matchesScope(entry, scope) && entry.id === queueEntryId
     );
     if (!queueEntry) return null;
+    advanceFixtureRowVersion(queueEntry);
     queueEntry.status = status;
     if (status === "called") queueEntry.calledAt = queueEntry.calledAt ?? this.#nowIso();
     if (status === "completed")
@@ -2349,6 +2359,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       completedAt,
       completedByUserId
     });
+    advanceFixtureRowVersion(task);
 
     Object.assign(task, {
       status: nextStatus,
@@ -2457,10 +2468,13 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       updatedAt: this.#nowIso()
     });
     if (recall.taskId && ["booked", "completed", "skipped"].includes(recall.status)) {
-      await this.updateTask(scope, recall.taskId, {
-        status: "done",
-        completionEvidence: evidence
-      });
+      const linkedTask = await this.findTaskById(scope, recall.taskId);
+      if (linkedTask && linkedTask.status !== "done") {
+        await this.updateTask(scope, recall.taskId, {
+          status: "done",
+          completionEvidence: evidence
+        });
+      }
     }
     this.timelineItems.push(
       this.#timeline(
@@ -2721,6 +2735,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         id: uuid(),
         tenantId: scope.tenantId,
         clinicId: scope.clinicId,
+        rowVersion: 1,
         templateId: schedule.templateId,
         scheduleId: schedule.id,
         taskId: null,
@@ -2826,6 +2841,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     });
     const detail = this.sopRunDetail(scope, run.id);
     if (detail) assertSopRunCompletion(detail);
+    advanceFixtureRowVersion(run);
     if (run.status === "completed" && run.taskId) {
       await this.updateTask(scope, run.taskId, {
         status: "done",
@@ -2847,6 +2863,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       id: uuid(),
       tenantId: scope.tenantId,
       clinicId: scope.clinicId,
+      rowVersion: 1,
       patientId: input.patientId ?? null,
       leadId: input.leadId ?? null,
       appointmentId: input.appointmentId ?? null,
@@ -2978,6 +2995,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       id: uuid(),
       tenantId: scope.tenantId,
       clinicId: scope.clinicId,
+      rowVersion: 1,
       vendorId: input.vendorId,
       patientId: input.patientId,
       encounterId: input.encounterId ?? null,
@@ -3048,6 +3066,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     assertLabCaseTransition(labCase.status, input.status);
     const fromStatus = labCase.status;
     const now = this.#nowIso();
+    advanceFixtureRowVersion(labCase);
     labCase.status = input.status;
     labCase.updatedAt = now;
     labCase.updatedByUserId = scope.actorUserId;
@@ -3336,6 +3355,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       id: uuid(),
       tenantId: scope.tenantId,
       clinicId: scope.clinicId,
+      rowVersion: 1,
       templateId: template.id,
       status: "in_progress",
       startedByUserId: scope.actorUserId,
@@ -3426,14 +3446,17 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       }
     }
 
-    run.status = input.status;
-    run.notes = input.notes ?? run.notes;
-    run.updatedAt = now;
     if (input.status === "completed") {
       const uncountedRequiredLine = this.inventoryCheckRunLines.find(
         (line) => matchesScope(line, scope) && line.checkRunId === run.id && line.countedQuantity === null
       );
       if (uncountedRequiredLine) return null;
+    }
+    advanceFixtureRowVersion(run);
+    run.status = input.status;
+    run.notes = input.notes ?? run.notes;
+    run.updatedAt = now;
+    if (input.status === "completed") {
       run.completedByUserId = scope.actorUserId;
       run.completedAt = now;
     }
@@ -3572,6 +3595,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       id: uuid(),
       tenantId: scope.tenantId,
       clinicId: scope.clinicId,
+      rowVersion: 1,
       incidentId: input.incidentId ?? null,
       actionType: input.actionType,
       title: input.title,
@@ -3619,6 +3643,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     if (!action || action.status === "completed" || action.status === "cancelled") return null;
 
     const now = this.#nowIso();
+    advanceFixtureRowVersion(action);
     action.status = input.status;
     action.updatedAt = now;
     action.updatedByUserId = scope.actorUserId;
@@ -4055,6 +4080,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       id: uuid(),
       tenantId: scope.tenantId,
       clinicId: scope.clinicId,
+      rowVersion: 1,
       patientId: input.patientId,
       appointmentId: input.appointmentId ?? null,
       providerUserId: input.providerUserId,
@@ -4093,6 +4119,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     assertEncounterTransition(encounter.status, status);
     const previous = encounter.status;
+    advanceFixtureRowVersion(encounter);
     encounter.status = status;
     encounter.updatedAt = this.#nowIso();
     if (status === "drafting") encounter.startedAt = encounter.startedAt ?? encounter.updatedAt;
@@ -4134,6 +4161,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     if (existingDraft) {
       existingDraft.content = content;
+      advanceFixtureRowVersion(encounter);
       encounter.status = input.readyForSign ? "ready_for_sign" : "drafting";
       encounter.updatedAt = this.#nowIso();
       return existingDraft;
@@ -4167,6 +4195,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         "Clinical note drafted"
       )
     );
+    advanceFixtureRowVersion(encounter);
     encounter.status = input.readyForSign ? "ready_for_sign" : "drafting";
     encounter.updatedAt = note.createdAt;
     return note;
@@ -4193,6 +4222,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     if (!draft) return null;
 
     assertClinicalNoteCanBeSigned(draft);
+    advanceFixtureRowVersion(encounter);
     draft.status = "signed";
     draft.signedByUserId = scope.actorUserId;
     draft.signedAt = this.#nowIso();
@@ -4244,6 +4274,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     };
 
     this.clinicalNoteVersions.push(note);
+    advanceFixtureRowVersion(encounter);
     encounter.status = "amended";
     encounter.updatedAt = now;
     this.timelineItems.push(
@@ -4861,6 +4892,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       id: uuid(),
       tenantId: scope.tenantId,
       clinicId: scope.clinicId,
+      rowVersion: 1,
       patientId,
       encounterId: normalized.encounterId,
       toothNumber: normalized.toothNumber,
@@ -4932,6 +4964,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     const beforeState = toDentalFindingSnapshotFinding(finding);
     const next = normalizeFixtureUpdateDentalFindingInput(finding, input);
     const now = this.#nowIso();
+    advanceFixtureRowVersion(finding);
     Object.assign(finding, {
       encounterId: next.encounterId,
       toothNumber: next.toothNumber,
@@ -5058,6 +5091,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       id: uuid(),
       tenantId: scope.tenantId,
       clinicId: scope.clinicId,
+      rowVersion: 1,
       patientId,
       encounterId: input.encounterId ?? null,
       title: input.title.trim(),
@@ -5118,6 +5152,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     if (!plan) return null;
 
     assertTreatmentPlanMutable(plan);
+    advanceFixtureRowVersion(plan);
 
     if (input.title !== undefined) plan.title = input.title.trim();
     if (input.clinicalSummary !== undefined) {
@@ -5168,6 +5203,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     assertTreatmentPlanAcceptable(plan, items.length);
     const now = this.#nowIso();
+    advanceFixtureRowVersion(plan);
     plan.status = "accepted";
     plan.presentedAt = plan.presentedAt ?? now;
     plan.acceptedAt = now;
@@ -5222,6 +5258,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     }
 
     const now = this.#nowIso();
+    advanceFixtureRowVersion(detail.treatmentPlan);
     const procedure: ProcedurePerformedRecord = {
       id: uuid(),
       tenantId: scope.tenantId,
@@ -6364,4 +6401,14 @@ function normalizeFixtureUpdateDentalFindingInput(
 
   assertValidDentalFinding(normalized);
   return normalized;
+}
+
+function advanceFixtureRowVersion(record: { rowVersion: number }): void {
+  if (!Number.isSafeInteger(record.rowVersion) || record.rowVersion < 1) {
+    throw new Error("Fixture rowVersion must be a positive safe integer.");
+  }
+  if (record.rowVersion === Number.MAX_SAFE_INTEGER) {
+    throw new Error("Fixture rowVersion cannot advance beyond the safe integer limit.");
+  }
+  record.rowVersion += 1;
 }
