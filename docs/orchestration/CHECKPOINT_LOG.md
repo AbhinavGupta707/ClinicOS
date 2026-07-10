@@ -581,3 +581,53 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 - Canonical program: `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`.
 - Active packet: `docs/orchestration/CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md`.
 - CP12 launch is not part of this planning session. The future master must record the clean planning-complete `main` HEAD, create `codex/integration/checkpoint-12`, resolve the ClinicOS project through `list_projects`, create/verify the heartbeat, run the adaptive lane gate, and only then launch the three independently justified initial worktrees.
+
+## Checkpoint 12 Launch - 2026-07-10
+
+- Master task: `gpt-5.6-sol` at `xhigh`, executing the complete `orchestrate-worktrees` skill and referenced runbook.
+- Exact launch base: clean verified `main` commit `1166baa7a816b614d896cf267066f31f40eac142`; the only working-tree entries were preserved user-owned untracked `research/` and `scripts/research/`.
+- Integration branch: `codex/integration/checkpoint-12`, created directly from the recorded launch base before worker creation.
+- Saved project: `/Users/abhinavgupta/Desktop/ClinicOS`, resolved through `list_projects`; all workers use project-scoped Codex worktree threads.
+- Heartbeat: `clinicos-cp12-18-orchestrator-heartbeat`, thread-attached to the master task, verified `ACTIVE` with `FREQ=SECONDLY;INTERVAL=90`.
+- GitHub preflight: the sandboxed CLI check could not access authoritative keyring state; the approved external check verified `AbhinavGupta707` with `repo` and `workflow` scopes.
+- Secret boundary: `.secrets/orchestration.env` is ignored, mode `0600`, selects `AWS_PROFILE=clinicos-human`, `WHATSAPP_PROVIDER=simulator`, and `PAYMENT_PROVIDER=simulator`. Workers must not read, source, copy, or receive this file or run live AWS/provider/dashboard operations.
+- Historical worktrees: all 12 existing CP8-CP10-era worktrees were freshly rechecked as clean ancestors of `main` with zero unique commits. They remain historical and excluded from CP12.
+- CP11 invalidation-sensitive preflight passed from `1166baa`: `npm run check`, `npm run typecheck`, `npm run lint`, full socket-enabled zero-skip `npm run test`, `npm run build`, `npm run db:verify`, and `git diff --check`. Database verification reported 14 migrations, 96/96 forced-RLS tenant tables, role separation, zero no-context rows, worker product-table denial, and cross-tenant isolation.
+- Adaptive worker decision: three initial workers are justified. Each owns a substantial namespace, consumes only stable CP11 contracts, has independent narrow tests, produces a useful standalone commit, and does not mutate a shared external environment. The API framework is a dependent consumer and is not launched until these producer interfaces are reviewed, merged, and frozen.
+
+### CP12 Initial Conflict And Dependency Matrix
+
+| Lane | Model / effort | Writable ownership | Stable inputs and independent verification | Parallel-safety decision |
+| --- | --- | --- | --- | --- |
+| Runtime Contracts / OpenAPI / Client Generation | `gpt-5.6-sol` / `xhigh` | `packages/api-contracts/**`, new namespaced generated-client package if needed, `scripts/cp12-openapi*`, `docs/api/**` | Existing native route inventory and CP11 public behavior; package contract tests, deterministic generation, client compile and inventory coverage | Launch: no overlap with database/auth/security/app paths |
+| Repository Module Seams | `gpt-5.6-sol` / `xhigh` | new `packages/db/src/modules/**`, CP12-namespaced DB tests/docs only | Existing `postgres.ts`/repository behavior and CP11 RLS/unit-of-work invariants; repository parity, tenant/context, rollback/idempotency and dependency tests | Launch: additive namespaced paths; canonical migrations, `postgres.ts`, shared barrels and manifests remain forbidden |
+| Security Pipeline / Parity Foundation | `gpt-5.6-sol` / `xhigh` | `packages/auth/**`, `packages/security/**`, `tests/acceptance/cp12/**`, `docs/qa/checkpoint-12*`, `docs/security/checkpoint-12*` | Current route/security inventory and CP11 auth/tenant behavior; auth/tenant matrix, mass-assignment/body/pagination/rate-budget corpus and parity plan | Launch: disjoint from contracts, DB modules and API app implementation |
+| API Framework / Modularization | `gpt-5.6-sol` / `xhigh` when justified | `apps/api/**` only in a later wave | Requires frozen outputs from all three producer lanes | Sequenced: not parallel-safe at initial launch |
+
+- Master-only surfaces for this launch: root manifests/lockfile, `AGENTS.md`, `.github/**`, shared env/CI/Docker files, canonical migrations, `packages/db/src/postgres.ts`, shared export barrels, aggregate OpenAPI/client output, API bootstrap/route composition, memory/checkpoint/remediation/release truth, and all user research.
+- Initial worker thread IDs, pending worktree IDs, resolved paths, commits and handoffs are recorded below as they become available.
+
+### CP12 Initial Worker Launch Records
+
+- Runtime Contracts / OpenAPI / Client Generation:
+  - pending worktree ID: `client-new-thread:47ab951a-8398-4a23-a0a3-1a32f3832139`;
+  - thread ID: `019f4953-a946-7cd2-8cb9-135a45812f9f`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/3178/ClinicOS`;
+  - verified base: detached `1166baa7a816b614d896cf267066f31f40eac142`, initially clean;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - ownership: `packages/api-contracts/**`, optional `packages/api-client-generated/**`, `scripts/cp12-openapi*`, `docs/api/**`.
+- Repository Module Seams:
+  - pending worktree ID: `client-new-thread:7abaf225-d365-4f59-89a8-f74c615c9b55`;
+  - thread ID: `019f4953-a947-7251-b025-8daa0d5c502a`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/e6f6/ClinicOS`;
+  - verified base: detached `1166baa7a816b614d896cf267066f31f40eac142`, initially clean;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - ownership: new `packages/db/src/modules/**`, `packages/db/test/cp12-*.test.ts`, and CP12-namespaced module-seam documentation under `packages/db/`.
+- Security Pipeline / Legacy Parity Foundation:
+  - pending worktree ID: `client-new-thread:5ae5a8c7-5d40-4480-945f-9eac634383a3`;
+  - thread ID: `019f4953-a949-77a0-9aad-accef6517096`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/2556/ClinicOS`;
+  - verified base: detached `1166baa7a816b614d896cf267066f31f40eac142`, initially clean;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - ownership: `packages/auth/**`, `packages/security/**`, `tests/acceptance/cp12/**`, `docs/qa/checkpoint-12*`, `docs/security/checkpoint-12*`.
+- All three resolved as active project-scoped worktree threads at launch. Each prompt requires early blocker reporting, forbidden-path discipline, deterministic narrow checks, a committed clean handoff, and no merge/push/release claim.
