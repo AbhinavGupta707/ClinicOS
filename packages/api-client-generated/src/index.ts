@@ -5,7 +5,7 @@ export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 export type PublicJsonObject = Readonly<Record<string, JsonValue>>;
 export type WritableJsonObject = Readonly<Record<string, JsonValue>>;
-export type ClinicOsApiErrorCode = "UNAUTHENTICATED" | "PERMISSION_DENIED" | "NOT_FOUND" | "VALIDATION_ERROR" | "CONFLICT" | "AI_PROVIDER_UNAVAILABLE" | "DEPENDENCY_UNAVAILABLE" | "CONFIGURATION_ERROR";
+export type ClinicOsApiErrorCode = "BAD_REQUEST" | "UNAUTHENTICATED" | "PERMISSION_DENIED" | "NOT_FOUND" | "VALIDATION_ERROR" | "CONFLICT" | "PAYLOAD_TOO_LARGE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "AI_PROVIDER_UNAVAILABLE" | "DEPENDENCY_UNAVAILABLE" | "CONFIGURATION_ERROR";
 
 export interface ClinicOsApiClientOptions {
   readonly baseUrl: string;
@@ -78,7 +78,7 @@ function appendQuery(url: string, values?: Readonly<Record<string, unknown>>): s
   return serialized ? url + "?" + serialized : url;
 }
 export type HealthLiveRequest = Readonly<Record<string, never>>;
-export type HealthLiveResponse = { readonly status: "ok"; readonly service: "clinic-os-api"; readonly request_id: string } | { readonly error: { readonly code: "UNAUTHENTICATED" | "PERMISSION_DENIED" | "NOT_FOUND" | "VALIDATION_ERROR" | "CONFLICT" | "AI_PROVIDER_UNAVAILABLE" | "DEPENDENCY_UNAVAILABLE" | "CONFIGURATION_ERROR"; readonly message: string; readonly details: PublicJsonObject; readonly request_id: string } };
+export type HealthLiveResponse = { readonly status: "ok"; readonly service: "clinic-os-api"; readonly request_id: string } | { readonly error: { readonly code: "BAD_REQUEST" | "UNAUTHENTICATED" | "PERMISSION_DENIED" | "NOT_FOUND" | "VALIDATION_ERROR" | "CONFLICT" | "PAYLOAD_TOO_LARGE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "AI_PROVIDER_UNAVAILABLE" | "DEPENDENCY_UNAVAILABLE" | "CONFIGURATION_ERROR"; readonly message: string; readonly details: PublicJsonObject; readonly request_id: string } };
 export type HealthReadyRequest = Readonly<Record<string, never>>;
 export type HealthReadyResponse = { readonly status: "ready" | "unavailable"; readonly service: "clinic-os-api"; readonly repository_mode: "postgres" | "fixture" | "injected"; readonly auth_mode: "keycloak_jwks" | "local_synthetic_fixture"; readonly evidence_tier: "E2_fixture" | "E3_durable" | "unverified_injected"; readonly dependencies: readonly (PublicJsonObject)[]; readonly request_id: string };
 export type HealthStartupRequest = Readonly<Record<string, never>>;

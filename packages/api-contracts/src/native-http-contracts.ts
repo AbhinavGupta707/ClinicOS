@@ -130,7 +130,7 @@ const treatmentPlanPhaseSchema = bodySchema(
 );
 
 const STANDARD_ERROR_RESPONSES = {
-  400: { description: "The request failed runtime contract validation.", schema: API_ERROR_SCHEMA },
+  400: { description: "The request is malformed or ambiguous.", schema: API_ERROR_SCHEMA },
   401: { description: "Authentication is required or invalid.", schema: API_ERROR_SCHEMA },
   403: {
     description: "The verified identity is not authorized for the scoped operation.",
@@ -141,6 +141,10 @@ const STANDARD_ERROR_RESPONSES = {
     description: "The request conflicts with current workflow or idempotency state.",
     schema: API_ERROR_SCHEMA
   },
+  413: { description: "The request exceeds its declared body budget.", schema: API_ERROR_SCHEMA },
+  422: { description: "The request failed runtime contract validation.", schema: API_ERROR_SCHEMA },
+  429: { description: "The request exceeded an application abuse budget.", schema: API_ERROR_SCHEMA },
+  500: { description: "The request failed without exposing internal details.", schema: API_ERROR_SCHEMA },
   503: {
     description: "A required dependency or configured capability is unavailable.",
     schema: API_ERROR_SCHEMA

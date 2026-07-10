@@ -109,11 +109,15 @@ export const IF_MATCH_SCHEMA = schema.string({
 export const LIMIT_SCHEMA = schema.integer({ minimum: 1, maximum: 100 });
 
 export const API_ERROR_CODES = [
+  "BAD_REQUEST",
   "UNAUTHENTICATED",
   "PERMISSION_DENIED",
   "NOT_FOUND",
   "VALIDATION_ERROR",
   "CONFLICT",
+  "PAYLOAD_TOO_LARGE",
+  "RATE_LIMITED",
+  "INTERNAL_ERROR",
   "AI_PROVIDER_UNAVAILABLE",
   "DEPENDENCY_UNAVAILABLE",
   "CONFIGURATION_ERROR"

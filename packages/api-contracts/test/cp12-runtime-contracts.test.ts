@@ -307,15 +307,24 @@ test("public response guard rejects private storage and provider-secret fields r
 
 test("stable error taxonomy and response envelope validate", () => {
   assert.deepEqual(API_ERROR_CODES, [
+    "BAD_REQUEST",
     "UNAUTHENTICATED",
     "PERMISSION_DENIED",
     "NOT_FOUND",
     "VALIDATION_ERROR",
     "CONFLICT",
+    "PAYLOAD_TOO_LARGE",
+    "RATE_LIMITED",
+    "INTERNAL_ERROR",
     "AI_PROVIDER_UNAVAILABLE",
     "DEPENDENCY_UNAVAILABLE",
     "CONFIGURATION_ERROR"
   ]);
+  const patientOperation = getNativeHttpOperation("createPatient");
+  assert.deepEqual(
+    [400, 413, 422, 429, 500].filter((status) => patientOperation.responses[status]),
+    [400, 413, 422, 429, 500]
+  );
   const response = parseNativeOperationResponse("getPatient", 404, {
     error: {
       code: "NOT_FOUND",
