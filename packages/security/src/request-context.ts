@@ -26,7 +26,7 @@ export function createRequestCorrelationContext(input: {
   requestIdHeader?: string | readonly string[] | null;
   method: string;
   routeId: string;
-  now?: Date;
+  now: Date;
   generateId?: () => string;
 }): RequestCorrelationContext {
   if (!HTTP_METHOD_PATTERN.test(input.method)) {
@@ -34,6 +34,9 @@ export function createRequestCorrelationContext(input: {
   }
   if (!ROUTE_ID_PATTERN.test(input.routeId)) {
     throw new Error("Request context requires a stable, non-PHI route id.");
+  }
+  if (!(input.now instanceof Date) || Number.isNaN(input.now.getTime())) {
+    throw new Error("Request context requires a valid injected received-at instant.");
   }
 
   const supplied = Array.isArray(input.requestIdHeader)
@@ -56,7 +59,7 @@ export function createRequestCorrelationContext(input: {
       : headerWasProvided
         ? "generated_after_invalid_client_value"
         : "generated",
-    receivedAt: (input.now ?? new Date()).toISOString(),
+    receivedAt: input.now.toISOString(),
     method: input.method,
     routeId: input.routeId
   };

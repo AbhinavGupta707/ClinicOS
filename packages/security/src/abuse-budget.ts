@@ -184,13 +184,13 @@ export async function enforceRateBudget(input: {
   bucketKey: string;
   policy: RateBudgetPolicy;
   cost?: number;
-  now?: Date;
+  now: Date;
 }): Promise<BudgetConsumptionResult> {
   assertPositiveInteger(input.policy.limit, "rate.limit");
   assertPositiveInteger(input.policy.windowSeconds, "rate.windowSeconds");
   const cost = input.cost ?? 1;
   assertPositiveInteger(cost, "rate.cost");
-  const now = input.now ?? new Date();
+  const now = trustedInstant(input.now, "rate.now");
   const result = await input.store.consume({
     bucketKey: input.bucketKey,
     limit: input.policy.limit,
@@ -208,7 +208,7 @@ export async function enforceExpensiveOperationBudget(input: {
   bucketKey: string;
   requestedUnits: number;
   policy: ExpensiveOperationBudgetPolicy;
-  now?: Date;
+  now: Date;
 }): Promise<BudgetConsumptionResult> {
   assertPositiveInteger(input.requestedUnits, "expensiveOperation.requestedUnits");
   assertPositiveInteger(input.policy.maxUnitsPerRequest, "expensiveOperation.maxUnitsPerRequest");
@@ -218,7 +218,7 @@ export async function enforceExpensiveOperationBudget(input: {
     throwValidation("Requested operation cost exceeds the per-request ceiling.", "cost_units");
   }
 
-  const now = input.now ?? new Date();
+  const now = trustedInstant(input.now, "expensiveOperation.now");
   const result = await input.store.consume({
     bucketKey: input.bucketKey,
     limit: input.policy.maxUnitsPerWindow,
@@ -285,4 +285,11 @@ function assertNonNegativeInteger(value: number, field: string): void {
   if (!Number.isSafeInteger(value) || value < 0) {
     throw new Error(`${field} must be a non-negative safe integer.`);
   }
+}
+
+function trustedInstant(value: Date, field: string): Date {
+  if (!(value instanceof Date) || Number.isNaN(value.getTime())) {
+    throw new Error(`${field} must be a valid injected instant.`);
+  }
+  return new Date(value.getTime());
 }

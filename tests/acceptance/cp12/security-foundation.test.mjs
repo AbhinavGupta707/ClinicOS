@@ -199,6 +199,7 @@ test("CP12 request-id and sensitive-error contracts keep provenance without PHI 
   });
   assert.equal(context.requestId, "generated-safe-id");
   assert.equal(context.requestIdProvenance, "generated_after_invalid_client_value");
+  assert.equal(context.receivedAt, now.toISOString());
 
   const serialized = serializeBoundaryError(
     new BoundaryError({

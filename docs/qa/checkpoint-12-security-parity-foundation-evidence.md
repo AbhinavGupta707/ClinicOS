@@ -14,6 +14,7 @@ tier: E1
 environment: local-codex-worktree-synthetic-only
 data: deterministic-synthetic-no-real-phi
 executed_at_utc: 2026-07-10T00:18:36Z
+clock_regression_follow_up_executed_at_utc: 2026-07-10T00:26:37Z
 clinic_timezone: Asia/Kolkata
 clinic_local_time: 2026-07-10T05:48:36+0530
 node: 22.22.2
@@ -45,6 +46,7 @@ durable API parity, distributed rate limiting or production readiness.
 | CP12-E1-ACCEPTANCE-005 | `node --test tests/acceptance/cp12/*.test.mjs`      | PASS: 10 tests                | static inventory and isolated contract evidence; no API product wiring            |
 | CP12-E1-DIFF-006       | `git diff --check`                                  | PASS                          | repeated after final evidence edit before commit                                  |
 | CP12-E1-SECRETS-007    | `npm run security:secrets`                          | PASS                          | release-scope tracked/untracked files; user research excluded                     |
+| CP12-E1-CLOCK-008      | `node scripts/check-clock-usage.mjs`                | PASS: 37 owned call sites     | security request and budget contracts require caller-injected instants            |
 
 ## Covered assertions
 
@@ -54,6 +56,8 @@ durable API parity, distributed rate limiting or production readiness.
 - unknown-field, mass-assignment and prototype-pollution corpus;
 - malformed JSON, body byte, query cardinality/bytes/duplicates, pagination and cursor limits;
 - atomic rate and expensive-operation budgets, opaque HMAC keys, `429` and `Retry-After`;
+- caller-injected deterministic request/budget instants with invalid-instant rejection and no new
+  clock-usage allowlist entries;
 - validated/generated request IDs with safe provenance and no raw request data in audit metadata;
 - stable `400`/`401`/`403`/`409`/`413`/`422`/`429` mappings;
 - generic unknown errors and bounded PHI/secret/token/stack/SQL diagnostic redaction;

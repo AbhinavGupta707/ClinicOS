@@ -110,6 +110,7 @@ test("request ids accept one bounded safe value and regenerate invalid or ambigu
   });
   assert.equal(accepted.requestId, "edge.req:123");
   assert.equal(accepted.requestIdProvenance, "validated_client_value");
+  assert.equal(accepted.receivedAt, "2026-07-10T10:00:00.000Z");
 
   const invalid = createRequestCorrelationContext({
     requestIdHeader: "contains patient@example.test and spaces",
@@ -137,6 +138,15 @@ test("request ids accept one bounded safe value and regenerate invalid or ambigu
     "requestIdProvenance",
     "routeId"
   ]);
+  assert.throws(
+    () =>
+      createRequestCorrelationContext({
+        method: "GET",
+        routeId: "patients.list",
+        now: new Date(Number.NaN)
+      }),
+    /valid injected received-at instant/
+  );
 });
 
 test("strict runtime validation rejects mass assignment and prototype-pollution corpus", () => {
@@ -300,6 +310,20 @@ test("rate and expensive-operation budgets rely on an atomic store and emit Retr
   });
   assert.equal(store.requests.length, 3);
   assert.equal(store.requests[2]!.cost, 10);
+  assert.ok(
+    store.requests.every((request) => request.now.toISOString() === fixedNow.toISOString()),
+    "budget stores must receive the injected instant"
+  );
+  await assert.rejects(
+    () =>
+      enforceRateBudget({
+        store,
+        bucketKey: key,
+        policy: { limit: 10, windowSeconds: 60, scope: "tenant_actor" },
+        now: new Date(Number.NaN)
+      }),
+    /valid injected instant/
+  );
   assert.throws(
     () => deriveAbuseBudgetKey({ secret: "short", routeId: "x", scope: "ip", identity: "raw" }),
     /at least 32 bytes/
