@@ -1,0 +1,546 @@
+import { randomUUID } from "node:crypto";
+import {
+  assertMediaMimeType,
+  isDentalToothNumber,
+  isMediaScanStatus,
+  isMediaType,
+  mediaAssetCanBeViewed,
+  toPublicMediaAsset,
+  toPublicMediaUploadReservation,
+  type MediaAssetRecord,
+  type MediaType,
+  type MediaUploadReservationRecord,
+  type UUID
+} from "@clinic-os/domain";
+import {
+  assertClinicalMediaBudget,
+  CLINICAL_MEDIA_ACCESS_MAX_SECONDS,
+  CLINICAL_MEDIA_ACCESS_MIN_SECONDS,
+  CLINICAL_MEDIA_UPLOAD_TTL_MS
+} from "../../../../../packages/domain/src/cp13/clinical-dental/index.ts";
+import type { StoredMediaObject } from "../../media-storage.ts";
+import type { ClinicFeatureExecutionContext } from "../contracts.ts";
+import {
+  appendAudit,
+  appendMutationEvidence,
+  assertDentalFindingPatient,
+  assertPatientExists,
+  configuration,
+  conflict,
+  created,
+  notFound,
+  ok,
+  parsedBinaryBody,
+  parsedBody,
+  parsedPathId,
+  parsedQueryInteger,
+  requireClinicalConsent,
+  validation,
+  type ClinicalDentalRequest,
+  type ParsedJsonObject
+} from "./shared.ts";
+import type {
+  ClinicalDentalHandlerDependencies,
+  ClinicalMediaInspectionProvider
+} from "./types.ts";
+
+interface RequestMediaUploadBody extends ParsedJsonObject {
+  readonly patientId: UUID;
+  readonly encounterId?: UUID | null;
+  readonly toothNumber?: string | null;
+  readonly dentalFindingId?: UUID | null;
+  readonly mediaType: MediaType;
+  readonly originalFilename: string;
+  readonly mimeType: string;
+  readonly fileSizeBytes: number;
+  readonly sha256Digest?: string | null;
+  readonly tags?: readonly string[];
+  readonly provenance?: Readonly<Record<string, unknown>>;
+}
+
+interface CompleteMediaUploadBody extends ParsedJsonObject {
+  readonly patientId: UUID;
+  readonly encounterId?: UUID | null;
+  readonly contentLength?: number | null;
+  readonly sha256Digest?: string | null;
+  readonly mimeType?: string | null;
+}
+
+interface SignedMediaAccessBody extends ParsedJsonObject {
+  readonly expiresInSeconds?: number;
+}
+
+export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependencies) {
+  return {
+    requestMediaUploadUrl: async (
+      request: ClinicalDentalRequest<"requestMediaUploadUrl">,
+      context: ClinicFeatureExecutionContext
+    ) => {
+      const input = parsedBody<RequestMediaUploadBody>(request);
+      const storage = mediaStorage(dependencies);
+      if (!isMediaType(input.mediaType)) {
+        throw validation("Unsupported clinical media type.", { field: "mediaType" });
+      }
+      assertClinicalMediaBudget(input.fileSizeBytes);
+      try {
+        assertMediaMimeType(input.mediaType, input.mimeType);
+      } catch (error) {
+        throw validation(error instanceof Error ? error.message : "Invalid media MIME type.", {
+          field: "mimeType",
+          mediaType: input.mediaType
+        });
+      }
+      if (input.toothNumber && !isDentalToothNumber(input.toothNumber)) {
+        throw validation("Media tooth number must use valid FDI notation.", {
+          field: "toothNumber"
+        });
+      }
+      await assertPatientExists(dependencies, context, input.patientId);
+      await requireClinicalConsent(request, context, input.patientId, "media_reserve", {
+        mediaType: input.mediaType
+      });
+      await assertEncounterPatient(context, input.encounterId, input.patientId);
+      if (input.dentalFindingId) {
+        await assertDentalFindingPatient(
+          dependencies,
+          context,
+          input.dentalFindingId,
+          input.patientId
+        );
+      }
+
+      const uploadId = randomUUID() as UUID;
+      const expiresAt = new Date(
+        context.clock.now().getTime() + CLINICAL_MEDIA_UPLOAD_TTL_MS
+      ).toISOString();
+      const objectKey = storage.buildObjectKey({
+        tenantId: request.access.context.tenant.id,
+        clinicId: request.access.clinicId,
+        patientId: input.patientId,
+        uploadId,
+        originalFilename: input.originalFilename
+      });
+      const reservation = await context.repositories.clinicalMedia.createMediaUploadReservation({
+        id: uploadId,
+        patientId: input.patientId,
+        encounterId: input.encounterId,
+        toothNumber: input.toothNumber,
+        dentalFindingId: input.dentalFindingId,
+        mediaType: input.mediaType,
+        originalFilename: input.originalFilename,
+        mimeType: input.mimeType.toLowerCase(),
+        expectedFileSizeBytes: input.fileSizeBytes,
+        expectedSha256Digest: input.sha256Digest,
+        objectKey,
+        storageProvider: storage.providerKey,
+        storageRegion: storage.region,
+        expiresAt,
+        tags: input.tags ? [...input.tags] : [],
+        provenance: input.provenance ? { ...input.provenance } : {}
+      });
+      const uploadTarget = await storage.createUploadTarget({
+        uploadId,
+        tenantId: request.access.context.tenant.id,
+        clinicId: request.access.clinicId,
+        patientId: input.patientId,
+        objectKey,
+        mimeType: reservation.mimeType,
+        expectedFileSizeBytes: reservation.expectedFileSizeBytes,
+        expectedSha256Digest: reservation.expectedSha256Digest,
+        expiresAt
+      });
+      assertPublicProviderShape(uploadTarget, "upload target");
+
+      await appendMutationEvidence(request, context, {
+        auditAction: "media.upload_requested",
+        eventType: "media.upload_requested",
+        aggregateType: "media_upload",
+        aggregateId: reservation.id,
+        patientId: reservation.patientId,
+        auditMetadata: mediaAuditMetadata(reservation),
+        eventPayload: {
+          uploadId: reservation.id,
+          patientId: reservation.patientId,
+          mediaType: reservation.mediaType,
+          encounterId: reservation.encounterId,
+          toothNumber: reservation.toothNumber,
+          dentalFindingId: reservation.dentalFindingId
+        }
+      });
+      return created({
+        upload: toPublicMediaUploadReservation(reservation),
+        uploadTarget
+      });
+    },
+
+    receiveMediaUploadContent: async (
+      request: ClinicalDentalRequest<"receiveMediaUploadContent">,
+      context: ClinicFeatureExecutionContext
+    ) => {
+      const uploadId = parsedPathId(request, "uploadId");
+      const body = parsedBinaryBody(request);
+      const storage = mediaStorage(dependencies);
+      const reservation =
+        await context.repositories.clinicalMedia.findMediaUploadReservationById(uploadId);
+      if (!reservation) {
+        throw notFound("Media upload reservation not found.", { upload_id: uploadId });
+      }
+      assertStorageMatches(storage.providerKey, reservation);
+      assertUploadOpen(reservation, context.clock.now().getTime());
+      await requireClinicalConsent(request, context, reservation.patientId, "media_receive", {
+        mediaType: reservation.mediaType
+      });
+      if (body.byteLength !== reservation.expectedFileSizeBytes) {
+        throw validation("Uploaded object size does not match the reserved media metadata.", {
+          upload_id: uploadId,
+          expected_bytes: reservation.expectedFileSizeBytes,
+          received_bytes: body.byteLength
+        });
+      }
+
+      let object = await storage.statObject(reservation.objectKey);
+      if (object) {
+        validateStoredObject(reservation, object, {});
+      } else {
+        object = await storage.receiveUpload({
+          objectKey: reservation.objectKey,
+          body: Buffer.from(body),
+          mimeType: reservation.mimeType,
+          metadata: {
+            tenant_id: reservation.tenantId,
+            clinic_id: reservation.clinicId,
+            patient_id: reservation.patientId,
+            upload_id: reservation.id
+          }
+        });
+        validateStoredObject(reservation, object, {});
+      }
+      return ok({
+        upload: toPublicMediaUploadReservation(reservation),
+        object: publicStoredObject(object)
+      });
+    },
+
+    completeMediaUpload: async (
+      request: ClinicalDentalRequest<"completeMediaUpload">,
+      context: ClinicFeatureExecutionContext
+    ) => {
+      const uploadId = parsedPathId(request, "uploadId");
+      const input = parsedBody<CompleteMediaUploadBody>(request);
+      const storage = mediaStorage(dependencies);
+      const inspection = mediaInspection(dependencies);
+      const reservation =
+        await context.repositories.clinicalMedia.findMediaUploadReservationById(uploadId);
+      if (!reservation) {
+        throw notFound("Media upload reservation not found.", { upload_id: uploadId });
+      }
+      assertStorageMatches(storage.providerKey, reservation);
+      assertUploadOpen(reservation, context.clock.now().getTime());
+      if (input.patientId !== reservation.patientId) {
+        throw validation("Complete-upload patient does not match the reservation.", {
+          upload_id: uploadId
+        });
+      }
+      if ((input.encounterId ?? null) !== reservation.encounterId) {
+        throw validation("Complete-upload encounter does not match the reservation.", {
+          upload_id: uploadId
+        });
+      }
+      await requireClinicalConsent(request, context, reservation.patientId, "media_complete", {
+        mediaType: reservation.mediaType
+      });
+      const object = await storage.statObject(reservation.objectKey);
+      if (!object) {
+        throw conflict("Reserved media object has not been uploaded.", { upload_id: uploadId });
+      }
+      validateStoredObject(reservation, object, input);
+      const inspectionResult = await inspection.inspect({
+        reservation,
+        object,
+        now: context.clock.now()
+      });
+      validateInspectionResult(reservation.mediaType, inspectionResult);
+      const asset = await context.repositories.clinicalMedia.completeMediaUpload(uploadId, {
+        contentLength: object.contentLength,
+        sha256Digest: object.sha256Digest,
+        objectVersion: inspectionResult.objectVersion,
+        scanStatus: inspectionResult.scanStatus,
+        quarantineReason: inspectionResult.quarantineReason,
+        dicomMetadata: inspectionResult.dicomMetadata ? { ...inspectionResult.dicomMetadata } : {}
+      });
+      if (!asset) {
+        throw conflict("Media upload reservation is no longer completable.", {
+          upload_id: uploadId
+        });
+      }
+      await appendMutationEvidence(request, context, {
+        auditAction: "media.upload_completed",
+        eventType: "media.upload_completed",
+        aggregateType: "media_asset",
+        aggregateId: asset.id,
+        patientId: asset.patientId,
+        auditMetadata: mediaAuditMetadata(asset),
+        eventPayload: {
+          mediaAssetId: asset.id,
+          uploadId,
+          patientId: asset.patientId,
+          mediaType: asset.mediaType,
+          encounterId: asset.encounterId,
+          toothNumber: asset.toothNumber,
+          dentalFindingId: asset.dentalFindingId,
+          scanStatus: asset.scanStatus
+        }
+      });
+      return created({ mediaAsset: toPublicMediaAsset(asset) });
+    },
+
+    listPatientMediaAssets: async (
+      request: ClinicalDentalRequest<"listPatientMediaAssets">,
+      context: ClinicFeatureExecutionContext
+    ) => {
+      const patientId = parsedPathId(request, "patientId");
+      const limit = parsedQueryInteger(request, "limit") ?? 50;
+      await assertPatientExists(dependencies, context, patientId);
+      const mediaAssets = (
+        await context.repositories.clinicalMedia.listPatientMediaAssets(patientId)
+      )
+        .slice(0, limit)
+        .map(toPublicMediaAsset);
+      await appendAudit(request, context, "media.viewed", {
+        patientId,
+        resourceType: "media_asset_collection",
+        resourceId: patientId,
+        metadata: { resultCount: mediaAssets.length }
+      });
+      return ok({ mediaAssets });
+    },
+
+    createSignedMediaAccess: async (
+      request: ClinicalDentalRequest<"createSignedMediaAccess">,
+      context: ClinicFeatureExecutionContext
+    ) => {
+      const mediaAssetId = parsedPathId(request, "mediaAssetId");
+      const input = parsedBody<SignedMediaAccessBody>(request);
+      const storage = mediaStorage(dependencies);
+      const asset = await context.repositories.clinicalMedia.findMediaAssetById(mediaAssetId);
+      if (!asset) throw notFound("Media asset not found.", { media_asset_id: mediaAssetId });
+      assertStorageMatches(storage.providerKey, asset);
+      await requireClinicalConsent(request, context, asset.patientId, "media_access", {
+        mediaType: asset.mediaType
+      });
+      if (!mediaAssetCanBeViewed(asset)) {
+        throw conflict("Media asset cannot be viewed until scanning clears it.", {
+          media_asset_id: mediaAssetId,
+          scan_status: asset.scanStatus
+        });
+      }
+      const expiresInSeconds = Math.min(
+        Math.max(
+          input.expiresInSeconds ?? CLINICAL_MEDIA_ACCESS_MAX_SECONDS,
+          CLINICAL_MEDIA_ACCESS_MIN_SECONDS
+        ),
+        CLINICAL_MEDIA_ACCESS_MAX_SECONDS
+      );
+      const expiresAt = new Date(
+        context.clock.now().getTime() + expiresInSeconds * 1000
+      ).toISOString();
+      const access = await storage.createSignedReadAccess({
+        objectKey: asset.objectKey,
+        mimeType: asset.mimeType,
+        expiresAt
+      });
+      assertPublicProviderShape(access, "signed media access");
+      await appendAudit(request, context, "media.viewed", {
+        patientId: asset.patientId,
+        resourceType: "media_asset",
+        resourceId: asset.id,
+        metadata: {
+          mediaType: asset.mediaType,
+          expiresAt: access.expiresAt,
+          expiresInSeconds
+        }
+      });
+      return ok({ mediaAsset: toPublicMediaAsset(asset), access });
+    }
+  } as const;
+}
+
+function mediaStorage(dependencies: ClinicalDentalHandlerDependencies) {
+  if (!dependencies.mediaStorage) {
+    throw configuration("Media storage provider is not configured for this ClinicOS runtime.");
+  }
+  return dependencies.mediaStorage;
+}
+
+function mediaInspection(
+  dependencies: ClinicalDentalHandlerDependencies
+): ClinicalMediaInspectionProvider {
+  if (!dependencies.mediaInspection) {
+    throw configuration(
+      "Media inspection and quarantine provider is not configured for this ClinicOS runtime."
+    );
+  }
+  return dependencies.mediaInspection;
+}
+
+async function assertEncounterPatient(
+  context: ClinicFeatureExecutionContext,
+  encounterId: UUID | null | undefined,
+  patientId: UUID
+): Promise<void> {
+  if (!encounterId) return;
+  const encounter = await context.repositories.clinicalCare.findEncounterById(encounterId);
+  if (!encounter || encounter.patientId !== patientId) {
+    throw validation("Encounter does not belong to the media patient.", {
+      encounter_id: encounterId,
+      patient_id: patientId
+    });
+  }
+}
+
+function assertUploadOpen(reservation: MediaUploadReservationRecord, nowMs: number): void {
+  if (reservation.status !== "reserved") {
+    throw conflict("Media upload reservation is not open.", {
+      upload_id: reservation.id,
+      status: reservation.status
+    });
+  }
+  if (new Date(reservation.expiresAt).getTime() <= nowMs) {
+    throw conflict("Media upload reservation has expired.", {
+      upload_id: reservation.id,
+      expires_at: reservation.expiresAt
+    });
+  }
+}
+
+function validateStoredObject(
+  reservation: MediaUploadReservationRecord,
+  object: StoredMediaObject,
+  claimed: Readonly<{
+    contentLength?: number | null;
+    sha256Digest?: string | null;
+    mimeType?: string | null;
+  }>
+): void {
+  if (object.objectKey !== reservation.objectKey) {
+    throw configuration("Media storage provider returned an object outside the reservation.");
+  }
+  if (object.contentLength !== reservation.expectedFileSizeBytes) {
+    throw validation("Stored media object size does not match the upload reservation.", {
+      upload_id: reservation.id
+    });
+  }
+  if (object.mimeType.toLowerCase() !== reservation.mimeType.toLowerCase()) {
+    throw validation("Stored media MIME type does not match the upload reservation.", {
+      upload_id: reservation.id
+    });
+  }
+  if (
+    reservation.expectedSha256Digest &&
+    object.sha256Digest !== reservation.expectedSha256Digest
+  ) {
+    throw validation("Stored media digest does not match the upload reservation.", {
+      upload_id: reservation.id
+    });
+  }
+  if (claimed.contentLength && claimed.contentLength !== object.contentLength) {
+    throw validation("Complete-upload size does not match stored object metadata.", {
+      upload_id: reservation.id
+    });
+  }
+  if (claimed.mimeType && claimed.mimeType.toLowerCase() !== object.mimeType.toLowerCase()) {
+    throw validation("Complete-upload MIME type does not match stored object metadata.", {
+      upload_id: reservation.id
+    });
+  }
+  if (claimed.sha256Digest && claimed.sha256Digest !== object.sha256Digest) {
+    throw validation("Complete-upload digest does not match stored object metadata.", {
+      upload_id: reservation.id
+    });
+  }
+}
+
+function validateInspectionResult(
+  mediaType: MediaType,
+  result: Awaited<ReturnType<ClinicalMediaInspectionProvider["inspect"]>>
+): void {
+  if (!isMediaScanStatus(result.scanStatus)) {
+    throw configuration("Media inspection provider returned an unsupported scan state.");
+  }
+  if (result.scanStatus === "quarantined" && !result.quarantineReason?.trim()) {
+    throw configuration("Quarantined media requires a provider-owned quarantine reason.");
+  }
+  if (result.scanStatus === "not_required" && mediaType !== "generated_document") {
+    throw configuration(
+      "Patient-supplied clinical media cannot bypass malware and quarantine inspection."
+    );
+  }
+  if (result.dicomMetadata) {
+    assertNoPrivateMediaKeys(result.dicomMetadata, "inspection metadata");
+  }
+}
+
+function publicStoredObject(object: StoredMediaObject) {
+  return {
+    contentLength: object.contentLength,
+    mimeType: object.mimeType,
+    sha256Digest: object.sha256Digest,
+    storedAt: object.storedAt
+  };
+}
+
+function mediaAuditMetadata(
+  input: Pick<
+    MediaUploadReservationRecord | MediaAssetRecord,
+    "mediaType" | "mimeType" | "encounterId" | "toothNumber" | "dentalFindingId" | "tags"
+  > & { readonly scanStatus?: string }
+) {
+  return {
+    mediaType: input.mediaType,
+    mimeType: input.mimeType,
+    encounterId: input.encounterId,
+    toothNumber: input.toothNumber,
+    dentalFindingId: input.dentalFindingId,
+    tagCount: input.tags.length,
+    ...(input.scanStatus ? { scanStatus: input.scanStatus } : {})
+  };
+}
+
+function assertStorageMatches(
+  configuredProvider: string,
+  record: Pick<MediaUploadReservationRecord | MediaAssetRecord, "storageProvider">
+): void {
+  if (record.storageProvider !== configuredProvider) {
+    throw configuration(
+      "Configured media storage provider does not own the persisted media object."
+    );
+  }
+}
+
+function assertPublicProviderShape(value: unknown, label: string): void {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw configuration(`Media provider returned an invalid ${label}.`);
+  }
+  assertNoPrivateMediaKeys(value as Record<string, unknown>, label);
+}
+
+function assertNoPrivateMediaKeys(value: unknown, label: string): void {
+  if (!value || typeof value !== "object") return;
+  if (Array.isArray(value)) {
+    value.forEach((item) => assertNoPrivateMediaKeys(item, label));
+    return;
+  }
+  for (const [key, child] of Object.entries(value as Record<string, unknown>)) {
+    const normalized = key.replace(/[^a-z0-9]/gi, "").toLowerCase();
+    if (
+      normalized === "objectkey" ||
+      normalized === "storagepath" ||
+      normalized === "bucket" ||
+      normalized === "providersecret" ||
+      normalized === "localpath"
+    ) {
+      throw configuration(`Media provider ${label} exposed a private storage field.`);
+    }
+    assertNoPrivateMediaKeys(child, label);
+  }
+}
