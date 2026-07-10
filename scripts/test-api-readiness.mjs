@@ -23,6 +23,7 @@ const env = {
 
 const { server } = createRuntimeApiServer(env);
 let postgresStopped = false;
+let redisStopped = false;
 
 try {
   await new Promise((resolvePromise, rejectPromise) => {
@@ -39,7 +40,9 @@ try {
   assert.equal(initial.body.repository_mode, "postgres");
   assert.equal(initial.body.evidence_tier, "E3_durable");
   assert.deepEqual(initial.body.dependencies, [
-    { name: "postgres_schema", required: true, status: "ready" }
+    { name: "postgres_schema", required: true, status: "ready" },
+    { name: "redis_abuse_budget", required: true, status: "ready" },
+    { name: "transactional_mutation_coordinator", required: true, status: "ready" }
   ]);
 
   const identity = await fetch(`${baseUrl}/v1/me`, {
@@ -52,8 +55,9 @@ try {
 
   const unavailable = await pollHealth(baseUrl, 503);
   assert.equal(unavailable.body.status, "unavailable");
-  assert.equal(unavailable.body.dependencies[0]?.name, "postgres_schema");
-  assert.equal(unavailable.body.dependencies[0]?.status, "unavailable");
+  assertDependencyStatus(unavailable.body, "postgres_schema", "unavailable");
+  assertDependencyStatus(unavailable.body, "transactional_mutation_coordinator", "unavailable");
+  assertDependencyStatus(unavailable.body, "redis_abuse_budget", "ready");
   assert.equal((await fetch(`${baseUrl}/health/live`)).status, 200);
 
   const deniedDuringOutage = await fetch(`${baseUrl}/v1/me`, {
@@ -72,6 +76,28 @@ try {
   });
   assert.equal(identityAfterRecovery.status, 200);
 
+  await runDockerCompose(["stop", "redis"]);
+  redisStopped = true;
+
+  const redisUnavailable = await pollHealth(baseUrl, 503);
+  assertDependencyStatus(redisUnavailable.body, "postgres_schema", "ready");
+  assertDependencyStatus(redisUnavailable.body, "redis_abuse_budget", "unavailable");
+  assertDependencyStatus(redisUnavailable.body, "transactional_mutation_coordinator", "ready");
+  assert.equal((await fetch(`${baseUrl}/health/live`)).status, 200);
+  const deniedDuringRedisOutage = await fetch(`${baseUrl}/v1/me`, {
+    headers: { "x-clinic-os-dev-subject": "seed-owner" }
+  });
+  assert.equal(deniedDuringRedisOutage.status, 503);
+  assert.equal((await deniedDuringRedisOutage.json()).error.code, "DEPENDENCY_UNAVAILABLE");
+
+  await runDockerCompose(["start", "redis"]);
+  redisStopped = false;
+  await pollHealth(baseUrl, 200);
+  const identityAfterRedisRecovery = await fetch(`${baseUrl}/v1/me`, {
+    headers: { "x-clinic-os-dev-subject": "seed-owner" }
+  });
+  assert.equal(identityAfterRedisRecovery.status, 200);
+
   const keycloakEvidence = await verifyKeycloakDependency({
     ...env,
     CLINIC_OS_API_USE_DEV_AUTH_FIXTURE: "false"
@@ -85,6 +111,9 @@ try {
         readinessDependencyLoss: "pass",
         trafficDeniedDuringDependencyLoss: "pass",
         readinessRecovery: "pass",
+        redisReadinessDependencyLoss: "pass",
+        redisTrafficDeniedDuringLoss: "pass",
+        redisReadinessRecovery: "pass",
         durableRepositoryMode: "pass",
         ...keycloakEvidence
       },
@@ -94,6 +123,7 @@ try {
   );
 } finally {
   if (postgresStopped) await runDockerCompose(["start", "postgres"]);
+  if (redisStopped) await runDockerCompose(["start", "redis"]);
   if (server.listening) {
     await new Promise((resolvePromise, rejectPromise) => {
       server.close((error) => (error ? rejectPromise(error) : resolvePromise()));
@@ -115,7 +145,9 @@ async function verifyKeycloakDependency(realAuthEnv) {
     const initial = await pollHealth(baseUrl, 200);
     assert.deepEqual(initial.body.dependencies, [
       { name: "postgres_schema", required: true, status: "ready" },
-      { name: "keycloak_jwks", required: true, status: "ready" }
+      { name: "keycloak_jwks", required: true, status: "ready" },
+      { name: "redis_abuse_budget", required: true, status: "ready" },
+      { name: "transactional_mutation_coordinator", required: true, status: "ready" }
     ]);
 
     await runDockerCompose(["stop", "keycloak"]);
@@ -146,6 +178,11 @@ async function verifyKeycloakDependency(realAuthEnv) {
       });
     }
   }
+}
+
+function assertDependencyStatus(body, name, status) {
+  const dependency = body.dependencies.find((candidate) => candidate.name === name);
+  assert.equal(dependency?.status, status, `${name} dependency status`);
 }
 
 async function health(baseUrl, path) {
