@@ -123,9 +123,9 @@ A finding closes only when all of the following exist:
 - **Remediation:** nonce/hash-based CSP compatible with Next, HSTS at TLS edge, `frame-ancestors 'none'`, `X-Content-Type-Options`, strict referrer and permissions policies, secure cookies, no-store/private caching for PHI, trusted-host/origin enforcement, CSRF protection for cookie-authenticated mutations, and documented CORS allowlists.
 - **Closure evidence:** deployed-header tests, CSP violation monitoring, browser regression, CSRF/origin negative tests, and cache inspection.
 
-### PRR-014 — Durable end-to-end clinic-day behavior is not demonstrated (P1)
+### PRR-014 — Durable end-to-end clinic-day behavior is not demonstrated (P1; closed at E3)
 
-- **Evidence:** CP10 browser workflows passed in fixture mode while the inspected durable database was empty and the live smoke failed. Some aggregate read models remain intentionally unavailable outside fixtures.
+- **Evidence:** CP13 now passes the canonical clinic day twice on a clean-origin PostgreSQL database with runtime IDs, 100 forced-RLS tenant tables, exact generated-client/API routes, durable audit/outbox evidence, Temporal recovery, direct reconciliation, role/consent negatives and enabled desktop/390px Playwright. See `docs/qa/checkpoint-13-evidence.md`.
 - **Risk:** the UI can present a coherent synthetic day while production writes, reads, workflow transitions, audit, outbox, and recovery disagree.
 - **Remediation:** CP13 runs the canonical lead-to-recall and payment/operations flows against Postgres, Keycloak, Temporal/outbox, and production-equivalent API clients. Implement canonical read models or defer their entire UI workflow; do not add compatibility stubs.
 - **Closure evidence:** E3/E4 role-based browser and API tests with runtime IDs, restart/retry recovery, audit/outbox reconciliation, and tenant-negative evidence.
@@ -214,9 +214,9 @@ A finding closes only when all of the following exist:
 - **Remediation:** provider/capability registry with states `absent`, `registered`, `configured`, `sandbox_verified`, `production_verified`, `degraded`, `disabled`; activation prerequisites; last verified time; owner; health; UI/API exposure rules. Diagnose registration/discovery first, then permissions/runtime.
 - **Closure evidence:** automated state-transition tests and operations surface matching provider-side truth.
 
-### PRR-027 — Outbox and Temporal durability are not proven against real persistence (P1)
+### PRR-027 — Outbox and Temporal durability are not proven against real persistence (P1; closed at E3)
 
-- **Evidence:** workflow/outbox models and local services exist, but fixture repositories bypass durable persistence and no full transaction-to-worker recovery evidence was demonstrated on the empty local database.
+- **Evidence:** CP13 proves atomic durable intent/outbox state, crash-after-commit recovery, stale-lease recovery, duplicate delivery, worker restart, deterministic Temporal replay/versioning, exactly-one provider request, dead-letter behavior and domain/audit/outbox reconciliation against local PostgreSQL and Temporal. See `docs/qa/checkpoint-13-evidence.md`.
 - **Risk:** lost/duplicated messages, stuck clinic workflows, or state divergence after crashes.
 - **Remediation:** atomic domain-write/outbox transaction; relay ownership/lease; idempotent consumers; Temporal workflow/activity retry policies; poison handling; replay authorization; versioning; queue age SLO; restart and failover recovery.
 - **Closure evidence:** kill-after-commit, duplicate delivery, worker restart, Temporal replay/version, dead-letter and reconciliation tests at E3/E4.
@@ -259,7 +259,7 @@ A finding closes only when all of the following exist:
 | PRR-011 real TypeScript checking             | P2       | CP11          | Closed at E3                                                            | Hard                       |
 | PRR-012 modular API/generated contracts      | P2       | CP12          | Closed at E3                                                            | Hard                       |
 | PRR-013 web/edge security policy             | P2       | CP14          | Open                                                                    | Hard                       |
-| PRR-014 durable clinic day                   | P1       | CP13          | Open                                                                    | Hard                       |
+| PRR-014 durable clinic day                   | P1       | CP13          | Closed at E3; deployed/staging evidence remains part of later release gates | Hard                    |
 | PRR-015 live backup/restore/failover         | P1       | CP14          | Open                                                                    | Hard                       |
 | PRR-016 production identity/session          | P1       | CP14          | Open                                                                    | Hard                       |
 | PRR-017 rate/resource/abuse control          | P2       | CP12/CP14     | Partial: CP12 application controls closed; CP14 edge/load evidence open | Hard                       |
@@ -272,7 +272,7 @@ A finding closes only when all of the following exist:
 | PRR-024 SLO/capacity/resilience/incident ops | P1       | CP14/CP17     | Open                                                                    | Hard                       |
 | PRR-025 accurate readiness governance        | P1       | Docs/CP11     | Partial: CP10 corrected; production approvals open                      | Hard                       |
 | PRR-026 capability activation registry       | P2       | CP11/CP15     | Partial: repository/auth modes truthful; provider registry open         | Hard for enabled providers |
-| PRR-027 outbox/Temporal durability           | P1       | CP11/CP13     | Partial: Postgres outbox/worker closed; Temporal reconciliation open    | Hard                       |
+| PRR-027 outbox/Temporal durability           | P1       | CP11/CP13     | Closed at E3; deployed failover/queue SLO evidence remains CP14/CP17    | Hard                       |
 | PRR-028 runtime validation/mass assignment   | P2       | CP12          | Closed at E3                                                            | Hard                       |
 | PRR-029 release-check scope hygiene          | P3       | CP11          | Closed at E3                                                            | Check reproducibility      |
 | PRR-030 real-clinic governance               | P1       | CP17          | Open                                                                    | Hard                       |
@@ -304,6 +304,23 @@ Tooling gates not converted to accepted gaps: Terraform is not installed; Docker
 but not authenticated; container/IaC scan evidence therefore remains open. CycloneDX npm SBOM,
 high-severity npm audit and tracked-file secret scan pass. No physical-device, provider sandbox,
 cloud apply, live restore, alert-delivery or real-clinic evidence exists.
+
+### CP13 E3 status delta — 2026-07-10
+
+Result candidate: `9116a8ea`; evidence: `docs/qa/checkpoint-13-evidence.md`; threat delta:
+`docs/security/checkpoint-13-threat-model-delta.md`.
+
+- PRR-014 is closed at E3 durable-local scope by two clean-origin runtime-ID clinic-day passes,
+  generated-client/web evidence, 100 forced-RLS tables, role/tenant/consent negatives and direct
+  domain/audit/outbox/recovery reconciliation. PRR-016 remains open for production Keycloak/BFF,
+  session, MFA, revocation and rotation.
+- PRR-027 is closed at E3 by atomic action events, least-privilege worker adapters, crash-after-
+  commit, duplicate/stale-lease handling, worker restart, Temporal replay/versioning and exactly-one
+  payment-request recovery. Deployed queue SLO/failover remains governed by PRR-015/024.
+- Production media remains open under PRR-009: local inspection is deliberately `pending` and
+  never claims a clean scan. Official provider activation remains PRR-008/026 and CP15.
+- The release remains NO-GO. No cloud apply, staging identity, official provider, live restore,
+  physical-device, alert-delivery or real-clinic evidence was created by CP13.
 
 ## 5. Remediation Dependency Order
 

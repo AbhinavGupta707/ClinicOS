@@ -851,3 +851,34 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   localhost Postgres is not running. Homebrew PostgreSQL 16 binaries are available, so a fresh
   isolated temporary cluster can provide migration/RLS/adapter evidence after migration 0017 is
   frozen, but it does not substitute for Redis/Keycloak/Temporal or the complete Docker lifecycle.
+
+### CP13 E3 Integration Candidate — 2026-07-10
+
+- Wave 2 durability and workflow candidates were reviewed and integrated as `328540b7` and
+  `6e4f612a`; master runtime wiring landed in `ad12fe17`. The stopped final web worktree did not
+  provide a committed handoff, so the master completed its scope directly and rejected URL/browser-
+  storage record identity.
+- Final implementation commits are `d5e5e0f4` (durable E3 runtime and recovery corrections) and
+  `9116a8ea` (generated-client web workspaces and enabled Playwright coverage).
+- A fresh isolated PostgreSQL 16.14 database applied Flyway migrations 001-017 from zero. Final
+  verification reports 100/100 forced-RLS tenant tables, three least-privilege roles, two synthetic
+  tenants, zero no-context runtime rows, denied worker patient/idempotency access and cross-tenant
+  isolation pass. Flyway validate/info/no-op migrate pass.
+- The full CP13 API smoke passed twice on the same clean-origin state with independent runtime IDs,
+  fixture fallback false and direct media/payment/provider/prescription/recovery evidence. The
+  crash/restart test proves stale-lease recovery, duplicate delivery, worker restart, replay and one
+  payment request.
+- E3 found and closed real integration defects in worker outbox grants, migration-runner options,
+  SQL parameter typing, invoice FK ordering, public media projection, due-generation progress and
+  transaction-client query overlap. Repeatability defects in the smoke/verifier were also corrected.
+- Final gates: API 123/123, DB 93/93, web 86/86, worker 16/16, workflow 10/10, enabled Playwright
+  4/4, root check/typecheck/lint/test/build, 128-route drift/inventory, secret scan, CycloneDX 1.5
+  SBOM with 756 production components and diff checks all pass with zero skips. In-app Browser was
+  unavailable with `no Codex IAB backends discovered`.
+- The managed registry-audit rerun was rejected as external dependency-inventory disclosure. The
+  unchanged lockfile retains the user-provided evidence of 21 moderate and zero high/critical
+  advisories; no force fix was run.
+- Evidence: `docs/qa/checkpoint-13-evidence.md`; threat delta:
+  `docs/security/checkpoint-13-threat-model-delta.md`; final report:
+  `docs/orchestration/CHECKPOINT_13_FINAL_REPORT.md`. Promotion and post-promotion checks remain the
+  only CP13 steps. CP14 has not started.

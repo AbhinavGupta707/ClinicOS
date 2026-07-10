@@ -314,3 +314,30 @@ Update these during orchestration:
   command after informed user authorization, do not retry or route around it; require exact output
   and exit status from an authorized operator or approved CI environment. Never substitute cached
   or local-only output while claiming the required external audit passed.
+
+## CP13 Integration Memory
+
+- A due-generation workflow progress count must represent processed candidate outcomes, not the
+  number of durable entities emitted. One procedure candidate may atomically create both a recall
+  and its linked task while still counting as one created outcome.
+- One transaction-bound node-postgres client cannot execute concurrent queries. Serialize bound
+  repository-port operations even if feature code uses `Promise.all`; trace deprecations during E3
+  so overlap is found before pg 9 turns it into a hard failure.
+- Durable runtime smokes must be repeatable on the same state. Run-scope every unique fixture field,
+  accept cursor pages that legitimately skip existing rows, use canonical consent purposes and
+  contract limits, and never assume the database still contains only seed rows after a smoke.
+- Payment/provider recovery progress and web payment intent are not settlement. Provider evidence
+  must be signed and digest-bound; overpayment is capped and reconciled; pending intent UI must say
+  that it is not payment confirmation.
+- Patient-supplied media stays pending/quarantined until an official inspection provider supplies
+  durable evidence. Public media DTOs must strip object keys, paths, provider versions and other
+  storage authority.
+- A web access-token seam may be registration-only and fail closed for CP13. Never source tokens or
+  patient/encounter/invoice selection from URLs, public environment values, local storage or session
+  storage. CP14 owns the production BFF/session lifecycle.
+- When the in-app Browser backend is unavailable, record the exact failure and run the explicitly
+  enabled Playwright suite against the exact integrated production build. An unflagged all-skipped
+  invocation is diagnostic output, not browser evidence.
+- Post-smoke RLS verification should assert that every visible row belongs to the scoped tenant and
+  canonical seed rows remain present. It must not assume the row count remains equal to the initial
+  seed count.
