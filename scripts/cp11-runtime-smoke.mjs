@@ -69,7 +69,8 @@ export async function runCp11RuntimeSmoke(options) {
 
   const validationFailure = await request("assistant", "POST", "/v1/patients", {
     body: { fullName: "CP11 Validation Synthetic", source: "manual" },
-    expectedStatus: 400
+    expectedStatus: 422,
+    idempotencyKey: `${idempotencyPrefix}-validation`
   });
   assert.equal(validationFailure.body.error.code, "VALIDATION_ERROR");
 
@@ -157,12 +158,10 @@ export async function runCp11RuntimeSmoke(options) {
   assert.equal(deniedRole.body.error.details.required_permission, "schedule.write");
 
   await request("assistant", "POST", `/v1/appointments/${appointmentId}/confirm`, {
-    body: {},
     expectedStatus: 200,
     idempotencyKey: `${idempotencyPrefix}-confirm`
   });
   const checkIn = await request("assistant", "POST", `/v1/appointments/${appointmentId}/check-in`, {
-    body: {},
     expectedStatus: 200,
     idempotencyKey: `${idempotencyPrefix}-check-in`
   });
@@ -172,7 +171,6 @@ export async function runCp11RuntimeSmoke(options) {
     "POST",
     `/v1/appointments/${appointmentId}/check-in`,
     {
-      body: {},
       expectedStatus: 200,
       idempotencyKey: `${idempotencyPrefix}-check-in`
     }
@@ -195,6 +193,7 @@ export async function runCp11RuntimeSmoke(options) {
       captureMethod: "clinic_staff",
       grantedByName: "CP11 Runtime Synthetic",
       relationshipToPatient: "self",
+      evidence: { kind: "synthetic_runtime_smoke" },
       provenance: { kind: "manual_entry", evidence: "cp11_runtime_id_smoke" }
     },
     expectedStatus: 201,
@@ -213,11 +212,15 @@ export async function runCp11RuntimeSmoke(options) {
     idempotencyKey: `${idempotencyPrefix}-encounter`
   });
   const encounterId = encounter.body.encounter.id;
-  await request("assistant", "POST", `/v1/encounters/${encounterId}/start`, {
-    body: {},
-    expectedStatus: 200,
-    idempotencyKey: `${idempotencyPrefix}-encounter-start`
-  });
+  const startedEncounter = await request(
+    "assistant",
+    "POST",
+    `/v1/encounters/${encounterId}/start`,
+    {
+      expectedStatus: 200,
+      idempotencyKey: `${idempotencyPrefix}-encounter-start`
+    }
+  );
   await request("assistant", "PATCH", `/v1/encounters/${encounterId}`, {
     body: {
       content: {
@@ -229,16 +232,15 @@ export async function runCp11RuntimeSmoke(options) {
       readyForSign: true
     },
     expectedStatus: 200,
-    idempotencyKey: `${idempotencyPrefix}-draft`
+    idempotencyKey: `${idempotencyPrefix}-draft`,
+    ifMatch: startedEncounter.response.headers.get("etag")
   });
   const deniedSign = await request("assistant", "POST", `/v1/encounters/${encounterId}/sign-note`, {
-    body: {},
     expectedStatus: 403,
     idempotencyKey: `${idempotencyPrefix}-sign-denied`
   });
   assert.equal(deniedSign.body.error.details.required_permission, "clinical.note.sign");
   const signed = await request("doctor", "POST", `/v1/encounters/${encounterId}/sign-note`, {
-    body: {},
     expectedStatus: 200,
     idempotencyKey: `${idempotencyPrefix}-sign`
   });
@@ -320,6 +322,7 @@ export async function runCp11RuntimeSmoke(options) {
     };
     if (requestOptions.body !== undefined) headers["content-type"] = "application/json";
     if (requestOptions.idempotencyKey) headers["idempotency-key"] = requestOptions.idempotencyKey;
+    if (requestOptions.ifMatch) headers["if-match"] = requestOptions.ifMatch;
     if (requestOptions.includeClinic) {
       headers["x-clinic-id"] = activeClinic(identities.get(requestOptions.actorKey)).id;
     }
