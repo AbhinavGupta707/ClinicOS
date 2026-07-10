@@ -26,3 +26,11 @@ The package now exposes framework-neutral contracts for the later modular API co
 - a deny-by-default route-policy registry contract with exact registration coverage, verified-identity authority, explicit public-health and signed-webhook exceptions, strict runtime validation, and no-store responses.
 
 The source package intentionally does not ship an in-memory production rate limiter. A later API integration must supply a distributed atomic budget store and register every route before startup. Missing policy coverage is a startup/configuration failure, not a permissive fallback.
+
+## Checkpoint 14 Edge Policy
+
+`TrustedEdgePolicy` validates exact public hosts and origins only from a direct canonical connection or an explicit `VerifiedTrustedProxyBoundary`. Production ALB adapters must prove the peer connection, header overwrite and one normalized forwarding hop, then strip raw `X-Forwarded-Host`/`X-Forwarded-Proto`; a boolean trust flag or unverified forwarded header is never authority. Browser mutations require an exact same-origin `Origin`, safe fetch metadata, an accepted content type, no browser-supplied bearer header, and a session-bound CSRF token. CORS is explicit and origin-reflecting only after allowlist validation.
+
+`buildBrowserSecurityHeaders` emits a nonce-only CSP without `unsafe-inline` or `unsafe-eval`, denies framing/sniffing and sensitive caching, and keeps HSTS disabled until the real domain and subdomain posture are verified. A CSP report endpoint must be an explicit HTTPS path on an already trusted origin. `CP14_APPLICATION_RESOURCE_POLICIES` supplies bounded login, callback, session, mutation, and privileged budgets; production adapters still have to enforce those policies through the distributed CP12 abuse-budget store.
+
+Refresh replay and post-dispatch recovery uncertainty are distinct critical audit classifications. Provider-confirmed reuse emits `auth.refresh.replay_detected`; timeout, transport, malformed response, identity drift, or lost durable completion emits `auth.refresh.recovery_uncertain`. Neither may be substituted with diagnostic logging.

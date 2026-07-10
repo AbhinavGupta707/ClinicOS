@@ -1,0 +1,71 @@
+{
+  "schemaVersion": 1,
+  "service": "keycloak",
+  "environmentClass": "production-like",
+  "image": {
+    "minimumVersion": "26.6.4",
+    "digestRequired": true,
+    "mutableTagsForbidden": true
+  },
+  "availability": {
+    "minimumReplicas": 3,
+    "minimumAvailabilityZones": 3,
+    "spreadAcrossZones": true,
+    "rollingUpdateMinimumHealthyPercent": 100,
+    "rollingUpdateMaximumPercent": 200,
+    "gracefulShutdownSeconds": 60
+  },
+  "database": {
+    "engine": "postgresql",
+    "dedicatedSchema": true,
+    "multiAzRequired": true,
+    "tlsRequired": true,
+    "credentialsSource": "aws-secrets-manager",
+    "connectionPoolBounded": true,
+    "schemaMigrationOwnerSeparated": true
+  },
+  "cache": {
+    "provider": "ispn",
+    "stack": "jdbc-ping",
+    "clusterPortsPrivateOnly": [7800, 57800],
+    "stickySessions": "preferred-not-required"
+  },
+  "network": {
+    "publicIngress": "alb-only",
+    "keycloakTasksPrivate": true,
+    "adminHostnameSeparate": true,
+    "adminIngress": "vpn-or-jit-operator-only",
+    "adminMfaBoundaryPolicy": "operations/privileged-mfa-boundary.json",
+    "adminReadinessRequiresRuntimeMfaEvidence": true,
+    "proxyHeaders": "xforwarded-from-trusted-alb-only",
+    "httpEnabledBehindTlsTerminatingAlb": true,
+    "strictHostnameRequired": true
+  },
+  "health": {
+    "healthEndpointsEnabled": true,
+    "metricsEnabled": true,
+    "startupProbeRequired": true,
+    "readinessProbeRequired": true,
+    "livenessProbeRequired": true,
+    "loadBalancerAdmissionUsesReadiness": true
+  },
+  "secrets": {
+    "bootstrapAdminIsEphemeral": true,
+    "bootstrapAdminRemovedAfterProvisioning": true,
+    "clientSecretsGeneratedAtRuntime": true,
+    "clientSecretsStoredInSecretsManager": true,
+    "realmFilesContainSecrets": false
+  },
+  "failClosedRuntimeBindings": [
+    "KC_HOSTNAME",
+    "KC_HOSTNAME_ADMIN",
+    "KC_DB_URL",
+    "KC_DB_USERNAME",
+    "KC_DB_PASSWORD",
+    "KC_PROXY_HEADERS",
+    "CLINIC_OS_WEB_ORIGIN",
+    "CLINIC_OS_WEB_CALLBACK_URI",
+    "CLINIC_OS_WEB_POST_LOGOUT_URI",
+    "CLINIC_OS_MOBILE_REDIRECT_URI"
+  ]
+}
