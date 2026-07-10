@@ -26,6 +26,54 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: false,
     requiresPatientId: false
   },
+  "auth.session.created": {
+    category: "security",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "auth.session.rotated": {
+    category: "security",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "auth.session.revoked": {
+    category: "security",
+    riskLevel: "high",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "auth.refresh.replay_detected": {
+    category: "security",
+    riskLevel: "critical",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "auth.mfa.denied": {
+    category: "security",
+    riskLevel: "high",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "identity.joiner.completed": {
+    category: "administration",
+    riskLevel: "high",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "identity.mover.completed": {
+    category: "administration",
+    riskLevel: "critical",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "identity.leaver.completed": {
+    category: "administration",
+    riskLevel: "critical",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
   "patient.record.viewed": {
     category: "phi_access",
     riskLevel: "medium",

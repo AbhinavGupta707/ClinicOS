@@ -22,3 +22,12 @@ Authorization is tenant-first, then clinic-scoped, then permission-scoped. A rol
 - `RequestScopeResolutionError` and `AuthorizationError` keep scope-resolution failure distinct from missing-capability failure for stable `403` mapping.
 
 The API framework consumer must verify the token signature and claims before calling these helpers, load current membership state from the authoritative identity repository, derive the request scope, and then authorize the route policy. UI visibility and decoded-but-unverified JWT claims are not security boundaries.
+
+## Checkpoint 14 Identity and Session Contracts
+
+- `OAuthTransactionManager` builds Authorization Code + PKCE S256 requests and requires an atomic, consume-once state store. Callback state, nonce, verifier, return target, issuer, audience, and authorized party are server-bound; URL fragments, token parameters, `offline_access`, and cross-origin return targets are rejected.
+- `WebSessionManager` stores access, refresh, and ID tokens only in an AES-256-GCM encrypted server record. The browser receives an opaque `HttpOnly`, `SameSite=Lax`, production `Secure __Host-` cookie and a session-bound synchronizer CSRF token. Session-family revocation, periodic/fixation rotation, authority-revision checks, refresh compare-and-swap, and replay response are store-atomic contracts.
+- `MobileTokenManager` is a separate native contract. Refresh material is accepted only through an OS secure-storage vault that is device-only and backup-excluded; refresh reuse or identity drift purges the vault. Logout purges locally before requiring upstream refresh-token revocation and reports an honest unconfirmed state if the provider is unavailable.
+- `principalFromProductionKeycloakClaims` applies bounded lifetime, issuer, audience, `azp`, session, token-ID, and MFA checks after framework signature verification. JML and break-glass helpers require ordered, idempotent, audited controls and do not replace current ClinicOS tenant/clinic authorization.
+
+Production composition must provide distributed transaction/session stores, KMS-backed key rings, a current-authority resolver, an official OIDC token client, and a distributed revocation feed. Missing bindings are startup/readiness failures. Browser code must never receive or persist access or refresh tokens.

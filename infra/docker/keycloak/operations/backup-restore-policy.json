@@ -1,0 +1,43 @@
+{
+  "schemaVersion": 1,
+  "authoritativeBackup": {
+    "source": "keycloak-postgresql-database",
+    "continuousPointInTimeRecovery": true,
+    "multiAz": true,
+    "crossRegionCopy": "ap-south-2",
+    "encryption": "customer-managed-kms",
+    "vaultLockRequired": true,
+    "deletionProtectionRequired": true,
+    "restoreDrillCadenceDays": 90
+  },
+  "realmExport": {
+    "purpose": "configuration-promotion-and-secondary-recovery-aid",
+    "countsAsAuthoritativeBackup": false,
+    "allNodesStoppedForConsistentExport": true,
+    "usersInSeparateFiles": true,
+    "encryptedRestrictedArtifact": true,
+    "secretsRedactedBeforeRepositoryComparison": true,
+    "adminEventsSessionsRevocationsCovered": false
+  },
+  "restoreOrder": [
+    "isolate-target-environment",
+    "restore-postgresql-to-new-instance",
+    "verify-backup-and-kms-provenance",
+    "start-one-keycloak-node-with-traffic-disabled",
+    "run-schema-and-realm-integrity-checks",
+    "start-cluster-and-verify-cache-membership",
+    "rotate-bootstrap-and-database-credentials",
+    "verify-issuer-jwks-login-mfa-revocation-and-jml",
+    "reconcile-clinic-membership-authority-revisions",
+    "authorize-traffic-after-signed-review"
+  ],
+  "requiredEvidence": [
+    "timed-rpo-rto",
+    "login-and-mfa",
+    "refresh-rotation-and-replay-denial",
+    "logout-and-administrator-revocation",
+    "old-and-current-signing-key-validation-window",
+    "admin-event-retention",
+    "application-membership-revocation"
+  ]
+}
