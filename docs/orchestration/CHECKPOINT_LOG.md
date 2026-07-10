@@ -646,3 +646,12 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   - model/effort: `gpt-5.6-sol` / `xhigh`;
   - exclusive ownership: `apps/api/src/**` and `apps/api/test/**`; manifests, lockfile, packages, migrations, generated contracts and release/evidence truth remain master-only;
   - mandate: real Nest modular-monolith bootstrap, uniform 128-operation contract/security strangler pipeline, atomic Redis abuse budgets, raw-body Razorpay verification, native health/readiness and identity routes, adversarial parity tests, committed clean handoff and no release claim.
+- API framework review identified a genuine remaining persistence dependency rather than treating OpenAPI metadata as runtime compliance: 80 contract-marked mutations require durable request replay/conflict semantics, and 12 PATCH operations require atomic `If-Match` version advancement. Master commit `75e75f960dcaac41dc1e6412aa8bed55f2d703dd` freezes migration 0015 with forced-RLS actor/clinic/operation/key idempotency state, bounded replay fields, processing leases, expired tombstones and `row_version` columns on the 12 resources. A clean local bootstrap applied all 15 migrations; `db:verify` reported 97/97 forced-RLS tenant tables, three least-privilege roles, zero no-context rows, worker denial and passing cross-tenant isolation.
+- Durable API Request-Guards DB Adapter worker:
+  - pending worktree ID: `client-new-thread:4361920b-7baf-4f89-9ffc-cbc03294f440`;
+  - thread ID: `019f498f-86a4-70d2-8d46-bd5f691573d8`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/3b15/ClinicOS`;
+  - verified base: detached `75e75f960dcaac41dc1e6412aa8bed55f2d703dd`, initially clean;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - ownership: focused `packages/db` request-guard/Postgres unit-of-work adapter and tests only; migration 0015 is frozen and apps/manifests/docs remain forbidden;
+  - adaptive-lane decision: launch is justified because the work is substantial, path-disjoint from the active `apps/api` worker, independently testable against a frozen schema, and must be transaction-coupled to the CP11 unit of work rather than implemented in Redis or an API-local parallel transaction.
