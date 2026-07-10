@@ -49,6 +49,8 @@ test("identity edge preserves verified tenant/clinic authority and MFA for privi
     (error) => error instanceof BoundaryError && error.code === "UNAUTHENTICATED"
   );
   assert.equal(auditOutbox.intents.at(-1)?.action, "auth.mfa.denied");
+  assert.equal(auditOutbox.intents.at(-1)?.tenantId, tenantId);
+  assert.equal(auditOutbox.intents.at(-1)?.clinicId, clinicId);
   for (const bypassClaims of [
     { ...tokenClaims(["otp"]), acr: "urn:unproved:aal2" },
     { ...tokenClaims(["webauthn"]), acr: "urn:unproved:mfa" },

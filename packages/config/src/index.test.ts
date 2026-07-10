@@ -72,6 +72,7 @@ describe("parseClinicOsEnv", () => {
       LLM_PROVIDER: "unconfigured",
       TRANSCRIPTION_PROVIDER: "unconfigured",
       CLINIC_OS_ABUSE_BUDGET_KEY_SECRET: "staging-abuse-budget-key-secret-0001",
+      CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET: "staging-token-revocation-key-secret-0001",
       AWS_ACCOUNT_ID: "123456789012",
       AWS_TERRAFORM_STATE_BUCKET: "clinic-os-terraform-state",
       AWS_TERRAFORM_LOCK_TABLE: "clinic-os-terraform-locks",
@@ -85,6 +86,9 @@ describe("parseClinicOsEnv", () => {
     expect(config.providers.payment.provider).toBe("manual_clinic_approved");
     expect(config.operations.alerting.provider).toBe("email");
     expect(config.security.abuseBudgetKeySecret).toBe("staging-abuse-budget-key-secret-0001");
+    expect(config.security.tokenRevocationKeySecret).toBe(
+      "staging-token-revocation-key-secret-0001"
+    );
   });
 
   it("requires a strong abuse-budget key secret in production-like environments", () => {

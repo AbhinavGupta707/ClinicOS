@@ -96,6 +96,7 @@ const runtimeEnvSchema = z
       "REDIS_URL must use redis:// or rediss://"
     ),
     CLINIC_OS_ABUSE_BUDGET_KEY_SECRET: optionalString,
+    CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET: optionalString,
     TEMPORAL_ADDRESS: requiredString.default("localhost:7233"),
 
     KEYCLOAK_BASE_URL: requiredUrl,
@@ -196,6 +197,17 @@ const runtimeEnvSchema = z
           path: ["CLINIC_OS_ABUSE_BUDGET_KEY_SECRET"],
           message:
             "Production-like API runtime requires CLINIC_OS_ABUSE_BUDGET_KEY_SECRET with at least 32 UTF-8 bytes."
+        });
+      }
+      if (
+        !env.CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET ||
+        Buffer.byteLength(env.CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET, "utf8") < 32
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET"],
+          message:
+            "Production-like identity runtime requires CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET with at least 32 UTF-8 bytes."
         });
       }
 
@@ -422,6 +434,7 @@ export type ClinicOsConfig = {
   };
   security: {
     abuseBudgetKeySecret?: string | undefined;
+    tokenRevocationKeySecret?: string | undefined;
   };
   auth: {
     keycloakBaseUrl: string;
@@ -541,7 +554,8 @@ function toConfig(env: RuntimeEnv): ClinicOsConfig {
       temporalAddress: env.TEMPORAL_ADDRESS
     },
     security: {
-      abuseBudgetKeySecret: env.CLINIC_OS_ABUSE_BUDGET_KEY_SECRET
+      abuseBudgetKeySecret: env.CLINIC_OS_ABUSE_BUDGET_KEY_SECRET,
+      tokenRevocationKeySecret: env.CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET
     },
     auth: {
       keycloakBaseUrl: env.KEYCLOAK_BASE_URL,

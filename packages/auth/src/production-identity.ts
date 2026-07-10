@@ -217,6 +217,8 @@ export async function assertMfaForAccess(input: {
   subject: string;
   issuer: string;
   authorizedParty: string;
+  tenantId?: string;
+  clinicId?: string;
   auditDeduplicationKey: string;
   now: Date;
   auditOutbox: RequiredSecurityAuditOutbox;
@@ -233,6 +235,9 @@ export async function assertMfaForAccess(input: {
           input.breakGlass ? "break_glass" : "privileged_role"
         }`,
         subject: input.subject,
+        ...(input.tenantId && input.clinicId
+          ? { tenantId: input.tenantId, clinicId: input.clinicId }
+          : {}),
         issuer: input.issuer,
         authorizedParty: input.authorizedParty,
         reasonCode: input.breakGlass ? "break_glass" : "privileged_role",
@@ -463,6 +468,8 @@ export async function assertActiveBreakGlassGrant(
       subject: input.actorUserId,
       issuer: input.issuer,
       authorizedParty: input.authorizedParty,
+      tenantId: input.tenantId,
+      clinicId: input.clinicId,
       auditDeduplicationKey: input.auditDeduplicationKey,
       now,
       auditOutbox: input.auditOutbox

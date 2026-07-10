@@ -115,6 +115,8 @@ export class IdentitySessionEdgeGuard {
         subject: principal.subject,
         issuer: principal.issuer,
         authorizedParty: principal.authorizedParty,
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
         auditDeduplicationKey: principal.tokenId,
         now: input.now,
         auditOutbox: this.#securityAuditOutbox

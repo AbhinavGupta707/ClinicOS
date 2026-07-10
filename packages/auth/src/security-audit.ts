@@ -7,6 +7,9 @@ interface RequiredSecurityAuditBase {
   occurredAt: string;
   deduplicationKey: string;
   subject: string;
+  /** Verified application scope when the audit originates inside a clinic request. */
+  tenantId?: string;
+  clinicId?: string;
 }
 
 export type RequiredSecurityAuditIntent =
@@ -57,6 +60,15 @@ export function validateRequiredSecurityAuditIntent(
   if (!safeAuditValue(intent.subject) || !REASON_CODE_PATTERN.test(intent.reasonCode)) {
     throw new Error("Required security-audit identity or reason is invalid.");
   }
+  if (
+    (intent.clinicId !== undefined && intent.tenantId === undefined) ||
+    (intent.action === "auth.mfa.denied" &&
+      (intent.tenantId === undefined) !== (intent.clinicId === undefined)) ||
+    (intent.tenantId !== undefined && !safeAuditValue(intent.tenantId)) ||
+    (intent.clinicId !== undefined && !safeAuditValue(intent.clinicId))
+  ) {
+    throw new Error("Required security-audit clinic scope is invalid.");
+  }
   if ("issuer" in intent) {
     if (!safeAuditUrl(intent.issuer) || !safeAuditValue(intent.authorizedParty)) {
       throw new Error("Required authentication audit context is invalid.");
@@ -71,7 +83,7 @@ export function validateRequiredSecurityAuditIntent(
       throw new Error("Required MFA-denial audit roles are invalid.");
     }
   }
-  if ("tenantId" in intent) {
+  if ("transition" in intent) {
     if (
       !safeAuditValue(intent.tenantId) ||
       !safeAuditValue(intent.commandId) ||

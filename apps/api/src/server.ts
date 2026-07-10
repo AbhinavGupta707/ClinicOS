@@ -27,6 +27,7 @@ import {
   type IdentityRepository,
   type PaymentProviderEventRecord,
   type RepositoryScope,
+  type SqlConnectionFactory,
   type ScopedApiRequestGuardsPort
 } from "@clinic-os/db";
 import {
@@ -203,6 +204,11 @@ import type { ClinicFeatureHandlerMap } from "./features/contracts.ts";
 import { createCp13ClinicFeatureHandlerMap } from "./features/cp13-composition.ts";
 import type { Cp13ClinicFeatureOperationId } from "./features/cp13-operation-ownership.ts";
 import { createClinicalDentalRelationshipAuthority } from "./features/clinical-dental/index.ts";
+import {
+  IdentitySessionEdgeGuard,
+  PostgresIdentitySecurityAuditOutbox,
+  RedisTokenRevocationStore
+} from "./features/identity-session-edge/index.ts";
 import { runClinicFeatureOperation } from "./features/runtime.ts";
 import {
   createTreatmentBillingProviderOperationService,
@@ -252,6 +258,7 @@ export interface ClinicOsApiServerOptions {
   budgetKeySecret?: string;
   mutationCoordinator?: AtomicMutationCoordinator;
   featureHandlers?: ClinicFeatureHandlerMap;
+  identityEdgeGuard?: IdentitySessionEdgeGuard;
 }
 
 interface RuntimeOptions {
@@ -316,6 +323,13 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
       "Non-fixture ClinicOS runtime requires durable transactional mutation coordination."
     );
   }
+  if (options.config.isProductionLike && !options.identityEdgeGuard) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Production identity-session edge dependencies are not configured."
+    );
+  }
   const budgetStoreWithReadiness = budgetStore as AtomicBudgetStore & {
     readiness?: () => Promise<void>;
   };
@@ -324,6 +338,15 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
     authMode: options.useLocalAuthFixture ? "local_synthetic_fixture" : "keycloak_jwks",
     probes: [
       ...(options.dependencyProbes ?? []),
+      ...(options.identityEdgeGuard
+        ? [
+            {
+              name: "identity_session_edge",
+              required: true,
+              check: () => options.identityEdgeGuard!.readiness()
+            }
+          ]
+        : []),
       {
         name: "redis_abuse_budget",
         required: true,
@@ -411,7 +434,9 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
         expectedIssuer,
         acceptedAudience,
         config: options.config,
-        identityRepository: options.identityRepository
+        identityRepository: options.identityRepository,
+        identityEdgeGuard: options.identityEdgeGuard,
+        clock: options.clock ?? systemClock
       }),
     async handleIdentity(request, requestId, access) {
       if (options.auditSink) {
@@ -632,6 +657,7 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
 
   let pool: Pool | undefined;
   let redisBudgetStore: RedisAtomicBudgetStore | undefined;
+  let tokenRevocationStore: RedisTokenRevocationStore | undefined;
   const repositorySet = useFixtureRepository
     ? {
         identityRepository: new LocalFixtureIdentityRepository(),
@@ -657,6 +683,46 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
     );
   }
   const paymentProvider = createRuntimePaymentProvider(parsed.data);
+  const tokenRevocationKeySecret =
+    parsed.data.security.tokenRevocationKeySecret ??
+    (parsed.data.isProductionLike
+      ? null
+      : "clinicos-local-synthetic-token-revocation-key-000000000000");
+  const identityEdgeGuard =
+    pool && !useLocalAuthFixture && tokenRevocationKeySecret
+      ? (() => {
+          tokenRevocationStore = new RedisTokenRevocationStore({
+            redisUrl: parsed.data.services.redisUrl,
+            keyHmacSecret: Buffer.from(tokenRevocationKeySecret, "utf8"),
+            now: () => systemClock.now()
+          });
+          return new IdentitySessionEdgeGuard({
+            configuration: {
+              productionLike: parsed.data.isProductionLike,
+              expectedIssuer: buildExpectedIssuer(parsed.data),
+              mfaAssurancePolicy: {
+                policyId: "clinicos-amr-two-factor-v1",
+                reviewedRealmEvidenceId: null,
+                acceptedAcrValues: [],
+                primaryFactorAmrValues: ["pwd"],
+                secondaryFactorAmrValues: ["otp", "totp", "webauthn"],
+                phishingResistantAmrValues: []
+              },
+              requiredAudience: DEFAULT_API_AUDIENCE,
+              acceptedAuthorizedParties: [
+                parsed.data.auth.keycloakClientId,
+                "clinic-os-mobile"
+              ],
+              maximumAccessTokenLifetimeSeconds: 300,
+              browserSessionCookieName: "__Host-clinicos_session"
+            },
+            revocations: tokenRevocationStore,
+            securityAuditOutbox: new PostgresIdentitySecurityAuditOutbox(
+              pool as unknown as SqlConnectionFactory
+            )
+          });
+        })()
+      : undefined;
 
   const serverOptions: ClinicOsApiServerOptions = {
     config: parsed.data,
@@ -667,6 +733,7 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
     paymentProvider,
     useLocalAuthFixture,
     repositoryMode: useFixtureRepository ? "fixture" : "postgres",
+    identityEdgeGuard,
     dependencyProbes: pool
       ? createRuntimeDependencyProbes({
           pool,
@@ -707,7 +774,8 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
     close() {
       closePromise ??= Promise.all([
         ...(pool ? [pool.end()] : []),
-        ...(redisBudgetStore ? [redisBudgetStore.close()] : [])
+        ...(redisBudgetStore ? [redisBudgetStore.close()] : []),
+        ...(tokenRevocationStore ? [tokenRevocationStore.close()] : [])
       ]).then(() => undefined);
       return closePromise;
     }
@@ -1693,6 +1761,8 @@ async function resolveAccessContext(input: {
   acceptedAudience: string;
   config: ClinicOsConfig;
   identityRepository: IdentityRepository;
+  identityEdgeGuard?: IdentitySessionEdgeGuard;
+  clock?: Clock;
 }): Promise<{ context: AccessContext; clinics: Clinic[] }> {
   const verifiedKeycloakClaims = await resolveClaims({
     request: input.request,
@@ -1720,17 +1790,26 @@ async function resolveAccessContext(input: {
     );
   }
 
-  return {
-    context: buildAccessContext({
-      principal,
-      tenant: snapshot.tenant,
-      user: snapshot.user,
-      memberships: snapshot.memberships,
-      clinicAssignments: snapshot.clinicAssignments,
-      roleAssignments: snapshot.roleAssignments
-    }),
-    clinics: snapshot.clinics
-  };
+  const context = buildAccessContext({
+    principal,
+    tenant: snapshot.tenant,
+    user: snapshot.user,
+    memberships: snapshot.memberships,
+    clinicAssignments: snapshot.clinicAssignments,
+    roleAssignments: snapshot.roleAssignments
+  });
+  if (input.identityEdgeGuard) {
+    const selectedClinic = headerValue(input.request, "x-clinic-id");
+    await input.identityEdgeGuard.verify({
+      claims: verifiedKeycloakClaims,
+      accessContext: context,
+      clinics: snapshot.clinics,
+      ...(selectedClinic ? { selectedClinicId: pathUuid(selectedClinic, "x-clinic-id") } : {}),
+      cookieHeader: input.request.headers.cookie,
+      now: (input.clock ?? systemClock).now()
+    });
+  }
+  return { context, clinics: snapshot.clinics };
 }
 
 function resolveClinicId(request: IncomingMessage, context: AccessContext): UUID {
