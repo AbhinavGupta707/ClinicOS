@@ -3180,7 +3180,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       );
       const recall = result.rows[0] ? mapRecallRow(result.rows[0]) : null;
       if (recall?.taskId && ["booked", "completed", "skipped"].includes(recall.status)) {
-        await client.query(
+        const taskVersionResult = await client.query<RowVersionProjectionRow>(
           `
             update tasks
             set
@@ -3192,6 +3192,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
               status_changed_at = now(),
               row_version = row_version + 1
             where tenant_id = $1 and clinic_id = $2 and id = $3 and status <> 'done'
+            returning row_version
           `,
           [
             scope.tenantId,
@@ -3201,6 +3202,9 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
             JSON.stringify(evidence)
           ]
         );
+        if (taskVersionResult.rows[0]) {
+          positiveRowVersion(taskVersionResult.rows[0].row_version);
+        }
       }
       return recall;
     });
@@ -10325,6 +10329,10 @@ interface TaskRow {
   status_changed_at: Date | string;
   created_at: Date | string;
   updated_at: Date | string;
+}
+
+interface RowVersionProjectionRow {
+  row_version: number | string;
 }
 
 interface RecallRuleRow {

@@ -24,9 +24,11 @@ const unitOfWork = createPostgresClinicModuleUnitOfWork({
 const token = randomUUID();
 const recallId = randomUUID();
 const rollbackRecallId = randomUUID();
+const overflowRecallId = randomUUID();
 let patientId;
 let taskId;
 let rollbackTaskId;
+let overflowTaskId;
 let recallRuleId;
 
 try {
@@ -58,20 +60,32 @@ try {
       status: "open",
       idempotencyKey: `cp12-row-version-rollback-task-${token}`
     });
+    const overflowTask = await repositories.continuity.createTask({
+      patientId: patient.id,
+      taskType: "recall",
+      sourceWorkflow: "recall_generation",
+      sourceRecordType: "recall",
+      sourceRecordId: overflowRecallId,
+      title: "CP12 linked recall overflow",
+      status: "open",
+      idempotencyKey: `cp12-row-version-overflow-task-${token}`
+    });
     const rule = await repositories.continuity.createRecallRule({
       code: `CP12-RV-${token}`,
       title: "CP12 row-version regression",
       offsetDays: 180
     });
-    return { patient, task, rollbackTask, rule };
+    return { patient, task, rollbackTask, overflowTask, rule };
   });
   patientId = created.patient.id;
   taskId = created.task.id;
   rollbackTaskId = created.rollbackTask.id;
+  overflowTaskId = created.overflowTask.id;
   recallRuleId = created.rule.id;
   assert.equal(created.patient.rowVersion, 1);
   assert.equal(created.task.rowVersion, 1);
   assert.equal(created.rollbackTask.rowVersion, 1);
+  assert.equal(created.overflowTask.rowVersion, 1);
 
   const projectedAfterAdvance = await unitOfWork.run(
     { scope },
@@ -110,6 +124,28 @@ try {
         "2026-07-10T12:00:00.000Z",
         scope.actorUserId
       ]
+    );
+    await client.query(
+      `insert into recalls (
+         id, tenant_id, clinic_id, recall_rule_id, patient_id, task_id, status, due_at,
+         created_by_user_id, updated_by_user_id
+       )
+       values ($1, $2, $3, $4, $5, $6, 'due', $7, $8, $8)`,
+      [
+        overflowRecallId,
+        scope.tenantId,
+        scope.clinicId,
+        recallRuleId,
+        patientId,
+        overflowTaskId,
+        "2026-07-10T12:00:00.000Z",
+        scope.actorUserId
+      ]
+    );
+    await client.query(
+      `update tasks set row_version = $4
+       where tenant_id = $1 and clinic_id = $2 and id = $3`,
+      [scope.tenantId, scope.clinicId, overflowTaskId, Number.MAX_SAFE_INTEGER]
     );
   });
 
@@ -160,13 +196,34 @@ try {
   assert.equal(rollbackState.task?.rowVersion, 1);
   assert.equal(rollbackState.recall?.status, "due");
 
+  await assert.rejects(
+    unitOfWork.run({ scope }, ({ repositories }) =>
+      repositories.continuity.recordRecallAction(overflowRecallId, {
+        actionType: "completed",
+        method: "system",
+        evidence: { evidence: "cp12_row_version_projection" }
+      })
+    ),
+    /Database row_version must be a positive safe integer/u
+  );
+  const overflowState = await unitOfWork.run({ scope }, async ({ repositories }) => ({
+    task: await repositories.continuity.findTaskById(overflowTaskId),
+    recall: (await repositories.continuity.listRecalls({ patientId, limit: 10 })).find(
+      (candidate) => candidate.id === overflowRecallId
+    )
+  }));
+  assert.equal(overflowState.task?.status, "open");
+  assert.equal(overflowState.task?.rowVersion, Number.MAX_SAFE_INTEGER);
+  assert.equal(overflowState.recall?.status, "due");
+
   console.log(
     JSON.stringify(
       {
         createDefaultRowVersion: "pass",
         guardAdvanceProjection: "pass",
         linkedRecallTaskSingleAdvance: "pass",
-        linkedRecallTaskRollback: "pass"
+        linkedRecallTaskRollback: "pass",
+        linkedRecallTaskOverflowRollback: "pass"
       },
       null,
       2
@@ -178,12 +235,12 @@ try {
       await withScope(pool, scope, async (client) => {
         await client.query(`delete from recalls where tenant_id = $1 and id = any($2::uuid[])`, [
           scope.tenantId,
-          [recallId, rollbackRecallId]
+          [recallId, rollbackRecallId, overflowRecallId]
         ]);
-        if (taskId || rollbackTaskId) {
+        if (taskId || rollbackTaskId || overflowTaskId) {
           await client.query(`delete from tasks where tenant_id = $1 and id = any($2::uuid[])`, [
             scope.tenantId,
-            [taskId, rollbackTaskId].filter(Boolean)
+            [taskId, rollbackTaskId, overflowTaskId].filter(Boolean)
           ]);
         }
         if (recallRuleId) {

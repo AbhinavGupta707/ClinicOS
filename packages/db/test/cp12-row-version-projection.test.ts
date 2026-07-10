@@ -128,7 +128,12 @@ test("CP12 recall action advances its indirect linked task version exactly once"
   assert.ok(
     database.queries
       .filter((sql) => /update tasks/u.test(sql))
-      .every((sql) => /row_version = row_version \+ 1/u.test(sql) && /status <> 'done'/u.test(sql))
+      .every(
+        (sql) =>
+          /row_version = row_version \+ 1/u.test(sql) &&
+          /status <> 'done'/u.test(sql) &&
+          /returning row_version/u.test(sql)
+      )
   );
 });
 
@@ -155,6 +160,27 @@ test("CP12 recall-linked task version advancement rolls back with repository fai
   );
   assert.equal(persisted?.status, "open");
   assert.equal(persisted?.rowVersion, 1);
+  assert.equal(database.recall.status, "due");
+  assert.equal(database.taskVersionAdvances, 0);
+});
+
+test("CP12 recall-linked task overflow fails validation and rolls the transaction back", async () => {
+  const database = new RecallTaskDatabase();
+  database.task = { ...database.task, row_version: Number.MAX_SAFE_INTEGER };
+  const unitOfWork = recallUnitOfWork(database);
+
+  await assert.rejects(
+    unitOfWork.run({ scope: SCOPE }, ({ repositories }) =>
+      repositories.continuity.recordRecallAction(RECALL_ID, {
+        actionType: "completed",
+        evidence: { synthetic: true }
+      })
+    ),
+    /Database row_version must be a positive safe integer/u
+  );
+
+  assert.equal(database.task.status, "open");
+  assert.equal(database.task.row_version, Number.MAX_SAFE_INTEGER);
   assert.equal(database.recall.status, "due");
   assert.equal(database.taskVersionAdvances, 0);
 });
@@ -293,6 +319,7 @@ class RecallTaskClient implements SqlQueryClient {
           row_version: Number(this.#database.task.row_version) + 1
         };
         this.#database.taskVersionAdvances += 1;
+        return { rows: [{ row_version: this.#database.task.row_version } as TResult] };
       }
       return { rows: [] };
     }
