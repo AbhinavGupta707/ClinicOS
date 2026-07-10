@@ -894,3 +894,72 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   worker patient/idempotency access and cross-tenant isolation.
 - CP13 is complete at E3. The release remains NO-GO, CP14 has not started, and orchestration is
   paused at the user's requested checkpoint boundary.
+
+## CP14 Preflight And Initial Launch - 2026-07-10
+
+- The user resumed orchestration after the CP13 pause and authorized the low-risk CP14 preflight:
+  local tooling installation, non-destructive Docker recovery and Hyderabad region enablement. AWS
+  apply, DNS/domain changes, paid-plan activation, cloud deletion/replacement and recovery/failover
+  remain exact-action approval gates.
+- Verified launch base: clean tracked `main` commit
+  `a27a6dfec75718ef9ba8e1db60f0df2a5302b860`; preserved user-owned untracked `research/` and
+  `scripts/research/` remain untouched. Integration branch:
+  `codex/integration/checkpoint-14`.
+- The existing `clinicos-cp12-18-orchestrator-heartbeat` was resumed and independently rechecked
+  `ACTIVE` with `FREQ=SECONDLY;INTERVAL=90` on the master thread.
+- AWS Free Plan and identity preflight:
+  - the configured `clinicos-human` login resolves to the expected account through temporary
+    login credentials; GitHub CLI authentication is valid with `repo` and `workflow` scopes;
+  - root MFA is enabled with no root access keys; the active IAM administrator has two MFA devices,
+    no access keys and direct `AdministratorAccess`;
+  - the account is standalone/no visible Organization. Do not join/create AWS Organizations or
+    Control Tower under the Free Plan because that upgrades the account and expires Free Plan
+    credits;
+  - the S3 Terraform state bucket is reachable, AES256 encrypted, versioned and fully public-blocked;
+    the DynamoDB lock table is active. No customer-managed KMS key or ClinicOS alias exists yet;
+  - Mumbai is the primary region. Hyderabad was enabled through the account API and rechecked
+    `ENABLED`; enabling the region created no resources or usage charges;
+  - no ClinicOS application VPC, ECS cluster, RDS instance/cluster, load balancer, ECR repository,
+    Secrets Manager secret, backup vault, CloudWatch alarm, Route53 zone or ACM certificate is
+    currently deployed. No Terraform apply has occurred.
+- Local CP14 tooling is now installed and verified: Terraform `1.15.8`, Trivy `0.72.0`, Syft
+  `1.46.0` and Cosign `3.1.1`. Existing Terraform fmt and validation-only profile checks pass.
+- Docker Desktop remains blocked after safe start/restart and graceful quit/reopen attempts. Its VM
+  logs show ext4 write failures and potential data loss, while the host has roughly 8.5 GiB free and
+  the sparse Docker disk consumes roughly 32 GiB. Docker was stopped gracefully. No process kill,
+  prune, reset, factory restore, disk deletion or user-data mutation was attempted. Terraform,
+  identity/security and media contract work may proceed; image/runtime evidence remains blocked
+  until a separately approved storage/backup/rebuild path exists.
+- Credit-safety policy: Terraform itself is free; applied eligible AWS service usage consumes Free
+  Plan credits. The master will not select Upgrade Plan, use paid-only/Marketplace/upfront products,
+  create an Organization, or apply infrastructure until a deterministic plan identifies every
+  resource, replacement/deletion and cost driver. Domain/TLS and operational alert recipients may
+  remain absent during implementation but block the corresponding E4/E5 exit evidence.
+
+### CP14 Initial Conflict And Dependency Matrix
+
+| Lane | Model / effort | Exclusive writable ownership | Launch decision |
+| --- | --- | --- | --- |
+| AWS Terraform Platform | `gpt-5.6-sol` / `xhigh` | `infra/terraform/**` only | Launch: independent static/provider definitions; no secrets or apply |
+| Identity, Session and Edge Security | `gpt-5.6-sol` / `xhigh` | `packages/auth/**`, `packages/security/**`, `infra/docker/keycloak/**`, new CP14 identity/session namespaces in API/web and focused tests | Launch: path-disjoint; deterministic tests while Docker is unavailable |
+| Private Media and Data Protection | `gpt-5.6-sol` / `xhigh` | new integrations/API media-provider namespaces, focused tests and private-media runbooks | Launch: path-disjoint; master owns existing media composition and manifests |
+| Observability, Resilience and Recovery | `gpt-5.6-sol` / `xhigh` when launched | deferred until identity/media instrumentation hooks and Terraform outputs are frozen | Sequence: avoids shared runtime files and one applied environment |
+
+- Initial worker records, all active from clean detached launch base `a27a6df`:
+  - AWS Terraform Platform: pending
+    `client-new-thread:c14a40fb-670f-44ad-a886-29786b97814a`, thread
+    `019f4cbd-c22f-7893-9799-c297361bcd86`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/ae3d/ClinicOS`;
+  - Identity, Session and Edge Security: pending
+    `client-new-thread:034eef88-2506-4da6-979b-c079e6dab302`, thread
+    `019f4cbd-c230-7f61-bd04-938e60564073`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/a148/ClinicOS`;
+  - Private Media and Data Protection: pending
+    `client-new-thread:7a2de015-65b1-4174-b790-f71fa2382d99`, thread
+    `019f4cbd-c22f-7893-9799-c2bb46f85072`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/8be6/ClinicOS`.
+- Master-only integration surfaces: root/app/package manifests and lockfile, `.github/**`, env/config
+  schema, existing API/web bootstrap and shared route/navigation/media composition, Docker
+  composition, all secrets/authenticated sessions, live AWS/DNS/provider operations, aggregate
+  evidence and release/remediation/memory/checkpoint truth. Workers must commit clean handoffs and
+  cannot merge, push, apply infrastructure or claim CP14 completion.
