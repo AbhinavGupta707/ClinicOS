@@ -3,12 +3,12 @@ terraform_state_bucket  = "replace-with-existing-state-bucket"
 terraform_lock_table    = "replace-with-existing-lock-table"
 offline_validation_mode = true
 
-github_repository           = "OWNER/REPOSITORY"
-github_subject_claims       = ["repo:OWNER/REPOSITORY:environment:pilot-prod"]
+github_repository         = "OWNER/REPOSITORY"
+github_subject_claims     = ["repo:OWNER/REPOSITORY:environment:staging"]
 create_github_oidc_provider = false
-github_oidc_provider_arn    = "arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com"
+github_oidc_provider_arn  = "arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com"
 
-# The current external state has no ClinicOS domain, hosted zone, certificate, or signed runtime images.
+# No domain, certificate, public ingress, runtime, or paging target is assumed.
 enable_public_ingress = false
 enable_runtime        = false
 image_uris            = {}

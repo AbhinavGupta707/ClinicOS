@@ -1,26 +1,20 @@
-# Pilot-Prod Terraform Posture Profile
+# Pilot production
 
-This directory is a CP9 validation artifact for the pilot-prod infrastructure posture. It intentionally declares no Terraform providers and no live resources, so it is safe for `terraform fmt`, `terraform init -backend=false`, `terraform validate`, and plan-only review. Do not use this lane to apply infrastructure.
+This root supersedes the CP9 validation-only profile with deployable resources for an isolated pilot-production state. Its initial use remains synthetic-only. A different `aws_account_id` can be supplied when production receives its own account; the current Free Plan does not require or create AWS Organizations.
 
-Scope:
+The safe defaults are deliberately inactive where external prerequisites do not exist:
 
-- primary AWS region: `ap-south-1` Mumbai;
-- DR / warm-standby region: `ap-south-2` Hyderabad;
-- encrypted private database posture with PITR and backup retention;
-- encrypted private object storage posture with cross-region backup readiness;
-- managed secrets, WAF, centralized logs, provider-health alerts, and backup failure alerts;
-- RPO/RTO defaults of 60 / 240 minutes for pilot-prod review.
+- no public ALB/WAF/DNS/TLS without explicit hostnames and a certificate path;
+- no ECS services without signed digest-pinned images and populated secrets;
+- no claim of paging merely because an SNS topic exists;
+- no Backup Vault Lock without a separately reviewed irreversible-lock decision.
 
-Safe validation:
+Safe local verification:
 
 ```sh
-cd infra/terraform/pilot-prod
-terraform fmt -check
 terraform init -backend=false
 terraform validate
-terraform plan -refresh=false -var-file=terraform.tfvars.example
+terraform test -test-directory=tests
 ```
 
-The example variable file uses non-secret placeholder names. Real backend bucket, lock table, account id, and KMS alias values must come from `.secrets/orchestration.env` or CI/OIDC runtime and must not be committed.
-
-This profile is not a substitute for the future AWS resource modules. It is the hardening contract those modules must satisfy before a production apply is approved.
+For an authorized remote plan, copy `backend.hcl.example` outside version control, fill only the existing backend identifiers, initialize with `-backend-config=backend.hcl`, and set `offline_validation_mode=false`. Apply, DNS mutation, recovery actions, and Vault Lock remain master-only.
