@@ -151,7 +151,7 @@ jobs:
       matrix:
         include:
           - service: keycloak
-            user: "1000"
+            user: "1000:0"
           - service: temporal
             user: "1000:1000"
     steps:
