@@ -631,3 +631,18 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   - model/effort: `gpt-5.6-sol` / `xhigh`;
   - ownership: `packages/auth/**`, `packages/security/**`, `tests/acceptance/cp12/**`, `docs/qa/checkpoint-12*`, `docs/security/checkpoint-12*`.
 - All three resolved as active project-scoped worktree threads at launch. Each prompt requires early blocker reporting, forbidden-path discipline, deterministic narrow checks, a committed clean handoff, and no merge/push/release claim.
+
+### CP12 Producer Review, Integration, And Dependent Wave
+
+- Runtime Contracts / OpenAPI / Client Generation handed off `53eb160e0d3b49605b60871e09500fb5fab69e8a` after master review found and the worker corrected recursive unsafe JSON-key acceptance plus permissive date/date-time validation. Master reproduced 21/21 contract tests, 3/3 generated-client tests, exact 128-route generation/inventory checks, typechecks, the clock guard and `git diff --check`. It merged first as `4252938`.
+- Repository Module Seams handed off `5a779b85ef52680606881db9c9db4f77d084a095`. Master verified 12 domain/evidence ports, exact one-owner coverage for all 140 legacy repository operations, transaction-leased authority-bound adapters, clean path ownership, DB typecheck, 48/48 package tests including 9/9 focused CP12 tests, lint and `git diff --check`. It merged second as `869cb43`.
+- Security Pipeline / Legacy Parity Foundation handed off `52ee744f971f7e584d4648bc9552a6096bf40165` after master review found three CP11 clock-ownership regressions and the worker corrected them by requiring injected valid instants. Master reproduced auth 10/10, security 25/25, CP12 acceptance 10/10, typechecks, the exact 37-callsite clock guard and `git diff --check`. It merged third as `779f830`.
+- Master integration commit `e399209cacc5ea8035ed502d9d6c30432cc8906a` exports the reviewed DB module seams, registers the generated-client workspace in the lockfile, and freezes the API lane's direct internal, NestJS `11.1.28`, Redis `6.1.0`, reflection and RxJS dependencies. `npm ci --ignore-scripts --dry-run`, focused typechecks, generated drift/inventory checks, secret scan, clock guard and `git diff --check` passed. The live npm audit remains a promotion-time authority gate because policy rejected external disclosure of the private dependency inventory without separate approval; no audit pass is claimed.
+- Dependent API Framework / Modularization worker:
+  - pending worktree ID: `client-new-thread:b13d5ea9-d028-4d9c-b623-73ee6721bb51`;
+  - thread ID: `019f4985-d2f6-71d2-a8f2-288bfc5ec6dd`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/a707/ClinicOS`;
+  - verified base: detached `e399209cacc5ea8035ed502d9d6c30432cc8906a`, initially clean;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - exclusive ownership: `apps/api/src/**` and `apps/api/test/**`; manifests, lockfile, packages, migrations, generated contracts and release/evidence truth remain master-only;
+  - mandate: real Nest modular-monolith bootstrap, uniform 128-operation contract/security strangler pipeline, atomic Redis abuse budgets, raw-body Razorpay verification, native health/readiness and identity routes, adversarial parity tests, committed clean handoff and no release claim.
