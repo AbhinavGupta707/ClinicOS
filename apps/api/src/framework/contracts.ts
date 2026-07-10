@@ -5,6 +5,7 @@ import type {
   ClinicOperationsRepository,
   IdentityRepository,
   OptimisticConcurrencyOperationId,
+  SqlQueryClient,
   ScopedApiRequestGuardsPort
 } from "@clinic-os/db";
 import type { Clinic, Clock, UUID } from "@clinic-os/domain";
@@ -21,6 +22,8 @@ export interface ApiTransactionContext {
   repository: ClinicOperationsRepository;
   auditSink: AuditSink;
   requestGuards: ScopedApiRequestGuardsPort;
+  /** Internal transaction seam; absent from fixtures and unavailable after the callback returns. */
+  sqlClient?: SqlQueryClient;
 }
 
 export interface AuditSink {

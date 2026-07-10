@@ -1,5 +1,9 @@
 import type { UUID, MediaScanStatus, MediaUploadReservationRecord } from "@clinic-os/domain";
-import type { ClinicFeatureExecutionContext, ClinicFeatureOperationHandler } from "../contracts.ts";
+import type {
+  ClinicFeatureExecutionContext,
+  ClinicFeatureOperationHandler,
+  ClinicFeatureOperationRequest
+} from "../contracts.ts";
 import type { CP13_CLINICAL_DENTAL_OPERATION_IDS } from "../cp13-operation-ownership.ts";
 import type { MediaStorageProvider, StoredMediaObject } from "../../media-storage.ts";
 
@@ -55,4 +59,9 @@ export interface ClinicalDentalHandlerDependencies {
   readonly relationshipAuthority?: ClinicalDentalRelationshipAuthority;
   readonly mediaStorage?: MediaStorageProvider;
   readonly mediaInspection?: ClinicalMediaInspectionProvider;
+  /** Production factory: creates one provider bound to the already-open request transaction. */
+  readonly transactionMediaProvider?: (
+    request: ClinicFeatureOperationRequest<ClinicalDentalOperationId>,
+    context: ClinicFeatureExecutionContext
+  ) => MediaStorageProvider & ClinicalMediaInspectionProvider;
 }

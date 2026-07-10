@@ -6,6 +6,7 @@ import {
   type ApiIdempotencyClaimResult,
   type ApiReplayJsonValue,
   type ClinicOperationsRepository,
+  type SqlQueryClient,
   type ScopedApiRequestGuardsPort
 } from "@clinic-os/db";
 import { BoundaryError, type AuditEventRecord } from "@clinic-os/security";
@@ -30,6 +31,7 @@ interface TransactionalMutationUnitOfWork {
       repository: ClinicOperationsRepository;
       auditSink: { appendAuditEvent(event: AuditEventRecord): Promise<void> };
       requestGuards: ScopedApiRequestGuardsPort;
+      sqlClient?: SqlQueryClient;
     }) => Promise<T>
   ): Promise<T>;
 }
@@ -104,7 +106,12 @@ export class PostgresAtomicMutationCoordinator implements AtomicMutationCoordina
 
     let outcome: TransactionOutcome;
     try {
-      outcome = await this.#unitOfWork.run(async ({ repository, auditSink, requestGuards }) => {
+      outcome = await this.#unitOfWork.run(async ({
+        repository,
+        auditSink,
+        requestGuards,
+        sqlClient
+      }) => {
         const claim = await requestGuards.idempotency.claim(scope, {
           operationId: request.idempotency.operationId,
           idempotencyKey: request.idempotency.key,
@@ -172,7 +179,8 @@ export class PostgresAtomicMutationCoordinator implements AtomicMutationCoordina
         const transaction: ApiTransactionContext = {
           repository,
           auditSink: auditSink as AuditSink,
-          requestGuards
+          requestGuards,
+          ...(sqlClient ? { sqlClient } : {})
         };
         const effectResponse = await effect(transaction);
         if (!isSuccessfulResponse(effectResponse.status)) {

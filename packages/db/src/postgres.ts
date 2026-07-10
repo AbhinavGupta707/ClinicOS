@@ -517,6 +517,8 @@ export interface PostgresClinicUnitOfWorkContext {
   repository: PostgresClinicOperationsRepository;
   auditSink: PostgresAuditEventSink;
   requestGuards: ScopedApiRequestGuardsPort;
+  /** Caller-transaction SQL seam for narrowly scoped production adapters. */
+  sqlClient: SqlQueryClient;
 }
 
 export interface PostgresClinicRepositoryOptions {
@@ -576,9 +578,11 @@ export class PostgresClinicUnitOfWork {
             dueGenerationCursorSecret: this.#dueGenerationCursorSecret
           }),
           auditSink: new PostgresAuditEventSink(transactionClient),
-          requestGuards: createScopedPostgresApiRequestGuards(transactionClient, requestGuardLease)
+          requestGuards: createScopedPostgresApiRequestGuards(transactionClient, requestGuardLease),
+          sqlClient: transactionClient
         });
         await requestGuardLease.close();
+        transactionClient.close();
         return result;
       } catch (error) {
         try {
@@ -586,6 +590,7 @@ export class PostgresClinicUnitOfWork {
         } catch {
           // Preserve the first domain/database error while still draining transaction-bound work.
         }
+        transactionClient.close();
         throw error;
       }
     });
@@ -11974,6 +11979,7 @@ async function withTransaction<T>(
 class TransactionBoundSqlClient implements SqlConnectionFactory {
   readonly inTransaction = true;
   readonly #client: SqlQueryClient;
+  #open = true;
 
   constructor(client: SqlQueryClient) {
     this.#client = client;
@@ -11983,7 +11989,14 @@ class TransactionBoundSqlClient implements SqlConnectionFactory {
     sql: string,
     values?: readonly unknown[]
   ): Promise<SqlQueryResult<T>> {
+    if (!this.#open) {
+      throw new Error("Transaction-bound SQL client used outside its unit-of-work lease.");
+    }
     return this.#client.query<T>(sql, values);
+  }
+
+  close(): void {
+    this.#open = false;
   }
 }
 

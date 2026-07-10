@@ -228,6 +228,7 @@ interface OperationsUnitOfWork {
       repository: ClinicOperationsRepository;
       auditSink: AuditSink;
       requestGuards: ScopedApiRequestGuardsPort;
+      sqlClient?: import("@clinic-os/db").SqlQueryClient;
     }) => Promise<T>
   ): Promise<T>;
 }
@@ -547,8 +548,8 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
           "ClinicOS feature transaction dependencies are not configured."
         );
       }
-      return options.operationsUnitOfWork.run(({ repository, auditSink, requestGuards }) =>
-        execute({ repository, auditSink, requestGuards })
+      return options.operationsUnitOfWork.run(({ repository, auditSink, requestGuards, sqlClient }) =>
+        execute({ repository, auditSink, requestGuards, ...(sqlClient ? { sqlClient } : {}) })
       );
     },
     handleLegacyOperation: dispatchLegacyOperation

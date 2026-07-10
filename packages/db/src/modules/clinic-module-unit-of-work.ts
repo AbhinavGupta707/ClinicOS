@@ -2,7 +2,8 @@ import type { Clock } from "@clinic-os/domain";
 import {
   PostgresClinicUnitOfWork,
   type PersistableAuditEvent,
-  type SqlConnectionFactory
+  type SqlConnectionFactory,
+  type SqlQueryClient
 } from "../postgres.ts";
 import type {
   AuditEventSink,
@@ -76,6 +77,8 @@ export interface ClinicModuleTransactionContext {
   readonly repositories: ClinicRepositoryModules;
   readonly evidence: TransactionEvidencePort;
   readonly requestGuards: ApiRequestGuardsPort;
+  /** Present only for production adapters that must join the already-open transaction. */
+  readonly sqlClient?: SqlQueryClient;
 }
 
 export interface ClinicRepositoryUnitOfWorkPort {
@@ -84,6 +87,7 @@ export interface ClinicRepositoryUnitOfWorkPort {
       repository: ClinicOperationsRepository;
       auditSink: AuditEventSink<PersistableAuditEvent>;
       requestGuards: ScopedApiRequestGuardsPort;
+      sqlClient?: SqlQueryClient;
     }) => Promise<TResult>
   ): Promise<TResult>;
 }
@@ -115,9 +119,9 @@ export class ClinicModuleUnitOfWork<TAuthorizedContext> {
   ): Promise<TResult> {
     const scope = normalizeResolvedScope(this.#resolveScope(authorizedContext));
 
-    return this.#unitOfWork.run(async ({ repository, auditSink, requestGuards }) => {
+    return this.#unitOfWork.run(async ({ repository, auditSink, requestGuards, sqlClient }) => {
       return runWithClinicModuleTransactionContext(
-        { repository, auditSink, requestGuards, scope },
+        { repository, auditSink, requestGuards, sqlClient, scope },
         callback
       );
     });
@@ -134,6 +138,7 @@ export async function runWithClinicModuleTransactionContext<TResult>(
     repository: ClinicOperationsRepository;
     auditSink: AuditEventSink<PersistableAuditEvent>;
     requestGuards: ScopedApiRequestGuardsPort;
+    sqlClient?: SqlQueryClient;
     scope: Readonly<RepositoryScope>;
   },
   callback: (context: ClinicModuleTransactionContext) => Promise<TResult>
@@ -158,7 +163,8 @@ export async function runWithClinicModuleTransactionContext<TResult>(
         durableIntegrity: bindDurableIntegrityRepository(input.repository, scope, lease)
       }),
       evidence: bindTransactionEvidence(input.repository, input.auditSink, scope, lease),
-      requestGuards: bindApiRequestGuardsPort(input.requestGuards, scope, lease)
+      requestGuards: bindApiRequestGuardsPort(input.requestGuards, scope, lease),
+      ...(input.sqlClient ? { sqlClient: input.sqlClient } : {})
     });
     await lease.close();
     return result;
