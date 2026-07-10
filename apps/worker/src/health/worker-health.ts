@@ -1,12 +1,14 @@
 import {
   HealthRegistry,
   createHealthCheckResult,
-  type HealthProbe
+  type HealthProbe,
+  type ObservabilityRuntime
 } from "@clinic-os/observability";
 import type { ExternalAdapter } from "@clinic-os/integrations";
 import type { Client } from "@temporalio/client";
 import type { OutboxProcessor } from "../outbox/processor.js";
 import type { OutboxRepository } from "../outbox/types.js";
+import type { WorkerBackpressurePort } from "../runtime/create-worker-runtime.js";
 
 export interface WorkerHealthOptions {
   readonly service: string;
@@ -14,12 +16,32 @@ export interface WorkerHealthOptions {
   readonly processor: OutboxProcessor;
   readonly temporalClient?: Client;
   readonly providerAdapters?: readonly ExternalAdapter[];
+  readonly observability?: ObservabilityRuntime;
+  readonly backpressure?: WorkerBackpressurePort;
 }
 
 export function createWorkerHealthRegistry(options: WorkerHealthOptions): HealthRegistry {
   const registry = new HealthRegistry(options.service);
   registry.register(createOutboxRepositoryProbe(options.repository));
   registry.register(createRegisteredHandlersProbe(options.processor));
+  if (options.observability) {
+    registry.register({
+      name: "telemetry_export",
+      async check() {
+        await options.observability!.readiness();
+        return createHealthCheckResult("telemetry_export", "healthy");
+      }
+    });
+  }
+  if (options.backpressure) {
+    registry.register({
+      name: "backpressure",
+      async check() {
+        const decision = await options.backpressure!.observe();
+        return createHealthCheckResult("backpressure", decision.state);
+      }
+    });
+  }
 
   if (options.temporalClient) {
     registry.register(createTemporalConnectionProbe(options.temporalClient));

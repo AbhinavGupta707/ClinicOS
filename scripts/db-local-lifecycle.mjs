@@ -191,13 +191,15 @@ async function grantRuntimePrivileges() {
     await client.query(
       "revoke update, delete, truncate on table private_media_scan_evidence, private_media_operations from clinic_os_runtime"
     );
+    await client.query("revoke all on table outbox_trace_contexts from clinic_os_runtime");
     await client.query("revoke all on table flyway_schema_history from clinic_os_runtime");
     await client.query("grant select on table flyway_schema_history to clinic_os_runtime");
     await client.query("revoke all on all tables in schema public from clinic_os_worker");
     await client.query(
       `grant select on table
          external_accounts, external_systems, invoices, payment_transactions, payment_requests,
-         payment_provider_request_intents, outbox_events, pricebook_procedures, procedure_performed_records,
+         payment_provider_request_intents, outbox_events, outbox_trace_contexts,
+         pricebook_procedures, procedure_performed_records,
          recall_rules, recalls, tasks, sop_schedules, sop_templates, sop_template_items,
          sop_runs, sop_run_items
        to clinic_os_worker`

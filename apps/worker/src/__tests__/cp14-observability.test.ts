@@ -101,6 +101,7 @@ test("worker backpressure emits bounded signals and removes readiness on depende
     [
       "clinic_os.outbox.depth",
       "clinic_os.outbox.oldest_age_seconds",
+      "clinic_os.outbox.dead_lettered",
       "clinic_os.backpressure.state",
       "clinic_os.readiness"
     ]

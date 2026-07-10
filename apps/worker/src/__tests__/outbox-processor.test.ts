@@ -117,9 +117,28 @@ test("dead letters events without a registered handler", async () => {
   assert.equal(repository.deadLetters[0]?.failureCode, "OUTBOX_HANDLER_NOT_REGISTERED");
 });
 
+test("backpressure can stop claims or admit only explicitly selected event families", async () => {
+  const event = createEvent();
+  const repository = new MemoryOutboxRepository([event]);
+  const processor = createProcessor(
+    repository,
+    [{ eventType: event.eventType, handle: async () => undefined }],
+    async () => []
+  );
+
+  assert.deepEqual(await processor.pollOnce(), {
+    claimed: 0,
+    processed: 0,
+    retried: 0,
+    deadLettered: 0
+  });
+  assert.equal(repository.lastClaimRequest, null);
+});
+
 function createProcessor(
   repository: OutboxRepository,
-  handlers: readonly OutboxEventHandler[]
+  handlers: readonly OutboxEventHandler[],
+  admitEventTypes?: (registeredEventTypes: readonly string[]) => Promise<readonly string[]>
 ): OutboxProcessor {
   return new OutboxProcessor({
     workerId: "worker-test-001",
@@ -137,7 +156,8 @@ function createProcessor(
     baseRetryDelayMs: 1000,
     maxRetryDelayMs: 60000,
     now: () => fixedNow,
-    sleep: async () => undefined
+    sleep: async () => undefined,
+    ...(admitEventTypes ? { admitEventTypes } : {})
   });
 }
 

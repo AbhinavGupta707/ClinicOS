@@ -43,6 +43,13 @@ import {
   type AtomicBudgetStore,
   type AuditEventRecord
 } from "@clinic-os/security";
+import {
+  InstrumentationHooks,
+  createJsonLogger,
+  injectW3cTraceContext,
+  redactForLogs,
+  type ObservabilityRuntime
+} from "@clinic-os/observability";
 import { Pool } from "pg";
 import { ApiError, toApiErrorBody } from "./errors.ts";
 import { ApiHealthMonitor, type ApiDependencyProbe, type ApiRepositoryMode } from "./health.ts";
@@ -259,6 +266,7 @@ export interface ClinicOsApiServerOptions {
   mutationCoordinator?: AtomicMutationCoordinator;
   featureHandlers?: ClinicFeatureHandlerMap;
   identityEdgeGuard?: IdentitySessionEdgeGuard;
+  observabilityRuntime?: ObservabilityRuntime;
 }
 
 interface RuntimeOptions {
@@ -330,6 +338,13 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
       "Production identity-session edge dependencies are not configured."
     );
   }
+  if (options.config.isProductionLike && !options.observabilityRuntime) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Production observability runtime is not configured."
+    );
+  }
   const budgetStoreWithReadiness = budgetStore as AtomicBudgetStore & {
     readiness?: () => Promise<void>;
   };
@@ -347,6 +362,15 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
             }
           ]
         : []),
+      ...(options.observabilityRuntime
+        ? [
+            {
+              name: "telemetry_export",
+              required: options.config.isProductionLike,
+              check: () => options.observabilityRuntime!.readiness()
+            }
+          ]
+        : []),
       {
         name: "redis_abuse_budget",
         required: true,
@@ -359,6 +383,18 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
       }
     ]
   });
+  const instrumentation = options.observabilityRuntime
+    ? new InstrumentationHooks({
+        tracer: options.observabilityRuntime.tracer,
+        metrics: options.observabilityRuntime.metrics,
+        logger: createJsonLogger({
+          service: "clinic-os-api",
+          environment: options.config.clinicOsEnv,
+          redact: redactForLogs
+        }),
+        monotonicNowMs: () => performance.now()
+      })
+    : undefined;
 
   const dispatchLegacyOperation: ClinicOsNestRuntime["handleLegacyOperation"] = async (
     request,
@@ -410,6 +446,7 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
     repositoryMode,
     useLocalAuthFixture: options.useLocalAuthFixture ?? false,
     identityRepository: options.identityRepository,
+    instrumentation,
     async health(kind, requestId) {
       if (kind === "liveness") {
         return {
@@ -573,8 +610,9 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
           "ClinicOS feature transaction dependencies are not configured."
         );
       }
-      return options.operationsUnitOfWork.run(({ repository, auditSink, requestGuards, sqlClient }) =>
-        execute({ repository, auditSink, requestGuards, ...(sqlClient ? { sqlClient } : {}) })
+      return options.operationsUnitOfWork.run(
+        ({ repository, auditSink, requestGuards, sqlClient }) =>
+          execute({ repository, auditSink, requestGuards, ...(sqlClient ? { sqlClient } : {}) })
       );
     },
     handleLegacyOperation: dispatchLegacyOperation
@@ -600,9 +638,10 @@ export function createRuntimeApiServer(env: NodeJS.ProcessEnv = process.env): Ru
 }
 
 export async function createRuntimeApiNestApplication(
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  observabilityRuntime?: ObservabilityRuntime
 ): Promise<RuntimeNestOptions> {
-  const composition = createRuntimeComposition(env);
+  const composition = createRuntimeComposition(env, observabilityRuntime);
   try {
     const { app } = await createClinicOsApiNestApplication(composition.serverOptions);
     app.getHttpServer().once("close", () => {
@@ -615,7 +654,10 @@ export async function createRuntimeApiNestApplication(
   }
 }
 
-function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
+function createRuntimeComposition(
+  env: NodeJS.ProcessEnv = process.env,
+  observabilityRuntime?: ObservabilityRuntime
+): {
   serverOptions: ClinicOsApiServerOptions;
   port: number;
   close(): Promise<void>;
@@ -709,16 +751,14 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
                 phishingResistantAmrValues: []
               },
               requiredAudience: DEFAULT_API_AUDIENCE,
-              acceptedAuthorizedParties: [
-                parsed.data.auth.keycloakClientId,
-                "clinic-os-mobile"
-              ],
+              acceptedAuthorizedParties: [parsed.data.auth.keycloakClientId, "clinic-os-mobile"],
               maximumAccessTokenLifetimeSeconds: 300,
               browserSessionCookieName: "__Host-clinicos_session"
             },
             revocations: tokenRevocationStore,
             securityAuditOutbox: new PostgresIdentitySecurityAuditOutbox(
-              pool as unknown as SqlConnectionFactory
+              pool as unknown as SqlConnectionFactory,
+              { traceContextProvider: () => injectW3cTraceContext().traceparent }
             )
           });
         })()
@@ -734,6 +774,7 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
     useLocalAuthFixture,
     repositoryMode: useFixtureRepository ? "fixture" : "postgres",
     identityEdgeGuard,
+    observabilityRuntime,
     dependencyProbes: pool
       ? createRuntimeDependencyProbes({
           pool,
@@ -775,7 +816,8 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
       closePromise ??= Promise.all([
         ...(pool ? [pool.end()] : []),
         ...(redisBudgetStore ? [redisBudgetStore.close()] : []),
-        ...(tokenRevocationStore ? [tokenRevocationStore.close()] : [])
+        ...(tokenRevocationStore ? [tokenRevocationStore.close()] : []),
+        ...(observabilityRuntime ? [observabilityRuntime.shutdown()] : [])
       ]).then(() => undefined);
       return closePromise;
     }
@@ -1841,7 +1883,8 @@ function createPostgresRepositorySet(
   });
   const operationsUnitOfWork = new PostgresClinicUnitOfWork(pool, {
     clock: systemClock,
-    dueGenerationCursorSecret
+    dueGenerationCursorSecret,
+    traceContextProvider: () => injectW3cTraceContext().traceparent
   });
   pool.on("error", (error) => {
     const code = "code" in error && typeof error.code === "string" ? error.code : "unknown";

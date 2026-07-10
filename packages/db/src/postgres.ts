@@ -524,6 +524,7 @@ export interface PostgresClinicUnitOfWorkContext {
 export interface PostgresClinicRepositoryOptions {
   readonly clock?: Clock;
   readonly dueGenerationCursorSecret?: string;
+  readonly traceContextProvider?: () => string | undefined;
 }
 
 export function buildPaymentRequestIntentDigest(
@@ -560,11 +561,13 @@ export class PostgresClinicUnitOfWork {
   readonly #client: SqlConnectionFactory;
   readonly #clock: Clock;
   readonly #dueGenerationCursorSecret: string | undefined;
+  readonly #traceContextProvider: (() => string | undefined) | undefined;
 
   constructor(client: SqlConnectionFactory, options: PostgresClinicRepositoryOptions = {}) {
     this.#client = client;
     this.#clock = options.clock ?? systemClock;
     this.#dueGenerationCursorSecret = options.dueGenerationCursorSecret;
+    this.#traceContextProvider = options.traceContextProvider;
   }
 
   async run<T>(callback: (context: PostgresClinicUnitOfWorkContext) => Promise<T>): Promise<T> {
@@ -572,6 +575,12 @@ export class PostgresClinicUnitOfWork {
       const transactionClient = new TransactionBoundSqlClient(client);
       const requestGuardLease = createRepositoryPortTransactionLease();
       try {
+        const traceparent = validatedTraceparent(this.#traceContextProvider?.());
+        if (traceparent) {
+          await transactionClient.query("select set_config('app.traceparent', $1, true)", [
+            traceparent
+          ]);
+        }
         const result = await callback({
           repository: new PostgresClinicOperationsRepository(transactionClient, {
             clock: this.#clock,
@@ -15978,4 +15987,8 @@ function positiveRowVersion(value: number | string): number {
 function isoDateOnly(value: Date | string): string {
   if (value instanceof Date) return value.toISOString().slice(0, 10);
   return value.slice(0, 10);
+}
+
+function validatedTraceparent(value: string | undefined): string | undefined {
+  return value && /^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/u.test(value) ? value : undefined;
 }

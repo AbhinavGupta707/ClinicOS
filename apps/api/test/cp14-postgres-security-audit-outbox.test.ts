@@ -59,6 +59,24 @@ test("CP14 Postgres security audit rejects unscoped events before database acces
   assert.equal(database.connectCount, 0);
 });
 
+test("CP14 required identity audit binds active trace context inside its transaction", async () => {
+  const database = new AuditDatabase();
+  const outbox = new PostgresIdentitySecurityAuditOutbox(database, {
+    traceContextProvider: () =>
+      "00-10000000000000000000000000000001-1000000000000001-01"
+  });
+
+  await outbox.persistRequired(intent());
+
+  const traceIndex = database.statements.findIndex((statement) =>
+    statement.includes("set_config('app.traceparent'")
+  );
+  const outboxIndex = database.statements.findIndex((statement) =>
+    statement.includes("insert into outbox_events")
+  );
+  assert.ok(traceIndex > 0 && traceIndex < outboxIndex);
+});
+
 function intent(): RequiredSecurityAuditIntent {
   return {
     schemaVersion: 1,

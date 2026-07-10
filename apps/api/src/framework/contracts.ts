@@ -11,6 +11,7 @@ import type {
 import type { Clinic, Clock, UUID } from "@clinic-os/domain";
 import type { AtomicBudgetStore } from "@clinic-os/security";
 import type { AuditEventRecord } from "@clinic-os/security";
+import type { InstrumentationHooks } from "@clinic-os/observability";
 
 export interface ApiResponse {
   status: number;
@@ -99,6 +100,7 @@ export interface ClinicOsNestRuntime {
   repositoryMode: "postgres" | "fixture" | "injected";
   useLocalAuthFixture: boolean;
   identityRepository: IdentityRepository;
+  instrumentation?: Pick<InstrumentationHooks, "run">;
   health(kind: "liveness" | "readiness" | "startup", requestId: string): Promise<ApiResponse>;
   admitTraffic(): Promise<boolean>;
   resolveAccess(request: IncomingMessage): Promise<ResolvedAccessContext>;

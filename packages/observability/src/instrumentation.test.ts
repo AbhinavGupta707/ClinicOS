@@ -5,6 +5,53 @@ import type { MetricRecorder } from "./metrics.js";
 import { InstrumentationHooks } from "./instrumentation.js";
 
 describe("instrumentation error policy", () => {
+  it("records only a bounded HTTP route family and response status band", async () => {
+    const increments: Array<{ name: string; tags?: Record<string, string | undefined> }> = [];
+    const spanAttributes: Record<string, unknown> = {};
+    const span = {
+      setStatus: () => undefined,
+      setAttribute: (key: string, value: unknown) => {
+        spanAttributes[key] = value;
+        return span;
+      },
+      end: () => undefined
+    } as unknown as Span;
+    const tracer = {
+      startActiveSpan: (...args: unknown[]) => {
+        const callback = args.at(-1) as (activeSpan: Span) => Promise<unknown>;
+        return callback(span);
+      }
+    } as unknown as Tracer;
+    const hooks = new InstrumentationHooks({
+      tracer,
+      logger: {
+        debug: () => undefined,
+        info: () => undefined,
+        warn: () => undefined,
+        error: () => undefined
+      },
+      metrics: {
+        increment: (name, _value, tags) => increments.push({ name, tags }),
+        gauge: () => undefined,
+        timing: () => undefined
+      },
+      monotonicNowMs: () => 10
+    });
+
+    await hooks.run(
+      { domain: "http", operation: "request", routeFamily: "operations" },
+      async () => ({ status: 204 })
+    );
+
+    expect(increments).toEqual([
+      {
+        name: "clinic_os.http.requests",
+        tags: { routeFamily: "operations", status: "2xx" }
+      }
+    ]);
+    expect(spanAttributes["clinic_os.http.status_band"]).toBe("2xx");
+  });
+
   it("does not emit a patterned mutable Error.name", async () => {
     const errors: Array<Record<string, unknown>> = [];
     const spanAttributes: Record<string, unknown> = {};

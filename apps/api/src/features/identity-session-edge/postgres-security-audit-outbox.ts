@@ -20,9 +20,14 @@ export class PostgresIdentitySecurityAuditOutbox implements IdentitySecurityAudi
   readonly atomicity = "durable_transactional_outbox" as const;
   readonly durability = "distributed_durable" as const;
   readonly #connections: SqlConnectionFactory;
+  readonly #traceContextProvider: (() => string | undefined) | undefined;
 
-  constructor(connections: SqlConnectionFactory) {
+  constructor(
+    connections: SqlConnectionFactory,
+    options: { traceContextProvider?: () => string | undefined } = {}
+  ) {
     this.#connections = connections;
+    this.#traceContextProvider = options.traceContextProvider;
   }
 
   async readiness(): Promise<void> {
@@ -38,7 +43,12 @@ export class PostgresIdentitySecurityAuditOutbox implements IdentitySecurityAudi
 
   async persistRequired(rawIntent: RequiredSecurityAuditIntent): Promise<void> {
     const intent = validateRequiredSecurityAuditIntent(rawIntent);
-    if (!intent.tenantId || !intent.clinicId || !UUID.test(intent.tenantId) || !UUID.test(intent.clinicId)) {
+    if (
+      !intent.tenantId ||
+      !intent.clinicId ||
+      !UUID.test(intent.tenantId) ||
+      !UUID.test(intent.clinicId)
+    ) {
       throw new PostgresIdentitySecurityAuditOutboxError(
         "Required API security audit is missing verified clinic scope."
       );
@@ -53,16 +63,17 @@ export class PostgresIdentitySecurityAuditOutbox implements IdentitySecurityAudi
 
     try {
       await client.query("begin");
+      const traceparent = validatedTraceparent(this.#traceContextProvider?.());
+      if (traceparent) {
+        await client.query("select set_config('app.traceparent', $1, true)", [traceparent]);
+      }
       await client.query(
         `select set_config('app.tenant_id', $1, true),
                 set_config('app.clinic_id', $2, true),
                 set_config('app.user_id', $3, true)`,
         [intent.tenantId, intent.clinicId, ""]
       );
-      await client.query(
-        "select pg_advisory_xact_lock(hashtextextended($1, 0))",
-        [idempotencyKey]
-      );
+      await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))", [idempotencyKey]);
       const existingAudit = await client.query<{
         tenant_id: string;
         clinic_id: string;
@@ -157,13 +168,15 @@ export class PostgresIdentitySecurityAuditOutbox implements IdentitySecurityAudi
 
   async #acquire(): Promise<SqlQueryClient> {
     try {
-      return this.#connections.connect
-        ? await this.#connections.connect()
-        : this.#connections;
+      return this.#connections.connect ? await this.#connections.connect() : this.#connections;
     } catch {
       throw unavailable();
     }
   }
+}
+
+function validatedTraceparent(value: string | undefined): string | undefined {
+  return value && /^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/u.test(value) ? value : undefined;
 }
 
 function canonicalIntent(intent: RequiredSecurityAuditIntent): Record<string, unknown> {

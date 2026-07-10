@@ -28,6 +28,10 @@ export type MetricDefinition = Readonly<{
 }>;
 
 const statuses = [
+  "2xx",
+  "3xx",
+  "4xx",
+  "5xx",
   "available",
   "completed",
   "degraded",
@@ -110,6 +114,7 @@ export const clinicOsMetricCatalog: readonly MetricDefinition[] = [
   }),
   gauge("clinic_os.outbox.depth", { status: statuses }),
   gauge("clinic_os.outbox.oldest_age_seconds", { status: statuses }),
+  gauge("clinic_os.outbox.dead_lettered", { status: statuses }),
   counter("clinic_os.outbox.events", { workflow: workflows, status: statuses }),
   timing("clinic_os.temporal.duration_ms", { workflow: workflows, status: statuses }),
   counter("clinic_os.identity.outcomes", { operation: operations, status: statuses }),

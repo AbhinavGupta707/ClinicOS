@@ -184,11 +184,13 @@ export function createPostgresClinicModuleUnitOfWork<TAuthorizedContext>(input: 
   resolveScope: ClinicModuleScopeResolver<TAuthorizedContext>;
   clock?: Clock;
   dueGenerationCursorSecret?: string;
+  traceContextProvider?: () => string | undefined;
 }): ClinicModuleUnitOfWork<TAuthorizedContext> {
   return new ClinicModuleUnitOfWork({
     unitOfWork: new PostgresClinicUnitOfWork(input.client, {
       clock: input.clock,
-      dueGenerationCursorSecret: input.dueGenerationCursorSecret
+      dueGenerationCursorSecret: input.dueGenerationCursorSecret,
+      traceContextProvider: input.traceContextProvider
     }),
     resolveScope: input.resolveScope
   });

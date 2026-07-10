@@ -37,6 +37,7 @@ export interface ObservabilityRuntime {
   readonly metrics: MetricRecorder;
   state(): ObservabilityRuntimeState;
   start(): Promise<void>;
+  readiness(): Promise<void>;
   forceFlush(): Promise<TelemetryOperationResult>;
   shutdown(): Promise<TelemetryOperationResult>;
 }
@@ -93,6 +94,17 @@ export function createObservabilityRuntime(
       } catch {
         state = "failed";
         await sdk?.shutdown(configuration.startupExportTimeoutMs).catch(() => undefined);
+        throw new TelemetryStartupError("TELEMETRY_EXPORT_VERIFICATION_FAILED");
+      }
+    },
+    async readiness() {
+      if (state === "disabled" && !configuration.requireExport) return;
+      if (state !== "ready" || !sdk) {
+        throw new TelemetryStartupError("TELEMETRY_NOT_READY");
+      }
+      try {
+        await sdk.verifyExport(configuration.startupExportTimeoutMs);
+      } catch {
         throw new TelemetryStartupError("TELEMETRY_EXPORT_VERIFICATION_FAILED");
       }
     },

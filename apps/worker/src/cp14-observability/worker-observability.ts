@@ -112,6 +112,9 @@ export function createCp14WorkerObservability(
       options.metrics.gauge("clinic_os.outbox.oldest_age_seconds", observation.oldestAgeSeconds, {
         status: readiness.state
       });
+      options.metrics.gauge("clinic_os.outbox.dead_lettered", observation.deadLettered, {
+        status: readiness.state
+      });
       options.metrics.gauge("clinic_os.backpressure.state", backpressureOrdinal(backpressure), {
         status: backpressure.state
       });

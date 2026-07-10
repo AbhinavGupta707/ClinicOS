@@ -42,6 +42,32 @@ test("CP14 revokes the transaction SQL client on rollback as well", async () => 
   assert.throws(() => leaked!.query("select 1"), /used outside its unit-of-work lease/u);
 });
 
+test("CP14 binds a validated active W3C traceparent to the outbox transaction", async () => {
+  const connection = new RecordingConnection();
+  const unitOfWork = new PostgresClinicUnitOfWork(connection, {
+    traceContextProvider: () => "00-10000000000000000000000000000001-1000000000000001-01"
+  });
+
+  await unitOfWork.run(async () => undefined);
+
+  assert.deepEqual(connection.statements, [
+    "begin",
+    "select set_config('app.traceparent', $1, true)",
+    "commit"
+  ]);
+});
+
+test("CP14 refuses malformed trace correlation instead of persisting arbitrary context", async () => {
+  const connection = new RecordingConnection();
+  const unitOfWork = new PostgresClinicUnitOfWork(connection, {
+    traceContextProvider: () => "patient-123"
+  });
+
+  await unitOfWork.run(async () => undefined);
+
+  assert.deepEqual(connection.statements, ["begin", "commit"]);
+});
+
 class RecordingConnection implements SqlConnectionFactory {
   readonly statements: string[] = [];
 

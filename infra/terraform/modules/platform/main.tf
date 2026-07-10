@@ -436,6 +436,11 @@ locals {
           StringEquals = { "cloudwatch:namespace" = "ClinicOS/${var.environment}" }
         }
       },
+      {
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutLogEvents"]
+        Resource = "arn:aws:logs:${var.primary_region}:${var.account_id}:log-group:/aws/ecs/${local.name_prefix}/*:*"
+      },
     ]
   })
   media_task_policy = jsonencode({
@@ -466,6 +471,11 @@ locals {
           "cloudwatch:PutMetricData", "xray:PutTelemetryRecords", "xray:PutTraceSegments",
         ]
         Resource = "*"
+      },
+      {
+        Effect   = "Allow"
+        Action   = ["logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutLogEvents"]
+        Resource = "arn:aws:logs:${var.primary_region}:${var.account_id}:log-group:/aws/ecs/${local.name_prefix}/*:*"
       },
     ]
   })
@@ -704,6 +714,7 @@ module "compute" {
 
   name_prefix                 = local.name_prefix
   region                      = var.primary_region
+  metric_namespace            = "ClinicOS/${var.environment}"
   vpc_id                      = module.network_primary.vpc_id
   vpc_cidr                    = module.network_primary.vpc_cidr
   private_subnet_ids          = module.network_primary.private_subnet_ids
@@ -758,6 +769,7 @@ module "observability" {
   account_id                   = var.account_id
   region                       = var.primary_region
   edge_enabled                 = local.edge_enabled
+  metric_namespace             = "ClinicOS/${var.environment}"
   logs_kms_key_arn             = module.kms_primary.key_arns.logs
   ecs_cluster_name             = try(module.compute[0].cluster_name, "")
   ecs_service_names            = try(module.compute[0].service_names, {})

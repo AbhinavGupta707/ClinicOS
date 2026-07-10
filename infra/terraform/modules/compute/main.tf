@@ -183,10 +183,14 @@ resource "aws_ecs_task_definition" "this" {
   container_definitions = jsonencode(concat(
     [
       {
-        name                   = each.key
-        image                  = each.value.image_uri
-        user                   = each.value.user
-        essential              = true
+        name      = each.key
+        image     = each.value.image_uri
+        user      = each.value.user
+        essential = true
+        dependsOn = var.adot_image_uri == null ? [] : [{
+          containerName = "aws-otel-collector"
+          condition     = "HEALTHY"
+        }]
         privileged             = false
         readonlyRootFilesystem = true
         command                = length(each.value.command) == 0 ? null : each.value.command
@@ -199,8 +203,9 @@ resource "aws_ecs_task_definition" "this" {
         }] : []
         environment = [for name, value in merge(each.value.environment, {
           AWS_REGION                  = var.region
-          OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4317"
-          OTEL_EXPORTER_OTLP_PROTOCOL = "grpc"
+          CLINIC_OS_RELEASE_VERSION   = split("@sha256:", each.value.image_uri)[1]
+          OTEL_EXPORTER_OTLP_ENDPOINT = "http://127.0.0.1:4318"
+          OTEL_EXPORTER_OTLP_PROTOCOL = "http/protobuf"
           OTEL_SERVICE_NAME           = each.key
         }) : { name = name, value = value }]
         secrets = [for name, value_from in each.value.secrets : { name = name, valueFrom = value_from }]
@@ -238,11 +243,94 @@ resource "aws_ecs_task_definition" "this" {
         name                   = "aws-otel-collector"
         image                  = var.adot_image_uri
         user                   = var.adot_user
-        essential              = false
+        essential              = true
         privileged             = false
         readonlyRootFilesystem = true
-        command                = ["--config=/etc/ecs/ecs-default-config.yaml"]
-        environment            = [{ name = "AWS_REGION", value = var.region }]
+        command                = ["--config=env:AOT_CONFIG_CONTENT"]
+        environment = [
+          { name = "AWS_REGION", value = var.region },
+          {
+            name = "AOT_CONFIG_CONTENT"
+            value = yamlencode({
+              extensions = {
+                health_check = { endpoint = "127.0.0.1:13133" }
+              }
+              receivers = {
+                otlp = {
+                  protocols = {
+                    grpc = { endpoint = "127.0.0.1:4317" }
+                    http = { endpoint = "127.0.0.1:4318" }
+                  }
+                }
+              }
+              processors = {
+                memory_limiter = {
+                  check_interval         = "1s"
+                  limit_percentage       = 75
+                  spike_limit_percentage = 20
+                }
+                "batch/traces" = {
+                  timeout         = "1s"
+                  send_batch_size = 256
+                }
+                "batch/metrics" = {
+                  timeout         = "30s"
+                  send_batch_size = 512
+                }
+              }
+              exporters = {
+                awsxray = {}
+                "awsemf/application" = {
+                  namespace                        = var.metric_namespace
+                  log_group_name                   = aws_cloudwatch_log_group.service[each.key].name
+                  dimension_rollup_option          = "NoDimensionRollup"
+                  resource_to_telemetry_conversion = { enabled = true }
+                  metric_declarations = [
+                    {
+                      dimensions = [["service.name"]]
+                      metric_name_selectors = [
+                        "^clinic_os\\.outbox\\.(depth|oldest_age_seconds|dead_lettered)$",
+                        "^clinic_os\\.(backpressure\\.state|readiness)$"
+                      ]
+                    },
+                    {
+                      dimensions            = [["service.name", "routeFamily", "status"]]
+                      metric_name_selectors = ["^clinic_os\\.http\\.(requests|duration_ms)$"]
+                    },
+                    {
+                      dimensions            = [["service.name", "component", "status"]]
+                      metric_name_selectors = ["^clinic_os\\.readiness$"]
+                    }
+                  ]
+                }
+              }
+              service = {
+                extensions = ["health_check"]
+                telemetry  = { logs = { level = "warn" } }
+                pipelines = {
+                  traces = {
+                    receivers  = ["otlp"]
+                    processors = ["memory_limiter", "batch/traces"]
+                    exporters  = ["awsxray"]
+                  }
+                  "metrics/application" = {
+                    receivers  = ["otlp"]
+                    processors = ["memory_limiter", "batch/metrics"]
+                    exporters  = ["awsemf/application"]
+                  }
+                }
+              }
+            })
+          },
+        ]
+        healthCheck = {
+          command     = ["CMD", "/healthcheck"]
+          interval    = 10
+          timeout     = 5
+          retries     = 3
+          startPeriod = 15
+        }
+        stopTimeout = 120
         mountPoints = [{
           sourceVolume  = "tmp"
           containerPath = "/tmp"

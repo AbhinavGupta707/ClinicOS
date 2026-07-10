@@ -26,6 +26,7 @@
     "@clinic-os/observability": "0.0.0",
     "@clinic-os/workflow": "0.0.0",
     "@temporalio/client": "^1.12.1",
+    "@temporalio/common": "^1.12.1",
     "@temporalio/worker": "^1.12.1",
     "pg": "^8.13.1"
   },

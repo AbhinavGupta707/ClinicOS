@@ -104,182 +104,199 @@ export class ClinicOsRequestPipeline {
       });
     }
 
-    assertUnambiguousSecurityHeaders(request);
-    enforceQueryBudget(url.searchParams, matched.policy.abuse.query);
-    this.#enforceBodyBudget(request, matched.operation.request.body?.maximumBytes ?? null);
-    if (matched.policy.access.mode !== "public_health") {
-      await this.#enforcePreAuthenticationRate(request, matched.policy.routeId, now);
-    }
-
-    if (url.pathname.startsWith("/v1/") && !(await this.#runtime.admitTraffic())) {
-      throw new BoundaryError({
-        code: "DEPENDENCY_UNAVAILABLE",
-        message: "ClinicOS API startup dependencies are unavailable.",
-        details: { reason: "startup_dependencies_unavailable" }
-      });
-    }
-
-    let access: ResolvedAccessContext | null = null;
-    let verifiedClinic: VerifiedClinicRequestContext | null = null;
-    if (matched.policy.access.mode === "authenticated") {
-      access = await this.#runtime.resolveAccess(request);
-      assertActiveMembership(access);
-      if (matched.policy.access.clinic === "verified_active_membership") {
-        verifiedClinic = resolveVerifiedClinic(request, access);
+    const executeMatched = async (): Promise<PipelineResponse> => {
+      assertUnambiguousSecurityHeaders(request);
+      enforceQueryBudget(url.searchParams, matched.policy.abuse.query);
+      this.#enforceBodyBudget(request, matched.operation.request.body?.maximumBytes ?? null);
+      if (matched.policy.access.mode !== "public_health") {
+        await this.#enforcePreAuthenticationRate(request, matched.policy.routeId, now);
       }
-      assertCentralPermissions(matched.operation.operationId, access, verifiedClinic);
-    }
 
-    const parsedRequest = parseRequestContract(
-      request,
-      url,
-      matched.operation.operationId,
-      matched.pathParameters,
-      correlation.requestId,
-      this.#runtime.useLocalAuthFixture
-    );
+      if (url.pathname.startsWith("/v1/") && !(await this.#runtime.admitTraffic())) {
+        throw new BoundaryError({
+          code: "DEPENDENCY_UNAVAILABLE",
+          message: "ClinicOS API startup dependencies are unavailable.",
+          details: { reason: "startup_dependencies_unavailable" }
+        });
+      }
 
-    if (access) {
-      await this.#enforceAuthenticatedBudgets(matched.policy, access, verifiedClinic, now);
-    } else if (matched.policy.access.mode !== "authenticated") {
-      await this.#enforcePublicRouteBudget(request, matched.policy, now);
-    }
+      let access: ResolvedAccessContext | null = null;
+      let verifiedClinic: VerifiedClinicRequestContext | null = null;
+      if (matched.policy.access.mode === "authenticated") {
+        access = await this.#runtime.resolveAccess(request);
+        assertActiveMembership(access);
+        if (matched.policy.access.clinic === "verified_active_membership") {
+          verifiedClinic = resolveVerifiedClinic(request, access);
+        }
+        assertCentralPermissions(matched.operation.operationId, access, verifiedClinic);
+      }
 
-    const dispatch = (transaction?: ApiTransactionContext): Promise<ApiResponse> => {
-      if (matched.policy.access.mode === "public_health") {
-        return this.#runtime.health(matched.policy.access.healthKind, correlation.requestId);
+      const parsedRequest = parseRequestContract(
+        request,
+        url,
+        matched.operation.operationId,
+        matched.pathParameters,
+        correlation.requestId,
+        this.#runtime.useLocalAuthFixture
+      );
+
+      if (access) {
+        await this.#enforceAuthenticatedBudgets(matched.policy, access, verifiedClinic, now);
+      } else if (matched.policy.access.mode !== "authenticated") {
+        await this.#enforcePublicRouteBudget(request, matched.policy, now);
       }
-      if (matched.policy.access.mode === "verified_webhook") {
-        const rawBody = rawRequestBody(request) ?? Buffer.alloc(0);
-        return this.#runtime.handleWebhook(request, correlation.requestId, rawBody, transaction);
-      }
-      if (matched.operation.operationId === "getCurrentIdentity") {
-        if (!access) throw new Error("Identity route reached dispatch without verified access.");
-        return this.#runtime.handleIdentity(request, correlation.requestId, access);
-      }
-      if (!verifiedClinic) {
-        throw new Error("Clinic operation reached dispatch without verified clinic context.");
-      }
-      if (this.#runtime.handleClinicOperation) {
-        return this.#runtime.handleClinicOperation(
+
+      const dispatch = (transaction?: ApiTransactionContext): Promise<ApiResponse> => {
+        if (matched.policy.access.mode === "public_health") {
+          return this.#runtime.health(matched.policy.access.healthKind, correlation.requestId);
+        }
+        if (matched.policy.access.mode === "verified_webhook") {
+          const rawBody = rawRequestBody(request) ?? Buffer.alloc(0);
+          return this.#runtime.handleWebhook(request, correlation.requestId, rawBody, transaction);
+        }
+        if (matched.operation.operationId === "getCurrentIdentity") {
+          if (!access) throw new Error("Identity route reached dispatch without verified access.");
+          return this.#runtime.handleIdentity(request, correlation.requestId, access);
+        }
+        if (!verifiedClinic) {
+          throw new Error("Clinic operation reached dispatch without verified clinic context.");
+        }
+        if (this.#runtime.handleClinicOperation) {
+          return this.#runtime.handleClinicOperation(
+            request,
+            matched.operation.operationId,
+            correlation.requestId,
+            verifiedClinic,
+            parsedRequest,
+            now,
+            rawRequestBody(request),
+            transaction
+          );
+        }
+        return this.#runtime.handleLegacyOperation(
           request,
-          matched.operation.operationId,
           correlation.requestId,
           verifiedClinic,
-          parsedRequest,
-          now,
+          parsedRequest.body,
           rawRequestBody(request),
           transaction
         );
-      }
-      return this.#runtime.handleLegacyOperation(
-        request,
-        correlation.requestId,
-        verifiedClinic,
-        parsedRequest.body,
-        rawRequestBody(request),
-        transaction
-      );
-    };
-
-    const validateResponse = (response: ApiResponse, replayed: boolean): ApiResponse => {
-      const body = normalizeJsonResponseBody(response.body);
-      const headers = contractResponseHeaders({
-        operation: matched.operation,
-        status: response.status,
-        body,
-        effectHeaders: response.headers,
-        requestId: correlation.requestId,
-        replayed
-      });
-      const normalizedResponse = {
-        status: response.status,
-        body,
-        headers
       };
-      const responseContract = parseNativeOperationResponse(
-        matched.operation.operationId,
-        normalizedResponse.status,
-        normalizedResponse.body
-      );
-      if (!responseContract.success) {
-        throw new BoundaryError({
-          code: "INTERNAL_ERROR",
-          message: "The response failed its runtime contract.",
-          details: {
-            operation: matched.operation.operationId,
-            issues: responseContract.issues.slice(0, 50).map(({ path, code }) => ({ path, code }))
-          }
-        });
-      }
-      const headerContract = parseNativeOperationResponseHeaders(
-        matched.operation.operationId,
-        normalizedResponse.status,
-        normalizedResponse.headers
-      );
-      if (!headerContract.success) {
-        throw new BoundaryError({
-          code: "INTERNAL_ERROR",
-          message: "The response headers failed their runtime contract.",
-          details: {
-            operation: matched.operation.operationId,
-            issues: headerContract.issues.slice(0, 50).map(({ path, code }) => ({ path, code }))
-          }
-        });
-      }
-      return normalizedResponse;
-    };
-    const concurrency =
-      matched.operation.concurrency.mode === "if-match"
-        ? concurrencyMetadata(
-            matched.operation.operationId,
-            matched.pathParameters,
-            requiredParsedHeader(parsedRequest, "if-match")
-          )
-        : null;
-    const mutationResult =
-      matched.operation.idempotency.mode === "header"
-        ? await this.#runtime.mutationCoordinator.execute(
-            {
-              identity: mutationIdentity(verifiedClinic),
-              idempotency: {
-                operationId: matched.operation.operationId,
-                key: requiredParsedHeader(parsedRequest, "idempotency-key"),
-                requestDigest: canonicalRequestDigest(matched.operation, parsedRequest)
-              },
-              concurrency,
-              versionAdvances: deriveVersionAdvancesForMutation(
-                matched.operation.operationId,
-                matched.pathParameters,
-                parsedRequest.body,
-                concurrency
-              ),
-              requestId: correlation.requestId,
-              now
-            },
-            async (transaction) => validateResponse(await dispatch(transaction), false)
-          )
-        : null;
-    const response = mutationResult
-      ? validateResponse(mutationResult.response, mutationResult.replayed)
-      : validateResponse(await dispatch(), false);
-    const successfulIdempotentMutation =
-      matched.operation.idempotency.mode === "header" &&
-      response.status >= 200 &&
-      response.status < 300;
 
-    return {
-      status: response.status,
-      body: response.body,
-      headers: {
-        ...response.headers,
-        "cache-control": response.headers?.["cache-control"] ?? "no-store",
-        "x-request-id": correlation.requestId,
-        ...(successfulIdempotentMutation
-          ? { "idempotency-replayed": mutationResult?.replayed ? "true" : "false" }
-          : {})
-      }
+      const validateResponse = (response: ApiResponse, replayed: boolean): ApiResponse => {
+        const body = normalizeJsonResponseBody(response.body);
+        const headers = contractResponseHeaders({
+          operation: matched.operation,
+          status: response.status,
+          body,
+          effectHeaders: response.headers,
+          requestId: correlation.requestId,
+          replayed
+        });
+        const normalizedResponse = {
+          status: response.status,
+          body,
+          headers
+        };
+        const responseContract = parseNativeOperationResponse(
+          matched.operation.operationId,
+          normalizedResponse.status,
+          normalizedResponse.body
+        );
+        if (!responseContract.success) {
+          throw new BoundaryError({
+            code: "INTERNAL_ERROR",
+            message: "The response failed its runtime contract.",
+            details: {
+              operation: matched.operation.operationId,
+              issues: responseContract.issues.slice(0, 50).map(({ path, code }) => ({ path, code }))
+            }
+          });
+        }
+        const headerContract = parseNativeOperationResponseHeaders(
+          matched.operation.operationId,
+          normalizedResponse.status,
+          normalizedResponse.headers
+        );
+        if (!headerContract.success) {
+          throw new BoundaryError({
+            code: "INTERNAL_ERROR",
+            message: "The response headers failed their runtime contract.",
+            details: {
+              operation: matched.operation.operationId,
+              issues: headerContract.issues.slice(0, 50).map(({ path, code }) => ({ path, code }))
+            }
+          });
+        }
+        return normalizedResponse;
+      };
+      const concurrency =
+        matched.operation.concurrency.mode === "if-match"
+          ? concurrencyMetadata(
+              matched.operation.operationId,
+              matched.pathParameters,
+              requiredParsedHeader(parsedRequest, "if-match")
+            )
+          : null;
+      const mutationResult =
+        matched.operation.idempotency.mode === "header"
+          ? await this.#runtime.mutationCoordinator.execute(
+              {
+                identity: mutationIdentity(verifiedClinic),
+                idempotency: {
+                  operationId: matched.operation.operationId,
+                  key: requiredParsedHeader(parsedRequest, "idempotency-key"),
+                  requestDigest: canonicalRequestDigest(matched.operation, parsedRequest)
+                },
+                concurrency,
+                versionAdvances: deriveVersionAdvancesForMutation(
+                  matched.operation.operationId,
+                  matched.pathParameters,
+                  parsedRequest.body,
+                  concurrency
+                ),
+                requestId: correlation.requestId,
+                now
+              },
+              async (transaction) => validateResponse(await dispatch(transaction), false)
+            )
+          : null;
+      const response = mutationResult
+        ? validateResponse(mutationResult.response, mutationResult.replayed)
+        : validateResponse(await dispatch(), false);
+      const successfulIdempotentMutation =
+        matched.operation.idempotency.mode === "header" &&
+        response.status >= 200 &&
+        response.status < 300;
+
+      return {
+        status: response.status,
+        body: response.body,
+        headers: {
+          ...response.headers,
+          "cache-control": response.headers?.["cache-control"] ?? "no-store",
+          "x-request-id": correlation.requestId,
+          ...(successfulIdempotentMutation
+            ? { "idempotency-replayed": mutationResult?.replayed ? "true" : "false" }
+            : {})
+        }
+      };
     };
+
+    if (!this.#runtime.instrumentation) return executeMatched();
+    const routeFamily = routeFamilyForOperation(matched.operation.operationId);
+    const featureDomain = instrumentationDomainForRouteFamily(routeFamily);
+    const executeFeature = featureDomain
+      ? () =>
+          this.#runtime.instrumentation!.run(
+            { domain: featureDomain, operation: "request" },
+            executeMatched
+          )
+      : executeMatched;
+    return this.#runtime.instrumentation.run(
+      { domain: "http", operation: "request", routeFamily },
+      executeFeature
+    );
   }
 
   #enforceBodyBudget(request: ParsedIncomingRequest, maximumBytes: number | null): void {
@@ -378,6 +395,26 @@ export class ClinicOsRequestPipeline {
       now
     });
   }
+}
+
+function routeFamilyForOperation(
+  operationId: string
+): "health" | "identity" | "clinic_day" | "media" | "operations" | "provider_callback" {
+  if (["healthLive", "healthReady", "healthStartup"].includes(operationId)) return "health";
+  if (operationId === "getCurrentIdentity") return "identity";
+  if (operationId === "getMorningDashboard") return "clinic_day";
+  if (operationId === "receiveRazorpayPaymentWebhook") return "provider_callback";
+  if (/Media|media/u.test(operationId)) return "media";
+  return "operations";
+}
+
+function instrumentationDomainForRouteFamily(
+  routeFamily: ReturnType<typeof routeFamilyForOperation>
+): "identity" | "media" | "provider" | null {
+  if (routeFamily === "identity") return "identity";
+  if (routeFamily === "media") return "media";
+  if (routeFamily === "provider_callback") return "provider";
+  return null;
 }
 
 function normalizeJsonResponseBody(body: unknown): unknown {

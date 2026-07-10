@@ -83,7 +83,11 @@ export class InstrumentationHooks {
         const result = await execute();
         const durationMs = Math.max(0, this.#monotonicNowMs() - startedAt);
         span.setStatus({ code: SpanStatusCode.OK });
-        this.#record(operation, "success", durationMs);
+        const status = operation.domain === "http" ? httpStatusBand(result) : "success";
+        if (operation.domain === "http") {
+          span.setAttribute("clinic_os.http.status_band", status);
+        }
+        this.#record(operation, status, durationMs);
         return result;
       } catch (error) {
         const durationMs = Math.max(0, this.#monotonicNowMs() - startedAt);
@@ -116,7 +120,7 @@ export class InstrumentationHooks {
     return trace.getActiveSpan();
   }
 
-  #record(operation: InstrumentedOperation, status: "success" | "error", durationMs: number) {
+  #record(operation: InstrumentedOperation, status: string, durationMs: number) {
     if (operation.domain === "http") {
       const tags = { routeFamily: operation.routeFamily ?? "other", status };
       this.#metrics.increment("clinic_os.http.requests", 1, tags);
@@ -160,6 +164,17 @@ export class InstrumentationHooks {
     this.#metrics.increment("clinic_os.dependency.operations", 1, tags);
     this.#metrics.timing("clinic_os.dependency.duration_ms", durationMs, tags);
   }
+}
+
+function httpStatusBand(value: unknown): "2xx" | "3xx" | "4xx" | "5xx" | "other" {
+  if (!value || typeof value !== "object" || !("status" in value)) return "other";
+  const status = value.status;
+  if (typeof status !== "number" || !Number.isInteger(status)) return "other";
+  if (status >= 200 && status < 300) return "2xx";
+  if (status >= 300 && status < 400) return "3xx";
+  if (status >= 400 && status < 500) return "4xx";
+  if (status >= 500 && status < 600) return "5xx";
+  return "other";
 }
 
 function operationAttributes(operation: InstrumentedOperation): Attributes {

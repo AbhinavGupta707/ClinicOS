@@ -1,6 +1,7 @@
 variable "name_prefix" { type = string }
 variable "account_id" { type = string }
 variable "region" { type = string }
+variable "metric_namespace" { type = string }
 variable "edge_enabled" { type = bool }
 variable "logs_kms_key_arn" { type = string }
 variable "ecs_cluster_name" { type = string }

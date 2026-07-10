@@ -95,6 +95,69 @@ describe("observability configuration", () => {
 });
 
 describe("observability runtime", () => {
+  it("re-verifies export during readiness after a successful startup", async () => {
+    let verifyCalls = 0;
+    const runtime = createObservabilityRuntime({
+      configuration: productionConfiguration(),
+      sdkFactory: () => ({
+        start: () => undefined,
+        verifyExport: async () => {
+          verifyCalls += 1;
+        },
+        forceFlush: async () => undefined,
+        shutdown: async () => undefined
+      })
+    });
+
+    await runtime.start();
+    await runtime.readiness();
+
+    expect(verifyCalls).toBe(2);
+    expect(runtime.state()).toBe("ready");
+  });
+
+  it("fails readiness with a bounded code when export becomes unavailable", async () => {
+    let verifyCalls = 0;
+    const runtime = createObservabilityRuntime({
+      configuration: productionConfiguration(),
+      sdkFactory: () => ({
+        start: () => undefined,
+        verifyExport: async () => {
+          verifyCalls += 1;
+          if (verifyCalls > 1) throw new Error("secret collector response");
+        },
+        forceFlush: async () => undefined,
+        shutdown: async () => undefined
+      })
+    });
+
+    await runtime.start();
+
+    await expect(runtime.readiness()).rejects.toEqual(
+      expect.objectContaining<Partial<TelemetryStartupError>>({
+        code: "TELEMETRY_EXPORT_VERIFICATION_FAILED"
+      })
+    );
+  });
+
+  it("treats explicitly disabled non-production telemetry as ready", async () => {
+    const configuration = observabilityConfigurationFromEnvironment(
+      { CLINIC_OS_ENV: "local", OTEL_SDK_DISABLED: "true" },
+      {
+        serviceName: "clinic-os-api",
+        serviceVersion: "test",
+        serviceInstanceId: "api-synthetic-001",
+        region: "local"
+      }
+    );
+    const runtime = createObservabilityRuntime({ configuration });
+
+    await runtime.start();
+
+    await expect(runtime.readiness()).resolves.toBeUndefined();
+    expect(runtime.state()).toBe("disabled");
+  });
+
   it("fails startup and shuts the SDK down when required export verification fails", async () => {
     const calls: string[] = [];
     const adapter: TelemetrySdkAdapter = {

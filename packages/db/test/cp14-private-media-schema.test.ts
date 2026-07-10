@@ -13,8 +13,8 @@ const localLifecycle = readFileSync(
   "utf8"
 );
 
-test("CP14 private-media migration is the canonical schema version", () => {
-  assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "018");
+test("CP14 private-media migration remains present in the current canonical schema", () => {
+  assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "019");
   assert.match(migration, /migration blocked by an incomplete S3 reservation/u);
   assert.match(migration, /media_uploads_s3_private_binding_check/u);
   assert.match(migration, /media_uploads_private_binding_uq/u);

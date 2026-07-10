@@ -200,6 +200,104 @@ resource "aws_cloudwatch_metric_alarm" "waf_blocks" {
   tags = var.tags
 }
 
+resource "aws_cloudwatch_metric_alarm" "api_5xx" {
+  for_each = toset(["clinic_day", "health", "identity", "media", "operations", "provider_callback"])
+
+  alarm_name          = "${var.name_prefix}-api-${replace(each.key, "_", "-")}-5xx"
+  alarm_description   = "ClinicOS API route family emitted a server-error response"
+  namespace           = var.metric_namespace
+  metric_name         = "clinic_os.http.requests"
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 2
+  datapoints_to_alarm = 1
+  threshold           = 5
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
+  dimensions = {
+    "service.name" = "clinic-os-api"
+    routeFamily    = each.key
+    status         = "5xx"
+  }
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "identity_4xx" {
+  alarm_name          = "${var.name_prefix}-identity-4xx-spike"
+  alarm_description   = "ClinicOS identity boundary emitted repeated client or authorization failures"
+  namespace           = var.metric_namespace
+  metric_name         = "clinic_os.http.requests"
+  statistic           = "Sum"
+  period              = 300
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  threshold           = 10
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "notBreaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
+  dimensions = {
+    "service.name" = "clinic-os-api"
+    routeFamily    = "identity"
+    status         = "4xx"
+  }
+  tags = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "worker_backpressure" {
+  alarm_name          = "${var.name_prefix}-worker-backpressure-not-ready"
+  alarm_description   = "ClinicOS worker backpressure reached the not-ready state"
+  namespace           = var.metric_namespace
+  metric_name         = "clinic_os.backpressure.state"
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 1
+  threshold           = 3
+  comparison_operator = "GreaterThanOrEqualToThreshold"
+  treat_missing_data  = "breaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
+  dimensions          = { "service.name" = "clinic-os-worker" }
+  tags                = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "outbox_oldest_age" {
+  alarm_name          = "${var.name_prefix}-outbox-oldest-age"
+  alarm_description   = "ClinicOS outbox oldest pending event exceeded five minutes"
+  namespace           = var.metric_namespace
+  metric_name         = "clinic_os.outbox.oldest_age_seconds"
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 2
+  datapoints_to_alarm = 2
+  threshold           = 300
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "breaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
+  dimensions          = { "service.name" = "clinic-os-worker" }
+  tags                = var.tags
+}
+
+resource "aws_cloudwatch_metric_alarm" "outbox_dead_lettered" {
+  alarm_name          = "${var.name_prefix}-outbox-dead-lettered"
+  alarm_description   = "ClinicOS has one or more unresolved durable outbox dead letters"
+  namespace           = var.metric_namespace
+  metric_name         = "clinic_os.outbox.dead_lettered"
+  statistic           = "Maximum"
+  period              = 60
+  evaluation_periods  = 1
+  threshold           = 0
+  comparison_operator = "GreaterThanThreshold"
+  treat_missing_data  = "breaching"
+  alarm_actions       = local.alarm_actions
+  ok_actions          = local.alarm_actions
+  dimensions          = { "service.name" = "clinic-os-worker" }
+  tags                = var.tags
+}
+
 resource "aws_cloudwatch_event_rule" "backup_failure" {
   name        = "${var.name_prefix}-backup-failure"
   description = "AWS Backup jobs that did not complete"
@@ -264,6 +362,21 @@ resource "aws_cloudwatch_dashboard" "this" {
               ["AWS/ECS", "MemoryUtilization", "ClusterName", var.ecs_cluster_name, "ServiceName", service],
             ]
           ])
+        }
+      },
+      {
+        type   = "metric"
+        width  = 24
+        height = 6
+        properties = {
+          title  = "ClinicOS application readiness, outbox and backpressure"
+          view   = "timeSeries"
+          region = var.region
+          metrics = [
+            [var.metric_namespace, "clinic_os.outbox.oldest_age_seconds", "service.name", "clinic-os-worker"],
+            [var.metric_namespace, "clinic_os.outbox.dead_lettered", "service.name", "clinic-os-worker"],
+            [var.metric_namespace, "clinic_os.backpressure.state", "service.name", "clinic-os-worker"],
+          ]
         }
       },
     ]
