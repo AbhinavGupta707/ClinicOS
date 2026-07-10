@@ -333,7 +333,9 @@ export class S3PrivateMediaProvider {
           "content-length": String(input.expectedBytes),
           "x-amz-checksum-sha256": Buffer.from(sha256Hex, "hex").toString("base64"),
           "x-amz-meta-clinicos-binding": binding,
-          "x-amz-tagging": `${QUARANTINE_TAG}=${UPLOAD_TAG_VALUE}`
+          "x-amz-tagging": `${QUARANTINE_TAG}=${UPLOAD_TAG_VALUE}`,
+          "x-amz-server-side-encryption": "aws:kms",
+          "x-amz-server-side-encryption-aws-kms-key-id": this.#config.kmsKeyId
         }
       });
     } catch (error) {
