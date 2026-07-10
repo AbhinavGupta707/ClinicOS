@@ -190,6 +190,9 @@ No AWS resource or mutation was performed by this lane. Before activation, Terra
    any additional signer-required header is a provider failure.
    Signer transport or validation failures append only a classified
    `media.upload_signing_failed` audit/outbox event; URLs and headers are never persisted.
+   Provider-created validation errors remain specific and safe. Arbitrary SDK/transport errors are
+   replaced with a generic retryable `provider_error` without the original cause, request, URL,
+   headers, provider message, or stack text before they reach aggregate API logging.
 4. On completion, head the authoritative version, reject incomplete multipart, validate size/type/checksum/metadata/tag/KMS/version, and range-read only the configured magic-byte budget.
 5. Atomically persist `upload_verified`, its audit, and reconciliation intent; do not return read access.
 6. Atomically claim a bounded scanner lease and durable execution intent before invoking the

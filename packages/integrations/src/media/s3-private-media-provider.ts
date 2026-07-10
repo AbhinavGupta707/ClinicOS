@@ -291,9 +291,22 @@ export class S3PrivateMediaProvider {
       assertSameReservation(existing, record);
     }
 
-    let upload: PublicSignedMediaRequest<"PUT">;
+    const auditUploadSigningFailure = async (
+      failureClass: "invalid_signer_response" | "signer_transport_failure"
+    ): Promise<void> => {
+      await this.#recordAuditAndIntent({
+        authority: input.authority,
+        action: "media.upload_signing_failed",
+        outcome: "failed",
+        metadata: { failureClass, method: "PUT" },
+        intentKind: "upload_signing_failed",
+        intentPayload: { failureClass, method: "PUT", state: record.state },
+        discriminator: `upload-signing-failed:${reserveOperation.operationId}:${failureClass}`
+      });
+    };
+    let transportRequest: SignedTransportRequest;
     try {
-      const transportRequest = await this.#signer.signPutObject({
+      transportRequest = await this.#signer.signPutObject({
         locator,
         expiresAt,
         contentLength: input.expectedBytes,
@@ -302,6 +315,12 @@ export class S3PrivateMediaProvider {
         metadata: { [PRIVATE_METADATA_BINDING]: binding },
         tags: { [QUARANTINE_TAG]: UPLOAD_TAG_VALUE }
       });
+    } catch {
+      await auditUploadSigningFailure("signer_transport_failure");
+      throw sanitizedSignerTransportError();
+    }
+    let upload: PublicSignedMediaRequest<"PUT">;
+    try {
       upload = publicSignedRequest(transportRequest, {
         method: "PUT",
         requestedExpiresAt: expiresAt,
@@ -318,17 +337,9 @@ export class S3PrivateMediaProvider {
         }
       });
     } catch (error) {
-      const failureClass = signerFailureClass(error);
-      await this.#recordAuditAndIntent({
-        authority: input.authority,
-        action: "media.upload_signing_failed",
-        outcome: "failed",
-        metadata: { failureClass, method: "PUT" },
-        intentKind: "upload_signing_failed",
-        intentPayload: { failureClass, method: "PUT", state: record.state },
-        discriminator: `upload-signing-failed:${reserveOperation.operationId}:${failureClass}`
-      });
-      throw error;
+      await auditUploadSigningFailure("invalid_signer_response");
+      if (error instanceof PrivateMediaError && error.code === "provider_error") throw error;
+      throw sanitizedSignerTransportError();
     }
     return Object.freeze({
       mediaId: input.authority.mediaId,
@@ -733,25 +744,9 @@ export class S3PrivateMediaProvider {
       },
       discriminator: `access-request:${boundedExpiry}:${authority.correlationId}`
     });
-    let access: PublicSignedMediaRequest<"GET">;
-    try {
-      const signed = await this.#signer.signGetObject({
-        locator: record.locator,
-        versionId: record.objectVersionId,
-        expiresAt: boundedExpiry,
-        responseContentType: record.detectedMimeType ?? record.declaredMimeType
-      });
-      access = publicSignedRequest(signed, {
-        method: "GET",
-        requestedExpiresAt: boundedExpiry,
-        now,
-        allowedOrigins: this.#config.presignedEndpointAllowlist,
-        locator: record.locator,
-        objectVersionId: record.objectVersionId,
-        requiredHeaders: {}
-      });
-    } catch (error) {
-      const failureClass = signerFailureClass(error);
+    const auditAccessSigningFailure = async (
+      failureClass: "invalid_signer_response" | "signer_transport_failure"
+    ): Promise<void> => {
       await this.#recordAuditAndIntent({
         authority,
         action: "media.access_signing_failed",
@@ -766,7 +761,34 @@ export class S3PrivateMediaProvider {
         },
         discriminator: `access-signing-failed:${boundedExpiry}:${authority.correlationId}:${failureClass}`
       });
-      throw error;
+    };
+    let signed: SignedTransportRequest;
+    try {
+      signed = await this.#signer.signGetObject({
+        locator: record.locator,
+        versionId: record.objectVersionId,
+        expiresAt: boundedExpiry,
+        responseContentType: record.detectedMimeType ?? record.declaredMimeType
+      });
+    } catch {
+      await auditAccessSigningFailure("signer_transport_failure");
+      throw sanitizedSignerTransportError();
+    }
+    let access: PublicSignedMediaRequest<"GET">;
+    try {
+      access = publicSignedRequest(signed, {
+        method: "GET",
+        requestedExpiresAt: boundedExpiry,
+        now,
+        allowedOrigins: this.#config.presignedEndpointAllowlist,
+        locator: record.locator,
+        objectVersionId: record.objectVersionId,
+        requiredHeaders: {}
+      });
+    } catch (error) {
+      await auditAccessSigningFailure("invalid_signer_response");
+      if (error instanceof PrivateMediaError && error.code === "provider_error") throw error;
+      throw sanitizedSignerTransportError();
     }
     await this.#recordAuditAndIntent({
       authority,
@@ -2104,12 +2126,12 @@ function requireRestoreReasonCode(value: unknown): PrivateMediaRestoreReasonCode
   return value as PrivateMediaRestoreReasonCode;
 }
 
-function signerFailureClass(
-  error: unknown
-): "invalid_signer_response" | "signer_transport_failure" {
-  return error instanceof PrivateMediaError && error.code === "provider_error"
-    ? "invalid_signer_response"
-    : "signer_transport_failure";
+function sanitizedSignerTransportError(): PrivateMediaError {
+  return new PrivateMediaError({
+    code: "provider_error",
+    message: "The private media signing service is temporarily unavailable.",
+    retryable: true
+  });
 }
 
 function invalidEvidence(message: string): PrivateMediaError {

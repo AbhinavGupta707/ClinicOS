@@ -825,7 +825,13 @@ test("CP14 legal hold cannot race claimed delete or purge effects", async (t) =>
 
 test("CP14 signer cannot return expired or broadened URL authority", async () => {
   const harness = createHarness({ signerExpiry: "2026-07-10T09:59:59.000Z" });
-  await assert.rejects(reserve(harness), hasMediaCode("provider_error"));
+  await assert.rejects(reserve(harness), (error: unknown) => {
+    assert.ok(error instanceof PrivateMediaError);
+    assert.equal(error.code, "provider_error");
+    assert.equal(error.retryable, false);
+    assert.equal(error.message, "Media signer returned an invalid expiry.");
+    return true;
+  });
 
   const wrongMethod = createHarness({ signerMethod: "GET" });
   await assert.rejects(reserve(wrongMethod), hasMediaCode("provider_error"));
@@ -875,8 +881,9 @@ test("CP14 signed capability endpoints reject malicious HTTPS destinations for P
 });
 
 test("CP14 signer transport failures append classified redacted audit/outbox evidence", async () => {
-  const uploadHarness = createHarness({ signerFailPut: true });
-  await assert.rejects(reserve(uploadHarness), /put signer unavailable/u);
+  const uploadTransportError = secretBearingSignerError("PUT");
+  const uploadHarness = createHarness({ signerPutFailure: uploadTransportError });
+  await assert.rejects(reserve(uploadHarness), isSanitizedSignerTransportError);
   const uploadFailure = uploadHarness.auditEvents.at(-1);
   assert.equal(uploadFailure?.action, "media.upload_signing_failed");
   assert.deepEqual(uploadFailure?.metadata, {
@@ -886,7 +893,8 @@ test("CP14 signer transport failures append classified redacted audit/outbox evi
   assertNoPrivateFields(uploadHarness.auditEvents);
   assertNoPrivateFields(uploadHarness.persistence.intents);
 
-  const accessHarness = createHarness({ signerFailGet: true });
+  const accessTransportError = secretBearingSignerError("GET");
+  const accessHarness = createHarness({ signerGetFailure: accessTransportError });
   await completeUpload(accessHarness);
   await accessHarness.provider.inspectQuarantinedMedia(accessHarness.authority);
   await assert.rejects(
@@ -894,7 +902,7 @@ test("CP14 signer transport failures append classified redacted audit/outbox evi
       accessHarness.authority,
       "2026-07-10T10:04:00.000Z"
     ),
-    /get signer unavailable/u
+    isSanitizedSignerTransportError
   );
   const accessFailure = accessHarness.auditEvents.at(-1);
   assert.equal(accessFailure?.action, "media.access_signing_failed");
@@ -904,6 +912,8 @@ test("CP14 signer transport failures append classified redacted audit/outbox evi
   });
   assertNoPrivateFields(accessHarness.auditEvents);
   assertNoPrivateFields(accessHarness.persistence.intents);
+  assert.match(uploadTransportError.message, /SECRET_SIGNED_CAPABILITY/u);
+  assert.match(accessTransportError.message, /SECRET_SIGNED_CAPABILITY/u);
 });
 
 test("CP14 signer headers are exact and reject metadata, tag, or authorization injection", async (t) => {
@@ -952,8 +962,8 @@ interface HarnessOptions {
   readonly signerExtraGetHeaders?: Readonly<Record<string, string>>;
   readonly signerPutUrl?: string;
   readonly signerGetUrl?: string;
-  readonly signerFailPut?: boolean;
-  readonly signerFailGet?: boolean;
+  readonly signerPutFailure?: unknown;
+  readonly signerGetFailure?: unknown;
   readonly presignedEndpointAllowlist?: readonly string[];
   readonly evidenceMutator?: (evidence: SignedMalwareEvidence) => unknown;
   readonly scanCommitFailure?: PersistenceFailurePoint;
@@ -984,8 +994,8 @@ function createHarness(options: HarnessOptions = {}): Harness {
     extraGetHeaders: options.signerExtraGetHeaders,
     putUrl: options.signerPutUrl,
     getUrl: options.signerGetUrl,
-    failPut: options.signerFailPut,
-    failGet: options.signerFailGet
+    putFailure: options.signerPutFailure,
+    getFailure: options.signerGetFailure
   });
   const scanner =
     options.scannerFactory?.(clock) ??
@@ -1495,8 +1505,8 @@ class TestSigner implements S3PresigningTransport {
   readonly extraGetHeaders: Readonly<Record<string, string>>;
   readonly putUrl?: string;
   readonly getUrl?: string;
-  readonly failPut: boolean;
-  readonly failGet: boolean;
+  readonly putFailure?: unknown;
+  readonly getFailure?: unknown;
 
   constructor(
     options: Readonly<{
@@ -1506,8 +1516,8 @@ class TestSigner implements S3PresigningTransport {
       extraGetHeaders?: Readonly<Record<string, string>>;
       putUrl?: string;
       getUrl?: string;
-      failPut?: boolean;
-      failGet?: boolean;
+      putFailure?: unknown;
+      getFailure?: unknown;
     }> = {}
   ) {
     this.forcedExpiry = options.forcedExpiry;
@@ -1516,12 +1526,12 @@ class TestSigner implements S3PresigningTransport {
     this.extraGetHeaders = options.extraGetHeaders ?? {};
     this.putUrl = options.putUrl;
     this.getUrl = options.getUrl;
-    this.failPut = options.failPut ?? false;
-    this.failGet = options.failGet ?? false;
+    this.putFailure = options.putFailure;
+    this.getFailure = options.getFailure;
   }
 
   async signPutObject(input: Parameters<S3PresigningTransport["signPutObject"]>[0]) {
-    if (this.failPut) throw new Error("put signer unavailable");
+    if (this.putFailure !== undefined) throw this.putFailure;
     return {
       method: this.forcedPutMethod ?? "PUT",
       url: this.putUrl ?? testSignedObjectUrl(input.locator),
@@ -1538,7 +1548,7 @@ class TestSigner implements S3PresigningTransport {
   }
 
   async signGetObject(input: Parameters<S3PresigningTransport["signGetObject"]>[0]) {
-    if (this.failGet) throw new Error("get signer unavailable");
+    if (this.getFailure !== undefined) throw this.getFailure;
     this.lastGet = { versionId: input.versionId };
     return {
       method: "GET" as const,
@@ -1754,6 +1764,33 @@ async function waitForScannerCalls(scanner: ControlledScanner, expected: number)
 
 function hasMediaCode(code: string) {
   return (error: unknown) => error instanceof PrivateMediaError && error.code === code;
+}
+
+function secretBearingSignerError(method: "PUT" | "GET"): Error {
+  return Object.assign(
+    new Error(
+      `${method} SECRET_SIGNED_CAPABILITY https://secret.example/private?signature=do-not-log`
+    ),
+    {
+      url: "https://secret.example/private?signature=do-not-log",
+      headers: { authorization: "SECRET_AUTHORIZATION_HEADER" },
+      request: { method, rawProviderMessage: "SECRET_RAW_PROVIDER_MESSAGE" }
+    }
+  );
+}
+
+function isSanitizedSignerTransportError(error: unknown): boolean {
+  assert.ok(error instanceof PrivateMediaError);
+  assert.equal(error.code, "provider_error");
+  assert.equal(error.retryable, true);
+  assert.equal(error.message, "The private media signing service is temporarily unavailable.");
+  assert.equal("cause" in error, false);
+  const exposed = [String(error), error.stack ?? "", JSON.stringify(error)].join("\n");
+  assert.doesNotMatch(
+    exposed,
+    /SECRET_|secret\.example|signature=do-not-log|authorization|rawProviderMessage/iu
+  );
+  return true;
 }
 
 function assertNoPrivateFields(value: unknown): void {
