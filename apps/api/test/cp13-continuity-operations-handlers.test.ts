@@ -73,7 +73,10 @@ test("CP13 create task uses parsed input, bound port, injected clock, audit and 
   assert.equal(evidence.audits[0]?.occurredAt, now);
   assert.equal(evidence.outbox.length, 1);
   assert.equal(evidence.outbox[0]?.eventType, "task.created");
-  assert.equal(evidence.outbox[0]?.idempotencyKey, "cp13-task-create-0001");
+  assert.equal(
+    evidence.outbox[0]?.idempotencyKey,
+    `${tenantId}:${clinicId}:${userId}:createTask:cp13-task-create-0001:task.created:${task.id}:0`
+  );
   assert.doesNotMatch(JSON.stringify(response.body), /tenantId|clinicId/);
 });
 
@@ -412,10 +415,19 @@ function request(
   });
   assert.equal(parsed.success, true, JSON.stringify(parsed));
   if (!parsed.success) throw new Error("Request fixture did not satisfy the frozen contract.");
+  const context = accessContext("owner_admin");
+  const clinic = {
+    id: clinicId,
+    tenantId,
+    slug: "cp13-clinic",
+    displayName: "CP13 Clinic",
+    status: "active" as const,
+    timezone: "Asia/Kolkata"
+  };
   return {
     operationId,
     parsed: parsed.data,
-    access: { clinicId } as VerifiedClinicRequestContext,
+    access: { clinicId, clinic, clinics: [clinic], context } satisfies VerifiedClinicRequestContext,
     metadata: {
       requestId: `request-${operationId}`,
       receivedAt: new Date(now),
