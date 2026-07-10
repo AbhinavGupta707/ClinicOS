@@ -805,3 +805,49 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   disk. No reset, data deletion or other destructive recovery has been attempted. Canonical migration
   0016 therefore has deterministic schema tests but no E3 clean-Postgres claim yet; CP13 promotion
   remains gated on safe Docker recovery and a complete clean lifecycle.
+
+### CP13 Candidate Review, Correction And Wave 2 — 2026-07-10
+
+- The four initial lane commits were merged as integration candidates only: Front Office
+  `753b02d1`, Clinical/Dental `54aa0f1c`, Treatment/Billing `3cd923ce`, and
+  Continuity/Operations `a80de311`. Read-only cross-review then identified material patient,
+  provider, payment, media, cursor and durability gaps; none of the candidates was treated as a
+  checkpoint-complete claim.
+- Master hardening `69e31530` signs and tenant/clinic-binds due-generation cursors, rejects future
+  passes and tampering, advances safely across DST gaps, scopes outbox idempotency, fixes generated
+  client binary typing and restores the web generated-client dependency. Migration preflight
+  `aab16d1d` now aborts legacy-invalid checkout recall state with actionable evidence before DDL.
+- Reviewed lane corrections are integrated: Front Office `85e155c9` as `13b621c0` plus the full-web
+  type correction `e48c7875`; Treatment/Billing `f7c9cd41` as `9ccfe774`; Clinical/Dental
+  `e5934893` as `a01e8f45`. The master also corrected Continuity request-authority fixtures in
+  `7223e29b`, removed false patient-instruction outbox linkage in `4303639c`, and froze exact
+  93-operation clinic composition in `13737a60`. Focused lane tests, API/domain/DB/web typechecks,
+  the 116-test API package with only sandbox socket skips, root `npm run check`, secret scan and
+  diff checks pass at this stage.
+- Durable Integrity and Provider Recovery Wave 2 lane:
+  - pending worktree ID: `client-new-thread:4d17a953-5ae0-451e-87ce-d026a0066501`;
+  - thread ID: `019f4bb6-3daf-7283-9129-f09425ba8322`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/b1dc/ClinicOS`;
+  - verified base: clean detached `e48c787560fc693a43bbefa72849a46bf7683502`;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - exclusive ownership: canonical migration 0017, Postgres/repository/module durability adapters,
+    DB tests/proposal reconciliation and lane evidence. API/web/workflow and release truth remain
+    forbidden.
+- Durable Workflow, Replay and Reconciliation Wave 2 lane:
+  - pending worktree ID: `client-new-thread:274a80c6-532d-44ca-8394-b1cdbb07849c`;
+  - thread ID: `019f4bc0-11a6-70b1-8ae3-5640147df917`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/4fb2/ClinicOS`;
+  - verified base: clean detached `a01e8f453bcaea1b973ef43f6f594cfcf66965be`;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - exclusive ownership: deterministic CP13 Temporal contracts, action-event handlers, worker
+    composition helpers, focused tests and lane evidence. API, DB, web, worker main and release
+    truth remain forbidden.
+- Both Wave 2 lanes are path-disjoint and independently testable. The DB lane consumes the reviewed
+  provider/media/front-office requirements; the workflow lane consumes the frozen CP13 event
+  taxonomy and exposes typed future activity adapters without depending on unfinished DB code.
+  Runtime API/worker wiring, generated-client web mounting, E3 lifecycle and promotion remain with
+  the master after both producer handoffs are reviewed.
+- A renewed authorized `docker info` outside the sandbox still hangs and required interruption;
+  localhost Postgres is not running. Homebrew PostgreSQL 16 binaries are available, so a fresh
+  isolated temporary cluster can provide migration/RLS/adapter evidence after migration 0017 is
+  frozen, but it does not substitute for Redis/Keycloak/Temporal or the complete Docker lifecycle.
