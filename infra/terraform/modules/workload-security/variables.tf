@@ -15,6 +15,15 @@ variable "alb_target_ports" {
   type    = set(number)
   default = []
 }
+variable "admin_alb_enabled" {
+  type    = bool
+  default = false
+}
+variable "admin_alb_security_group_id" {
+  type     = string
+  default  = null
+  nullable = true
+}
 variable "tags" {
   type    = map(string)
   default = {}

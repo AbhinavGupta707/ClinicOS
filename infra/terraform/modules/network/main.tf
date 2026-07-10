@@ -152,53 +152,6 @@ resource "aws_route_table_association" "data" {
   route_table_id = aws_route_table.data[each.key].id
 }
 
-resource "aws_vpc_endpoint" "s3" {
-  vpc_id            = aws_vpc.this.id
-  service_name      = "com.amazonaws.${var.region}.s3"
-  vpc_endpoint_type = "Gateway"
-  route_table_ids   = concat(values(aws_route_table.private)[*].id, values(aws_route_table.data)[*].id)
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-s3-endpoint" })
-}
-
-resource "aws_security_group" "endpoints" {
-  count = var.create_interface_endpoints ? 1 : 0
-
-  name_prefix = "${var.name_prefix}-endpoints-"
-  description = "TLS from ClinicOS VPC workloads to AWS interface endpoints"
-  vpc_id      = aws_vpc.this.id
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-endpoints" })
-
-  lifecycle {
-    create_before_destroy = true
-  }
-}
-
-resource "aws_vpc_security_group_ingress_rule" "endpoints_https" {
-  count = var.create_interface_endpoints ? 1 : 0
-
-  security_group_id = aws_security_group.endpoints[0].id
-  description       = "TLS from this VPC"
-  ip_protocol       = "tcp"
-  from_port         = 443
-  to_port           = 443
-  cidr_ipv4         = var.vpc_cidr
-}
-
-resource "aws_vpc_endpoint" "interface" {
-  for_each = var.create_interface_endpoints ? var.interface_endpoint_services : []
-
-  vpc_id              = aws_vpc.this.id
-  service_name        = "com.amazonaws.${var.region}.${each.value}"
-  vpc_endpoint_type   = "Interface"
-  private_dns_enabled = true
-  subnet_ids          = values(aws_subnet.private)[*].id
-  security_group_ids  = [aws_security_group.endpoints[0].id]
-
-  tags = merge(var.tags, { Name = "${var.name_prefix}-${replace(each.value, ".", "-")}-endpoint" })
-}
-
 resource "aws_cloudwatch_log_group" "flow" {
   name              = "/aws/vpc/${var.name_prefix}/flow"
   retention_in_days = var.log_retention_days

@@ -92,11 +92,23 @@ variable "ingress" {
   })
 }
 
+variable "admin_ingress" {
+  type = object({
+    enabled                = bool
+    hostname               = optional(string)
+    private_zone_id        = optional(string)
+    certificate_arn        = optional(string)
+    allowed_operator_cidrs = set(string)
+  })
+  description = "Separate internal Keycloak admin listener contract."
+}
+
 variable "runtime" {
   type = object({
     enabled       = bool
     temporal_mode = string
     images        = map(string)
+    image_users   = map(string)
     capacity = map(object({
       cpu              = number
       memory           = number
@@ -125,7 +137,7 @@ variable "github" {
     create_oidc_provider     = bool
     oidc_provider_arn        = optional(string)
     oidc_thumbprints         = list(string)
-    permissions_boundary_arn = optional(string)
+    permissions_boundary_arn = string
   })
 }
 
@@ -134,7 +146,25 @@ variable "state_backend" {
     bucket_name = string
     lock_table  = string
     state_key   = string
+    kms_key_arn = string
   })
+}
+
+variable "activation_phase" {
+  type        = string
+  description = "Ordered deployment phase: foundation, data-plane, runtime, or edge."
+  default     = "foundation"
+  validation {
+    condition     = contains(["foundation", "data-plane", "runtime", "edge"], var.activation_phase)
+    error_message = "activation_phase must be foundation, data-plane, runtime, or edge."
+  }
+}
+
+variable "audit_compliance_authorized_by" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Named authority for irreversible COMPLIANCE Object Lock."
 }
 
 variable "additional_alarm_action_arns" {

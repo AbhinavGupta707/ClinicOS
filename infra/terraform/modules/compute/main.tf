@@ -185,7 +185,9 @@ resource "aws_ecs_task_definition" "this" {
       {
         name                   = each.key
         image                  = each.value.image_uri
+        user                   = each.value.user
         essential              = true
+        privileged             = false
         readonlyRootFilesystem = true
         command                = length(each.value.command) == 0 ? null : each.value.command
         portMappings = each.value.container_port > 0 ? [{
@@ -207,7 +209,13 @@ resource "aws_ecs_task_definition" "this" {
           containerPath = "/tmp"
           readOnly      = false
         }]
-        linuxParameters = { initProcessEnabled = true }
+        linuxParameters = {
+          initProcessEnabled = true
+          capabilities = {
+            add  = []
+            drop = ["ALL"]
+          }
+        }
         healthCheck = length(each.value.health_check_command) == 0 ? null : {
           command     = each.value.health_check_command
           interval    = 30
@@ -229,7 +237,9 @@ resource "aws_ecs_task_definition" "this" {
       {
         name                   = "aws-otel-collector"
         image                  = var.adot_image_uri
+        user                   = var.adot_user
         essential              = false
+        privileged             = false
         readonlyRootFilesystem = true
         command                = ["--config=/etc/ecs/ecs-default-config.yaml"]
         environment            = [{ name = "AWS_REGION", value = var.region }]
@@ -238,6 +248,13 @@ resource "aws_ecs_task_definition" "this" {
           containerPath = "/tmp"
           readOnly      = false
         }]
+        linuxParameters = {
+          initProcessEnabled = true
+          capabilities = {
+            add  = []
+            drop = ["ALL"]
+          }
+        }
         logConfiguration = {
           logDriver = "awslogs"
           options = {
@@ -263,10 +280,13 @@ resource "aws_ecs_service" "this" {
 
   deployment_minimum_healthy_percent = 100
   deployment_maximum_percent         = 200
-  health_check_grace_period_seconds  = try(each.value.target_group_arn, null) == null ? 0 : each.value.health_check_grace_seconds
-  enable_execute_command             = false
-  wait_for_steady_state              = false
-  propagate_tags                     = "SERVICE"
+  health_check_grace_period_seconds = length(concat(
+    try(each.value.target_group_arn, null) == null ? [] : [each.value.target_group_arn],
+    each.value.additional_target_group_arns,
+  )) == 0 ? 0 : each.value.health_check_grace_seconds
+  enable_execute_command = false
+  wait_for_steady_state  = false
+  propagate_tags         = "SERVICE"
 
   capacity_provider_strategy {
     capacity_provider = each.value.use_fargate_spot ? "FARGATE_SPOT" : "FARGATE"
@@ -289,7 +309,10 @@ resource "aws_ecs_service" "this" {
   }
 
   dynamic "load_balancer" {
-    for_each = try(each.value.target_group_arn, null) == null ? [] : [each.value.target_group_arn]
+    for_each = toset(concat(
+      try(each.value.target_group_arn, null) == null ? [] : [each.value.target_group_arn],
+      each.value.additional_target_group_arns,
+    ))
     content {
       target_group_arn = load_balancer.value
       container_name   = each.key

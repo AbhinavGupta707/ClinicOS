@@ -7,3 +7,7 @@ output "ecr_repository_urls" { value = module.platform.ecr_repository_urls }
 output "ci_role_arns" { value = module.platform.ci_role_arns }
 output "temporal_schema_task_definition_arn" { value = module.platform.temporal_schema_task_definition_arn }
 output "keycloak_bootstrap_task_definition_arn" { value = module.platform.keycloak_bootstrap_task_definition_arn }
+output "activation" { value = module.platform.activation }
+output "policy_assertions" { value = module.platform.policy_assertions }
+output "identity_contract" { value = module.platform.identity_contract }
+output "cloudtrail_s3_object_event_arns" { value = module.platform.cloudtrail_s3_object_event_arns }

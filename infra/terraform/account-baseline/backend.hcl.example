@@ -1,0 +1,7 @@
+bucket         = "REPLACE_WITH_DEDICATED_KMS_STATE_BUCKET"
+key            = "clinicos/account-baseline/terraform.tfstate"
+region         = "ap-south-1"
+dynamodb_table = "clinicos-terraform-locks"
+encrypt        = true
+kms_key_id     = "REPLACE_WITH_DEDICATED_STATE_KMS_KEY_ARN"
+use_lockfile   = true

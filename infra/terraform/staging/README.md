@@ -2,7 +2,7 @@
 
 This root owns the synthetic-only Mumbai staging environment and its Hyderabad recovery foundations. It is intentionally isolated in its own Terraform state and accepts a different `aws_account_id` when future account separation is available. It does not use AWS Organizations.
 
-Public ingress and ECS runtime services are off until real DNS/TLS inputs and digest-pinned signed images are supplied. Alarm definitions still exist when no paging ARN is supplied, but `alert_delivery_configured` remains false. Those honest inactive states are not E4 evidence.
+The default `foundation` phase excludes NAT, endpoints, RDS, cache, backup plan, ECS, and load balancers. `data-plane`, `runtime`, and `edge` are explicit ordered activations. Runtime additionally requires a distinct internal Keycloak admin hostname/ALB contract, a DNS-owner-supplied private zone, TLS, restricted operator CIDRs, immutable images, and numeric non-root image users. Public auth ingress remains off until `edge`. Those honest inactive states are not E4 evidence.
 
 Safe local verification:
 
@@ -12,7 +12,7 @@ terraform validate
 terraform test -test-directory=tests
 ```
 
-Authorized remote-state initialization uses the existing backend only:
+Authorized remote-state initialization uses the dedicated KMS backend only after the master completes bootstrap/migration:
 
 ```sh
 terraform init -backend-config=backend.hcl

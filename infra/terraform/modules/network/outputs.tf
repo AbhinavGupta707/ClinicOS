@@ -22,6 +22,10 @@ output "private_route_table_ids" {
   value = values(aws_route_table.private)[*].id
 }
 
+output "data_route_table_ids" {
+  value = values(aws_route_table.data)[*].id
+}
+
 output "flow_log_group_arn" {
   value = aws_cloudwatch_log_group.flow.arn
 }

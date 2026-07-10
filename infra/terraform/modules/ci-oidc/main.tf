@@ -22,6 +22,26 @@ check "github_subject_scope" {
   }
 }
 
+check "sensitive_read_exclusion" {
+  assert {
+    condition = alltrue([
+      !contains(var.read_actions, "s3:GetObject"),
+      !contains(var.read_actions, "s3:*"),
+      !contains(var.read_actions, "secretsmanager:GetSecretValue"),
+      !contains(var.read_actions, "secretsmanager:BatchGetSecretValue"),
+      !contains(var.read_actions, "*"),
+    ])
+    error_message = "Terraform discovery permissions must exclude S3 object bodies, secret values, and wildcard actions. State-object access is separately restricted to one exact key."
+  }
+}
+
+check "mandatory_permissions_boundary" {
+  assert {
+    condition     = var.permissions_boundary_arn != null
+    error_message = "All GitHub OIDC roles require the account-baseline ClinicOS permissions boundary."
+  }
+}
+
 resource "aws_iam_openid_connect_provider" "github" {
   count = var.create_oidc_provider ? 1 : 0
 
@@ -77,6 +97,14 @@ locals {
         Action   = ["dynamodb:DeleteItem", "dynamodb:GetItem", "dynamodb:PutItem"]
         Resource = "arn:aws:dynamodb:${var.region}:${var.account_id}:table/${var.state_lock_table_name}"
       },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:DescribeKey", "kms:Encrypt", "kms:GenerateDataKey"]
+        Resource = var.state_kms_key_arn
+        Condition = {
+          StringEquals = { "kms:ViaService" = ["s3.${var.region}.amazonaws.com", "dynamodb.${var.region}.amazonaws.com"] }
+        }
+      },
     ]
   })
   state_apply_policy = jsonencode({
@@ -103,6 +131,14 @@ locals {
         Action   = ["dynamodb:DeleteItem", "dynamodb:GetItem", "dynamodb:PutItem"]
         Resource = "arn:aws:dynamodb:${var.region}:${var.account_id}:table/${var.state_lock_table_name}"
       },
+      {
+        Effect   = "Allow"
+        Action   = ["kms:Decrypt", "kms:DescribeKey", "kms:Encrypt", "kms:GenerateDataKey"]
+        Resource = var.state_kms_key_arn
+        Condition = {
+          StringEquals = { "kms:ViaService" = ["s3.${var.region}.amazonaws.com", "dynamodb.${var.region}.amazonaws.com"] }
+        }
+      },
     ]
   })
 }
@@ -116,9 +152,10 @@ resource "aws_iam_role" "plan" {
   tags                 = var.tags
 }
 
-resource "aws_iam_role_policy_attachment" "plan_read_only" {
-  role       = aws_iam_role.plan.name
-  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+resource "aws_iam_role_policy" "plan_discovery" {
+  name   = "explicit-platform-metadata-discovery"
+  role   = aws_iam_role.plan.id
+  policy = var.read_policy_json
 }
 
 resource "aws_iam_role_policy" "plan_state" {
@@ -178,9 +215,10 @@ resource "aws_iam_role_policy" "deploy_state" {
   policy = local.state_apply_policy
 }
 
-resource "aws_iam_role_policy_attachment" "deploy_read_only" {
-  role       = aws_iam_role.deploy.name
-  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+resource "aws_iam_role_policy" "deploy_discovery" {
+  name   = "explicit-platform-metadata-discovery"
+  role   = aws_iam_role.deploy.id
+  policy = var.read_policy_json
 }
 
 resource "aws_iam_role_policy" "deploy" {

@@ -35,6 +35,10 @@ variable "offline_validation_mode" {
 
 variable "terraform_state_bucket" { type = string }
 variable "terraform_lock_table" { type = string }
+variable "terraform_state_kms_key_arn" {
+  type        = string
+  description = "Dedicated backend CMK ARN created by the singleton bootstrap root."
+}
 variable "github_repository" { type = string }
 variable "github_subject_claims" { type = list(string) }
 variable "create_github_oidc_provider" {
@@ -52,27 +56,30 @@ variable "github_oidc_thumbprints" {
   description = "Reconfirm through GitHub/AWS official activation docs immediately before apply."
 }
 variable "permissions_boundary_arn" {
-  type     = string
-  default  = null
-  nullable = true
+  type        = string
+  description = "Mandatory CI permissions boundary produced by account-baseline."
 }
 
-variable "enable_runtime" {
-  type        = bool
-  default     = false
-  description = "Creates services only after signed digest images and runtime secrets are ready."
+variable "activation_phase" {
+  type        = string
+  default     = "foundation"
+  description = "Ordered activation: foundation, data-plane, runtime, or edge."
+  validation {
+    condition     = contains(["foundation", "data-plane", "runtime", "edge"], var.activation_phase)
+    error_message = "activation_phase must be foundation, data-plane, runtime, or edge."
+  }
 }
 variable "image_uris" {
   type        = map(string)
   default     = {}
   description = "Immutable image URIs keyed by adot, api, keycloak, temporal, web, and worker."
 }
-
-variable "enable_public_ingress" {
-  type        = bool
-  default     = false
-  description = "Creates ALB/WAF only when domain and TLS inputs are complete."
+variable "image_users" {
+  type        = map(string)
+  default     = {}
+  description = "Image-owned numeric non-root UIDs keyed by adot, api, keycloak, temporal, web, worker."
 }
+
 variable "certificate_arn" {
   type     = string
   default  = null
@@ -106,6 +113,26 @@ variable "auth_hostname" {
   default  = null
   nullable = true
 }
+variable "keycloak_admin_hostname" {
+  type     = string
+  default  = null
+  nullable = true
+}
+variable "keycloak_admin_private_zone_id" {
+  type     = string
+  default  = null
+  nullable = true
+}
+variable "keycloak_admin_certificate_arn" {
+  type     = string
+  default  = null
+  nullable = true
+}
+variable "keycloak_admin_allowed_operator_cidrs" {
+  type        = set(string)
+  default     = []
+  description = "Private/VPN/JIT source ranges for the internal admin ALB."
+}
 variable "allowed_ingress_cidrs" {
   type    = list(string)
   default = ["0.0.0.0/0"]
@@ -120,6 +147,17 @@ variable "enable_backup_vault_lock" {
   type        = bool
   default     = false
   description = "Irreversible after its change window; requires an explicitly authorized apply."
+}
+variable "enable_audit_compliance_lock" {
+  type        = bool
+  default     = false
+  description = "Irreversible COMPLIANCE retention opt-in; named authorization is also required."
+}
+variable "audit_compliance_authorized_by" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Named accountable authority for COMPLIANCE Object Lock."
 }
 variable "postgres_engine_version" {
   type    = string

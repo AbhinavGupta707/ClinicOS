@@ -25,12 +25,28 @@ variable "oidc_thumbprints" {
 variable "state_bucket_name" { type = string }
 variable "state_lock_table_name" { type = string }
 variable "state_key" { type = string }
+variable "state_kms_key_arn" {
+  type        = string
+  description = "Dedicated customer-managed key protecting Terraform state and locks."
+}
 variable "ecr_repository_arns" { type = map(string) }
+variable "read_policy_json" {
+  type        = string
+  description = "Explicit Terraform discovery policy. It must not grant object-body or secret-value reads."
+}
+variable "read_actions" {
+  type        = set(string)
+  description = "Explicit discovery action inventory used for deterministic sensitive-read assertions."
+}
 variable "deploy_policy_json" { type = string }
 variable "permissions_boundary_arn" {
-  type     = string
-  default  = null
-  nullable = true
+  type        = string
+  description = "Mandatory account-baseline boundary for every GitHub OIDC role."
+
+  validation {
+    condition     = can(regex("^arn:aws:iam::[0-9]{12}:policy/clinicos/", var.permissions_boundary_arn))
+    error_message = "permissions_boundary_arn must be an account policy under /clinicos/; environment OIDC roles cannot be created without it."
+  }
 }
 variable "tags" {
   type    = map(string)

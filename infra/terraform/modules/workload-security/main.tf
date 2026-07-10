@@ -39,6 +39,17 @@ resource "aws_vpc_security_group_ingress_rule" "alb" {
   to_port                      = each.value
 }
 
+resource "aws_vpc_security_group_ingress_rule" "admin_alb" {
+  count = var.admin_alb_enabled ? 1 : 0
+
+  security_group_id            = aws_security_group.this.id
+  description                  = "Internal admin ALB to Keycloak"
+  referenced_security_group_id = var.admin_alb_security_group_id
+  ip_protocol                  = "tcp"
+  from_port                    = 8080
+  to_port                      = 8080
+}
+
 resource "aws_vpc_security_group_egress_rule" "https" {
   security_group_id = aws_security_group.this.id
   description       = "TLS to AWS endpoints and approved providers through controlled egress"

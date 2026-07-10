@@ -30,13 +30,14 @@ resource "aws_secretsmanager_secret" "auth" {
 # Secrets Manager. Rotation requires a reviewed two-token application rollout before replacement.
 resource "aws_secretsmanager_secret_version" "auth" {
   secret_id = aws_secretsmanager_secret.auth.id
-  secret_string = jsonencode({
+  secret_string_wo = jsonencode({
     username = "default"
     password = random_password.auth.result
     host     = aws_elasticache_replication_group.this.primary_endpoint_address
     port     = 6379
     url      = "rediss://default:${urlencode(random_password.auth.result)}@${aws_elasticache_replication_group.this.primary_endpoint_address}:6379"
   })
+  secret_string_wo_version = 1
 }
 
 resource "aws_security_group" "cache" {

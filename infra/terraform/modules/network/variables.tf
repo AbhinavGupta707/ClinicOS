@@ -54,18 +54,6 @@ variable "nat_gateway_count" {
   }
 }
 
-variable "interface_endpoint_services" {
-  type        = set(string)
-  description = "Interface endpoint service suffixes."
-  default     = ["ecr.api", "ecr.dkr", "kms", "logs", "secretsmanager", "ssm", "ssmmessages"]
-}
-
-variable "create_interface_endpoints" {
-  type        = bool
-  description = "Whether to create billable interface endpoints. Disable for dormant DR."
-  default     = true
-}
-
 variable "logs_kms_key_arn" {
   type        = string
   description = "KMS key for VPC flow logs."

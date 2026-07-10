@@ -1,3 +1,18 @@
+check "runtime_admin_ingress" {
+  assert {
+    condition = !contains(["runtime", "edge"], var.activation_phase) || (
+      var.auth_hostname != null &&
+      var.keycloak_admin_hostname != null &&
+      var.keycloak_admin_private_zone_id != null &&
+      var.keycloak_admin_certificate_arn != null &&
+      length(var.keycloak_admin_allowed_operator_cidrs) > 0 &&
+      var.auth_hostname != var.keycloak_admin_hostname &&
+      can(regex("^[A-Z0-9]+$", var.keycloak_admin_private_zone_id))
+    )
+    error_message = "Runtime requires a distinct TLS Keycloak admin hostname, private zone, certificate, and private/VPN/JIT operator CIDRs."
+  }
+}
+
 module "platform" {
   source = "../modules/platform"
   providers = {
@@ -5,12 +20,14 @@ module "platform" {
     aws.dr = aws.dr
   }
 
-  environment    = "staging"
-  account_id     = var.aws_account_id
-  primary_region = var.primary_region
-  dr_region      = var.dr_region
-  cost_center    = var.cost_center
-  owner          = var.owner
+  environment                    = "staging"
+  account_id                     = var.aws_account_id
+  primary_region                 = var.primary_region
+  dr_region                      = var.dr_region
+  cost_center                    = var.cost_center
+  owner                          = var.owner
+  activation_phase               = var.activation_phase
+  audit_compliance_authorized_by = var.audit_compliance_authorized_by
 
   primary_network = {
     vpc_cidr             = "10.20.0.0/16"
@@ -55,7 +72,7 @@ module "platform" {
     secret_recovery_days = 30
   }
   ingress = {
-    enabled            = var.enable_public_ingress
+    enabled            = var.activation_phase == "edge"
     allowed_ipv4_cidrs = var.allowed_ingress_cidrs
     certificate_arn    = var.certificate_arn
     create_certificate = var.create_certificate
@@ -66,10 +83,18 @@ module "platform" {
     auth_hostname      = var.auth_hostname
     waf_rate_limit     = 2000
   }
+  admin_ingress = {
+    enabled                = contains(["runtime", "edge"], var.activation_phase)
+    hostname               = var.keycloak_admin_hostname
+    private_zone_id        = var.keycloak_admin_private_zone_id
+    certificate_arn        = var.keycloak_admin_certificate_arn
+    allowed_operator_cidrs = var.keycloak_admin_allowed_operator_cidrs
+  }
   runtime = {
-    enabled       = var.enable_runtime
+    enabled       = contains(["runtime", "edge"], var.activation_phase)
     temporal_mode = "self-hosted-ecs"
     images        = var.image_uris
+    image_users   = var.image_users
     capacity = {
       api               = { cpu = 512, memory = 1024, desired_count = 1, minimum_count = 1, maximum_count = 3, use_fargate_spot = false }
       web               = { cpu = 512, memory = 1024, desired_count = 1, minimum_count = 1, maximum_count = 3, use_fargate_spot = false }
@@ -100,6 +125,7 @@ module "platform" {
     bucket_name = var.terraform_state_bucket
     lock_table  = var.terraform_lock_table
     state_key   = "clinicos/staging/terraform.tfstate"
+    kms_key_arn = var.terraform_state_kms_key_arn
   }
   additional_alarm_action_arns = var.additional_alarm_action_arns
 }

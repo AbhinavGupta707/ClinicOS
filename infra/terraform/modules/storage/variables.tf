@@ -42,6 +42,13 @@ variable "audit_lock_mode" {
   }
 }
 
+variable "audit_compliance_authorized_by" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Named authority required before irreversible COMPLIANCE retention can be planned."
+}
+
 variable "access_log_retention_days" {
   type        = number
   description = "Retention for ALB access logs."

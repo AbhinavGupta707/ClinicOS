@@ -82,6 +82,33 @@ resource "aws_cloudwatch_log_group" "upgrade" {
   tags              = var.tags
 }
 
+resource "aws_iam_role" "enhanced_monitoring" {
+  name_prefix = substr("${var.name_prefix}-rds-monitor-", 0, 38)
+  path        = "/clinicos/${var.name_prefix}/"
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect    = "Allow"
+      Principal = { Service = "monitoring.rds.amazonaws.com" }
+      Action    = "sts:AssumeRole"
+    }]
+  })
+  tags = var.tags
+}
+
+resource "aws_iam_role_policy" "enhanced_monitoring" {
+  name = "write-rds-os-metrics-only"
+  role = aws_iam_role.enhanced_monitoring.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = ["logs:CreateLogGroup", "logs:CreateLogStream", "logs:DescribeLogStreams", "logs:PutLogEvents", "logs:PutRetentionPolicy"]
+      Resource = "arn:aws:logs:${var.region}:${var.account_id}:log-group:RDSOSMetrics:*"
+    }]
+  })
+}
+
 resource "aws_db_instance" "this" {
   identifier = "${var.name_prefix}-postgres"
 
@@ -120,7 +147,8 @@ resource "aws_db_instance" "this" {
   performance_insights_enabled          = true
   performance_insights_kms_key_id       = var.data_kms_key_arn
   performance_insights_retention_period = var.performance_insights_retention_days
-  monitoring_interval                   = 0
+  monitoring_interval                   = var.enhanced_monitoring_interval_seconds
+  monitoring_role_arn                   = aws_iam_role.enhanced_monitoring.arn
 
   auto_minor_version_upgrade = false
   apply_immediately          = false
@@ -134,5 +162,5 @@ resource "aws_db_instance" "this" {
     prevent_destroy = true
   }
 
-  depends_on = [aws_cloudwatch_log_group.postgresql, aws_cloudwatch_log_group.upgrade]
+  depends_on = [aws_cloudwatch_log_group.postgresql, aws_cloudwatch_log_group.upgrade, aws_iam_role_policy.enhanced_monitoring]
 }

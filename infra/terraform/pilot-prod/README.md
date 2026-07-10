@@ -4,10 +4,11 @@ This root supersedes the CP9 validation-only profile with deployable resources f
 
 The safe defaults are deliberately inactive where external prerequisites do not exist:
 
-- no public ALB/WAF/DNS/TLS without explicit hostnames and a certificate path;
-- no ECS services without signed digest-pinned images and populated secrets;
+- `foundation` has no NAT, endpoints, RDS, cache, backup plan, ECS, or load balancers;
+- no public ALB/WAF/DNS/TLS before the explicit `edge` phase;
+- no ECS services without signed digest-pinned images, numeric non-root users, populated secrets, and a separate internal Keycloak admin hostname/private-zone/TLS/operator-CIDR path;
 - no claim of paging merely because an SNS topic exists;
-- no Backup Vault Lock without a separately reviewed irreversible-lock decision.
+- no Backup Vault Lock or COMPLIANCE Object Lock without a separately reviewed named irreversible-lock decision.
 
 Safe local verification:
 
@@ -17,4 +18,4 @@ terraform validate
 terraform test -test-directory=tests
 ```
 
-For an authorized remote plan, copy `backend.hcl.example` outside version control, fill only the existing backend identifiers, initialize with `-backend-config=backend.hcl`, and set `offline_validation_mode=false`. Apply, DNS mutation, recovery actions, and Vault Lock remain master-only.
+For an authorized remote plan, copy `backend.hcl.example` outside version control, fill the migrated dedicated backend identifiers and CMK ARN, initialize with `-backend-config=backend.hcl`, and set `offline_validation_mode=false`. Apply, DNS mutation, recovery actions, and lock activation remain master-only.

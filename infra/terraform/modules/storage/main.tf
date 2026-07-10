@@ -6,6 +6,15 @@ terraform {
   }
 }
 
+check "compliance_retention_authorization" {
+  assert {
+    condition = var.audit_lock_mode != "COMPLIANCE" || (
+      var.audit_compliance_authorized_by != null && length(trimspace(var.audit_compliance_authorized_by)) >= 3
+    )
+    error_message = "COMPLIANCE Object Lock requires a named audit_compliance_authorized_by."
+  }
+}
+
 locals {
   suffix = var.is_replica ? "dr" : "primary"
   buckets = {

@@ -7,3 +7,10 @@ output "master_secret_arn" {
   value     = try(aws_db_instance.this.master_user_secret[0].secret_arn, null)
   sensitive = true
 }
+output "enhanced_monitoring" {
+  value = {
+    interval_seconds = var.enhanced_monitoring_interval_seconds
+    role_arn         = aws_iam_role.enhanced_monitoring.arn
+    policy_scoped    = true
+  }
+}
