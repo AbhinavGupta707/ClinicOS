@@ -7641,6 +7641,21 @@ export class PostgresClinicOperationsRepository
       const invoice = mapInvoiceRow(invoiceResult.rows[0]);
 
       for (const procedure of procedures) {
+        const linkedProcedure = await client.query<{ id: UUID }>(
+          `
+            update procedure_performed_records
+            set invoice_id = $4
+            where tenant_id = $1
+              and clinic_id = $2
+              and id = $3
+              and invoice_id is null
+            returning id
+          `,
+          [scope.tenantId, scope.clinicId, procedure.id, invoice.id]
+        );
+        if (!linkedProcedure.rows[0]) {
+          throw new Error("Completed procedure was invoiced by a concurrent transaction.");
+        }
         const pricebookProcedure = await this.#findPricebookProcedureByIdInTransaction(
           client,
           scope,
@@ -7682,14 +7697,6 @@ export class PostgresClinicOperationsRepository
             procedure.taxMinor,
             procedure.totalMinor
           ]
-        );
-        await client.query(
-          `
-            update procedure_performed_records
-            set invoice_id = $4
-            where tenant_id = $1 and clinic_id = $2 and id = $3
-          `,
-          [scope.tenantId, scope.clinicId, procedure.id, invoice.id]
         );
       }
 
@@ -7783,7 +7790,7 @@ export class PostgresClinicOperationsRepository
             $6,
             $7,
             $8,
-            $9,
+            $9::char(3),
             $10::jsonb,
             $11,
             $12::timestamptz,
@@ -7796,7 +7803,7 @@ export class PostgresClinicOperationsRepository
             and invoices.id = $4
             and invoices.status = 'issued'
             and invoices.balance_minor >= $8
-            and invoices.currency = $9
+            and invoices.currency = ($9::char(3))::text
           on conflict (tenant_id, clinic_id, external_account_id, idempotency_key) do nothing
           returning *
         `,
@@ -7947,17 +7954,6 @@ export class PostgresClinicOperationsRepository
         );
         return { outcome: "request_mismatch", intent: mismatch };
       }
-      if (
-        !(await this.#paymentAccountIsAvailable(
-          client,
-          scope,
-          current.externalAccountId,
-          current.providerKey,
-          current.requiredCapability
-        ))
-      ) {
-        return { outcome: "account_unavailable", intent: current };
-      }
       if (current.status !== "claimed") return { outcome: "replayed", intent: current };
       if (new Date(current.leaseExpiresAt ?? 0).getTime() > new Date(input.requestedAt).getTime()) {
         return { outcome: "in_progress", intent: current };
@@ -8100,8 +8096,8 @@ export class PostgresClinicOperationsRepository
           client,
           scope,
           input.externalAccountId,
-          "razorpay",
-          null
+          input.providerKey,
+          "VERIFY_WEBHOOKS"
         ))
       ) {
         return { outcome: "account_unavailable", event: null };
@@ -8149,16 +8145,17 @@ export class PostgresClinicOperationsRepository
             received_at
           )
           values (
-            $1, $2, 'razorpay', $3, $4, $5, $6, $7, 'verified', 'processing', null,
-            $8, $8, $9, $10, $11::jsonb, 'verified', $12, $13::timestamptz, 1,
-            $14::timestamptz
+            $1, $2, $3, $4, $5, $6, $7, $8, 'verified', 'processing', null,
+            $9::text, ($9::text)::char(64), $10, $11, $12::jsonb, 'verified', $13, $14::timestamptz, 1,
+            $15::timestamptz
           )
-          on conflict (tenant_id, provider_key, idempotency_key) do nothing
+          on conflict (tenant_id, clinic_id, external_account_id, idempotency_key) do nothing
           returning *
         `,
         [
           scope.tenantId,
           scope.clinicId,
+          input.providerKey,
           input.externalAccountId,
           requireNonEmpty(input.eventName, "Provider event name"),
           requireNonEmpty(input.eventKind, "Provider event kind"),
@@ -8183,14 +8180,21 @@ export class PostgresClinicOperationsRepository
           from raw_webhook_events
           where tenant_id = $1
             and clinic_id = $2
-            and provider_key = 'razorpay'
-            and external_account_id = $3
-            and (provider_event_id = $4 or idempotency_key = $5)
+            and provider_key = $3
+            and external_account_id = $4
+            and (provider_event_id = $5 or idempotency_key = $6)
           order by received_at
           limit 1
           for update
         `,
-        [scope.tenantId, scope.clinicId, input.externalAccountId, providerEventId, idempotencyKey]
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.providerKey,
+          input.externalAccountId,
+          providerEventId,
+          idempotencyKey
+        ]
       );
       const existingRow = existingResult.rows[0];
       if (!existingRow) {
@@ -8356,7 +8360,7 @@ export class PostgresClinicOperationsRepository
         `
           select *
           from raw_webhook_events
-          where tenant_id = $1 and clinic_id = $2 and id = $3 and provider_key = 'razorpay'
+          where tenant_id = $1 and clinic_id = $2 and id = $3
           for update
         `,
         [scope.tenantId, scope.clinicId, input.providerEventRecordId]
@@ -11147,6 +11151,7 @@ export class PostgresClinicOperationsRepository
           and ($4::uuid is null or treatment_plan_id = $4)
           and (cardinality($5::uuid[]) = 0 or id = any($5::uuid[]))
         order by performed_at
+        for update
       `,
       [scope.tenantId, scope.clinicId, input.patientId ?? null, input.treatmentPlanId ?? null, ids]
     );
@@ -13196,6 +13201,7 @@ interface PaymentProviderEventRow {
   tenant_id: UUID;
   clinic_id: UUID;
   external_account_id: UUID;
+  provider_key: PaymentProviderEventRecord["providerKey"];
   provider_event_id: string;
   idempotency_key: string;
   event_type: string;
@@ -15079,6 +15085,7 @@ function mapPaymentProviderEventRow(row: PaymentProviderEventRow): PaymentProvid
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
     externalAccountId: row.external_account_id,
+    providerKey: row.provider_key,
     providerEventId: row.provider_event_id,
     idempotencyKey: row.idempotency_key,
     eventName: row.event_type,

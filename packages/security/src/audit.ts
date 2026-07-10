@@ -422,6 +422,12 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: false,
     requiresPatientId: false
   },
+  "workflow.cp13.payment_intent_missing": {
+    category: "integration",
+    riskLevel: "high",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
   "payment.recorded": {
     category: "billing",
     riskLevel: "high",

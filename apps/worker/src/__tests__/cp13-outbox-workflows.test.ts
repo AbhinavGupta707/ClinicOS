@@ -8,6 +8,7 @@ import type {
   Cp13PaymentRequestRecoveryWorkflowInput
 } from "@clinic-os/workflow";
 import { createCp13WorkerComposition } from "../cp13/create-cp13-worker-composition.js";
+import { countCp13DueGenerationCreatedCandidates } from "../cp13/postgres-cp13-activity-ports.js";
 import { classifyOutboxFailure } from "../outbox/errors.js";
 import { OutboxHandlerRegistry } from "../outbox/handler-registry.js";
 import {
@@ -30,6 +31,24 @@ import type {
   OutboxEventRecord,
   OutboxHandlerContext
 } from "../outbox/types.js";
+
+test("CP13 due-generation progress counts candidate outcomes rather than emitted entities", () => {
+  assert.equal(
+    countCp13DueGenerationCreatedCandidates({
+      recallsCreated: [{}],
+      followUpTasksCreated: []
+    }),
+    1
+  );
+  assert.equal(
+    countCp13DueGenerationCreatedCandidates({
+      recallsCreated: [],
+      followUpTasksCreated: [{}, {}]
+    }),
+    2
+  );
+  assert.equal(countCp13DueGenerationCreatedCandidates({ runsCreated: [{}, {}] }), 2);
+});
 
 test("CP13 due-generation handlers propagate the frozen opaque cursor and stable workflow ID", async () => {
   const temporal = new RecordingTemporalClient();
@@ -249,6 +268,23 @@ test("CP13 composition preserves approval and registers only exact action events
     "recordWorkflowWaiting",
     "requestPatientInstructionSend"
   ]);
+});
+
+test("CP13 composition does not expose an approval starter without durable approval activities", () => {
+  const temporal = new RecordingTemporalClient();
+  const composition = createCp13WorkerComposition({
+    temporalClient: temporal.asClient(),
+    cp13ActivityPorts: cp13ActivityPorts()
+  });
+  const registry = new OutboxHandlerRegistry(composition.handlers);
+  assert.deepEqual(registry.eventTypes(), [
+    "instruction.send_requested",
+    "workflow.cp13.continuity_due_generation.requested",
+    "workflow.cp13.payment_request_recovery.requested",
+    "workflow.cp13.sop_due_generation.requested"
+  ]);
+  assert.equal(registry.get("workflow.approval.requested"), undefined);
+  assert.equal("createApprovalTask" in composition.activities, false);
 });
 
 interface StartOptionsProjection {

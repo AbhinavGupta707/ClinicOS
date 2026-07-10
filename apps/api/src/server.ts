@@ -1,10 +1,13 @@
+import { createHash } from "node:crypto";
 import { type IncomingMessage, type Server } from "node:http";
 import { pathToFileURL } from "node:url";
 import { safeParseClinicOsEnv, type ClinicOsConfig } from "@clinic-os/config";
 import {
   createPaymentProvider,
   type AiGatewayProvider,
-  type PaymentProvider
+  type PaymentProvider,
+  type PaymentProviderWebhookEvent,
+  type RawPaymentWebhook
 } from "@clinic-os/integrations";
 import {
   buildAccessContext,
@@ -20,7 +23,10 @@ import {
   PostgresIdentityRepository,
   LATEST_DATABASE_SCHEMA_VERSION,
   type ClinicOperationsRepository,
+  type DurableIntegrityRepository,
   type IdentityRepository,
+  type PaymentProviderEventRecord,
+  type RepositoryScope,
   type ScopedApiRequestGuardsPort
 } from "@clinic-os/db";
 import {
@@ -149,7 +155,6 @@ import {
   requestMediaUploadUrl,
   replayDeadLetterEvent,
   resolveMigrationBatchRow,
-  processPaymentWebhook,
   rollbackMigrationBatch,
   runRetentionJob,
   deleteAiScribeRetainedPayloads,
@@ -160,6 +165,7 @@ import {
   startEncounter,
   submitPatientIntakeForm,
   recordRecallAction,
+  processPaymentWebhook,
   updateCorrectiveAction,
   updateDentalFinding,
   updateAppointment,
@@ -198,6 +204,13 @@ import { createCp13ClinicFeatureHandlerMap } from "./features/cp13-composition.t
 import type { Cp13ClinicFeatureOperationId } from "./features/cp13-operation-ownership.ts";
 import { createClinicalDentalRelationshipAuthority } from "./features/clinical-dental/index.ts";
 import { runClinicFeatureOperation } from "./features/runtime.ts";
+import {
+  createTreatmentBillingProviderOperationService,
+  type DurablePaymentProviderEventResultProjection,
+  type PaymentProviderEventEvidenceProjection,
+  type VerifiedRazorpayPaymentEventRequest
+} from "./features/treatment-billing/index.ts";
+import { PendingLocalClinicalMediaInspectionSimulator } from "./media-inspection.ts";
 
 interface AuditSink {
   appendAuditEvent(event: AuditEventRecord): Promise<void>;
@@ -252,6 +265,7 @@ interface RuntimeNestOptions {
 
 const DEFAULT_PORT = 4000;
 const DEFAULT_API_AUDIENCE = "clinic-os-api";
+const SYSTEM_INTEGRATION_ACTOR_USER_ID = "00000000-0000-4000-8000-000000000000" as UUID;
 
 export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Server {
   return createClinicOsNestCompatibilityServer(createClinicOsNestRuntime(options));
@@ -419,34 +433,76 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
     async handleWebhook(request, requestId, rawBody, transaction) {
       const repository = transaction?.repository ?? options.operationsRepository;
       const auditSink = transaction?.auditSink ?? options.auditSink;
-      if (!repository) throw missingOperationsRepository();
-      const webhookInput = {
-        requestId,
-        providerKey: "razorpay" as const,
-        rawBody: rawBody.toString("utf8"),
-        receivedAt: (options.clock ?? systemClock).now().toISOString(),
-        headers: allowlistedWebhookHeaders(request, options.useLocalAuthFixture ?? false),
-        ipAddress: request.socket.remoteAddress ?? null,
-        userAgent: headerValue(request, "user-agent") ?? null
-      };
-      const handle = (activeRepository: ClinicOperationsRepository, activeAudit?: AuditSink) =>
-        processPaymentWebhook(
+      if (!repository || !auditSink) throw missingOperationsRepository();
+      const provider = options.paymentProvider ?? createRuntimePaymentProvider(options.config);
+      const receivedAt = (options.clock ?? systemClock).now();
+      if (fixtureMode) {
+        return processPaymentWebhook(
           {
-            repository: activeRepository,
-            auditSink: activeAudit,
-            paymentProvider:
-              options.paymentProvider ?? createRuntimePaymentProvider(options.config),
-            paymentRepository: paymentRepositoryFromOperationsRepository(activeRepository)
+            repository,
+            auditSink,
+            paymentProvider: provider,
+            paymentRepository: paymentRepositoryFromOperationsRepository(repository)
           },
-          webhookInput
+          {
+            requestId,
+            providerKey: provider.providerKey,
+            rawBody: rawBody.toString("utf8"),
+            receivedAt: receivedAt.toISOString(),
+            headers: allowlistedWebhookHeaders(request, options.useLocalAuthFixture ?? false),
+            ipAddress: request.socket.remoteAddress ?? null,
+            userAgent: headerValue(request, "user-agent") ?? null
+          }
         );
-      if (transaction) return handle(repository, auditSink);
-      return options.operationsUnitOfWork
-        ? options.operationsUnitOfWork.run(
-            ({ repository: activeRepository, auditSink: activeAudit }) =>
-              handle(activeRepository, activeAudit)
-          )
-        : handle(repository, auditSink);
+      }
+      const raw: RawPaymentWebhook = {
+        providerKey: provider.providerKey,
+        rawBody: rawBody.toString("utf8"),
+        receivedAt: receivedAt.toISOString(),
+        headers: allowlistedWebhookHeaders(request, options.useLocalAuthFixture ?? false)
+      };
+      const verification = await provider.verifyWebhook(raw);
+      if (verification.status !== "verified" || !verification.signatureHeader?.trim()) {
+        throw new ApiError(
+          verification.status === "invalid_signature" ? 403 : 400,
+          verification.status === "invalid_signature" ? "PERMISSION_DENIED" : "VALIDATION_ERROR",
+          verification.message,
+          {
+            verification_status: verification.status,
+            provider_event_id: verification.providerEventId ?? null
+          }
+        );
+      }
+      const event = await provider.parseWebhook(raw);
+      const scope = verifiedPaymentProviderScope(event);
+      const providerKey = verifiedCp13PaymentProviderKey(event.providerKey);
+      const signatureSha256 = sha256Text(verification.signatureHeader);
+      const execute = (activeRepository: ClinicOperationsRepository, activeAudit: AuditSink) =>
+        executeVerifiedPaymentProviderEvent({
+          repository: activeRepository,
+          auditSink: activeAudit,
+          scope,
+          providerKey,
+          requestId,
+          event,
+          signatureSha256,
+          receivedAt,
+          ipAddress: request.socket.remoteAddress ?? null,
+          userAgent: headerValue(request, "user-agent") ?? null,
+          clock: options.clock ?? systemClock
+        });
+      if (transaction) return execute(repository, auditSink);
+      if (!options.operationsUnitOfWork) {
+        throw new ApiError(
+          503,
+          "CONFIGURATION_ERROR",
+          "Durable payment provider transaction dependencies are not configured."
+        );
+      }
+      return options.operationsUnitOfWork.run(
+        ({ repository: activeRepository, auditSink: activeAudit }) =>
+          execute(activeRepository, activeAudit)
+      );
     },
     async handleClinicOperation(
       request,
@@ -585,6 +641,7 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
   if ("pool" in repositorySet) pool = repositorySet.pool;
   const port = parsePort(env.PORT ?? env.API_PORT);
   const mediaStorage = createRuntimeMediaStorage(parsed.data, env);
+  const mediaInspection = createRuntimeMediaInspection(parsed.data, env);
   const paymentProvider = createRuntimePaymentProvider(parsed.data);
 
   const serverOptions: ClinicOsApiServerOptions = {
@@ -608,7 +665,8 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
     paymentProvider,
     clinicalDental: {
       relationshipAuthority: createClinicalDentalRelationshipAuthority(),
-      ...(mediaStorage ? { mediaStorage } : {})
+      ...(mediaStorage ? { mediaStorage } : {}),
+      ...(mediaInspection ? { mediaInspection } : {})
     }
   });
   if (!useFixtureRepository) {
@@ -1802,6 +1860,27 @@ function createRuntimeMediaStorage(
   });
 }
 
+function createRuntimeMediaInspection(config: ClinicOsConfig, env: NodeJS.ProcessEnv) {
+  const provider =
+    env.CLINIC_OS_MEDIA_INSPECTION_PROVIDER ??
+    (config.isProductionLike ? "" : "local_pending_simulator");
+
+  if (!provider) return undefined;
+  if (provider !== "local_pending_simulator") {
+    throw new ApiError(503, "CONFIGURATION_ERROR", "Unsupported media inspection provider.", {
+      provider
+    });
+  }
+  if (config.isProductionLike) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "The local pending media inspection simulator is forbidden outside local/dev environments."
+    );
+  }
+  return new PendingLocalClinicalMediaInspectionSimulator();
+}
+
 function createRuntimePaymentProvider(config: ClinicOsConfig): PaymentProvider {
   return createPaymentProvider({
     provider: config.providers.payment.provider,
@@ -1811,6 +1890,336 @@ function createRuntimePaymentProvider(config: ClinicOsConfig): PaymentProvider {
     razorpayWebhookSecret: config.providers.payment.razorpayWebhookSecret,
     razorpayWebhookUrl: config.providers.payment.razorpayWebhookUrl
   });
+}
+
+async function executeVerifiedPaymentProviderEvent(input: {
+  repository: ClinicOperationsRepository;
+  auditSink: AuditSink;
+  scope: RepositoryScope;
+  providerKey: "razorpay" | "simulator";
+  requestId: string;
+  event: PaymentProviderWebhookEvent;
+  signatureSha256: string;
+  receivedAt: Date;
+  ipAddress: string | null;
+  userAgent: string | null;
+  clock: Clock;
+}) {
+  const durable = durableIntegrityRepositoryFrom(input.repository);
+  const account = await durable.findActivePaymentProviderAccount(input.scope, {
+    providerKey: input.providerKey,
+    requiredCapability: "VERIFY_WEBHOOKS"
+  });
+  if (account.outcome !== "resolved") {
+    throw new ApiError(
+      503,
+      "DEPENDENCY_UNAVAILABLE",
+      "The clinic payment webhook account is not available.",
+      {
+        provider_key: input.providerKey,
+        provider_account_state: account.outcome,
+        required_capability: "VERIFY_WEBHOOKS"
+      }
+    );
+  }
+
+  const request: VerifiedRazorpayPaymentEventRequest = {
+    operationId: "receiveRazorpayPaymentWebhook",
+    accountScope: {
+      tenantId: input.scope.tenantId,
+      clinicId: input.scope.clinicId,
+      providerAccountKey: account.account.externalAccountId
+    },
+    verification: {
+      status: "verified",
+      providerKey: input.providerKey,
+      rawBodySha256: input.event.rawBodySha256,
+      signatureSha256: input.signatureSha256
+    },
+    event: input.event,
+    metadata: {
+      requestId: input.requestId,
+      receivedAt: input.receivedAt,
+      ipAddress: input.ipAddress,
+      userAgent: input.userAgent
+    }
+  };
+  const providerEvents = createDurablePaymentProviderEventAdapter({
+    durable,
+    scope: input.scope,
+    providerKey: input.providerKey,
+    externalAccountId: account.account.externalAccountId,
+    leaseOwner: input.requestId,
+    now: () => input.clock.now()
+  });
+  const service = createTreatmentBillingProviderOperationService();
+  return service.receiveRazorpayPaymentWebhook(request, {
+    billing: {
+      listPricebookProcedures: () => input.repository.listPricebookProcedures(input.scope),
+      findPricebookProcedureById: (procedureId) =>
+        input.repository.findPricebookProcedureById(input.scope, procedureId),
+      createInvoice: (invoice) => input.repository.createInvoice(input.scope, invoice),
+      findInvoiceById: (invoiceId) => input.repository.findInvoiceById(input.scope, invoiceId),
+      createPaymentRequest: (paymentRequest) =>
+        input.repository.createPaymentRequest(input.scope, paymentRequest),
+      recordPaymentTransaction: (payment) =>
+        input.repository.recordPaymentTransaction(input.scope, payment),
+      createReceipt: (invoiceId, receipt) =>
+        input.repository.createReceipt(input.scope, invoiceId, receipt)
+    },
+    providerEvents,
+    evidence: {
+      appendIntegrationAudit: (event) =>
+        input.auditSink.appendAuditEvent(
+          createAuditEvent({
+            tenantId: input.scope.tenantId,
+            clinicId: input.scope.clinicId,
+            actor: { type: "integration", id: account.account.externalAccountId },
+            action: event.action,
+            patientId: event.patientId,
+            resourceType: event.resourceType,
+            resourceId: event.resourceId,
+            metadata: event.metadata,
+            ipAddress: event.ipAddress,
+            userAgent: event.userAgent,
+            correlationId: event.correlationId,
+            occurredAt: new Date(event.occurredAt)
+          })
+        ),
+      async appendOutboxEvent(event) {
+        const appended = await durable.appendPaymentProviderIntegrationOutboxEvent(input.scope, {
+          ...event,
+          externalAccountId: account.account.externalAccountId,
+          providerKey: input.providerKey,
+          requiredCapability: "VERIFY_WEBHOOKS"
+        });
+        if (appended.outcome !== "appended" && appended.outcome !== "replayed") {
+          throw new ApiError(
+            appended.outcome === "account_unavailable" ? 503 : 409,
+            appended.outcome === "account_unavailable" ? "DEPENDENCY_UNAVAILABLE" : "CONFLICT",
+            "Payment provider evidence outbox could not be committed under integration authority.",
+            { provider_outbox_outcome: appended.outcome }
+          );
+        }
+      }
+    },
+    now: () => input.clock.now()
+  });
+}
+
+function createDurablePaymentProviderEventAdapter(input: {
+  durable: DurableIntegrityRepository;
+  scope: RepositoryScope;
+  providerKey: "razorpay" | "simulator";
+  externalAccountId: UUID;
+  leaseOwner: string;
+  now: () => Date;
+}) {
+  return {
+    async claimVerifiedEvent(claim: {
+      providerKey: "razorpay" | "simulator";
+      providerAccountKey: string;
+      providerEventId: string;
+      idempotencyKey: string;
+      eventName: string;
+      eventKind: string;
+      rawBodySha256: string;
+      signatureSha256: string;
+      normalizedEvent: Record<string, unknown>;
+      receivedAt: string;
+      leaseOwner: string;
+      leaseExpiresAt: string;
+    }) {
+      if (
+        claim.providerKey !== input.providerKey ||
+        claim.providerAccountKey !== input.externalAccountId ||
+        claim.leaseOwner !== input.leaseOwner
+      ) {
+        throw new ApiError(
+          409,
+          "CONFLICT",
+          "Verified provider event scope changed before its durable claim."
+        );
+      }
+      const result = await input.durable.claimVerifiedPaymentProviderEvent(input.scope, {
+        providerKey: input.providerKey,
+        externalAccountId: input.externalAccountId,
+        providerEventId: claim.providerEventId,
+        idempotencyKey: claim.idempotencyKey,
+        eventName: claim.eventName,
+        eventKind: claim.eventKind,
+        rawBodySha256: claim.rawBodySha256,
+        signatureSha256: claim.signatureSha256,
+        normalizedEventSha256: sha256StableJson(claim.normalizedEvent),
+        normalizedEvent: claim.normalizedEvent,
+        receivedAt: claim.receivedAt,
+        leaseOwner: claim.leaseOwner,
+        leaseExpiresAt: claim.leaseExpiresAt
+      });
+      if (result.outcome === "claimed" || result.outcome === "recovered") {
+        return { outcome: "claimed" as const, eventId: result.event.id };
+      }
+      if (result.outcome === "in_progress") {
+        return { outcome: "in_progress" as const, eventId: result.event.id };
+      }
+      if (result.outcome === "duplicate") {
+        return duplicateProviderEventProjection(result.event);
+      }
+      if (result.outcome === "evidence_mismatch") {
+        throw new ApiError(
+          409,
+          "CONFLICT",
+          "A duplicate provider event does not match stored verified evidence.",
+          { reason: "provider_event_evidence_mismatch", reconciliation_required: true }
+        );
+      }
+      throw new ApiError(
+        503,
+        "DEPENDENCY_UNAVAILABLE",
+        "The clinic payment webhook account became unavailable."
+      );
+    },
+    async createReconciliation(reconciliation: {
+      providerEventRecordId: UUID;
+      invoiceId: UUID | null;
+      patientId: UUID | null;
+      reason:
+        | "overpayment"
+        | "missing_invoice_reference"
+        | "currency_mismatch"
+        | "invalid_provider_amount"
+        | "scope_mismatch"
+        | "manual_review_required";
+      capturedAmountMinor: number;
+      appliedAmountMinor: number;
+      unallocatedAmountMinor: number;
+      currency: string | null;
+      evidence: Record<string, unknown>;
+    }) {
+      const record = await input.durable.createPaymentReconciliation(input.scope, {
+        ...reconciliation,
+        createdAt: input.now().toISOString()
+      });
+      return {
+        id: record.id,
+        reason: record.reason,
+        invoiceId: record.invoiceId,
+        patientId: record.patientId,
+        capturedAmountMinor: record.capturedAmountMinor,
+        appliedAmountMinor: record.appliedAmountMinor,
+        unallocatedAmountMinor: record.unallocatedAmountMinor,
+        currency: record.currency,
+        status: "open" as const
+      };
+    },
+    async completeEvent(completion: {
+      providerEventRecordId: UUID;
+      processingStatus: "applied" | "ignored" | "reconciliation_required" | "failed";
+      processedAt: string;
+      result: DurablePaymentProviderEventResultProjection;
+    }) {
+      const completed = await input.durable.completePaymentProviderEvent(input.scope, {
+        providerEventRecordId: completion.providerEventRecordId,
+        leaseOwner: input.leaseOwner,
+        processingStatus: completion.processingStatus,
+        resultDigest: sha256StableJson(completion.result),
+        resultProjection: completion.result as unknown as Record<string, unknown>,
+        processedAt: completion.processedAt
+      });
+      if (completed.outcome !== "completed" && completed.outcome !== "replayed") {
+        throw new ApiError(
+          completed.outcome === "lost_lease" ? 503 : 409,
+          completed.outcome === "lost_lease" ? "DEPENDENCY_UNAVAILABLE" : "CONFLICT",
+          "Verified provider event could not be completed under its durable claim.",
+          { provider_event_completion: completed.outcome }
+        );
+      }
+    }
+  };
+}
+
+function duplicateProviderEventProjection(event: PaymentProviderEventRecord) {
+  if (!event.resultProjection) {
+    throw new ApiError(
+      503,
+      "DEPENDENCY_UNAVAILABLE",
+      "A completed provider event is missing its durable result projection."
+    );
+  }
+  const result = event.resultProjection as unknown as DurablePaymentProviderEventResultProjection;
+  const storedEvidence: PaymentProviderEventEvidenceProjection = {
+    rawBodySha256: event.rawBodySha256,
+    signatureSha256: event.signatureSha256,
+    normalizedEvent: event.normalizedEvent
+  };
+  return { outcome: "duplicate" as const, eventId: event.id, storedEvidence, result };
+}
+
+function durableIntegrityRepositoryFrom(
+  repository: ClinicOperationsRepository
+): DurableIntegrityRepository {
+  const candidate = repository as ClinicOperationsRepository & Partial<DurableIntegrityRepository>;
+  const required = [
+    "findActivePaymentProviderAccount",
+    "appendPaymentProviderIntegrationOutboxEvent",
+    "claimVerifiedPaymentProviderEvent",
+    "createPaymentReconciliation",
+    "completePaymentProviderEvent"
+  ] as const;
+  if (required.every((operation) => typeof candidate[operation] === "function")) {
+    return candidate as ClinicOperationsRepository & DurableIntegrityRepository;
+  }
+  throw new ApiError(
+    503,
+    "CONFIGURATION_ERROR",
+    "Durable payment provider event persistence is not configured."
+  );
+}
+
+function verifiedPaymentProviderScope(event: PaymentProviderWebhookEvent): RepositoryScope {
+  if (!event.tenantId || !event.clinicId || !isUuid(event.tenantId) || !isUuid(event.clinicId)) {
+    throw new ApiError(
+      400,
+      "VALIDATION_ERROR",
+      "Verified payment provider event scope is missing or invalid.",
+      { reason: "provider_event_scope_missing" }
+    );
+  }
+  return {
+    tenantId: event.tenantId,
+    clinicId: event.clinicId,
+    actorUserId: SYSTEM_INTEGRATION_ACTOR_USER_ID
+  };
+}
+
+function verifiedCp13PaymentProviderKey(value: string): "razorpay" | "simulator" {
+  if (value === "razorpay" || value === "simulator") return value;
+  throw new ApiError(
+    503,
+    "CONFIGURATION_ERROR",
+    "The configured payment provider cannot process CP13 signed webhook events."
+  );
+}
+
+function sha256Text(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function sha256StableJson(value: unknown): string {
+  return sha256Text(JSON.stringify(stableJsonValue(value)));
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entry]) => entry !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entry]) => [key, stableJsonValue(entry)])
+    );
+  }
+  return value;
 }
 
 function missingOperationsRepository(): ApiError {

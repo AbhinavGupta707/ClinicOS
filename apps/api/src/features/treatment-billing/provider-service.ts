@@ -23,7 +23,7 @@ export interface VerifiedRazorpayPaymentEventRequest {
   };
   readonly verification: {
     readonly status: "verified";
-    readonly providerKey: "razorpay";
+    readonly providerKey: "razorpay" | "simulator";
     readonly rawBodySha256: string;
     readonly signatureSha256: string;
   };
@@ -64,6 +64,7 @@ export interface PaymentReconciliationProjection {
 
 export interface DurablePaymentProviderEventPort {
   claimVerifiedEvent(input: {
+    readonly providerKey: "razorpay" | "simulator";
     readonly providerAccountKey: string;
     readonly providerEventId: string;
     readonly idempotencyKey: string;
@@ -163,6 +164,7 @@ async function applyVerifiedRazorpayPaymentEvent(
   const normalizedEvent = safeProviderEvent(request.event);
   const verificationEvidence = providerEventVerificationEvidence(request, normalizedEvent);
   const claim = await context.providerEvents.claimVerifiedEvent({
+    providerKey: request.verification.providerKey,
     providerAccountKey: request.accountScope.providerAccountKey,
     providerEventId: request.event.providerEventId,
     idempotencyKey: request.event.idempotencyKey,
@@ -274,7 +276,7 @@ async function applyVerifiedRazorpayPaymentEvent(
 
   const existing = invoice.payments.find(
     (payment) =>
-      payment.provider === "razorpay" &&
+      payment.provider === request.verification.providerKey &&
       (payment.idempotencyKey === request.event.idempotencyKey ||
         Boolean(
           request.event.providerPaymentId &&
@@ -349,7 +351,7 @@ async function applyVerifiedRazorpayPaymentEvent(
 
   const transaction = await context.billing.recordPaymentTransaction({
     invoiceId,
-    provider: "razorpay",
+    provider: request.verification.providerKey,
     providerPaymentId: request.event.providerPaymentId ?? null,
     providerOrderId: request.event.providerPaymentRequestId ?? null,
     amountMinor:
@@ -422,7 +424,7 @@ async function applyVerifiedRazorpayPaymentEvent(
     aggregateType: "payment_transaction",
     aggregateId: transaction.id,
     patientId: invoice.invoice.patientId,
-    idempotencyKey: `cp13:razorpay:${request.event.providerEventId}`,
+    idempotencyKey: `cp13:${request.verification.providerKey}:${request.event.providerEventId}`,
     correlationId: request.metadata.requestId,
     payload: {
       invoiceId,
@@ -500,7 +502,7 @@ async function reconcileAndComplete(
     aggregateType: "payment_reconciliation",
     aggregateId: reconciliationItem.id,
     patientId: input.invoice?.invoice.patientId ?? null,
-    idempotencyKey: `cp13:razorpay:${request.event.providerEventId}`,
+    idempotencyKey: `cp13:${request.verification.providerKey}:${request.event.providerEventId}`,
     correlationId: request.metadata.requestId,
     payload: {
       providerEventRecordId,
@@ -532,10 +534,14 @@ async function reconcileAndComplete(
 function assertVerifiedRequest(request: VerifiedRazorpayPaymentEventRequest): void {
   if (
     request.verification.status !== "verified" ||
-    request.verification.providerKey !== "razorpay" ||
-    request.event.providerKey !== "razorpay"
+    !["razorpay", "simulator"].includes(request.verification.providerKey) ||
+    request.event.providerKey !== request.verification.providerKey
   ) {
-    throw new ApiError(403, "PERMISSION_DENIED", "Razorpay event was not signature verified.");
+    throw new ApiError(
+      403,
+      "PERMISSION_DENIED",
+      "Payment provider event was not signature verified."
+    );
   }
   if (
     !isSha256(request.verification.rawBodySha256) ||
@@ -573,7 +579,7 @@ function integrationAudit(
     resourceType: "payment_provider_event",
     resourceId,
     metadata: {
-      providerKey: "razorpay",
+      providerKey: request.verification.providerKey,
       providerEventId: request.event.providerEventId,
       rawBodySha256: request.verification.rawBodySha256,
       ...metadata
@@ -587,7 +593,7 @@ function integrationAudit(
 
 function providerEvidence(request: VerifiedRazorpayPaymentEventRequest) {
   return {
-    providerKey: "razorpay",
+    providerKey: request.verification.providerKey,
     providerEventId: request.event.providerEventId,
     providerPaymentId: request.event.providerPaymentId ?? null,
     rawBodySha256: request.verification.rawBodySha256,

@@ -421,6 +421,9 @@ alter table raw_webhook_events
 create unique index raw_webhook_events_cp13_account_event_uidx
   on raw_webhook_events (tenant_id, external_account_id, provider_event_id)
   where external_account_id is not null and provider_event_id is not null;
+drop index if exists raw_webhook_events_idempotency_unique_idx;
+create unique index raw_webhook_events_cp13_account_idempotency_uidx
+  on raw_webhook_events (tenant_id, clinic_id, external_account_id, idempotency_key);
 alter table raw_webhook_events
   drop constraint if exists raw_webhook_events_account_fk,
   add constraint raw_webhook_events_cp13_account_fk

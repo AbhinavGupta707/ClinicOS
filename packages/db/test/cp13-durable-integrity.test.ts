@@ -18,6 +18,7 @@ const migration = readFileSync(
   "utf8"
 );
 const postgresSource = readFileSync(resolve(import.meta.dirname, "../src/postgres.ts"), "utf8");
+const localLifecycle = readFileSync(resolve(ROOT, "scripts/db-local-lifecycle.mjs"), "utf8");
 
 const TENANT_ID = "10000000-0000-4000-8000-000000000001" as UUID;
 const CLINIC_ID = "10000000-0000-4000-8000-000000000101" as UUID;
@@ -47,7 +48,29 @@ test("CP13 forward migration is strict, preflighted, scoped, and forced-RLS", ()
     migration,
     /verified legacy webhook rows lack complete signature\/raw-body\/normalized fingerprints/u
   );
+  const createInvoiceSection = postgresSource.slice(
+    postgresSource.indexOf("  async createInvoice(scope"),
+    postgresSource.indexOf("  async findInvoiceById(scope")
+  );
+  assert.ok(
+    createInvoiceSection.indexOf("update procedure_performed_records") <
+      createInvoiceSection.indexOf("insert into invoice_items"),
+    "The procedure must reference the invoice before the composite invoice-item FK is inserted."
+  );
+  assert.match(
+    postgresSource,
+    /#listCompletedProceduresForInvoiceInTransaction[\s\S]*invoice_id is null[\s\S]*for update/u
+  );
   assert.match(migration, /duplicate account-scoped provider event identifiers exist/u);
+  assert.match(migration, /drop index if exists raw_webhook_events_idempotency_unique_idx/u);
+  assert.match(
+    migration,
+    /raw_webhook_events_cp13_account_idempotency_uidx[\s\S]*tenant_id, clinic_id, external_account_id, idempotency_key/u
+  );
+  assert.match(
+    postgresSource,
+    /on conflict \(tenant_id, clinic_id, external_account_id, idempotency_key\) do nothing/u
+  );
   assert.match(
     migration,
     /original_filename ~ '\^clinical-media-\[0-9a-f\]\{8\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{4\}-\[0-9a-f\]\{12\}\\\./u
@@ -91,6 +114,42 @@ test("CP13 forward migration is strict, preflighted, scoped, and forced-RLS", ()
   assert.match(migrationRunner, /runFlyway\("migrate"\)/u);
   assert.match(migrationRunner, /"flyway",[\s\S]*command/u);
   assert.match(migrationRunner, /flyway_schema_history/u);
+  assert.match(migrationRunner, /localFlywayMigrationOptions[\s\S]*-sqlMigrationPrefix=0/u);
+  assert.match(
+    migrationRunner,
+    /`-locations=filesystem:\$\{temporaryMigrations\}`,[\s\S]*\.\.\.localFlywayMigrationOptions,[\s\S]*command/u
+  );
+});
+
+test("CP13 worker grants are activity-specific and keep patient/idempotency tables denied", () => {
+  assert.match(
+    localLifecycle,
+    /grant select on table[\s\S]*payment_provider_request_intents, outbox_events[\s\S]*recall_rules[\s\S]*sop_runs[\s\S]*to clinic_os_worker/u
+  );
+  assert.match(
+    localLifecycle,
+    /grant insert on table[\s\S]*audit_events[\s\S]*payment_requests[\s\S]*recalls[\s\S]*sop_runs[\s\S]*to clinic_os_worker/u
+  );
+  assert.match(
+    localLifecycle,
+    /grant update on table[\s\S]*payment_provider_request_intents, recalls, sop_runs[\s\S]*to clinic_os_worker/u
+  );
+  assert.match(localLifecycle, /workerUnauthorizedPatientAccess: "denied"/u);
+  assert.match(localLifecycle, /workerApiIdempotencyAccess: "denied"/u);
+  assert.match(
+    localLifecycle,
+    /for \(let dayOfWeek = 0; dayOfWeek <= 6; dayOfWeek \+= 1\)[\s\S]*insert into provider_schedules/u
+  );
+  assert.match(localLifecycle, /select tenant_id, id from patients order by id/u);
+  assert.match(
+    localLifecycle,
+    /tenantA\.rows\.some\(\(row\) => row\.tenant_id !== CHECKPOINT1_SEED_IDS\.tenantId\)/u
+  );
+  assert.doesNotMatch(localLifecycle, /tenantA\.rows\.length !== 1/u);
+  assert.doesNotMatch(
+    localLifecycle,
+    /grant (?:select|insert|update|delete|all)[^;]*all tables[^;]*clinic_os_worker/iu
+  );
 });
 
 test("CP13 adapter uses the integrated clinical-media UUID format and never accepts an arbitrary client name", () => {
@@ -312,6 +371,11 @@ test("payment request intent recovery returns the immutable canonical provider r
   assert.equal(claimed.outcome, "claimed");
   assert.deepEqual(claimed.intent.canonicalRequest, canonicalRequest);
   assert.equal(claimed.intent.providerKey, "simulator");
+  const insert = client.queries.find((query) =>
+    /insert into payment_provider_request_intents/u.test(query.sql)
+  );
+  assert.match(insert?.sql ?? "", /\$9::char\(3\)/u);
+  assert.match(insert?.sql ?? "", /invoices\.currency = \(\$9::char\(3\)\)::text/u);
 
   invoiceCollectible = false;
   const recovered = await repository.claimPaymentRequestIntent(scope, {
@@ -493,9 +557,9 @@ test("provider eligibility is current-clinic doctor scoped and provider-event ev
     if (/insert into raw_webhook_events/u.test(sql)) {
       if (providerEvent) return [];
       providerEvent = providerEventRow({
-        rawBodySha256: String(values[7]),
-        signatureSha256: String(values[8]),
-        normalizedEventSha256: String(values[9])
+        rawBodySha256: String(values[8]),
+        signatureSha256: String(values[9]),
+        normalizedEventSha256: String(values[10])
       });
       return [providerEvent];
     }
@@ -524,6 +588,7 @@ test("provider eligibility is current-clinic doctor scoped and provider-event ev
   assert.doesNotMatch(eligibilityQuery?.sql ?? "", /keycloak|subject/iu);
 
   const input = {
+    providerKey: "razorpay" as const,
     externalAccountId: ACCOUNT_ID,
     providerEventId: "pay_event_001",
     idempotencyKey: "razorpay:pay_event_001",
@@ -539,6 +604,13 @@ test("provider eligibility is current-clinic doctor scoped and provider-event ev
   };
   const claimed = await repository.claimVerifiedPaymentProviderEvent(scope, input);
   assert.equal(claimed.outcome, "claimed");
+  const providerEventInsert = client.queries.find((query) =>
+    /insert into raw_webhook_events/u.test(query.sql)
+  );
+  assert.match(
+    providerEventInsert?.sql ?? "",
+    /\$9::text, \(\$9::text\)::char\(64\), \$10, \$11/u
+  );
   providerEvent = {
     ...providerEvent,
     evidence_state: "applied",
@@ -757,6 +829,7 @@ function providerEventRow(input: {
     tenant_id: TENANT_ID,
     clinic_id: CLINIC_ID,
     external_account_id: ACCOUNT_ID,
+    provider_key: "razorpay",
     provider_event_id: "pay_event_001",
     idempotency_key: "razorpay:pay_event_001",
     event_type: "payment.captured",

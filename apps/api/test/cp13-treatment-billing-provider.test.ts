@@ -29,6 +29,20 @@ test("CP13 provider service covers the exact frozen Razorpay provider operation"
   assert.equal(Object.isFrozen(service), true);
 });
 
+test("CP13 local signed simulator uses the same durable provider-event foundation", async () => {
+  const durableLedger = new InMemoryDurableProviderLedger();
+  const billing = new BillingStore(invoiceDetail(6_000));
+  const response =
+    await createTreatmentBillingProviderOperationService().receiveRazorpayPaymentWebhook(
+      verifiedRequest({ providerEventId: "evt-simulator-001", providerKey: "simulator" }),
+      providerContext(billing, durableLedger, new EvidenceRecorder())
+    );
+
+  assert.equal((response.body as PaymentProviderEventResultProjection).status, "processed");
+  assert.equal(billing.transactions[0]?.provider, "simulator");
+  assert.equal(durableLedger.completed.size, 1);
+});
+
 test("CP13 signed provider overpayment applies only the balance and survives service restart", async () => {
   const durableLedger = new InMemoryDurableProviderLedger();
   const evidence = new EvidenceRecorder();
@@ -411,6 +425,7 @@ function providerContext(
 
 function verifiedRequest(input: {
   readonly providerEventId: string;
+  readonly providerKey?: "razorpay" | "simulator";
   readonly invoiceId?: string | null;
   readonly tenantId?: string | null;
   readonly amountPaise?: number;
@@ -419,23 +434,24 @@ function verifiedRequest(input: {
   readonly signatureSha256?: string;
 }): VerifiedRazorpayPaymentEventRequest {
   const rawBodySha256 = input.rawBodySha256 ?? RAW_DIGEST;
+  const providerKey = input.providerKey ?? "razorpay";
   return {
     operationId: "receiveRazorpayPaymentWebhook",
     accountScope: {
       tenantId: TENANT_ID,
       clinicId: CLINIC_ID,
-      providerAccountKey: "synthetic-razorpay-account"
+      providerAccountKey: `synthetic-${providerKey}-account`
     },
     verification: {
       status: "verified",
-      providerKey: "razorpay",
+      providerKey,
       rawBodySha256,
       signatureSha256: input.signatureSha256 ?? SIGNATURE_DIGEST
     },
     event: {
-      providerKey: "razorpay",
+      providerKey,
       providerEventId: input.providerEventId,
-      idempotencyKey: `razorpay:webhook:${input.providerEventId}`,
+      idempotencyKey: `${providerKey}:webhook:${input.providerEventId}`,
       eventName: "payment.captured",
       eventKind: "payment_succeeded",
       occurredAt: FIXED_NOW,

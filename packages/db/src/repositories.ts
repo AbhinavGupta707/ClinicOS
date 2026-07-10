@@ -1108,6 +1108,7 @@ export type FinalizePaymentRequestIntentResult = {
 };
 
 export interface ClaimVerifiedPaymentProviderEventInput {
+  providerKey: PaymentProviderKey;
   externalAccountId: UUID;
   providerEventId: string;
   idempotencyKey: string;
@@ -1127,6 +1128,7 @@ export interface PaymentProviderEventRecord {
   tenantId: UUID;
   clinicId: UUID;
   externalAccountId: UUID;
+  providerKey: PaymentProviderKey;
   providerEventId: string;
   idempotencyKey: string;
   eventName: string;

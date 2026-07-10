@@ -373,6 +373,46 @@ test("CP13 owner analytics remains aggregate-only and exposes request-time fresh
   assert.equal(evidence.outbox.length, 0);
 });
 
+test("CP13 owner analytics defaults and date-only ranges use the verified clinic timezone", async () => {
+  let receivedRange: { startAt: string; endAt: string } | null = null;
+  const context = executionContext({
+    clinicOperations: {
+      loadOwnerDashboardProjectionData: async (range: { startAt: string; endAt: string }) => {
+        receivedRange = range;
+        return {
+          patients: [],
+          leads: [],
+          appointments: [],
+          encounters: [],
+          attributionTouches: [],
+          treatmentPlans: [],
+          procedures: [],
+          invoices: [],
+          payments: [],
+          recalls: [],
+          tasks: [],
+          sopRuns: [],
+          labCases: [],
+          inventoryExceptions: [],
+          incidents: [],
+          correctiveActions: [],
+          dataSources: []
+        };
+      }
+    }
+  });
+  const response = await createContinuityOperationsHandlerMap().getOwnerDashboard(
+    request("getOwnerDashboard", {}),
+    { ...context, clock: new FixedClock("2026-07-10T20:00:00.000Z") }
+  );
+
+  assert.equal(response.status, 200);
+  assert.deepEqual(receivedRange, {
+    startAt: "2026-07-10T18:30:00.000Z",
+    endAt: "2026-07-11T18:29:59.999Z"
+  });
+});
+
 test("CP13 central role and tenant policies deny unsupported clinic access", () => {
   const receptionist = accessContext("receptionist");
   assert.deepEqual(

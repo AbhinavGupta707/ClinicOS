@@ -1157,6 +1157,7 @@ function assertSafeMediaResponse(
 ): void {
   walk(value, (key) => {
     assert.notEqual(key, "objectKey");
+    assert.notEqual(key, "objectVersion");
     assert.notEqual(key, "storageProvider");
     assert.notEqual(key, "storageRegion");
     assert.notEqual(key, "providerSecret");

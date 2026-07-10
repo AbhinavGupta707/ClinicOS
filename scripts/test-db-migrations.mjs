@@ -2,7 +2,7 @@
 import { spawn } from "node:child_process";
 import { cp, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { isAbsolute, join, resolve } from "node:path";
 import { Client } from "pg";
 
 const root = resolve(import.meta.dirname, "..");
@@ -13,8 +13,25 @@ const adminUrl =
 const testDatabase = "clinic_os_migration_test";
 const testDatabaseUrl = databaseUrl(adminUrl, testDatabase);
 const internalJdbcUrl = `jdbc:postgresql://postgres:5432/${testDatabase}`;
+const localJdbcUrl = `jdbc:postgresql://${new URL(adminUrl).host}/${testDatabase}`;
+const localFlywayBinary = process.env.CLINIC_OS_FLYWAY_BIN?.trim() || null;
+const localFlywayMigrationOptions = [
+  "-sqlMigrationPrefix=0",
+  "-sqlMigrationSeparator=_",
+  "-sqlMigrationSuffixes=.sql",
+  "-validateMigrationNaming=true",
+  "-table=flyway_schema_history",
+  "-connectRetries=30",
+  "-lockRetryCount=30",
+  "-cleanDisabled=true",
+  "-outOfOrder=false",
+  "-validateOnMigrate=true"
+];
 
 assertLocalAdminUrl(adminUrl);
+if (localFlywayBinary && !isAbsolute(localFlywayBinary)) {
+  throw new Error("CLINIC_OS_FLYWAY_BIN must be an absolute path to the approved Flyway CLI.");
+}
 
 const temporaryMigrations = await mkdtemp(join(tmpdir(), "clinic-os-migrations-"));
 const admin = new Client({ connectionString: adminUrl });
@@ -142,6 +159,16 @@ try {
 }
 
 function runFlyway(command) {
+  if (localFlywayBinary) {
+    return runCommand(localFlywayBinary, [
+      `-url=${localJdbcUrl}`,
+      "-user=clinic_os_migrator",
+      "-password=clinic_os_migrator",
+      `-locations=filesystem:${temporaryMigrations}`,
+      ...localFlywayMigrationOptions,
+      command
+    ]);
+  }
   const args = [
     "compose",
     "--profile",
@@ -154,8 +181,12 @@ function runFlyway(command) {
     `-url=${internalJdbcUrl}`,
     command
   ];
+  return runCommand("docker", args);
+}
+
+function runCommand(executable, args) {
   return new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn("docker", args, { cwd: root, env: process.env });
+    const child = spawn(executable, args, { cwd: root, env: process.env });
     let output = "";
     child.stdout.on("data", (chunk) => {
       output += chunk;

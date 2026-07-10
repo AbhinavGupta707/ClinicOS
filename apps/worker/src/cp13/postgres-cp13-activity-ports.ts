@@ -105,10 +105,7 @@ export function createPostgresCp13ActivityPorts(
             ordinal: ordinal++
           });
         }
-        createdCount =
-          generated.recallsCreated.length +
-          generated.recallTasksCreated.length +
-          generated.followUpTasksCreated.length;
+        createdCount = countCp13DueGenerationCreatedCandidates(generated);
         skippedCount = generated.skippedExistingKeys.length;
       } else {
         for (const detail of generated.runsCreated) {
@@ -160,6 +157,31 @@ export function createPostgresCp13ActivityPorts(
     const claimToken = `temporal:${options.workerId}:${request.eventId}:${randomUUID()}`;
     const claimedAt = now().toISOString();
     return run(scopeFrom(request), async (context) => {
+      const stored = await context.repositories.durableIntegrity?.findPaymentRequestIntentById(
+        request.durableIntentId as UUID
+      );
+      if (!stored) {
+        return {
+          outcome: "reconciliation_required",
+          reasonCode: "PAYMENT_INTENT_NOT_FOUND",
+          evidenceId: request.durableIntentId
+        };
+      }
+      const activeAccount =
+        await context.repositories.durableIntegrity?.findActivePaymentProviderAccount({
+          providerKey: stored.providerKey,
+          requiredCapability: stored.requiredCapability
+        });
+      if (
+        activeAccount?.outcome !== "resolved" ||
+        activeAccount.account.externalAccountId !== stored.externalAccountId
+      ) {
+        return {
+          outcome: "reconciliation_required",
+          reasonCode: "PAYMENT_PROVIDER_ACCOUNT_UNAVAILABLE",
+          evidenceId: stored.id
+        };
+      }
       const claimed = await context.repositories.durableIntegrity?.claimStoredPaymentRequestIntent({
         intentId: request.durableIntentId as UUID,
         requestDigest: request.intentDigest,
@@ -272,15 +294,55 @@ export function createPostgresCp13ActivityPorts(
       const durable = context.repositories.durableIntegrity;
       if (!durable) throw new Error("CP13 durable payment intent adapter is unavailable.");
       const existing = await durable.findPaymentRequestIntentById(request.durableIntentId as UUID);
-      if (!existing || existing.requestDigest !== request.intentDigest) {
-        return paymentReconciliationResult(
+      if (!existing) {
+        const evidenceId = await appendAudit(context, request, {
+          action: "workflow.cp13.payment_intent_missing",
+          category: "integration",
+          riskLevel: "high",
+          phiInvolved: false,
+          resourceType: "payment_request_intent",
+          resourceId: request.durableIntentId,
+          metadata: { reasonCode: "PAYMENT_INTENT_NOT_FOUND" },
+          occurredAt: now().toISOString()
+        });
+        return paymentReconciliationResult(request, "PAYMENT_INTENT_NOT_FOUND", evidenceId);
+      }
+      if (existing.requestDigest !== request.intentDigest) {
+        const evidenceId = randomUUID();
+        const result = paymentReconciliationResult(
           request,
-          "PAYMENT_INTENT_NOT_FOUND",
-          request.durableIntentId
+          "PAYMENT_INTENT_DIGEST_MISMATCH",
+          evidenceId
         );
+        await appendPaymentTerminalAudit(
+          context,
+          request,
+          evidenceId,
+          existing.patientId,
+          result,
+          now().toISOString()
+        );
+        return result;
       }
       const terminal = terminalPaymentResult(existing, request);
       if (existing.status !== "claimed" && terminal) return terminal;
+      if (existing.status !== "claimed") {
+        const evidenceId = randomUUID();
+        const result = paymentReconciliationResult(
+          request,
+          existing.mismatchReason ?? "PAYMENT_TERMINAL_RESULT_INVALID",
+          evidenceId
+        );
+        await appendPaymentTerminalAudit(
+          context,
+          request,
+          evidenceId,
+          existing.patientId,
+          result,
+          now().toISOString()
+        );
+        return result;
+      }
 
       const claimToken =
         request.claimToken ??
@@ -460,6 +522,22 @@ export function createPostgresCp13ActivityPorts(
       finalizeOrReconcilePaymentRequestIntent
     }
   };
+}
+
+export function countCp13DueGenerationCreatedCandidates(
+  generated:
+    | {
+        readonly recallsCreated: readonly unknown[];
+        readonly followUpTasksCreated: readonly unknown[];
+      }
+    | { readonly runsCreated: readonly unknown[] }
+): number {
+  if ("recallsCreated" in generated) {
+    // A procedure/checkout candidate creates both a recall and its linked task. Workflow
+    // progress counts candidate outcomes, not the number of durable entities emitted.
+    return generated.recallsCreated.length + generated.followUpTasksCreated.length;
+  }
+  return generated.runsCreated.length;
 }
 
 function scopeFrom(input: {

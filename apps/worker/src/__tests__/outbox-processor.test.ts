@@ -43,6 +43,7 @@ test("processes an outbox event and marks the attempt succeeded", async () => {
     deadLettered: 0
   });
   assert.deepEqual(handled, [event.eventId]);
+  assert.deepEqual(repository.lastClaimRequest?.eventTypes, ["test.event"]);
   assert.equal(repository.events.get(event.eventId)?.status, "processed");
   assert.equal(repository.attempts[0]?.status, "succeeded");
 });
@@ -170,12 +171,14 @@ class MemoryOutboxRepository implements OutboxRepository {
   readonly attempts: OutboxAttemptRecord[] = [];
   readonly retries: OutboxRetrySchedule[] = [];
   readonly deadLetters: OutboxDeadLetterRequest[] = [];
+  lastClaimRequest: OutboxClaimRequest | null = null;
 
   constructor(events: readonly OutboxEventRecord[]) {
     for (const event of events) this.events.set(event.eventId, event);
   }
 
-  async claimDueEvents(_request: OutboxClaimRequest): Promise<readonly OutboxEventRecord[]> {
+  async claimDueEvents(request: OutboxClaimRequest): Promise<readonly OutboxEventRecord[]> {
+    this.lastClaimRequest = request;
     const claimed = [...this.events.values()].filter(
       (event) => event.status === "pending" || event.status === "retry_scheduled"
     );

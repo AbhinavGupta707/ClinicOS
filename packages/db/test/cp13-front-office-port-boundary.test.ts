@@ -54,3 +54,31 @@ test("front-office ports bind verified scope and do not accept caller authority"
   await lease.close();
   assert.throws(() => patients.listPatients(), /no longer inside its active unit of work/);
 });
+
+test("transaction-bound repository operations are serialized on one SQL client", async () => {
+  const lease = createRepositoryPortTransactionLease();
+  const events: string[] = [];
+  let releaseFirst!: () => void;
+  const firstGate = new Promise<void>((resolve) => {
+    releaseFirst = resolve;
+  });
+
+  const first = lease.execute(async () => {
+    events.push("first:start");
+    await firstGate;
+    events.push("first:end");
+    return 1;
+  });
+  const second = lease.execute(async () => {
+    events.push("second:start");
+    events.push("second:end");
+    return 2;
+  });
+
+  await Promise.resolve();
+  assert.deepEqual(events, ["first:start"]);
+  releaseFirst();
+  assert.deepEqual(await Promise.all([first, second]), [1, 2]);
+  assert.deepEqual(events, ["first:start", "first:end", "second:start", "second:end"]);
+  await lease.close();
+});

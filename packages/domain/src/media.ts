@@ -104,7 +104,7 @@ export type PublicMediaUploadReservation = Omit<
 
 export type PublicMediaAsset = Omit<
   MediaAssetRecord,
-  "objectKey" | "storageProvider" | "storageRegion"
+  "objectKey" | "objectVersion" | "storageProvider" | "storageRegion"
 >;
 
 export function isMediaType(value: unknown): value is MediaType {
@@ -158,8 +158,13 @@ export function toPublicMediaUploadReservation(
 }
 
 export function toPublicMediaAsset(asset: MediaAssetRecord): PublicMediaAsset {
-  const { objectKey: _objectKey, storageProvider: _provider, storageRegion: _region, ...publicRecord } =
-    asset;
+  const {
+    objectKey: _objectKey,
+    objectVersion: _objectVersion,
+    storageProvider: _provider,
+    storageRegion: _region,
+    ...publicRecord
+  } = asset;
   return publicRecord;
 }
 

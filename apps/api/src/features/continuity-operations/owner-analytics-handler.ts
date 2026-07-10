@@ -1,5 +1,10 @@
-import { buildOwnerDashboardProjection } from "@clinic-os/domain";
-import { assertOwnerAnalyticsRange, ownerAnalyticsFreshness } from "@clinic-os/domain";
+import {
+  assertOwnerAnalyticsRange,
+  buildOwnerDashboardProjection,
+  clinicLocalDate,
+  clinicLocalDateTimeToInstant,
+  ownerAnalyticsFreshness
+} from "@clinic-os/domain";
 import {
   appendAudit,
   domainValidation,
@@ -12,9 +17,14 @@ import {
 export const getOwnerDashboardHandler: ContinuityOperationsHandler = async (request, context) => {
   const query = requestQuery(request);
   const observedAt = context.clock.now();
-  const defaultDate = observedAt.toISOString().slice(0, 10);
-  const from = dateBoundary(optionalStringValue(query.from) ?? defaultDate, "start");
-  const to = dateBoundary(optionalStringValue(query.to) ?? defaultDate, "end");
+  const clinicTimeZone = request.access.clinic.timezone;
+  const defaultDate = clinicLocalDate(observedAt, clinicTimeZone);
+  const from = dateBoundary(
+    optionalStringValue(query.from) ?? defaultDate,
+    "start",
+    clinicTimeZone
+  );
+  const to = dateBoundary(optionalStringValue(query.to) ?? defaultDate, "end", clinicTimeZone);
   domainValidation(() => assertOwnerAnalyticsRange(from, to));
 
   const data = await context.repositories.clinicOperations.loadOwnerDashboardProjectionData({
@@ -58,9 +68,13 @@ export const getOwnerDashboardHandler: ContinuityOperationsHandler = async (requ
   });
 };
 
-function dateBoundary(value: string, boundary: "start" | "end"): string {
+function dateBoundary(value: string, boundary: "start" | "end", timeZone: string): string {
   if (/^\d{4}-\d{2}-\d{2}$/.test(value)) {
-    return boundary === "start" ? `${value}T00:00:00.000Z` : `${value}T23:59:59.999Z`;
+    return clinicLocalDateTimeToInstant(
+      value,
+      boundary === "start" ? "00:00:00.000" : "23:59:59.999",
+      timeZone
+    ).toISOString();
   }
   const timestamp = Date.parse(value);
   if (!Number.isFinite(timestamp)) {
