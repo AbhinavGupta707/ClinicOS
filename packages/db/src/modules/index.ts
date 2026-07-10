@@ -1,6 +1,7 @@
 export {
   ClinicModuleUnitOfWork,
   createPostgresClinicModuleUnitOfWork,
+  runWithClinicModuleTransactionContext,
   type ClinicModuleScopeResolver,
   type ClinicModuleTransactionContext,
   type ClinicRepositoryModules,

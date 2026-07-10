@@ -726,3 +726,39 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   `docs/security/checkpoint-12-route-control-inventory.md` and
   `docs/security/checkpoint-12-security-foundation-delta.md`; candidate report:
   `docs/orchestration/CHECKPOINT_12_FINAL_REPORT.md`.
+
+## Checkpoint 13 — Durable Clinic-Day Vertical Slices
+
+### CP13 Launch And Seam Freeze — 2026-07-10
+
+- CP13 launch base is verified `main` revision
+  `c3802b73e135246d56d12efc9ab399ecd6f47fde`, containing the CP12 promotion merge and final
+  post-promotion record. The root integration branch is `codex/integration/checkpoint-13`; the only
+  pre-existing working-tree entries remain user-owned untracked `research/` and `scripts/research/`.
+- The seam audit confirmed CP12's 140-operation repository ownership and transaction-leased ports,
+  but found that the API transaction callback still exposed only the legacy repository/audit sink.
+  The master extracted `runWithClinicModuleTransactionContext` so CP13 handlers can bind verified
+  scope, namespaced repositories, request guards and audit/outbox evidence inside the already-open
+  Postgres mutation transaction. No nested transaction or caller-supplied authority is allowed.
+- Master-frozen API contracts assign all 94 CP2-CP6 clinic-day operations exactly once: front
+  office/intake 26, clinical/dental 22, treatment/billing 12 and continuity/operations 34. The lane
+  handler contract accepts only the parsed CP12 request, verified clinic context, bounded request
+  metadata, injected clock and transaction-bound module context. Workers do not parse raw authority
+  or bypass CP12 policy/idempotency/concurrency/response enforcement.
+- Initial adaptive launch decision: four lanes are justified because each writes only a new
+  namespaced feature tree plus lane-specific tests/proposals, consumes the frozen master contract,
+  and can commit useful independently testable work without touching shared composition files.
+
+| Lane                                 | Model / effort          | Writable ownership                                                                                                                                                                                                                                           | Stable inputs and verification                                                                                                                                  | Parallel-safety decision               |
+| ------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| Front Office and Intake              | `gpt-5.6-sol` / `high`  | new `apps/api/src/features/front-office/**`, `apps/web/features/cp13/front-office/**`, `packages/domain/src/cp13/front-office/**`, lane-named API/web/domain/DB tests, `packages/db/schema-proposals/cp13/front-office.sql`, lane evidence                   | frozen 26-operation list, CP12 contracts/client and patient-administration/scheduling/clinical-care ports; success/role/tenant/state/retry/audit-outbox tests   | Launch: additive namespaced paths only |
+| Clinical and Dental                  | `gpt-5.6-sol` / `xhigh` | new `apps/api/src/features/clinical-dental/**`, `apps/web/features/cp13/clinical-dental/**`, `packages/domain/src/cp13/clinical-dental/**`, lane-named tests, `packages/db/schema-proposals/cp13/clinical-dental.sql`, lane evidence                         | frozen 22-operation list, clinical-care/dental-treatment/clinical-media ports and existing provider interfaces; consent/signature/tenant/media disclosure tests | Launch: additive namespaced paths only |
+| Treatment, Billing and Instructions  | `gpt-5.6-sol` / `xhigh` | new `apps/api/src/features/treatment-billing/**`, `apps/web/features/cp13/treatment-billing/**`, `packages/domain/src/cp13/treatment-billing/**`, lane-named tests, `packages/db/schema-proposals/cp13/treatment-billing.sql`, lane evidence                 | frozen 12-operation list, dental-treatment/billing/clinical-care ports and provider verification interfaces; money/idempotency/overpayment/role tests           | Launch: additive namespaced paths only |
+| Continuity, Operations and Analytics | `gpt-5.6-sol` / `high`  | new `apps/api/src/features/continuity-operations/**`, `apps/web/features/cp13/continuity-operations/**`, `packages/domain/src/cp13/continuity-operations/**`, lane-named tests, `packages/db/schema-proposals/cp13/continuity-operations.sql`, lane evidence | frozen 34-operation list, continuity/clinic-operations ports; due/retry/reconciliation/freshness/PHI-safe analytics tests                                       | Launch: additive namespaced paths only |
+
+- Master-only and forbidden worker paths: canonical migrations, all manifests/lockfiles, shared
+  exports, `packages/api-contracts/**`, generated clients/artifacts, `apps/api/src/framework/**`,
+  `apps/api/src/server.ts`, `apps/api/src/operations.ts`, `apps/api/src/features/contracts.ts`,
+  `apps/api/src/features/cp13-operation-ownership.ts`, existing web components/loaders/navigation,
+  worker/workflow composition, root configuration, checkpoint/release/security truth and all user
+  research. Workers must propose shared changes in handoff rather than editing these paths.
