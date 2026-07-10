@@ -10,6 +10,10 @@ export {
   PostgresPrivateMediaPersistenceError,
   type PostgresPrivateMediaTransactionContext
 } from "./postgres-private-media-persistence.ts";
+export {
+  createPostgresS3TransactionMediaProviderFactory,
+  type PostgresS3TransactionMediaDependencies
+} from "./postgres-s3-transaction-media.ts";
 export type {
   MediaAuthorityFactory,
   MediaRequestAuthorityFactory,

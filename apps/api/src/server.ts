@@ -643,6 +643,19 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
   const port = parsePort(env.PORT ?? env.API_PORT);
   const mediaStorage = createRuntimeMediaStorage(parsed.data, env);
   const mediaInspection = createRuntimeMediaInspection(parsed.data, env);
+  if (parsed.data.isProductionLike && (!mediaStorage || !mediaInspection)) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Production private-media storage and scanner composition is not registered.",
+      {
+        missing: [
+          ...(!mediaStorage ? ["private_media_storage"] : []),
+          ...(!mediaInspection ? ["private_media_scanner"] : [])
+        ]
+      }
+    );
+  }
   const paymentProvider = createRuntimePaymentProvider(parsed.data);
 
   const serverOptions: ClinicOsApiServerOptions = {

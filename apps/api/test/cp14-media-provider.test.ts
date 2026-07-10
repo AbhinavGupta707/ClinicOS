@@ -3,9 +3,11 @@ import test from "node:test";
 import type { MediaUploadReservationRecord, UUID } from "@clinic-os/domain";
 import {
   PrivateMediaLifecycleService,
+  PostgresPrivateMediaPersistenceError,
   RoutedMediaAuthorityFactory,
   S3ClinicalMediaProvider,
-  ServiceMediaAuthorityFactory
+  ServiceMediaAuthorityFactory,
+  createPostgresS3TransactionMediaProviderFactory
 } from "../src/providers/media/index.ts";
 import type {
   PrivateMediaGateway,
@@ -191,6 +193,59 @@ test("CP14 routed authority requires a real actor and correlation id", () => {
       })).forScope(scope),
     /actor and correlation attribution/u
   );
+});
+
+test("CP14 production media factory requires and consumes the active request transaction", () => {
+  const factory = createPostgresS3TransactionMediaProviderFactory({
+    config: {
+      environment: "staging",
+      bucket: "private-media-bucket",
+      region: "ap-south-1",
+      kmsKeyId: "kms-media-key-1",
+      bindingSecret: "0123456789abcdef0123456789abcdef",
+      presignedEndpointAllowlist: [
+        "https://private-media-bucket.s3.ap-south-1.amazonaws.com"
+      ],
+      scannerSigningKeyIds: ["kms-scanner-signing-key-1"]
+    },
+    objects: {} as never,
+    signer: {} as never,
+    detector: {} as never,
+    scanner: {} as never,
+    evidenceVerifier: {} as never
+  });
+  const request = {
+    access: {
+      context: { tenant: { id: ids.tenantId }, user: { id: ids.actorId } },
+      clinicId: ids.clinicId
+    },
+    metadata: { requestId: "10000000-0000-4000-8000-000000000099" }
+  } as Parameters<typeof factory>[0];
+  const clock = { now: () => new Date("2026-07-10T10:00:00.000Z") };
+
+  assert.throws(
+    () => factory(request, { clock } as Parameters<typeof factory>[1]),
+    (error: unknown) =>
+      error instanceof PostgresPrivateMediaPersistenceError &&
+      error.code === "transaction_context_required"
+  );
+
+  const provider = factory(request, {
+    clock,
+    sqlClient: { async query() { return { rows: [] }; } }
+  } as Parameters<typeof factory>[1]);
+  const key = provider.buildObjectKey({
+    tenantId: ids.tenantId,
+    clinicId: ids.clinicId,
+    patientId: ids.patientId,
+    uploadId: ids.uploadId,
+    originalFilename: "patient-name.jpg"
+  });
+  assert.match(
+    key,
+    new RegExp(`^staging/tenants/${ids.tenantId}/clinics/${ids.clinicId}/media/${ids.uploadId}/${ids.uploadId}/[A-Za-z0-9_-]{40,128}$`, "u")
+  );
+  assert.doesNotMatch(key, /patient-name/iu);
 });
 
 test("CP14 API lifecycle service preserves opaque deletion and restore receipts", async () => {
