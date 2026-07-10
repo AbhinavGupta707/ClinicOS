@@ -11,6 +11,7 @@ import { FixedClock, type UUID } from "@clinic-os/domain";
 import type { ClinicFeatureOperationHandler } from "../src/features/contracts.ts";
 import {
   ALL_CP13_CLINIC_DAY_OPERATION_IDS,
+  ALL_CP13_CLINIC_FEATURE_OPERATION_IDS,
   CP13_CLINIC_DAY_OPERATION_OWNERS,
   CP13_TREATMENT_BILLING_CLINIC_OPERATION_IDS,
   CP13_TREATMENT_BILLING_PROVIDER_OPERATION_IDS
@@ -38,6 +39,12 @@ test("CP13 ownership keeps shared compatibility files out of worker path design"
     "receiveRazorpayPaymentWebhook"
   ]);
   assert.equal(CP13_TREATMENT_BILLING_CLINIC_OPERATION_IDS.length, 11);
+  assert.equal(ALL_CP13_CLINIC_FEATURE_OPERATION_IDS.length, 93);
+  assert.equal(new Set(ALL_CP13_CLINIC_FEATURE_OPERATION_IDS).size, 93);
+  assert.equal(
+    ALL_CP13_CLINIC_FEATURE_OPERATION_IDS.includes("receiveRazorpayPaymentWebhook" as never),
+    false
+  );
 });
 
 test("CP13 feature runtime binds verified scope and closes every module port", async () => {

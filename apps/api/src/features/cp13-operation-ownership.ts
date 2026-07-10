@@ -132,3 +132,10 @@ export type Cp13ClinicFeatureOperationId = Exclude<
 export const ALL_CP13_CLINIC_DAY_OPERATION_IDS = Object.freeze(
   Object.values(CP13_CLINIC_DAY_OPERATION_OWNERS).flat()
 ) as readonly Cp13ClinicDayOperationId[];
+
+export const ALL_CP13_CLINIC_FEATURE_OPERATION_IDS = Object.freeze([
+  ...CP13_FRONT_OFFICE_OPERATION_IDS,
+  ...CP13_CLINICAL_DENTAL_OPERATION_IDS,
+  ...CP13_TREATMENT_BILLING_CLINIC_OPERATION_IDS,
+  ...CP13_CONTINUITY_OPERATIONS_OPERATION_IDS
+] as const) satisfies readonly Cp13ClinicFeatureOperationId[];
