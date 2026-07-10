@@ -35,7 +35,7 @@ export interface AwsS3PresigningTransportConfig {
   /** Exact KMS key required by bucket default encryption/policy and verified at completion. */
   readonly kmsKeyId: string;
   readonly endpointOrigins: readonly string[];
-  readonly now?: () => Date;
+  readonly now: () => Date;
 }
 
 /** Official AWS SDK v3 presigner with an exact, short-lived object/method/header capability. */
@@ -59,7 +59,7 @@ export class AwsS3PresigningTransport implements S3PresigningTransport {
     this.#region = config.region;
     this.#kmsKeyId = config.kmsKeyId;
     this.#endpointOrigins = new Set(config.endpointOrigins.map((origin) => new URL(origin).origin));
-    this.#now = config.now ?? (() => new Date());
+    this.#now = config.now;
     this.#presign = presign;
   }
 
@@ -275,6 +275,7 @@ function assertAwsScopeConfig(config: AwsS3PresigningTransportConfig): void {
     !/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/u.test(config.region) ||
     !config.kmsKeyId ||
     config.kmsKeyId.length > 512 ||
+    typeof config.now !== "function" ||
     config.endpointOrigins.length === 0 ||
     config.endpointOrigins.length > 4
   ) {

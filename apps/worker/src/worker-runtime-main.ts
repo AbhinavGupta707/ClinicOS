@@ -1,5 +1,6 @@
 import { Pool } from "pg";
 import { createPaymentProvider } from "@clinic-os/integrations";
+import { systemClock, type Clock } from "@clinic-os/domain";
 import { createClinicTemporalWorker, createTemporalClient } from "@clinic-os/workflow";
 import {
   InstrumentationHooks,
@@ -22,7 +23,10 @@ import { PostgresOutboxRepository } from "./postgres/postgres-outbox-repository.
 import { parseWorkerEnvironment } from "./runtime/config.js";
 import { createWorkerRuntime } from "./runtime/create-worker-runtime.js";
 
-export async function runWorker(observability: ObservabilityRuntime): Promise<void> {
+export async function runWorker(
+  observability: ObservabilityRuntime,
+  clock: Clock = systemClock
+): Promise<void> {
   const env = parseWorkerEnvironment(process.env);
   const logger = createJsonLogger({
     service: "clinic-os-worker",
@@ -88,7 +92,7 @@ export async function runWorker(observability: ObservabilityRuntime): Promise<vo
     CP13_PAYMENT_REQUEST_RECOVERY_REQUESTED_EVENT
   ]);
   const observeBackpressure = async () => {
-    const observedAt = new Date();
+    const observedAt = clock.now();
     const stats = await repository.getBacklogStats(observedAt.toISOString());
     const oldestAgeSeconds = stats.oldestPendingOccurredAt
       ? Math.max(
