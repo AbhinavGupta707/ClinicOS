@@ -112,6 +112,7 @@ export interface TreatmentPlanRecord {
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
+  rowVersion: number;
   patientId: UUID;
   encounterId: UUID | null;
   title: string;

@@ -353,6 +353,7 @@ class RecordingSqlClient implements SqlQueryClient {
         id: PATIENT_ID,
         tenant_id: values[0],
         clinic_id: values[1],
+        row_version: 1,
         full_name: values[2],
         phone: values[3],
         email: values[4],

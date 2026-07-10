@@ -20,6 +20,7 @@ export interface PatientRecord {
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
+  rowVersion: number;
   fullName: string;
   phone: string | null;
   email: string | null;

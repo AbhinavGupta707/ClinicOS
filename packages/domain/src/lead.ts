@@ -16,6 +16,7 @@ export interface LeadRecord {
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
+  rowVersion: number;
   patientId: UUID | null;
   primaryContact: string;
   status: LeadStatus;
