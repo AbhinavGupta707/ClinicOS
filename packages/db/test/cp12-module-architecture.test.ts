@@ -48,6 +48,7 @@ test("CP12 domain modules cannot import sibling domains or persistence implement
     "continuity",
     "data-integrations",
     "dental-treatment",
+    "durable-integrity",
     "patient-administration",
     "privacy-security",
     "scheduling"

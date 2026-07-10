@@ -177,7 +177,11 @@ export interface IdentityRepository {
 }
 
 export interface PatientRepository {
-  findPatientById(scope: { tenantId: UUID; clinicId: UUID; patientId: UUID }): Promise<PatientRecord | null>;
+  findPatientById(scope: {
+    tenantId: UUID;
+    clinicId: UUID;
+    patientId: UUID;
+  }): Promise<PatientRecord | null>;
 }
 
 export interface AuditEventSink<TAuditEvent> {
@@ -901,6 +905,338 @@ export interface CompleteMediaUploadInput {
   dicomMetadata?: Record<string, unknown>;
 }
 
+export type ClinicalMediaReceiptState = "matched" | "mismatch" | "consumed";
+
+export interface RecordClinicalMediaReceiptInput {
+  uploadId: UUID;
+  providerKey: MediaStorageProviderKey;
+  providerArtifactReference: string;
+  contentLength: number;
+  mimeType: string;
+  sha256Digest: string;
+  storedAt: string;
+  receivedAt: string;
+}
+
+export interface ClinicalMediaReceiptRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  uploadId: UUID;
+  patientId: UUID;
+  providerKey: MediaStorageProviderKey;
+  receiptFingerprint: string;
+  providerArtifactFingerprint: string;
+  contentLength: number;
+  mimeType: string;
+  sha256Digest: string;
+  state: ClinicalMediaReceiptState;
+  mismatchReason: string | null;
+  storedAt: string;
+  receivedAt: string;
+  lastVerifiedAt: string;
+  consumedAt: string | null;
+}
+
+export type RecordClinicalMediaReceiptResult =
+  | {
+      outcome: "recorded" | "replayed";
+      receipt: ClinicalMediaReceiptRecord;
+    }
+  | {
+      outcome: "mismatch";
+      receipt: ClinicalMediaReceiptRecord;
+      reason: string;
+    }
+  | {
+      outcome: "not_found" | "not_receivable";
+      receipt: null;
+    };
+
+export interface AtomicAppointmentCheckInResult {
+  outcome: "checked_in" | "repaired" | "replayed" | "invalid_state" | "not_found";
+  appointment: AppointmentRecord | null;
+  queueEntry: QueueEntryRecord | null;
+  appointmentStatusChanged: boolean;
+  queueEntryCreated: boolean;
+}
+
+export interface ProviderEligibilityResult {
+  providerUserId: UUID;
+  userActive: boolean;
+  membershipActive: boolean;
+  clinicAssignmentActive: boolean;
+  doctorRoleActive: boolean;
+  eligible: boolean;
+}
+
+export type PaymentProviderKey = "razorpay" | "simulator";
+
+export interface ActivePaymentProviderAccount {
+  externalAccountId: UUID;
+  providerKey: PaymentProviderKey;
+  status: "available";
+  capabilityKeys: string[];
+}
+
+export type FindActivePaymentProviderAccountResult =
+  | {
+      outcome: "resolved";
+      account: ActivePaymentProviderAccount;
+    }
+  | {
+      outcome: "not_configured" | "ambiguous" | "degraded" | "unavailable";
+      account: null;
+    };
+
+export interface FindActivePaymentProviderAccountInput {
+  providerKey: PaymentProviderKey;
+  requiredCapability: string;
+}
+
+export interface AppendPaymentProviderIntegrationOutboxInput extends Omit<
+  OutboxEventInput,
+  "idempotencyKey" | "correlationId"
+> {
+  externalAccountId: UUID;
+  providerKey: PaymentProviderKey;
+  requiredCapability: string;
+  idempotencyKey: string;
+  correlationId: string;
+}
+
+export type AppendPaymentProviderIntegrationOutboxResult = {
+  outcome: "appended" | "replayed" | "mismatch" | "account_unavailable";
+  outboxEventId: UUID | null;
+};
+
+export interface ClaimPaymentRequestIntentInput {
+  externalAccountId: UUID;
+  providerKey: PaymentProviderKey;
+  requiredCapability: string;
+  invoiceId: UUID;
+  idempotencyKey: string;
+  requestDigest: string;
+  canonicalRequest: CanonicalPaymentProviderRequest;
+  leaseOwner: string;
+  leaseExpiresAt: string;
+  requestedAt: string;
+}
+
+export interface CanonicalPaymentProviderRequest {
+  requestType: "payment_link" | "invoice_qr";
+  amountMinor: number;
+  currency: string;
+  description: string | null;
+  expiresAt: string | null;
+  customer: Record<string, unknown> | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface PaymentRequestIntentRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  externalAccountId: UUID;
+  providerKey: PaymentProviderKey;
+  requiredCapability: string;
+  invoiceId: UUID;
+  patientId: UUID;
+  idempotencyKey: string;
+  requestDigest: string;
+  canonicalRequest: CanonicalPaymentProviderRequest;
+  status: "claimed" | "completed" | "failed" | "reconciliation_required";
+  leaseOwner: string | null;
+  leaseExpiresAt: string | null;
+  attemptCount: number;
+  paymentRequestId: UUID | null;
+  providerArtifactFingerprint: string | null;
+  resultDigest: string | null;
+  resultProjection: Record<string, unknown> | null;
+  mismatchReason: string | null;
+  requestedAt: string;
+  processedAt: string | null;
+}
+
+export type ClaimPaymentRequestIntentResult =
+  | {
+      outcome: "claimed" | "recovered" | "in_progress" | "replayed";
+      intent: PaymentRequestIntentRecord;
+    }
+  | {
+      outcome:
+        | "request_mismatch"
+        | "account_unavailable"
+        | "invoice_not_found"
+        | "invoice_not_collectible";
+      intent: PaymentRequestIntentRecord | null;
+    };
+
+export interface FinalizePaymentRequestIntentInput {
+  intentId: UUID;
+  leaseOwner: string;
+  requestDigest: string;
+  status: "completed" | "failed" | "reconciliation_required";
+  paymentRequestId?: UUID | null;
+  providerArtifactReference?: string | null;
+  resultDigest: string;
+  resultProjection: Record<string, unknown>;
+  processedAt: string;
+}
+
+export type FinalizePaymentRequestIntentResult = {
+  outcome: "finalized" | "replayed" | "mismatch" | "lost_lease" | "not_found";
+  intent: PaymentRequestIntentRecord | null;
+};
+
+export interface ClaimVerifiedPaymentProviderEventInput {
+  externalAccountId: UUID;
+  providerEventId: string;
+  idempotencyKey: string;
+  eventName: string;
+  eventKind: string;
+  rawBodySha256: string;
+  signatureSha256: string;
+  normalizedEventSha256: string;
+  normalizedEvent: Record<string, unknown>;
+  receivedAt: string;
+  leaseOwner: string;
+  leaseExpiresAt: string;
+}
+
+export interface PaymentProviderEventRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  externalAccountId: UUID;
+  providerEventId: string;
+  idempotencyKey: string;
+  eventName: string;
+  eventKind: string;
+  rawBodySha256: string;
+  signatureSha256: string;
+  normalizedEventSha256: string;
+  normalizedEvent: Record<string, unknown>;
+  evidenceState: "verified" | "mismatch" | "reconciliation_required" | "applied";
+  processingStatus: "processing" | "applied" | "ignored" | "reconciliation_required" | "failed";
+  mismatchReason: string | null;
+  leaseOwner: string | null;
+  leaseExpiresAt: string | null;
+  attemptCount: number;
+  resultDigest: string | null;
+  resultProjection: Record<string, unknown> | null;
+  receivedAt: string;
+  processedAt: string | null;
+}
+
+export type ClaimVerifiedPaymentProviderEventResult =
+  | {
+      outcome: "claimed" | "recovered" | "in_progress" | "duplicate";
+      event: PaymentProviderEventRecord;
+    }
+  | {
+      outcome: "evidence_mismatch" | "account_unavailable";
+      event: PaymentProviderEventRecord | null;
+    };
+
+export interface CreatePaymentReconciliationInput {
+  providerEventRecordId: UUID;
+  invoiceId: UUID | null;
+  patientId: UUID | null;
+  reason:
+    | "overpayment"
+    | "missing_invoice_reference"
+    | "currency_mismatch"
+    | "invalid_provider_amount"
+    | "scope_mismatch"
+    | "manual_review_required";
+  capturedAmountMinor: number;
+  appliedAmountMinor: number;
+  unallocatedAmountMinor: number;
+  currency: string | null;
+  evidence: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface PaymentReconciliationRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  providerEventRecordId: UUID;
+  invoiceId: UUID | null;
+  patientId: UUID | null;
+  reason: CreatePaymentReconciliationInput["reason"];
+  capturedAmountMinor: number;
+  appliedAmountMinor: number;
+  unallocatedAmountMinor: number;
+  currency: string | null;
+  status: "open" | "resolved" | "dismissed";
+  evidence: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface CompletePaymentProviderEventInput {
+  providerEventRecordId: UUID;
+  leaseOwner: string;
+  processingStatus: "applied" | "ignored" | "reconciliation_required" | "failed";
+  resultDigest: string;
+  resultProjection: Record<string, unknown>;
+  processedAt: string;
+}
+
+export type CompletePaymentProviderEventResult = {
+  outcome: "completed" | "replayed" | "mismatch" | "lost_lease" | "not_found";
+  event: PaymentProviderEventRecord | null;
+};
+
+/**
+ * Additive CP13 durability seam. It stays separate from the 140-operation compatibility interface
+ * so fixture repositories cannot accidentally be treated as production durability adapters.
+ */
+export interface DurableIntegrityRepository {
+  recordClinicalMediaReceipt(
+    scope: RepositoryScope,
+    input: RecordClinicalMediaReceiptInput
+  ): Promise<RecordClinicalMediaReceiptResult>;
+  checkInAppointmentWithQueue(
+    scope: RepositoryScope,
+    appointmentId: UUID,
+    reason?: string | null
+  ): Promise<AtomicAppointmentCheckInResult>;
+  findProviderEligibility(
+    scope: RepositoryScope,
+    providerUserId: UUID
+  ): Promise<ProviderEligibilityResult>;
+  findActivePaymentProviderAccount(
+    scope: RepositoryScope,
+    input: FindActivePaymentProviderAccountInput
+  ): Promise<FindActivePaymentProviderAccountResult>;
+  appendPaymentProviderIntegrationOutboxEvent(
+    scope: RepositoryScope,
+    input: AppendPaymentProviderIntegrationOutboxInput
+  ): Promise<AppendPaymentProviderIntegrationOutboxResult>;
+  claimPaymentRequestIntent(
+    scope: RepositoryScope,
+    input: ClaimPaymentRequestIntentInput
+  ): Promise<ClaimPaymentRequestIntentResult>;
+  finalizePaymentRequestIntent(
+    scope: RepositoryScope,
+    input: FinalizePaymentRequestIntentInput
+  ): Promise<FinalizePaymentRequestIntentResult>;
+  claimVerifiedPaymentProviderEvent(
+    scope: RepositoryScope,
+    input: ClaimVerifiedPaymentProviderEventInput
+  ): Promise<ClaimVerifiedPaymentProviderEventResult>;
+  createPaymentReconciliation(
+    scope: RepositoryScope,
+    input: CreatePaymentReconciliationInput
+  ): Promise<PaymentReconciliationRecord>;
+  completePaymentProviderEvent(
+    scope: RepositoryScope,
+    input: CompletePaymentProviderEventInput
+  ): Promise<CompletePaymentProviderEventResult>;
+}
+
 export interface CreateDentalChartSnapshotInput {
   encounterId?: UUID | null;
   reason?: string | null;
@@ -983,7 +1319,11 @@ export interface ClinicOperationsRepository {
     input: { fullName: string; phone: string }
   ): Promise<PatientRecord[]>;
   createPatient(scope: RepositoryScope, input: CreatePatientInput): Promise<PatientRecord>;
-  updatePatient(scope: RepositoryScope, patientId: UUID, input: UpdatePatientInput): Promise<PatientRecord | null>;
+  updatePatient(
+    scope: RepositoryScope,
+    patientId: UUID,
+    input: UpdatePatientInput
+  ): Promise<PatientRecord | null>;
 
   listAuditEvents(
     scope: RepositoryScope,
@@ -1043,12 +1383,18 @@ export interface ClinicOperationsRepository {
     filter: ActiveBreakGlassAccessFilter
   ): Promise<BreakGlassAccessRecord | null>;
 
-  createMigrationBatch(scope: RepositoryScope, input: CreateMigrationBatchInput): Promise<MigrationBatchDetail>;
+  createMigrationBatch(
+    scope: RepositoryScope,
+    input: CreateMigrationBatchInput
+  ): Promise<MigrationBatchDetail>;
   listMigrationBatches(
     scope: RepositoryScope,
     filter?: MigrationBatchSearchFilter
   ): Promise<MigrationBatchDetail[]>;
-  findMigrationBatchById(scope: RepositoryScope, batchId: UUID): Promise<MigrationBatchDetail | null>;
+  findMigrationBatchById(
+    scope: RepositoryScope,
+    batchId: UUID
+  ): Promise<MigrationBatchDetail | null>;
   listMigrationRows(
     scope: RepositoryScope,
     batchId: UUID,
@@ -1083,19 +1429,39 @@ export interface ClinicOperationsRepository {
   listLeads(scope: RepositoryScope, filter?: LeadSearchFilter): Promise<LeadRecord[]>;
   findLeadById(scope: RepositoryScope, leadId: UUID): Promise<LeadRecord | null>;
   createLead(scope: RepositoryScope, input: CreateLeadInput): Promise<LeadRecord>;
-  updateLeadStatus(scope: RepositoryScope, leadId: UUID, status: LeadStatus): Promise<LeadRecord | null>;
-  matchLeadToPatient(scope: RepositoryScope, leadId: UUID, patientId: UUID): Promise<LeadRecord | null>;
+  updateLeadStatus(
+    scope: RepositoryScope,
+    leadId: UUID,
+    status: LeadStatus
+  ): Promise<LeadRecord | null>;
+  matchLeadToPatient(
+    scope: RepositoryScope,
+    leadId: UUID,
+    patientId: UUID
+  ): Promise<LeadRecord | null>;
 
   listAppointmentTypes(scope: RepositoryScope): Promise<AppointmentTypeRecord[]>;
   listChairs(scope: RepositoryScope): Promise<ChairOrRoomRecord[]>;
-  listProviderSchedules(scope: RepositoryScope, providerUserId?: UUID | null): Promise<ProviderScheduleRecord[]>;
-  listAppointments(scope: RepositoryScope, filter?: AppointmentSearchFilter): Promise<AppointmentRecord[]>;
-  findAppointmentById(scope: RepositoryScope, appointmentId: UUID): Promise<AppointmentRecord | null>;
+  listProviderSchedules(
+    scope: RepositoryScope,
+    providerUserId?: UUID | null
+  ): Promise<ProviderScheduleRecord[]>;
+  listAppointments(
+    scope: RepositoryScope,
+    filter?: AppointmentSearchFilter
+  ): Promise<AppointmentRecord[]>;
+  findAppointmentById(
+    scope: RepositoryScope,
+    appointmentId: UUID
+  ): Promise<AppointmentRecord | null>;
   findAppointmentConflicts(
     scope: RepositoryScope,
     filter: AppointmentConflictFilter
   ): Promise<AppointmentConflict[]>;
-  createAppointment(scope: RepositoryScope, input: CreateAppointmentInput): Promise<AppointmentRecord>;
+  createAppointment(
+    scope: RepositoryScope,
+    input: CreateAppointmentInput
+  ): Promise<AppointmentRecord>;
   updateAppointmentStatus(
     scope: RepositoryScope,
     appointmentId: UUID,
@@ -1103,14 +1469,25 @@ export interface ClinicOperationsRepository {
     reason?: string | null
   ): Promise<AppointmentRecord | null>;
 
-  createQueueEntry(scope: RepositoryScope, appointment: AppointmentRecord): Promise<QueueEntryRecord>;
+  createQueueEntry(
+    scope: RepositoryScope,
+    appointment: AppointmentRecord
+  ): Promise<QueueEntryRecord>;
   listQueueEntries(scope: RepositoryScope, date: string): Promise<QueueEntryRecord[]>;
-  updateQueueEntry(scope: RepositoryScope, queueEntryId: UUID, status: QueueStatus): Promise<QueueEntryRecord | null>;
+  updateQueueEntry(
+    scope: RepositoryScope,
+    queueEntryId: UUID,
+    status: QueueStatus
+  ): Promise<QueueEntryRecord | null>;
 
   listTasks(scope: RepositoryScope, filter?: TaskSearchFilter): Promise<TaskRecord[]>;
   findTaskById(scope: RepositoryScope, taskId: UUID): Promise<TaskRecord | null>;
   createTask(scope: RepositoryScope, input: CreateTaskInput): Promise<TaskRecord>;
-  updateTask(scope: RepositoryScope, taskId: UUID, input: UpdateTaskInput): Promise<TaskRecord | null>;
+  updateTask(
+    scope: RepositoryScope,
+    taskId: UUID,
+    input: UpdateTaskInput
+  ): Promise<TaskRecord | null>;
   createRecallRule(scope: RepositoryScope, input: CreateRecallRuleInput): Promise<RecallRuleRecord>;
   listRecalls(scope: RepositoryScope, filter?: RecallSearchFilter): Promise<RecallRecord[]>;
   recordRecallAction(
@@ -1122,14 +1499,24 @@ export interface ClinicOperationsRepository {
     scope: RepositoryScope,
     input: GenerateDueContinuityInput
   ): Promise<GenerateDueContinuityResult>;
-  createSopTemplate(scope: RepositoryScope, input: CreateSopTemplateInput): Promise<SopTemplateDetail>;
-  createSopSchedule(scope: RepositoryScope, input: CreateSopScheduleInput): Promise<SopScheduleRecord | null>;
+  createSopTemplate(
+    scope: RepositoryScope,
+    input: CreateSopTemplateInput
+  ): Promise<SopTemplateDetail>;
+  createSopSchedule(
+    scope: RepositoryScope,
+    input: CreateSopScheduleInput
+  ): Promise<SopScheduleRecord | null>;
   generateDueSopRuns(
     scope: RepositoryScope,
     input: GenerateDueSopRunsInput
   ): Promise<GenerateDueSopRunsResult>;
   listSopRuns(scope: RepositoryScope, filter?: SopRunSearchFilter): Promise<SopRunDetail[]>;
-  updateSopRun(scope: RepositoryScope, sopRunId: UUID, input: UpdateSopRunInput): Promise<SopRunDetail | null>;
+  updateSopRun(
+    scope: RepositoryScope,
+    sopRunId: UUID,
+    input: UpdateSopRunInput
+  ): Promise<SopRunDetail | null>;
 
   listLabVendors(scope: RepositoryScope): Promise<LabVendorRecord[]>;
   findLabVendorById(scope: RepositoryScope, vendorId: UUID): Promise<LabVendorRecord | null>;
@@ -1154,14 +1541,17 @@ export interface ClinicOperationsRepository {
   ): Promise<InventoryCategoryRecord>;
   listInventoryItems(scope: RepositoryScope): Promise<InventoryItemRecord[]>;
   findInventoryItemById(scope: RepositoryScope, itemId: UUID): Promise<InventoryItemRecord | null>;
-  createInventoryItem(scope: RepositoryScope, input: CreateInventoryItemInput): Promise<InventoryItemRecord | null>;
+  createInventoryItem(
+    scope: RepositoryScope,
+    input: CreateInventoryItemInput
+  ): Promise<InventoryItemRecord | null>;
   createStockLedgerEntry(
     scope: RepositoryScope,
     input: CreateStockLedgerEntryInput
   ): Promise<StockLedgerEntryRecord | null>;
-  listInventoryCheckTemplates(scope: RepositoryScope): Promise<
-    Array<InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }>
-  >;
+  listInventoryCheckTemplates(
+    scope: RepositoryScope
+  ): Promise<Array<InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }>>;
   createInventoryCheckTemplate(
     scope: RepositoryScope,
     input: CreateInventoryCheckTemplateInput
@@ -1181,7 +1571,10 @@ export interface ClinicOperationsRepository {
   ): Promise<InventoryExceptionRecord[]>;
 
   listIncidents(scope: RepositoryScope, filter?: IncidentSearchFilter): Promise<IncidentRecord[]>;
-  createIncident(scope: RepositoryScope, input: CreateIncidentInput): Promise<IncidentRecord | null>;
+  createIncident(
+    scope: RepositoryScope,
+    input: CreateIncidentInput
+  ): Promise<IncidentRecord | null>;
   listCorrectiveActions(scope: RepositoryScope): Promise<CorrectiveActionRecord[]>;
   createCorrectiveAction(
     scope: RepositoryScope,
@@ -1230,7 +1623,11 @@ export interface ClinicOperationsRepository {
 
   listPatientConsents(scope: RepositoryScope, patientId: UUID): Promise<ConsentRecord[]>;
   createConsent(scope: RepositoryScope, input: CreateConsentInput): Promise<ConsentRecord>;
-  revokeConsent(scope: RepositoryScope, consentId: UUID, input: RevokeConsentInput): Promise<ConsentRecord | null>;
+  revokeConsent(
+    scope: RepositoryScope,
+    consentId: UUID,
+    input: RevokeConsentInput
+  ): Promise<ConsentRecord | null>;
   getConsentEnforcementState(
     scope: RepositoryScope,
     patientId: UUID
@@ -1253,7 +1650,10 @@ export interface ClinicOperationsRepository {
     scope: RepositoryScope,
     encounterId: UUID
   ): Promise<ClinicalNoteVersionRecord[]>;
-  signClinicalNote(scope: RepositoryScope, encounterId: UUID): Promise<SignClinicalNoteResult | null>;
+  signClinicalNote(
+    scope: RepositoryScope,
+    encounterId: UUID
+  ): Promise<SignClinicalNoteResult | null>;
   amendClinicalNote(
     scope: RepositoryScope,
     encounterId: UUID,
@@ -1269,7 +1669,10 @@ export interface ClinicOperationsRepository {
     scope: RepositoryScope,
     prescriptionId: UUID
   ): Promise<PrescriptionRecord | null>;
-  signPrescription(scope: RepositoryScope, prescriptionId: UUID): Promise<PrescriptionRecord | null>;
+  signPrescription(
+    scope: RepositoryScope,
+    prescriptionId: UUID
+  ): Promise<PrescriptionRecord | null>;
   createPatientInstruction(
     scope: RepositoryScope,
     patientId: UUID,
@@ -1290,7 +1693,11 @@ export interface ClinicOperationsRepository {
     sessionId: UUID,
     input: CreateAiSourceAnchorInput
   ): Promise<AiSourceAnchorRecord | null>;
-  createAiJob(scope: RepositoryScope, sessionId: UUID, input: CreateAiJobInput): Promise<AiJobRecord | null>;
+  createAiJob(
+    scope: RepositoryScope,
+    sessionId: UUID,
+    input: CreateAiJobInput
+  ): Promise<AiJobRecord | null>;
   createAiDraftOutput(
     scope: RepositoryScope,
     sessionId: UUID,
@@ -1376,7 +1783,10 @@ export interface ClinicOperationsRepository {
     scope: RepositoryScope,
     input: CreateInvoiceInput
   ): Promise<ProcedurePerformedRecord[]>;
-  createInvoice(scope: RepositoryScope, input: CreateInvoiceInput): Promise<CreateInvoiceResult | null>;
+  createInvoice(
+    scope: RepositoryScope,
+    input: CreateInvoiceInput
+  ): Promise<CreateInvoiceResult | null>;
   findInvoiceById(scope: RepositoryScope, invoiceId: UUID): Promise<InvoiceDetail | null>;
   createPaymentRequest(
     scope: RepositoryScope,

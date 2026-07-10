@@ -30,6 +30,10 @@ import {
 } from "./clinical-media/index.ts";
 import { bindContinuityRepository, type ContinuityRepositoryPort } from "./continuity/index.ts";
 import {
+  bindDurableIntegrityRepository,
+  type DurableIntegrityRepositoryPort
+} from "./durable-integrity/index.ts";
+import {
   bindDataIntegrationsRepository,
   type DataIntegrationsRepositoryPort
 } from "./data-integrations/index.ts";
@@ -61,6 +65,11 @@ export interface ClinicRepositoryModules {
   readonly dataIntegrations: DataIntegrationsRepositoryPort;
   readonly aiScribe: AiScribeRepositoryPort;
   readonly clinicalMedia: ClinicalMediaRepositoryPort;
+  /**
+   * Additive CP13 production durability seam. Optional at the structural type boundary so legacy
+   * fixture contexts remain compilable; production transaction composition always binds it.
+   */
+  readonly durableIntegrity?: DurableIntegrityRepositoryPort;
 }
 
 export interface ClinicModuleTransactionContext {
@@ -145,7 +154,8 @@ export async function runWithClinicModuleTransactionContext<TResult>(
         privacySecurity: bindPrivacySecurityRepository(input.repository, scope, lease),
         dataIntegrations: bindDataIntegrationsRepository(input.repository, scope, lease),
         aiScribe: bindAiScribeRepository(input.repository, scope, lease),
-        clinicalMedia: bindClinicalMediaRepository(input.repository, scope, lease)
+        clinicalMedia: bindClinicalMediaRepository(input.repository, scope, lease),
+        durableIntegrity: bindDurableIntegrityRepository(input.repository, scope, lease)
       }),
       evidence: bindTransactionEvidence(input.repository, input.auditSink, scope, lease),
       requestGuards: bindApiRequestGuardsPort(input.requestGuards, scope, lease)

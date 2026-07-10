@@ -171,6 +171,8 @@ import type {
   AppointmentSearchFilter,
   AmendClinicalNoteInput,
   AmendClinicalNoteResult,
+  AppendPaymentProviderIntegrationOutboxInput,
+  AppendPaymentProviderIntegrationOutboxResult,
   AiRetentionDeletionResult,
   ActiveBreakGlassAccessFilter,
   AuditEventSearchFilter,
@@ -219,6 +221,20 @@ import type {
   DeletionRequestSearchFilter,
   DashboardDataSet,
   CommitMigrationBatchInput,
+  AtomicAppointmentCheckInResult,
+  ClaimPaymentRequestIntentInput,
+  ClaimPaymentRequestIntentResult,
+  ClaimVerifiedPaymentProviderEventInput,
+  ClaimVerifiedPaymentProviderEventResult,
+  ClinicalMediaReceiptRecord,
+  CompletePaymentProviderEventInput,
+  CompletePaymentProviderEventResult,
+  CreatePaymentReconciliationInput,
+  DurableIntegrityRepository,
+  FinalizePaymentRequestIntentInput,
+  FinalizePaymentRequestIntentResult,
+  FindActivePaymentProviderAccountInput,
+  FindActivePaymentProviderAccountResult,
   GenerateDueContinuityInput,
   GenerateDueContinuityResult,
   GenerateDueSopRunsInput,
@@ -239,7 +255,13 @@ import type {
   PatientSearchFilter,
   PatientRecordExportInput,
   PatientRecordExportSearchFilter,
+  PaymentProviderEventRecord,
+  PaymentReconciliationRecord,
+  PaymentRequestIntentRecord,
+  ProviderEligibilityResult,
   RecordAiReviewDecisionInput,
+  RecordClinicalMediaReceiptInput,
+  RecordClinicalMediaReceiptResult,
   RecordPaymentTransactionInput,
   RecordRecallActionInput,
   RecallSearchFilter,
@@ -500,6 +522,36 @@ export interface PostgresClinicRepositoryOptions {
   readonly dueGenerationCursorSecret?: string;
 }
 
+export function buildPaymentRequestIntentDigest(
+  input: Pick<
+    ClaimPaymentRequestIntentInput,
+    | "externalAccountId"
+    | "providerKey"
+    | "requiredCapability"
+    | "invoiceId"
+    | "idempotencyKey"
+    | "canonicalRequest"
+  >
+): string {
+  const canonicalRequest = validatedCanonicalPaymentProviderRequest(input.canonicalRequest);
+  return sha256Text(
+    stableJson({
+      externalAccountId: input.externalAccountId,
+      providerKey: input.providerKey,
+      requiredCapability: requireNonEmpty(
+        input.requiredCapability,
+        "Payment request provider capability"
+      ),
+      invoiceId: input.invoiceId,
+      idempotencyKey: requireNonEmpty(
+        input.idempotencyKey,
+        "Payment request intent idempotency key"
+      ),
+      canonicalRequest
+    })
+  );
+}
+
 export class PostgresClinicUnitOfWork {
   readonly #client: SqlConnectionFactory;
   readonly #clock: Clock;
@@ -538,7 +590,9 @@ export class PostgresClinicUnitOfWork {
   }
 }
 
-export class PostgresClinicOperationsRepository implements ClinicOperationsRepository {
+export class PostgresClinicOperationsRepository
+  implements ClinicOperationsRepository, DurableIntegrityRepository
+{
   readonly #client: SqlConnectionFactory;
   readonly #clock: Clock;
   readonly #dueGenerationCursorSecret: string | undefined;
@@ -2758,8 +2812,23 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     appointment: AppointmentRecord
   ): Promise<QueueEntryRecord> {
     return this.#withRls(scope, async (client) => {
+      const existingResult = await client.query<QueueEntryRow>(
+        `
+          select *
+          from queue_entries
+          where tenant_id = $1 and clinic_id = $2 and appointment_id = $3
+          for update
+        `,
+        [scope.tenantId, scope.clinicId, appointment.id]
+      );
+      if (existingResult.rows[0]) return mapQueueEntryRow(existingResult.rows[0]);
+
       const calendar = await this.#clinicCalendar(client, scope);
       const checkedInAt = this.#clock.now().toISOString();
+      await client.query(
+        `select pg_advisory_xact_lock(hashtextextended($1 || ':' || $2 || ':' || $3, 0))`,
+        [scope.tenantId, scope.clinicId, calendar.date]
+      );
       const result = await client.query<QueueEntryRow>(
         `
           insert into queue_entries (
@@ -2792,9 +2861,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
             $6,
             $6
           )
-          on conflict (tenant_id, clinic_id, appointment_id) do update set
-            status = 'waiting',
-            updated_by_user_id = excluded.updated_by_user_id
+          on conflict (tenant_id, clinic_id, appointment_id) do nothing
           returning *
         `,
         [
@@ -2810,19 +2877,253 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         ]
       );
 
-      const queueEntry = mapQueueEntryRow(result.rows[0]);
+      const queueEntryRow =
+        result.rows[0] ??
+        (
+          await client.query<QueueEntryRow>(
+            `
+              select *
+              from queue_entries
+              where tenant_id = $1 and clinic_id = $2 and appointment_id = $3
+              for update
+            `,
+            [scope.tenantId, scope.clinicId, appointment.id]
+          )
+        ).rows[0];
+      if (!queueEntryRow) {
+        throw new Error("Queue entry conflict could not be reloaded without resetting state.");
+      }
+      const queueEntry = mapQueueEntryRow(queueEntryRow);
 
-      await this.#appendTimeline(client, scope, {
-        patientId: queueEntry.patientId,
-        itemType: "queue_entry_created",
-        sourceTable: "queue_entries",
-        sourceId: queueEntry.id,
-        title: "Queue entry created",
-        summary: null,
-        metadata: { appointmentId: queueEntry.appointmentId, status: queueEntry.status }
-      });
+      if (result.rows[0]) {
+        await this.#appendTimeline(client, scope, {
+          patientId: queueEntry.patientId,
+          itemType: "queue_entry_created",
+          sourceTable: "queue_entries",
+          sourceId: queueEntry.id,
+          title: "Queue entry created",
+          summary: null,
+          metadata: { appointmentId: queueEntry.appointmentId, status: queueEntry.status }
+        });
+      }
 
       return queueEntry;
+    });
+  }
+
+  async checkInAppointmentWithQueue(
+    scope: RepositoryScope,
+    appointmentId: UUID,
+    reason?: string | null
+  ): Promise<AtomicAppointmentCheckInResult> {
+    return this.#withRls(scope, async (client) => {
+      const appointmentResult = await client.query<AppointmentRow>(
+        `
+          select *
+          from appointments
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          for update
+        `,
+        [scope.tenantId, scope.clinicId, appointmentId]
+      );
+      const appointmentRow = appointmentResult.rows[0];
+      if (!appointmentRow) {
+        return {
+          outcome: "not_found",
+          appointment: null,
+          queueEntry: null,
+          appointmentStatusChanged: false,
+          queueEntryCreated: false
+        };
+      }
+
+      const existingAppointment = mapAppointmentRow(appointmentRow);
+      const queueResult = await client.query<QueueEntryRow>(
+        `
+          select *
+          from queue_entries
+          where tenant_id = $1 and clinic_id = $2 and appointment_id = $3
+          for update
+        `,
+        [scope.tenantId, scope.clinicId, appointmentId]
+      );
+      const existingQueueEntry = queueResult.rows[0] ? mapQueueEntryRow(queueResult.rows[0]) : null;
+
+      if (
+        !["requested", "booked", "confirmed", "checked_in"].includes(existingAppointment.status)
+      ) {
+        return {
+          outcome: "invalid_state",
+          appointment: existingAppointment,
+          queueEntry: existingQueueEntry,
+          appointmentStatusChanged: false,
+          queueEntryCreated: false
+        };
+      }
+
+      let appointment = existingAppointment;
+      let appointmentStatusChanged = false;
+      if (existingAppointment.status !== "checked_in") {
+        const updateResult = await client.query<AppointmentRow>(
+          `
+            update appointments
+            set status = 'checked_in', updated_by_user_id = $4
+            where tenant_id = $1 and clinic_id = $2 and id = $3 and status = $5
+            returning *
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            appointmentId,
+            scope.actorUserId,
+            existingAppointment.status
+          ]
+        );
+        const updatedRow = updateResult.rows[0];
+        if (!updatedRow) {
+          return {
+            outcome: "invalid_state",
+            appointment: existingAppointment,
+            queueEntry: existingQueueEntry,
+            appointmentStatusChanged: false,
+            queueEntryCreated: false
+          };
+        }
+        appointment = mapAppointmentRow(updatedRow);
+        appointmentStatusChanged = true;
+        await client.query(
+          `
+            insert into appointment_status_history (
+              tenant_id,
+              clinic_id,
+              appointment_id,
+              from_status,
+              to_status,
+              changed_by_user_id,
+              reason
+            )
+            values ($1, $2, $3, $4, 'checked_in', $5, $6)
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            appointmentId,
+            existingAppointment.status,
+            scope.actorUserId,
+            reason ?? null
+          ]
+        );
+        await this.#appendTimeline(client, scope, {
+          patientId: appointment.patientId,
+          itemType: "patient_checked_in",
+          sourceTable: "appointments",
+          sourceId: appointment.id,
+          title: "Patient checked in",
+          summary: reason ?? null,
+          metadata: { appointmentId: appointment.id, status: appointment.status }
+        });
+      }
+
+      if (existingQueueEntry) {
+        return {
+          outcome: "replayed",
+          appointment,
+          queueEntry: existingQueueEntry,
+          appointmentStatusChanged,
+          queueEntryCreated: false
+        };
+      }
+
+      const calendar = await this.#clinicCalendar(client, scope);
+      const checkedInAt = this.#clock.now().toISOString();
+      await client.query(
+        `select pg_advisory_xact_lock(hashtextextended($1 || ':' || $2 || ':' || $3, 0))`,
+        [scope.tenantId, scope.clinicId, calendar.date]
+      );
+      const insertResult = await client.query<QueueEntryRow>(
+        `
+          insert into queue_entries (
+            tenant_id,
+            clinic_id,
+            appointment_id,
+            patient_id,
+            provider_user_id,
+            position,
+            checked_in_at,
+            created_by_user_id,
+            updated_by_user_id
+          )
+          values (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            coalesce(
+              (select max(position) + 1
+               from queue_entries
+               where tenant_id = $1
+                 and clinic_id = $2
+                 and checked_in_at >= ($8::date::timestamp at time zone $9)
+                 and checked_in_at < (($8::date + 1)::timestamp at time zone $9)),
+              1
+            ),
+            $7::timestamptz,
+            $6,
+            $6
+          )
+          on conflict (tenant_id, clinic_id, appointment_id) do nothing
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          appointment.id,
+          appointment.patientId,
+          appointment.providerUserId,
+          scope.actorUserId,
+          checkedInAt,
+          calendar.date,
+          calendar.timezone
+        ]
+      );
+      const queueEntryRow =
+        insertResult.rows[0] ??
+        (
+          await client.query<QueueEntryRow>(
+            `
+              select *
+              from queue_entries
+              where tenant_id = $1 and clinic_id = $2 and appointment_id = $3
+              for update
+            `,
+            [scope.tenantId, scope.clinicId, appointment.id]
+          )
+        ).rows[0];
+      if (!queueEntryRow) {
+        throw new Error("Atomic appointment check-in could not load its durable queue entry.");
+      }
+      const queueEntry = mapQueueEntryRow(queueEntryRow);
+      const queueEntryCreated = Boolean(insertResult.rows[0]);
+      if (queueEntryCreated) {
+        await this.#appendTimeline(client, scope, {
+          patientId: queueEntry.patientId,
+          itemType: "queue_entry_created",
+          sourceTable: "queue_entries",
+          sourceId: queueEntry.id,
+          title: "Queue entry created",
+          summary: null,
+          metadata: { appointmentId: queueEntry.appointmentId, status: queueEntry.status }
+        });
+      }
+
+      return {
+        outcome: appointmentStatusChanged ? "checked_in" : "repaired",
+        appointment,
+        queueEntry,
+        appointmentStatusChanged,
+        queueEntryCreated
+      };
     });
   }
 
@@ -3277,9 +3578,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         skippedExistingKeys,
         processedCount,
         complete,
-        nextCursor: nextCursor
-          ? encodeDueGenerationCursor(nextCursor, cursorSecret)
-          : null
+        nextCursor: nextCursor ? encodeDueGenerationCursor(nextCursor, cursorSecret) : null
       });
       const continuation = (
         nextPhase: ContinuityDueGenerationPhase,
@@ -3817,16 +4116,19 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         complete,
         nextCursor: complete
           ? null
-          : encodeDueGenerationCursor({
-              version: 1,
-              kind: "sop",
-              asOf: asOfInstant,
-              snapshotAt,
-              tenantId: scope.tenantId,
-              clinicId: scope.clinicId,
-              recordId: nextScheduleId,
-              occurrenceDate: nextOccurrenceDate
-            }, cursorSecret)
+          : encodeDueGenerationCursor(
+              {
+                version: 1,
+                kind: "sop",
+                asOf: asOfInstant,
+                snapshotAt,
+                tenantId: scope.tenantId,
+                clinicId: scope.clinicId,
+                recordId: nextScheduleId,
+                occurrenceDate: nextOccurrenceDate
+              },
+              cursorSecret
+            )
       });
 
       while (processedCount < batchSize) {
@@ -4938,6 +5240,251 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     return buildConsentEnforcementState(patientId, consents);
   }
 
+  async findProviderEligibility(
+    scope: RepositoryScope,
+    providerUserId: UUID
+  ): Promise<ProviderEligibilityResult> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<{
+        user_active: boolean;
+        membership_active: boolean;
+        clinic_assignment_active: boolean;
+        doctor_role_active: boolean;
+      }>(
+        `
+          select
+            exists (
+              select 1 from users
+              where id = $3 and status = 'active'
+            ) as user_active,
+            exists (
+              select 1 from memberships
+              where tenant_id = $1 and user_id = $3 and status = 'active'
+            ) as membership_active,
+            exists (
+              select 1 from clinic_user_assignments
+              where tenant_id = $1 and clinic_id = $2 and user_id = $3 and status = 'active'
+            ) as clinic_assignment_active,
+            exists (
+              select 1
+              from user_role_assignments
+              join roles
+                on roles.tenant_id = user_role_assignments.tenant_id
+               and roles.id = user_role_assignments.role_id
+              where user_role_assignments.tenant_id = $1
+                and user_role_assignments.clinic_id = $2
+                and user_role_assignments.user_id = $3
+                and user_role_assignments.revoked_at is null
+                and roles.slug = 'doctor'
+            ) as doctor_role_active
+        `,
+        [scope.tenantId, scope.clinicId, providerUserId]
+      );
+      const row = result.rows[0] ?? {
+        user_active: false,
+        membership_active: false,
+        clinic_assignment_active: false,
+        doctor_role_active: false
+      };
+      return {
+        providerUserId,
+        userActive: row.user_active,
+        membershipActive: row.membership_active,
+        clinicAssignmentActive: row.clinic_assignment_active,
+        doctorRoleActive: row.doctor_role_active,
+        eligible:
+          row.user_active &&
+          row.membership_active &&
+          row.clinic_assignment_active &&
+          row.doctor_role_active
+      };
+    });
+  }
+
+  async findActivePaymentProviderAccount(
+    scope: RepositoryScope,
+    input: FindActivePaymentProviderAccountInput
+  ): Promise<FindActivePaymentProviderAccountResult> {
+    return this.#withRls(scope, async (client) => {
+      const requiredCapability = requireNonEmpty(
+        input.requiredCapability,
+        "Payment provider capability"
+      );
+      const result = await client.query<{
+        id: UUID;
+        provider_key: "razorpay" | "simulator";
+        account_status: "available" | "degraded" | "unavailable" | "not_configured";
+        system_status: "available" | "degraded" | "unavailable" | "not_configured";
+        capability_keys: string[];
+      }>(
+        `
+          select
+            external_accounts.id,
+            external_systems.provider_key,
+            external_accounts.status as account_status,
+            external_systems.status as system_status,
+            external_accounts.capability_keys
+          from external_accounts
+          join external_systems
+            on external_systems.tenant_id = external_accounts.tenant_id
+           and external_systems.id = external_accounts.external_system_id
+          where external_accounts.tenant_id = $1
+            and external_accounts.clinic_id = $2
+            and external_systems.provider_key = $3
+            and $4 = any(external_accounts.capability_keys)
+          order by external_accounts.id
+          limit 2
+        `,
+        [scope.tenantId, scope.clinicId, input.providerKey, requiredCapability]
+      );
+      if (result.rows.length === 0) return { outcome: "not_configured", account: null };
+      if (result.rows.length !== 1) return { outcome: "ambiguous", account: null };
+      const account = result.rows[0];
+      if (account.account_status === "degraded" || account.system_status === "degraded") {
+        return { outcome: "degraded", account: null };
+      }
+      if (
+        account.account_status === "not_configured" ||
+        account.system_status === "not_configured"
+      ) {
+        return { outcome: "not_configured", account: null };
+      }
+      if (account.account_status !== "available" || account.system_status !== "available") {
+        return { outcome: "unavailable", account: null };
+      }
+      return {
+        outcome: "resolved",
+        account: {
+          externalAccountId: account.id,
+          providerKey: account.provider_key,
+          status: "available",
+          capabilityKeys: [...account.capability_keys]
+        }
+      };
+    });
+  }
+
+  async appendPaymentProviderIntegrationOutboxEvent(
+    scope: RepositoryScope,
+    input: AppendPaymentProviderIntegrationOutboxInput
+  ): Promise<AppendPaymentProviderIntegrationOutboxResult> {
+    return this.#withRls(scope, async (client) => {
+      const requiredCapability = requireNonEmpty(
+        input.requiredCapability,
+        "Payment provider capability"
+      );
+      const idempotencyKey = requireNonEmpty(
+        input.idempotencyKey,
+        "Payment provider outbox idempotency key"
+      );
+      const correlationId = requireNonEmpty(
+        input.correlationId,
+        "Payment provider outbox correlation identifier"
+      );
+      const aggregateType = requireNonEmpty(
+        input.aggregateType,
+        "Payment provider outbox aggregate type"
+      );
+      assertProviderSafeJson(input.payload, "Payment provider outbox payload");
+      const accountResult = await client.query<{ id: UUID }>(
+        `
+          select external_accounts.id
+          from external_accounts
+          join external_systems
+            on external_systems.tenant_id = external_accounts.tenant_id
+           and external_systems.id = external_accounts.external_system_id
+          where external_accounts.tenant_id = $1
+            and external_accounts.clinic_id = $2
+            and external_accounts.id = $3
+            and external_accounts.status = 'available'
+            and external_systems.status = 'available'
+            and external_systems.provider_key = $4
+            and $5 = any(external_accounts.capability_keys)
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.externalAccountId,
+          input.providerKey,
+          requiredCapability
+        ]
+      );
+      const authoritativeAccountId = accountResult.rows[0]?.id;
+      if (!authoritativeAccountId) {
+        return { outcome: "account_unavailable", outboxEventId: null };
+      }
+      const values = [
+        scope.tenantId,
+        scope.clinicId,
+        input.eventType,
+        authoritativeAccountId,
+        aggregateType,
+        input.aggregateId,
+        input.patientId ?? null,
+        idempotencyKey,
+        correlationId,
+        JSON.stringify(input.payload),
+        input.occurredAt
+      ] as const;
+      const inserted = await client.query<{ id: UUID }>(
+        `
+          insert into outbox_events (
+            tenant_id,
+            clinic_id,
+            event_type,
+            schema_version,
+            actor_type,
+            actor_id,
+            aggregate_type,
+            aggregate_id,
+            patient_id,
+            idempotency_key,
+            correlation_id,
+            payload,
+            occurred_at
+          )
+          values ($1, $2, $3, '1.0', 'integration', $4::text, $5, $6, $7, $8, $9, $10::jsonb, $11::timestamptz)
+          on conflict (tenant_id, idempotency_key) where idempotency_key is not null do nothing
+          returning id
+        `,
+        values
+      );
+      if (inserted.rows[0]) {
+        return { outcome: "appended", outboxEventId: inserted.rows[0].id };
+      }
+      const replay = await client.query<{ id: UUID; replay_matches: boolean }>(
+        `
+          select
+            id,
+            (
+              clinic_id = $2
+              and event_type = $3
+              and actor_type = 'integration'
+              and actor_id = $4::text
+              and aggregate_type = $5
+              and aggregate_id = $6
+              and patient_id is not distinct from $7::uuid
+              and correlation_id = $9
+              and payload = $10::jsonb
+              and occurred_at = $11::timestamptz
+            ) as replay_matches
+          from outbox_events
+          where tenant_id = $1 and idempotency_key = $8
+          for update
+        `,
+        values
+      );
+      const existing = replay.rows[0];
+      if (!existing) {
+        throw new Error("Payment provider outbox conflict could not be reloaded.");
+      }
+      return {
+        outcome: existing.replay_matches ? "replayed" : "mismatch",
+        outboxEventId: existing.id
+      };
+    });
+  }
+
   async createEncounter(
     scope: RepositoryScope,
     input: CreateEncounterInput
@@ -5404,8 +5951,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       const now = this.#clock.now().toISOString();
       const status = input.channel === "print" ? "ready_for_print" : "send_requested";
       const printJobId = input.channel === "print" ? `print_${randomUUID()}` : null;
-      const outboxEventId =
-        input.channel === "whatsapp" ? (input.outboxEventId ?? (randomUUID() as UUID)) : null;
+      const outboxEventId = input.channel === "whatsapp" ? (input.outboxEventId ?? null) : null;
       const result = await client.query<PatientInstructionRow>(
         `
           insert into patient_instruction_requests (
@@ -6045,7 +6591,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           input.toothNumber ?? null,
           input.dentalFindingId ?? null,
           input.mediaType,
-          input.originalFilename,
+          validatedServerGeneratedMediaFilename(input.id, input.originalFilename, input.mimeType),
           input.mimeType,
           input.expectedFileSizeBytes,
           input.expectedSha256Digest ?? null,
@@ -6055,7 +6601,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           input.expiresAt,
           scope.actorUserId,
           JSON.stringify(input.tags ?? []),
-          JSON.stringify(input.provenance ?? {})
+          JSON.stringify(sanitizePrivateMetadata(input.provenance ?? {}))
         ]
       );
 
@@ -6070,6 +6616,170 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     return this.#withRls(scope, async (client) =>
       this.#findMediaUploadReservationByIdInTransaction(client, scope, uploadId)
     );
+  }
+
+  async recordClinicalMediaReceipt(
+    scope: RepositoryScope,
+    input: RecordClinicalMediaReceiptInput
+  ): Promise<RecordClinicalMediaReceiptResult> {
+    return this.#withRls(scope, async (client) => {
+      assertPositiveSafeInteger(input.contentLength, "Clinical media receipt content length");
+      const sha256Digest = requireSha256(input.sha256Digest, "Clinical media receipt digest");
+      const providerArtifactReference = requireNonEmpty(
+        input.providerArtifactReference,
+        "Clinical media provider artifact reference"
+      );
+      const mimeType = requireNonEmpty(
+        input.mimeType,
+        "Clinical media receipt MIME type"
+      ).toLowerCase();
+      const reservationResult = await client.query<MediaUploadReservationRow>(
+        `
+          select *
+          from media_uploads
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          for update
+        `,
+        [scope.tenantId, scope.clinicId, input.uploadId]
+      );
+      const reservationRow = reservationResult.rows[0];
+      if (!reservationRow) return { outcome: "not_found", receipt: null };
+      const reservation = mapMediaUploadReservationRow(reservationRow);
+      if (reservation.status !== "reserved") {
+        return { outcome: "not_receivable", receipt: null };
+      }
+
+      const providerArtifactFingerprint = sha256Text(providerArtifactReference);
+      const receiptFingerprint = sha256Text(
+        [
+          input.providerKey,
+          providerArtifactFingerprint,
+          String(input.contentLength),
+          mimeType,
+          sha256Digest,
+          input.storedAt
+        ].join("\u001f")
+      );
+      const mismatchReasons = [
+        input.providerKey !== reservation.storageProvider ? "provider_mismatch" : null,
+        providerArtifactReference !== reservation.objectKey ? "artifact_reference_mismatch" : null,
+        input.contentLength !== reservation.expectedFileSizeBytes
+          ? "content_length_mismatch"
+          : null,
+        mimeType !== reservation.mimeType.toLowerCase() ? "mime_type_mismatch" : null,
+        reservation.expectedSha256Digest && sha256Digest !== reservation.expectedSha256Digest
+          ? "content_digest_mismatch"
+          : null
+      ].filter((value): value is string => value !== null);
+      const mismatchReason = mismatchReasons.length > 0 ? mismatchReasons.join(",") : null;
+
+      const existingResult = await client.query<ClinicalMediaReceiptRow>(
+        `
+          select *
+          from clinical_media_receipts
+          where tenant_id = $1 and clinic_id = $2 and upload_id = $3
+          for update
+        `,
+        [scope.tenantId, scope.clinicId, input.uploadId]
+      );
+      const existingRow = existingResult.rows[0];
+      if (existingRow) {
+        const existing = mapClinicalMediaReceiptRow(existingRow);
+        if (existing.receiptFingerprint === receiptFingerprint && !mismatchReason) {
+          await client.query(
+            `
+              update clinical_media_receipts
+              set last_verified_at = $4::timestamptz
+              where tenant_id = $1 and clinic_id = $2 and upload_id = $3
+            `,
+            [scope.tenantId, scope.clinicId, input.uploadId, input.receivedAt]
+          );
+          return {
+            outcome: existing.state === "mismatch" ? "mismatch" : "replayed",
+            receipt: { ...existing, lastVerifiedAt: input.receivedAt },
+            ...(existing.state === "mismatch"
+              ? { reason: existing.mismatchReason ?? "receipt_evidence_mismatch" }
+              : {})
+          } as RecordClinicalMediaReceiptResult;
+        }
+
+        const reason = mismatchReason ?? "receipt_fingerprint_changed";
+        const mismatchResult = await client.query<ClinicalMediaReceiptRow>(
+          `
+            update clinical_media_receipts
+            set
+              state = 'mismatch',
+              mismatch_reason = $4,
+              mismatch_receipt_fingerprint = $5,
+              last_verified_at = $6::timestamptz
+            where tenant_id = $1 and clinic_id = $2 and upload_id = $3
+            returning *
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            input.uploadId,
+            reason,
+            receiptFingerprint,
+            input.receivedAt
+          ]
+        );
+        return {
+          outcome: "mismatch",
+          receipt: mapClinicalMediaReceiptRow(mismatchResult.rows[0]),
+          reason
+        };
+      }
+
+      const result = await client.query<ClinicalMediaReceiptRow>(
+        `
+          insert into clinical_media_receipts (
+            tenant_id,
+            clinic_id,
+            upload_id,
+            patient_id,
+            provider_key,
+            receipt_fingerprint,
+            provider_artifact_fingerprint,
+            content_length,
+            mime_type,
+            sha256_digest,
+            state,
+            mismatch_reason,
+            stored_at,
+            received_at,
+            last_verified_at,
+            recorded_by_user_id
+          )
+          values (
+            $1, $2, $3, $4, $5, $6, $7, $8, $9, $10,
+            $11, $12, $13::timestamptz, $14::timestamptz, $14::timestamptz, $15
+          )
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          reservation.id,
+          reservation.patientId,
+          input.providerKey,
+          receiptFingerprint,
+          providerArtifactFingerprint,
+          input.contentLength,
+          mimeType,
+          sha256Digest,
+          mismatchReason ? "mismatch" : "matched",
+          mismatchReason,
+          input.storedAt,
+          input.receivedAt,
+          scope.actorUserId
+        ]
+      );
+      const receipt = mapClinicalMediaReceiptRow(result.rows[0]);
+      return mismatchReason
+        ? { outcome: "mismatch", receipt, reason: mismatchReason }
+        : { outcome: "recorded", receipt };
+    });
   }
 
   async completeMediaUpload(
@@ -6152,6 +6862,19 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           where tenant_id = $1 and clinic_id = $2 and id = $3
         `,
         [scope.tenantId, scope.clinicId, uploadId, asset.id]
+      );
+      await client.query(
+        `
+          update clinical_media_receipts
+          set state = 'consumed', consumed_at = now(), last_verified_at = now()
+          where tenant_id = $1
+            and clinic_id = $2
+            and upload_id = $3
+            and state = 'matched'
+            and content_length = $4
+            and ($5::text is null or sha256_digest = $5)
+        `,
+        [scope.tenantId, scope.clinicId, uploadId, input.contentLength, input.sha256Digest ?? null]
       );
       await this.#appendTimeline(client, scope, {
         patientId: asset.patientId,
@@ -6993,6 +7716,624 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     return this.#withRls(scope, async (client) =>
       this.#findInvoiceDetailInTransaction(client, scope, invoiceId)
     );
+  }
+
+  async claimPaymentRequestIntent(
+    scope: RepositoryScope,
+    input: ClaimPaymentRequestIntentInput
+  ): Promise<ClaimPaymentRequestIntentResult> {
+    return this.#withRls(scope, async (client) => {
+      const idempotencyKey = requireNonEmpty(
+        input.idempotencyKey,
+        "Payment request intent idempotency key"
+      );
+      const requestDigest = requireSha256(input.requestDigest, "Payment request intent digest");
+      const canonicalRequest = validatedCanonicalPaymentProviderRequest(input.canonicalRequest);
+      const requiredCapability = requireNonEmpty(
+        input.requiredCapability,
+        "Payment request provider capability"
+      );
+      const leaseOwner = requireNonEmpty(input.leaseOwner, "Payment request intent lease owner");
+      if (requestDigest !== buildPaymentRequestIntentDigest(input)) {
+        throw new Error(
+          "Payment request intent digest does not match its canonical provider request."
+        );
+      }
+      if (
+        !(await this.#paymentAccountIsAvailable(
+          client,
+          scope,
+          input.externalAccountId,
+          input.providerKey,
+          requiredCapability
+        ))
+      ) {
+        return { outcome: "account_unavailable", intent: null };
+      }
+
+      const inserted = await client.query<PaymentRequestIntentRow>(
+        `
+          insert into payment_provider_request_intents (
+            tenant_id,
+            clinic_id,
+            external_account_id,
+            invoice_id,
+            patient_id,
+            idempotency_key,
+            request_digest,
+            request_type,
+            amount_minor,
+            currency,
+            provider_safe_request,
+            lease_owner,
+            lease_expires_at,
+            requested_at,
+            provider_key,
+            required_capability
+          )
+          select
+            $1,
+            $2,
+            $3,
+            invoices.id,
+            invoices.patient_id,
+            $5,
+            $6,
+            $7,
+            $8,
+            $9,
+            $10::jsonb,
+            $11,
+            $12::timestamptz,
+            $13::timestamptz,
+            $14,
+            $15
+          from invoices
+          where invoices.tenant_id = $1
+            and invoices.clinic_id = $2
+            and invoices.id = $4
+            and invoices.status = 'issued'
+            and invoices.balance_minor >= $8
+            and invoices.currency = $9
+          on conflict (tenant_id, clinic_id, external_account_id, idempotency_key) do nothing
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.externalAccountId,
+          input.invoiceId,
+          idempotencyKey,
+          requestDigest,
+          canonicalRequest.requestType,
+          canonicalRequest.amountMinor,
+          canonicalRequest.currency,
+          JSON.stringify({
+            description: canonicalRequest.description,
+            expiresAt: canonicalRequest.expiresAt,
+            customer: canonicalRequest.customer,
+            metadata: canonicalRequest.metadata
+          }),
+          leaseOwner,
+          input.leaseExpiresAt,
+          input.requestedAt,
+          input.providerKey,
+          requiredCapability
+        ]
+      );
+      if (inserted.rows[0]) {
+        return { outcome: "claimed", intent: mapPaymentRequestIntentRow(inserted.rows[0]) };
+      }
+
+      const existingResult = await client.query<PaymentRequestIntentRow>(
+        `
+          select *
+          from payment_provider_request_intents
+          where tenant_id = $1
+            and clinic_id = $2
+            and external_account_id = $3
+            and idempotency_key = $4
+          for update
+        `,
+        [scope.tenantId, scope.clinicId, input.externalAccountId, idempotencyKey]
+      );
+      const existingRow = existingResult.rows[0];
+      if (!existingRow) {
+        const invoice = await this.#findInvoiceRowInTransaction(client, scope, input.invoiceId);
+        return invoice
+          ? { outcome: "invoice_not_collectible", intent: null }
+          : { outcome: "invoice_not_found", intent: null };
+      }
+      const existingCanonicalRequest = mapCanonicalPaymentProviderRequest(existingRow);
+      const mismatchReason =
+        existingRow.provider_key !== input.providerKey
+          ? "provider_key_mismatch"
+          : existingRow.required_capability !== requiredCapability
+            ? "provider_capability_mismatch"
+            : existingRow.request_digest !== requestDigest
+              ? "request_digest_mismatch"
+              : stableJson(existingCanonicalRequest) !== stableJson(canonicalRequest)
+                ? "request_snapshot_mismatch"
+                : null;
+      if (mismatchReason) {
+        const mismatch = await client.query<PaymentRequestIntentRow>(
+          `
+            update payment_provider_request_intents
+            set
+              status = 'reconciliation_required',
+              mismatch_reason = $5,
+              lease_owner = null,
+              lease_expires_at = null,
+              processed_at = $6::timestamptz
+            where tenant_id = $1 and clinic_id = $2 and id = $3 and external_account_id = $4
+            returning *
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            existingRow.id,
+            input.externalAccountId,
+            mismatchReason,
+            input.requestedAt
+          ]
+        );
+        return {
+          outcome: "request_mismatch",
+          intent: mapPaymentRequestIntentRow(mismatch.rows[0])
+        };
+      }
+
+      const existing = mapPaymentRequestIntentRow(existingRow);
+      if (existing.status !== "claimed") return { outcome: "replayed", intent: existing };
+      if (
+        new Date(existing.leaseExpiresAt ?? 0).getTime() > new Date(input.requestedAt).getTime()
+      ) {
+        return { outcome: "in_progress", intent: existing };
+      }
+
+      const recovered = await client.query<PaymentRequestIntentRow>(
+        `
+          update payment_provider_request_intents
+          set
+            lease_owner = $5,
+            lease_expires_at = $6::timestamptz,
+            attempt_count = attempt_count + 1,
+            updated_at = $7::timestamptz
+          where tenant_id = $1 and clinic_id = $2 and id = $3 and external_account_id = $4
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          existing.id,
+          input.externalAccountId,
+          leaseOwner,
+          input.leaseExpiresAt,
+          input.requestedAt
+        ]
+      );
+      return { outcome: "recovered", intent: mapPaymentRequestIntentRow(recovered.rows[0]) };
+    });
+  }
+
+  async finalizePaymentRequestIntent(
+    scope: RepositoryScope,
+    input: FinalizePaymentRequestIntentInput
+  ): Promise<FinalizePaymentRequestIntentResult> {
+    return this.#withRls(scope, async (client) => {
+      const requestDigest = requireSha256(input.requestDigest, "Payment request intent digest");
+      const resultDigest = requireSha256(input.resultDigest, "Payment request result digest");
+      const leaseOwner = requireNonEmpty(input.leaseOwner, "Payment request intent lease owner");
+      assertProviderSafeJson(input.resultProjection, "Payment provider result projection");
+      const currentResult = await client.query<PaymentRequestIntentRow>(
+        `
+          select *
+          from payment_provider_request_intents
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          for update
+        `,
+        [scope.tenantId, scope.clinicId, input.intentId]
+      );
+      const currentRow = currentResult.rows[0];
+      if (!currentRow) return { outcome: "not_found", intent: null };
+      const current = mapPaymentRequestIntentRow(currentRow);
+      if (current.requestDigest !== requestDigest) {
+        const mismatch = await this.#markPaymentRequestIntentMismatch(
+          client,
+          scope,
+          current.id,
+          "request_digest_mismatch",
+          input.processedAt
+        );
+        return { outcome: "mismatch", intent: mismatch };
+      }
+      if (current.status !== "claimed") {
+        if (current.status === input.status && current.resultDigest === resultDigest) {
+          return { outcome: "replayed", intent: current };
+        }
+        const mismatch = await this.#markPaymentRequestIntentMismatch(
+          client,
+          scope,
+          current.id,
+          "final_result_mismatch",
+          input.processedAt
+        );
+        return { outcome: "mismatch", intent: mismatch };
+      }
+      if (
+        current.leaseOwner !== leaseOwner ||
+        new Date(current.leaseExpiresAt ?? 0).getTime() < new Date(input.processedAt).getTime()
+      ) {
+        return { outcome: "lost_lease", intent: current };
+      }
+
+      const providerArtifactFingerprint = input.providerArtifactReference
+        ? sha256Text(input.providerArtifactReference)
+        : null;
+      const result = await client.query<PaymentRequestIntentRow>(
+        `
+          update payment_provider_request_intents
+          set
+            status = $4,
+            lease_owner = null,
+            lease_expires_at = null,
+            payment_request_id = $5,
+            provider_artifact_fingerprint = $6,
+            result_digest = $7,
+            result_projection = $8::jsonb,
+            mismatch_reason = null,
+            processed_at = $9::timestamptz,
+            updated_at = $9::timestamptz
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.intentId,
+          input.status,
+          input.paymentRequestId ?? null,
+          providerArtifactFingerprint,
+          resultDigest,
+          JSON.stringify(sanitizePrivateMetadata(input.resultProjection)),
+          input.processedAt
+        ]
+      );
+      return { outcome: "finalized", intent: mapPaymentRequestIntentRow(result.rows[0]) };
+    });
+  }
+
+  async claimVerifiedPaymentProviderEvent(
+    scope: RepositoryScope,
+    input: ClaimVerifiedPaymentProviderEventInput
+  ): Promise<ClaimVerifiedPaymentProviderEventResult> {
+    return this.#withRls(scope, async (client) => {
+      if (
+        !(await this.#paymentAccountIsAvailable(
+          client,
+          scope,
+          input.externalAccountId,
+          "razorpay",
+          null
+        ))
+      ) {
+        return { outcome: "account_unavailable", event: null };
+      }
+      const providerEventId = requireNonEmpty(input.providerEventId, "Provider event identifier");
+      const idempotencyKey = requireNonEmpty(
+        input.idempotencyKey,
+        "Provider event idempotency key"
+      );
+      const rawBodySha256 = requireSha256(input.rawBodySha256, "Provider raw-body fingerprint");
+      const signatureSha256 = requireSha256(
+        input.signatureSha256,
+        "Provider signature fingerprint"
+      );
+      const normalizedEventSha256 = requireSha256(
+        input.normalizedEventSha256,
+        "Normalized provider event fingerprint"
+      );
+      const leaseOwner = requireNonEmpty(input.leaseOwner, "Provider event lease owner");
+      assertProviderSafeJson(input.normalizedEvent, "Normalized payment provider event");
+      const normalizedEvent = sanitizePrivateMetadata(input.normalizedEvent);
+      const inserted = await client.query<PaymentProviderEventRow>(
+        `
+          insert into raw_webhook_events (
+            tenant_id,
+            clinic_id,
+            provider_key,
+            external_account_id,
+            event_type,
+            event_kind,
+            provider_event_id,
+            idempotency_key,
+            verification_status,
+            processing_status,
+            raw_payload,
+            raw_payload_digest,
+            raw_body_sha256,
+            signature_sha256,
+            normalized_event_sha256,
+            normalized_event,
+            evidence_state,
+            lease_owner,
+            lease_expires_at,
+            attempt_count,
+            received_at
+          )
+          values (
+            $1, $2, 'razorpay', $3, $4, $5, $6, $7, 'verified', 'processing', null,
+            $8, $8, $9, $10, $11::jsonb, 'verified', $12, $13::timestamptz, 1,
+            $14::timestamptz
+          )
+          on conflict (tenant_id, provider_key, idempotency_key) do nothing
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.externalAccountId,
+          requireNonEmpty(input.eventName, "Provider event name"),
+          requireNonEmpty(input.eventKind, "Provider event kind"),
+          providerEventId,
+          idempotencyKey,
+          rawBodySha256,
+          signatureSha256,
+          normalizedEventSha256,
+          JSON.stringify(normalizedEvent),
+          leaseOwner,
+          input.leaseExpiresAt,
+          input.receivedAt
+        ]
+      );
+      if (inserted.rows[0]) {
+        return { outcome: "claimed", event: mapPaymentProviderEventRow(inserted.rows[0]) };
+      }
+
+      const existingResult = await client.query<PaymentProviderEventRow>(
+        `
+          select *
+          from raw_webhook_events
+          where tenant_id = $1
+            and clinic_id = $2
+            and provider_key = 'razorpay'
+            and external_account_id = $3
+            and (provider_event_id = $4 or idempotency_key = $5)
+          order by received_at
+          limit 1
+          for update
+        `,
+        [scope.tenantId, scope.clinicId, input.externalAccountId, providerEventId, idempotencyKey]
+      );
+      const existingRow = existingResult.rows[0];
+      if (!existingRow) {
+        return { outcome: "account_unavailable", event: null };
+      }
+      const mismatchFields = [
+        existingRow.provider_event_id !== providerEventId ? "provider_event_id" : null,
+        existingRow.idempotency_key !== idempotencyKey ? "idempotency_key" : null,
+        existingRow.raw_body_sha256 !== rawBodySha256 ? "raw_body_sha256" : null,
+        existingRow.signature_sha256 !== signatureSha256 ? "signature_sha256" : null,
+        existingRow.normalized_event_sha256 !== normalizedEventSha256 ? "normalized_event" : null
+      ].filter((value): value is string => value !== null);
+      if (mismatchFields.length > 0) {
+        const mismatch = await client.query<PaymentProviderEventRow>(
+          `
+            update raw_webhook_events
+            set
+              evidence_state = 'mismatch',
+              processing_status = 'reconciliation_required',
+              mismatch_reason = $4,
+              lease_owner = null,
+              lease_expires_at = null,
+              processed_at = $5::timestamptz
+            where tenant_id = $1 and clinic_id = $2 and id = $3
+            returning *
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            existingRow.id,
+            mismatchFields.join(","),
+            input.receivedAt
+          ]
+        );
+        return {
+          outcome: "evidence_mismatch",
+          event: mapPaymentProviderEventRow(mismatch.rows[0])
+        };
+      }
+
+      const existing = mapPaymentProviderEventRow(existingRow);
+      if (existing.processingStatus !== "processing") {
+        return { outcome: "duplicate", event: existing };
+      }
+      if (new Date(existing.leaseExpiresAt ?? 0).getTime() > new Date(input.receivedAt).getTime()) {
+        return { outcome: "in_progress", event: existing };
+      }
+      const recovered = await client.query<PaymentProviderEventRow>(
+        `
+          update raw_webhook_events
+          set
+            lease_owner = $4,
+            lease_expires_at = $5::timestamptz,
+            attempt_count = attempt_count + 1,
+            updated_at = $6::timestamptz
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          existing.id,
+          leaseOwner,
+          input.leaseExpiresAt,
+          input.receivedAt
+        ]
+      );
+      return { outcome: "recovered", event: mapPaymentProviderEventRow(recovered.rows[0]) };
+    });
+  }
+
+  async createPaymentReconciliation(
+    scope: RepositoryScope,
+    input: CreatePaymentReconciliationInput
+  ): Promise<PaymentReconciliationRecord> {
+    return this.#withRls(scope, async (client) => {
+      for (const [name, value] of [
+        ["capturedAmountMinor", input.capturedAmountMinor],
+        ["appliedAmountMinor", input.appliedAmountMinor],
+        ["unallocatedAmountMinor", input.unallocatedAmountMinor]
+      ] as const) {
+        assertNonNegativeSafeInteger(value, `Payment reconciliation ${name}`);
+      }
+      if (input.capturedAmountMinor !== input.appliedAmountMinor + input.unallocatedAmountMinor) {
+        throw new Error("Payment reconciliation amounts must balance exactly.");
+      }
+      assertProviderSafeJson(input.evidence, "Payment reconciliation evidence");
+      const result = await client.query<PaymentReconciliationRow>(
+        `
+          insert into payment_reconciliation_items (
+            tenant_id,
+            clinic_id,
+            raw_webhook_event_id,
+            invoice_id,
+            patient_id,
+            reason,
+            captured_amount_minor,
+            applied_amount_minor,
+            unallocated_amount_minor,
+            currency,
+            evidence,
+            created_at,
+            updated_at
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12::timestamptz, $12::timestamptz)
+          on conflict (tenant_id, clinic_id, raw_webhook_event_id) do nothing
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          input.providerEventRecordId,
+          input.invoiceId,
+          input.patientId,
+          input.reason,
+          input.capturedAmountMinor,
+          input.appliedAmountMinor,
+          input.unallocatedAmountMinor,
+          input.currency,
+          JSON.stringify(sanitizePrivateMetadata(input.evidence)),
+          input.createdAt
+        ]
+      );
+      const row =
+        result.rows[0] ??
+        (
+          await client.query<PaymentReconciliationRow>(
+            `
+              select *
+              from payment_reconciliation_items
+              where tenant_id = $1 and clinic_id = $2 and raw_webhook_event_id = $3
+              for update
+            `,
+            [scope.tenantId, scope.clinicId, input.providerEventRecordId]
+          )
+        ).rows[0];
+      if (!row) throw new Error("Payment reconciliation conflict could not be reloaded.");
+      const existing = mapPaymentReconciliationRow(row);
+      if (
+        existing.reason !== input.reason ||
+        existing.invoiceId !== input.invoiceId ||
+        existing.patientId !== input.patientId ||
+        existing.capturedAmountMinor !== input.capturedAmountMinor ||
+        existing.appliedAmountMinor !== input.appliedAmountMinor ||
+        existing.unallocatedAmountMinor !== input.unallocatedAmountMinor ||
+        existing.currency !== input.currency
+      ) {
+        throw new Error("Payment reconciliation replay does not match stored evidence.");
+      }
+      return existing;
+    });
+  }
+
+  async completePaymentProviderEvent(
+    scope: RepositoryScope,
+    input: CompletePaymentProviderEventInput
+  ): Promise<CompletePaymentProviderEventResult> {
+    return this.#withRls(scope, async (client) => {
+      const resultDigest = requireSha256(input.resultDigest, "Provider event result digest");
+      const leaseOwner = requireNonEmpty(input.leaseOwner, "Provider event lease owner");
+      assertProviderSafeJson(input.resultProjection, "Payment provider event result projection");
+      const currentResult = await client.query<PaymentProviderEventRow>(
+        `
+          select *
+          from raw_webhook_events
+          where tenant_id = $1 and clinic_id = $2 and id = $3 and provider_key = 'razorpay'
+          for update
+        `,
+        [scope.tenantId, scope.clinicId, input.providerEventRecordId]
+      );
+      const currentRow = currentResult.rows[0];
+      if (!currentRow) return { outcome: "not_found", event: null };
+      const current = mapPaymentProviderEventRow(currentRow);
+      if (current.processingStatus !== "processing") {
+        if (
+          current.processingStatus === input.processingStatus &&
+          current.resultDigest === resultDigest
+        ) {
+          return { outcome: "replayed", event: current };
+        }
+        const mismatch = await this.#markPaymentProviderEventMismatch(
+          client,
+          scope,
+          current.id,
+          "final_result_mismatch",
+          input.processedAt
+        );
+        return { outcome: "mismatch", event: mismatch };
+      }
+      if (
+        current.leaseOwner !== leaseOwner ||
+        new Date(current.leaseExpiresAt ?? 0).getTime() < new Date(input.processedAt).getTime()
+      ) {
+        return { outcome: "lost_lease", event: current };
+      }
+      const evidenceState =
+        input.processingStatus === "reconciliation_required"
+          ? "reconciliation_required"
+          : input.processingStatus === "applied" || input.processingStatus === "ignored"
+            ? "applied"
+            : "verified";
+      const result = await client.query<PaymentProviderEventRow>(
+        `
+          update raw_webhook_events
+          set
+            processing_status = $4,
+            evidence_state = $5,
+            result_digest = $6,
+            result_projection = $7::jsonb,
+            lease_owner = null,
+            lease_expires_at = null,
+            mismatch_reason = null,
+            processed_at = $8::timestamptz,
+            updated_at = $8::timestamptz
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          current.id,
+          input.processingStatus,
+          evidenceState,
+          resultDigest,
+          JSON.stringify(sanitizePrivateMetadata(input.resultProjection)),
+          input.processedAt
+        ]
+      );
+      return { outcome: "completed", event: mapPaymentProviderEventRow(result.rows[0]) };
+    });
   }
 
   async createPaymentRequest(
@@ -8901,6 +10242,84 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       [scope.tenantId, scope.clinicId, patientId]
     );
     return Number(result.rows[0]?.dependency_count ?? 0) > 0;
+  }
+
+  async #paymentAccountIsAvailable(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    externalAccountId: UUID,
+    providerKey: ClaimPaymentRequestIntentInput["providerKey"],
+    requiredCapability: string | null
+  ): Promise<boolean> {
+    const result = await client.query<{ id: UUID }>(
+      `
+        select external_accounts.id
+        from external_accounts
+        join external_systems
+          on external_systems.tenant_id = external_accounts.tenant_id
+         and external_systems.id = external_accounts.external_system_id
+        where external_accounts.tenant_id = $1
+          and external_accounts.clinic_id = $2
+          and external_accounts.id = $3
+          and external_accounts.status = 'available'
+          and external_systems.status = 'available'
+          and external_systems.provider_key = $4
+          and ($5::text is null or $5 = any(external_accounts.capability_keys))
+      `,
+      [scope.tenantId, scope.clinicId, externalAccountId, providerKey, requiredCapability]
+    );
+    return Boolean(result.rows[0]);
+  }
+
+  async #markPaymentRequestIntentMismatch(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    intentId: UUID,
+    reason: string,
+    processedAt: string
+  ): Promise<PaymentRequestIntentRecord> {
+    const result = await client.query<PaymentRequestIntentRow>(
+      `
+        update payment_provider_request_intents
+        set
+          status = 'reconciliation_required',
+          mismatch_reason = $4,
+          lease_owner = null,
+          lease_expires_at = null,
+          processed_at = $5::timestamptz,
+          updated_at = $5::timestamptz
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+        returning *
+      `,
+      [scope.tenantId, scope.clinicId, intentId, reason, processedAt]
+    );
+    return mapPaymentRequestIntentRow(result.rows[0]);
+  }
+
+  async #markPaymentProviderEventMismatch(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    eventId: UUID,
+    reason: string,
+    processedAt: string
+  ): Promise<PaymentProviderEventRecord> {
+    const result = await client.query<PaymentProviderEventRow>(
+      `
+        update raw_webhook_events
+        set
+          evidence_state = 'mismatch',
+          processing_status = 'reconciliation_required',
+          mismatch_reason = $4,
+          lease_owner = null,
+          lease_expires_at = null,
+          processed_at = $5::timestamptz,
+          updated_at = $5::timestamptz
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+        returning *
+      `,
+      [scope.tenantId, scope.clinicId, eventId, reason, processedAt]
+    );
+    return mapPaymentProviderEventRow(result.rows[0]);
   }
 
   async #withRls<T>(
@@ -11346,6 +12765,26 @@ interface MediaUploadReservationRow {
   provenance: Record<string, unknown>;
 }
 
+interface ClinicalMediaReceiptRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  upload_id: UUID;
+  patient_id: UUID;
+  provider_key: MediaStorageProviderKey;
+  receipt_fingerprint: string;
+  provider_artifact_fingerprint: string;
+  content_length: number | string;
+  mime_type: string;
+  sha256_digest: string;
+  state: ClinicalMediaReceiptRecord["state"];
+  mismatch_reason: string | null;
+  stored_at: Date | string;
+  received_at: Date | string;
+  last_verified_at: Date | string;
+  consumed_at: Date | string | null;
+}
+
 interface MediaAssetRow {
   id: UUID;
   tenant_id: UUID;
@@ -11630,6 +13069,81 @@ interface PaymentRequestRow {
   created_by_user_id: UUID;
   created_at: Date | string;
   updated_at: Date | string;
+}
+
+interface PaymentRequestIntentRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  external_account_id: UUID;
+  provider_key: PaymentRequestIntentRecord["providerKey"];
+  required_capability: string;
+  invoice_id: UUID;
+  patient_id: UUID;
+  idempotency_key: string;
+  request_digest: string;
+  request_type: "payment_link" | "invoice_qr";
+  amount_minor: number | string;
+  currency: string;
+  provider_safe_request: {
+    description: string | null;
+    expiresAt: string | null;
+    customer: Record<string, unknown> | null;
+    metadata: Record<string, unknown>;
+  };
+  status: PaymentRequestIntentRecord["status"];
+  lease_owner: string | null;
+  lease_expires_at: Date | string | null;
+  attempt_count: number | string;
+  payment_request_id: UUID | null;
+  provider_artifact_fingerprint: string | null;
+  result_digest: string | null;
+  result_projection: Record<string, unknown> | null;
+  mismatch_reason: string | null;
+  requested_at: Date | string;
+  processed_at: Date | string | null;
+}
+
+interface PaymentProviderEventRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  external_account_id: UUID;
+  provider_event_id: string;
+  idempotency_key: string;
+  event_type: string;
+  event_kind: string;
+  raw_body_sha256: string;
+  signature_sha256: string;
+  normalized_event_sha256: string;
+  normalized_event: Record<string, unknown>;
+  evidence_state: PaymentProviderEventRecord["evidenceState"];
+  processing_status: PaymentProviderEventRecord["processingStatus"];
+  mismatch_reason: string | null;
+  lease_owner: string | null;
+  lease_expires_at: Date | string | null;
+  attempt_count: number | string;
+  result_digest: string | null;
+  result_projection: Record<string, unknown> | null;
+  received_at: Date | string;
+  processed_at: Date | string | null;
+}
+
+interface PaymentReconciliationRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  raw_webhook_event_id: UUID;
+  invoice_id: UUID | null;
+  patient_id: UUID | null;
+  reason: PaymentReconciliationRecord["reason"];
+  captured_amount_minor: number | string;
+  applied_amount_minor: number | string;
+  unallocated_amount_minor: number | string;
+  currency: string | null;
+  status: PaymentReconciliationRecord["status"];
+  evidence: Record<string, unknown>;
+  created_at: Date | string;
 }
 
 interface PaymentTransactionRow {
@@ -12297,6 +13811,178 @@ function sha256Text(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
+function requireSha256(value: string, label: string): string {
+  const normalized = value.trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/u.test(normalized)) {
+    throw new Error(`${label} must be an exact lowercase SHA-256 digest.`);
+  }
+  return normalized;
+}
+
+function requireNonEmpty(value: string, label: string): string {
+  const normalized = value.trim();
+  if (normalized.length === 0) throw new Error(`${label} must be non-empty.`);
+  return normalized;
+}
+
+function assertPositiveSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value <= 0) {
+    throw new Error(`${label} must be a positive safe integer.`);
+  }
+}
+
+function assertNonNegativeSafeInteger(value: number, label: string): void {
+  if (!Number.isSafeInteger(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative safe integer.`);
+  }
+}
+
+function validatedServerGeneratedMediaFilename(
+  uploadId: UUID,
+  filename: string,
+  mimeType: string
+): string {
+  const normalized = filename.trim().toLowerCase();
+  const match = /^clinical-media-([0-9a-f-]{36})\.([a-z0-9]{1,12})$/u.exec(normalized);
+  const extensions =
+    (
+      {
+        "image/jpeg": ["jpg", "jpeg"],
+        "image/png": ["png"],
+        "image/webp": ["webp"],
+        "image/heic": ["heic"],
+        "image/heif": ["heif"],
+        "image/tiff": ["tif", "tiff"],
+        "application/dicom": ["dcm", "dicom"],
+        "application/pdf": ["pdf"],
+        "audio/wav": ["wav"],
+        "audio/webm": ["webm"],
+        "audio/mp4": ["m4a", "mp4"],
+        "audio/mpeg": ["mp3", "mpeg"]
+      } as Readonly<Record<string, readonly string[]>>
+    )[mimeType.split(";", 1)[0]?.trim().toLowerCase() ?? ""] ?? [];
+  if (match?.[1] !== uploadId.toLowerCase() || !match[2] || !extensions.includes(match[2])) {
+    throw new Error(
+      "Clinical media persistence requires the server-generated upload filename and a MIME-matched extension."
+    );
+  }
+  return normalized;
+}
+
+function validatedCanonicalPaymentProviderRequest(
+  input: ClaimPaymentRequestIntentInput["canonicalRequest"]
+): ClaimPaymentRequestIntentInput["canonicalRequest"] {
+  assertPositiveSafeInteger(input.amountMinor, "Payment provider request amount");
+  if (input.requestType !== "payment_link" && input.requestType !== "invoice_qr") {
+    throw new Error("Payment provider request type is unsupported.");
+  }
+  if (!/^[A-Z]{3}$/u.test(input.currency)) {
+    throw new Error("Payment provider request currency must be an uppercase ISO 4217 code.");
+  }
+  if (
+    input.description !== null &&
+    (input.description.trim().length === 0 || input.description.length > 500)
+  ) {
+    throw new Error("Payment provider request description must contain 1 to 500 characters.");
+  }
+  if (input.expiresAt !== null) {
+    const expiresAt = new Date(input.expiresAt);
+    if (
+      input.expiresAt.length > 64 ||
+      Number.isNaN(expiresAt.getTime()) ||
+      expiresAt.toISOString() !== input.expiresAt
+    ) {
+      throw new Error("Payment provider request expiry must be a canonical instant.");
+    }
+  }
+  const providerSafeRequest = {
+    description: input.description,
+    expiresAt: input.expiresAt,
+    customer: input.customer,
+    metadata: input.metadata
+  };
+  assertProviderSafeJson(providerSafeRequest, "Canonical payment provider request");
+  return {
+    requestType: input.requestType,
+    amountMinor: input.amountMinor,
+    currency: input.currency,
+    ...(JSON.parse(JSON.stringify(providerSafeRequest)) as typeof providerSafeRequest)
+  };
+}
+
+const PRIVATE_METADATA_KEY_PATTERN =
+  /^(?:original_?file_?name|file_?path|object_?key|bucket(?:_?name)?|provider_?secret|secret|api_?key|key_?secret|password|authorization|signature_?header|credential(?:_?ref)?|access_?token|refresh_?token|signed_?url)$/iu;
+
+function assertProviderSafeJson(input: Readonly<Record<string, unknown>>, label: string): void {
+  const visit = (value: unknown, depth: number, ancestors: Set<object>): void => {
+    if (value === null || typeof value === "string" || typeof value === "boolean") return;
+    if (typeof value === "number") {
+      if (!Number.isFinite(value)) throw new Error(`${label} contains a non-finite number.`);
+      return;
+    }
+    if (!value || typeof value !== "object") {
+      throw new Error(`${label} must contain only JSON values.`);
+    }
+    if (depth > 12) throw new Error(`${label} exceeds the maximum nesting depth.`);
+    if (ancestors.has(value)) throw new Error(`${label} contains a circular value.`);
+    ancestors.add(value);
+    if (Array.isArray(value)) {
+      if (value.length > 512) throw new Error(`${label} contains an oversized array.`);
+      for (const item of value) visit(item, depth + 1, ancestors);
+    } else {
+      const prototype = Object.getPrototypeOf(value);
+      if (prototype !== Object.prototype && prototype !== null) {
+        throw new Error(`${label} must contain only plain JSON objects.`);
+      }
+      const entries = Object.entries(value as Record<string, unknown>);
+      if (entries.length > 512) throw new Error(`${label} contains too many object fields.`);
+      for (const [key, nestedValue] of entries) {
+        if (key.length === 0 || key.length > 128 || PRIVATE_METADATA_KEY_PATTERN.test(key)) {
+          throw new Error(`${label} contains a private or invalid field name.`);
+        }
+        visit(nestedValue, depth + 1, ancestors);
+      }
+    }
+    ancestors.delete(value);
+  };
+  visit(input, 0, new Set());
+  const serialized = JSON.stringify(input);
+  if (Buffer.byteLength(serialized, "utf8") > 32_768) {
+    throw new Error(`${label} exceeds the 32 KiB persistence limit.`);
+  }
+}
+
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nestedValue]) => `${JSON.stringify(key)}:${stableJson(nestedValue)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function sanitizePrivateMetadata(
+  input: Readonly<Record<string, unknown>>
+): Record<string, unknown> {
+  return sanitizePrivateValue(input) as Record<string, unknown>;
+}
+
+function sanitizePrivateValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(sanitizePrivateValue);
+  if (!value || typeof value !== "object") return value;
+
+  const sanitized: Record<string, unknown> = {};
+  for (const [key, nestedValue] of Object.entries(value as Record<string, unknown>)) {
+    if (PRIVATE_METADATA_KEY_PATTERN.test(key)) {
+      continue;
+    }
+    sanitized[key] = sanitizePrivateValue(nestedValue);
+  }
+  return sanitized;
+}
+
 function mapImportedRecordLinkRow(row: ImportedRecordLinkRow): ImportedRecordLinkRecord {
   return {
     id: row.id,
@@ -12934,6 +14620,28 @@ function mapMediaUploadReservationRow(
   };
 }
 
+function mapClinicalMediaReceiptRow(row: ClinicalMediaReceiptRow): ClinicalMediaReceiptRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    uploadId: row.upload_id,
+    patientId: row.patient_id,
+    providerKey: row.provider_key,
+    receiptFingerprint: row.receipt_fingerprint,
+    providerArtifactFingerprint: row.provider_artifact_fingerprint,
+    contentLength: Number(row.content_length),
+    mimeType: row.mime_type,
+    sha256Digest: row.sha256_digest,
+    state: row.state,
+    mismatchReason: row.mismatch_reason,
+    storedAt: toIso(row.stored_at),
+    receivedAt: toIso(row.received_at),
+    lastVerifiedAt: toIso(row.last_verified_at),
+    consumedAt: row.consumed_at ? toIso(row.consumed_at) : null
+  };
+}
+
 function mapMediaAssetRow(row: MediaAssetRow): MediaAssetRecord {
   return {
     id: row.id,
@@ -13234,6 +14942,93 @@ function mapPaymentRequestRow(row: PaymentRequestRow): PaymentRequestRecord {
     createdByUserId: row.created_by_user_id,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapPaymentRequestIntentRow(row: PaymentRequestIntentRow): PaymentRequestIntentRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    externalAccountId: row.external_account_id,
+    providerKey: row.provider_key,
+    requiredCapability: row.required_capability,
+    invoiceId: row.invoice_id,
+    patientId: row.patient_id,
+    idempotencyKey: row.idempotency_key,
+    requestDigest: row.request_digest,
+    canonicalRequest: mapCanonicalPaymentProviderRequest(row),
+    status: row.status,
+    leaseOwner: row.lease_owner,
+    leaseExpiresAt: row.lease_expires_at ? toIso(row.lease_expires_at) : null,
+    attemptCount: Number(row.attempt_count),
+    paymentRequestId: row.payment_request_id,
+    providerArtifactFingerprint: row.provider_artifact_fingerprint,
+    resultDigest: row.result_digest,
+    resultProjection: row.result_projection ?? null,
+    mismatchReason: row.mismatch_reason,
+    requestedAt: toIso(row.requested_at),
+    processedAt: row.processed_at ? toIso(row.processed_at) : null
+  };
+}
+
+function mapCanonicalPaymentProviderRequest(
+  row: PaymentRequestIntentRow
+): PaymentRequestIntentRecord["canonicalRequest"] {
+  return {
+    requestType: row.request_type,
+    amountMinor: Number(row.amount_minor),
+    currency: row.currency,
+    description: row.provider_safe_request.description,
+    expiresAt: row.provider_safe_request.expiresAt,
+    customer: row.provider_safe_request.customer,
+    metadata: row.provider_safe_request.metadata
+  };
+}
+
+function mapPaymentProviderEventRow(row: PaymentProviderEventRow): PaymentProviderEventRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    externalAccountId: row.external_account_id,
+    providerEventId: row.provider_event_id,
+    idempotencyKey: row.idempotency_key,
+    eventName: row.event_type,
+    eventKind: row.event_kind,
+    rawBodySha256: row.raw_body_sha256,
+    signatureSha256: row.signature_sha256,
+    normalizedEventSha256: row.normalized_event_sha256,
+    normalizedEvent: row.normalized_event ?? {},
+    evidenceState: row.evidence_state,
+    processingStatus: row.processing_status,
+    mismatchReason: row.mismatch_reason,
+    leaseOwner: row.lease_owner,
+    leaseExpiresAt: row.lease_expires_at ? toIso(row.lease_expires_at) : null,
+    attemptCount: Number(row.attempt_count),
+    resultDigest: row.result_digest,
+    resultProjection: row.result_projection ?? null,
+    receivedAt: toIso(row.received_at),
+    processedAt: row.processed_at ? toIso(row.processed_at) : null
+  };
+}
+
+function mapPaymentReconciliationRow(row: PaymentReconciliationRow): PaymentReconciliationRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    providerEventRecordId: row.raw_webhook_event_id,
+    invoiceId: row.invoice_id,
+    patientId: row.patient_id,
+    reason: row.reason,
+    capturedAmountMinor: Number(row.captured_amount_minor),
+    appliedAmountMinor: Number(row.applied_amount_minor),
+    unallocatedAmountMinor: Number(row.unallocated_amount_minor),
+    currency: row.currency,
+    status: row.status,
+    evidence: row.evidence ?? {},
+    createdAt: toIso(row.created_at)
   };
 }
 
@@ -13805,7 +15600,10 @@ function dueGenerationCursorSecret(value: string | undefined): string {
 }
 
 function assertDueGenerationNotFuture(value: string, serverNow: string): void {
-  if (new Date(value).getTime() > new Date(serverNow).getTime() + MAX_DUE_GENERATION_FUTURE_SKEW_MS) {
+  if (
+    new Date(value).getTime() >
+    new Date(serverNow).getTime() + MAX_DUE_GENERATION_FUTURE_SKEW_MS
+  ) {
     throw new DueGenerationInputError("Due-generation asOf cannot be in the future.");
   }
 }

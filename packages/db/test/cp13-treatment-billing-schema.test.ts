@@ -4,9 +4,10 @@ import test from "node:test";
 import { resolve } from "node:path";
 import { BILLING_OPERATIONS } from "../src/modules/billing/index.ts";
 import { DENTAL_TREATMENT_OPERATIONS } from "../src/modules/dental-treatment/index.ts";
+import { DURABLE_INTEGRITY_OPERATIONS } from "../src/modules/durable-integrity/index.ts";
 
-const proposal = readFileSync(
-  resolve(import.meta.dirname, "../schema-proposals/cp13/treatment-billing.sql"),
+const migration = readFileSync(
+  resolve(import.meta.dirname, "../migrations/0017_cp13_durable_integrity.sql"),
   "utf8"
 );
 
@@ -32,20 +33,36 @@ test("CP13 treatment billing uses the frozen transaction-bound repository operat
   }
 });
 
-test("CP13 provider proposal is tenant-scoped, replay-safe, leased, and reconciliation-explicit", () => {
-  assert.match(proposal, /create table if not exists payment_provider_events/u);
-  assert.match(proposal, /unique \(tenant_id, provider_account_key, provider_event_id\)/u);
-  assert.match(proposal, /lease_expires_at timestamptz not null/u);
+test("CP13 canonical provider seam is account-scoped, replay-safe, and reconciliation-explicit", () => {
+  assert.match(migration, /create table payment_provider_request_intents/u);
+  assert.match(migration, /external_account_id uuid not null/u);
+  assert.match(migration, /request_digest char\(64\) not null/u);
+  assert.match(migration, /request_type text not null/u);
+  assert.match(migration, /amount_minor bigint not null/u);
+  assert.match(migration, /provider_safe_request jsonb not null/u);
+  assert.match(migration, /lease_expires_at timestamptz/u);
   assert.match(
-    proposal,
-    /verification_status text not null check \(verification_status = 'verified'\)/u
+    migration,
+    /raw_body_sha256 char\(64\)[\s\S]*signature_sha256 char\(64\)[\s\S]*normalized_event_sha256 char\(64\)/u
   );
-  assert.match(proposal, /create table if not exists payment_reconciliation_items/u);
+  assert.match(migration, /create table payment_reconciliation_items/u);
   assert.match(
-    proposal,
+    migration,
     /captured_amount_minor = applied_amount_minor \+ unallocated_amount_minor/u
   );
-  assert.match(proposal, /alter table payment_provider_events force row level security/u);
-  assert.match(proposal, /alter table payment_reconciliation_items force row level security/u);
-  assert.doesNotMatch(proposal, /provider_secret|api_key|signature_header/iu);
+  assert.match(migration, /alter table raw_webhook_events force row level security/u);
+  assert.match(migration, /alter table payment_provider_request_intents force row level security/u);
+  assert.match(migration, /alter table payment_reconciliation_items force row level security/u);
+  for (const operation of [
+    "findActivePaymentProviderAccount",
+    "appendPaymentProviderIntegrationOutboxEvent",
+    "claimPaymentRequestIntent",
+    "finalizePaymentRequestIntent",
+    "claimVerifiedPaymentProviderEvent",
+    "createPaymentReconciliation",
+    "completePaymentProviderEvent"
+  ]) {
+    assert.ok(DURABLE_INTEGRITY_OPERATIONS.includes(operation as never), operation);
+  }
+  assert.doesNotMatch(migration, /provider_account_key|provider_secret|api_key|signature_header/iu);
 });
