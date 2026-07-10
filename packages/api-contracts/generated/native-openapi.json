@@ -19123,7 +19123,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": false,
-                  "maxProperties": 4,
+                  "maxProperties": 5,
                   "properties": {
                     "clinics": {
                       "items": {
@@ -19131,6 +19131,37 @@
                       },
                       "maxItems": 100,
                       "type": "array"
+                    },
+                    "keycloak": {
+                      "additionalProperties": false,
+                      "maxProperties": 3,
+                      "properties": {
+                        "issuer": {
+                          "maxLength": 4096,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "roles": {
+                          "items": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "maxItems": 100,
+                          "type": "array"
+                        },
+                        "subject": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "subject",
+                        "issuer",
+                        "roles"
+                      ],
+                      "type": "object"
                     },
                     "permissions": {
                       "items": {
@@ -19152,7 +19183,8 @@
                     "user",
                     "tenant",
                     "clinics",
-                    "permissions"
+                    "permissions",
+                    "keycloak"
                   ],
                   "type": "object"
                 }

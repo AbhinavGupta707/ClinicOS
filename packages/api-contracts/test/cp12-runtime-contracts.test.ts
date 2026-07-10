@@ -54,6 +54,42 @@ test("active native registry covers identity/health and every CP2-CP10 checkpoin
   );
 });
 
+test("current identity response preserves bounded Keycloak provenance", () => {
+  const valid = parseNativeOperationResponse("getCurrentIdentity", 200, {
+    user: { id: patientId },
+    tenant: { id: patientId },
+    clinics: [],
+    permissions: ["patient.read"],
+    keycloak: {
+      subject: "synthetic-subject",
+      issuer: "http://keycloak.test/realms/clinic-os-test",
+      roles: ["doctor"]
+    }
+  });
+  assert.equal(valid.success, true);
+
+  const missingProvenance = parseNativeOperationResponse("getCurrentIdentity", 200, {
+    user: { id: patientId },
+    tenant: { id: patientId },
+    clinics: [],
+    permissions: ["patient.read"]
+  });
+  assert.equal(missingProvenance.success, false);
+
+  const unboundedRoleList = parseNativeOperationResponse("getCurrentIdentity", 200, {
+    user: { id: patientId },
+    tenant: { id: patientId },
+    clinics: [],
+    permissions: ["patient.read"],
+    keycloak: {
+      subject: "synthetic-subject",
+      issuer: "http://keycloak.test/realms/clinic-os-test",
+      roles: Array.from({ length: 101 }, (_, index) => `role-${index}`)
+    }
+  });
+  assert.equal(unboundedRoleList.success, false);
+});
+
 test("every writable JSON body and query is strict and every authenticated mutation is idempotent", () => {
   for (const operation of ACTIVE_NATIVE_HTTP_OPERATIONS) {
     assert.equal(operation.request.query.additionalProperties, false, operation.operationId);

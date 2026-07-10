@@ -267,9 +267,17 @@ export const ACTIVE_NATIVE_HTTP_OPERATIONS: readonly HttpOperationContract[] = [
           user: entity,
           tenant: entity,
           clinics: entities,
-          permissions: stringList
+          permissions: stringList,
+          keycloak: schema.object(
+            {
+              subject: shortText,
+              issuer: text,
+              roles: stringList
+            },
+            ["subject", "issuer", "roles"]
+          )
         },
-        ["user", "tenant", "clinics", "permissions"]
+        ["user", "tenant", "clinics", "permissions", "keycloak"]
       )
     },
     nativeRuntimeEnforcement: "route-parity"
