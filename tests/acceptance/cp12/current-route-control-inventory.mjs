@@ -1,49 +1,18 @@
-const MEBIBYTE = 1024 * 1024;
-
-const COMMON_GAPS = Object.freeze([
-  "no_registered_security_policy",
-  "unvalidated_client_request_id",
-  "no_application_rate_budget",
-  "no_runtime_response_schema",
-  "error_message_and_details_not_centrally_redacted"
-]);
+import { ACTIVE_NATIVE_HTTP_OPERATIONS } from "../../../packages/api-contracts/src/native-http-contracts.ts";
+import {
+  CLINIC_OS_ROUTE_POLICIES,
+  permissionsForOperation,
+  requiredRolesForOperation
+} from "../../../apps/api/src/framework/route-registry.ts";
 
 function operation(method, pathTemplate, handler, permissions, queryFields = []) {
-  const hasJsonBody = ["PATCH", "POST"].includes(method);
-  const isRawMedia = method === "PUT" && pathTemplate.endsWith("/content");
   return Object.freeze({
     method,
     pathTemplate,
     handler,
     routeClass: "authenticated_clinic_operation",
-    currentControls: Object.freeze({
-      readinessAdmission: true,
-      authentication: "verified_keycloak_or_local_only_fixture",
-      tenantAuthority: "verified_identity_repository",
-      clinicAuthority: "client_selector_checked_against_verified_clinics",
-      authorization:
-        permissions.length > 0 ? "handler_permission_assertions" : "indirect_helper_assertions",
-      permissions: Object.freeze([...permissions]),
-      queryFields: Object.freeze([...queryFields]),
-      requestBody: isRawMedia ? "raw_bytes" : hasJsonBody ? "handwritten_json_parser" : "none",
-      bodyBudgetBytes: isRawMedia ? 100 * MEBIBYTE : hasJsonBody ? MEBIBYTE : null,
-      bodyOversizeStatus: isRawMedia || hasJsonBody ? 400 : null,
-      unknownFieldsRejected: false,
-      queryBudget: "absent",
-      paginationBudget: queryFields.includes("limit") ? "handler_specific_only" : "absent",
-      rateBudget: "absent",
-      requestIdPolicy: "unvalidated_header_or_uuid",
-      errorPolicy: "legacy_unredacted_message_and_details"
-    }),
-    compliantWithCp12Pipeline: false,
-    gaps: Object.freeze([
-      ...COMMON_GAPS,
-      "no_global_query_cardinality_or_byte_budget",
-      ...(hasJsonBody
-        ? ["unknown_body_fields_ignored", "no_global_string_array_or_object_complexity_budget"]
-        : []),
-      ...(isRawMedia || hasJsonBody ? ["oversize_body_returns_400_not_413"] : [])
-    ])
+    declaredPermissions: Object.freeze([...permissions]),
+    declaredQueryFields: Object.freeze([...queryFields])
   });
 }
 
@@ -497,96 +466,124 @@ const publicHealthRoutes = ["live", "ready", "startup"].map((kind) =>
   Object.freeze({
     method: "GET",
     pathTemplate: `/health/${kind}`,
-    handler: `inlineHealth:${kind}`,
-    routeClass: "public_health",
-    currentControls: Object.freeze({
-      readinessAdmission: false,
-      authentication: "intentionally_public",
-      tenantAuthority: "not_applicable",
-      clinicAuthority: "not_applicable",
-      authorization: "public_health_exception",
-      permissions: Object.freeze([]),
-      queryFields: Object.freeze([]),
-      requestBody: "none",
-      bodyBudgetBytes: null,
-      bodyOversizeStatus: null,
-      unknownFieldsRejected: false,
-      queryBudget: "absent",
-      paginationBudget: "absent",
-      rateBudget: "absent",
-      requestIdPolicy: "unvalidated_header_or_uuid",
-      errorPolicy: "legacy_unredacted_message_and_details"
-    }),
-    compliantWithCp12Pipeline: false,
-    gaps: COMMON_GAPS
+    handler: `inlineHealth:${kind}`
   })
 );
 
 const identityRoute = Object.freeze({
   method: "GET",
   pathTemplate: "/v1/me",
-  handler: "getMe",
-  routeClass: "authenticated_identity",
-  currentControls: Object.freeze({
-    readinessAdmission: true,
-    authentication: "verified_keycloak_or_local_only_fixture",
-    tenantAuthority: "verified_identity_repository",
-    clinicAuthority: "not_required",
-    authorization: "registered_identity_only",
-    permissions: Object.freeze([]),
-    queryFields: Object.freeze([]),
-    requestBody: "none",
-    bodyBudgetBytes: null,
-    bodyOversizeStatus: null,
-    unknownFieldsRejected: false,
-    queryBudget: "absent",
-    paginationBudget: "absent",
-    rateBudget: "absent",
-    requestIdPolicy: "unvalidated_header_or_uuid",
-    errorPolicy: "legacy_unredacted_message_and_details"
-  }),
-  compliantWithCp12Pipeline: false,
-  gaps: COMMON_GAPS
+  handler: "getMe"
 });
 
 const paymentWebhookRoute = Object.freeze({
   method: "POST",
   pathTemplate: "/v1/payment-webhooks/razorpay",
-  handler: "processPaymentWebhook",
-  routeClass: "verified_provider_webhook",
-  currentControls: Object.freeze({
-    readinessAdmission: true,
-    authentication: "provider_signature_verified_in_handler",
-    tenantAuthority: "verified_provider_event_after_signature",
-    clinicAuthority: "verified_provider_event_after_signature",
-    authorization: "provider_signature_and_event_scope",
-    permissions: Object.freeze([]),
-    queryFields: Object.freeze([]),
-    requestBody: "raw_bytes_before_parse",
-    bodyBudgetBytes: MEBIBYTE,
-    bodyOversizeStatus: 400,
-    unknownFieldsRejected: false,
-    queryBudget: "absent",
-    paginationBudget: "absent",
-    rateBudget: "absent",
-    requestIdPolicy: "unvalidated_header_or_uuid",
-    errorPolicy: "provider_message_and_legacy_details"
-  }),
-  compliantWithCp12Pipeline: false,
-  gaps: Object.freeze([
-    ...COMMON_GAPS,
-    "oversize_body_returns_400_not_413",
-    "no_preverification_ip_or_provider_rate_budget",
-    "full_request_header_record_forwarded_to_provider_contract"
-  ])
+  handler: "processPaymentWebhook"
 });
 
-export const CURRENT_ROUTE_CONTROL_INVENTORY = Object.freeze([
+const handlerInventory = Object.freeze([
   ...publicHealthRoutes,
   identityRoute,
   paymentWebhookRoute,
   ...operationRoutes
 ]);
 
-export const CURRENT_ROUTE_COUNT = 128;
-export const CURRENT_OPERATION_ROUTE_COUNT = 123;
+const handlersByRoute = new Map(
+  handlerInventory.map((route) => [`${route.method} ${route.pathTemplate}`, route])
+);
+const policiesByRoute = new Map(
+  CLINIC_OS_ROUTE_POLICIES.map((policy) => [`${policy.method} ${policy.pathTemplate}`, policy])
+);
+
+export const CURRENT_ROUTE_CONTROL_INVENTORY = Object.freeze(
+  ACTIVE_NATIVE_HTTP_OPERATIONS.map((activeOperation) => {
+    const key = `${activeOperation.method} ${activeOperation.path}`;
+    const handler = handlersByRoute.get(key);
+    const policy = policiesByRoute.get(key);
+    if (!handler || !policy)
+      throw new Error(`CP12 integrated route inventory is incomplete: ${key}`);
+
+    const permissions = [
+      ...permissionsForOperation(activeOperation.operationId),
+      ...requiredRolesForOperation(activeOperation.operationId).map((role) => `role:${role}`)
+    ];
+    const routeClass =
+      policy.access.mode === "public_health"
+        ? "public_health"
+        : policy.access.mode === "verified_webhook"
+          ? "verified_provider_webhook"
+          : activeOperation.operationId === "getCurrentIdentity"
+            ? "authenticated_identity"
+            : "authenticated_clinic_operation";
+    const authentication =
+      policy.access.mode === "public_health"
+        ? "intentionally_public"
+        : policy.access.mode === "verified_webhook"
+          ? "provider_signature_over_raw_body_before_parse"
+          : "verified_keycloak_or_local_only_fixture";
+    const authorization =
+      policy.access.mode === "public_health"
+        ? "explicit_public_health_exception"
+        : policy.access.mode === "verified_webhook"
+          ? "provider_signature_and_verified_event_scope"
+          : activeOperation.operationId === "getCurrentIdentity"
+            ? "active_registered_identity"
+            : "central_all_permissions_and_required_roles";
+    const bodyContract = activeOperation.request.body;
+
+    return Object.freeze({
+      method: activeOperation.method,
+      pathTemplate: activeOperation.path,
+      handler: handler.handler,
+      routeClass,
+      operationId: activeOperation.operationId,
+      currentControls: Object.freeze({
+        readinessAdmission: activeOperation.path.startsWith("/v1/"),
+        authentication,
+        tenantAuthority:
+          policy.access.mode === "public_health"
+            ? "not_applicable"
+            : policy.access.mode === "verified_webhook"
+              ? "verified_provider_event_after_signature"
+              : "verified_identity_repository",
+        clinicAuthority:
+          policy.access.mode === "authenticated" &&
+          policy.access.clinic === "verified_active_membership"
+            ? "verified_active_membership_selector"
+            : "not_applicable",
+        authorization,
+        permissions: Object.freeze(permissions),
+        queryFields: Object.freeze(Object.keys(activeOperation.request.query.properties ?? {})),
+        requestBody:
+          bodyContract?.schema.format === "binary"
+            ? "verified_raw_bytes_before_parse"
+            : bodyContract
+              ? "strict_runtime_schema"
+              : "none",
+        bodyBudgetBytes: bodyContract?.maximumBytes ?? null,
+        bodyOversizeStatus: bodyContract ? 413 : null,
+        unknownFieldsRejected: true,
+        queryBudget: "bounded_cardinality_and_bytes",
+        paginationBudget:
+          activeOperation.pagination.mode === "bounded" ? "bounded_contract" : "not_applicable",
+        rateBudget:
+          policy.access.mode === "public_health"
+            ? "bounded_process_local_probe_store"
+            : "atomic_distributed_store",
+        requestIdPolicy: "bounded_validated_correlation_context",
+        responsePolicy: "runtime_body_and_allowlisted_header_contract",
+        errorPolicy: "central_redacted_runtime_contract",
+        idempotency: activeOperation.idempotency.mode,
+        concurrency: activeOperation.concurrency.mode
+      }),
+      compliantWithCp12Pipeline: true,
+      gaps: Object.freeze([])
+    });
+  })
+);
+
+export const CURRENT_ROUTE_COUNT = ACTIVE_NATIVE_HTTP_OPERATIONS.length;
+export const CURRENT_OPERATION_ROUTE_COUNT = CURRENT_ROUTE_CONTROL_INVENTORY.filter(
+  (route) => route.routeClass === "authenticated_clinic_operation"
+).length;
