@@ -35,6 +35,8 @@
     "keycloakTasksPrivate": true,
     "adminHostnameSeparate": true,
     "adminIngress": "vpn-or-jit-operator-only",
+    "adminMfaBoundaryPolicy": "operations/privileged-mfa-boundary.json",
+    "adminReadinessRequiresRuntimeMfaEvidence": true,
     "proxyHeaders": "xforwarded-from-trusted-alb-only",
     "httpEnabledBehindTlsTerminatingAlb": true,
     "strictHostnameRequired": true

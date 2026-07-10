@@ -129,6 +129,32 @@ describe("CP14 same-origin BFF", () => {
       runtime.proxyApi(request("GET", "/bff"), "https://attacker.example/v1/me", now)
     ).rejects.toThrow(/session is required/i);
   });
+
+  it("rejects malformed or ambiguous allowlisted upstream response headers", async () => {
+    const invalidHeaders: Array<Record<string, string>> = [
+      { "content-type": "text/html" },
+      { "content-type": "application/json", etag: '"safe"\r\nx-injected: yes' },
+      { "content-type": "application/json", "retry-after": "3601" },
+      { "content-type": "application/json", "x-request-id": "bad\nrequest" },
+      {
+        "content-type": "application/json",
+        "Content-Type": "application/problem+json"
+      },
+      { "content-type": "application/json", etag: `"${"x".repeat(200)}"` }
+    ];
+    for (const apiResponseHeaders of invalidHeaders) {
+      const tokenClient = new TestTokenClient();
+      const runtime = newRuntime({ tokenClient, apiResponseHeaders });
+      const cookie = await authenticate(runtime, tokenClient);
+      await expect(
+        runtime.proxyApi(
+          request("GET", "/bff/v1/me", { cookie }),
+          "/v1/me",
+          new Date(now.getTime() + 5_000)
+        )
+      ).rejects.toMatchObject({ code: "UPSTREAM_REJECTED" });
+    }
+  });
 });
 
 class TestTokenClient implements Cp14OidcTokenClient {
@@ -304,6 +330,7 @@ function newRuntime(input: {
   clientSecret?: string | null;
   tokenClient?: TestTokenClient;
   apiCalls?: Array<Record<string, unknown>>;
+  apiResponseHeaders?: Record<string, string>;
 }) {
   const sessions = new TestSessions();
   return new Cp14BffRuntime({
@@ -381,7 +408,7 @@ function newRuntime(input: {
         });
         return {
           status: 200,
-          headers: {
+          headers: input.apiResponseHeaders ?? {
             "content-type": "application/json; charset=utf-8",
             "set-cookie": "must-not-be-forwarded=1",
             "x-request-id": "request-0001"
@@ -391,6 +418,25 @@ function newRuntime(input: {
       }
     }
   });
+}
+
+async function authenticate(
+  runtime: Cp14BffRuntime,
+  tokenClient: TestTokenClient
+): Promise<string> {
+  const login = await runtime.beginLogin(request("GET", "/auth/login"), now);
+  const authorizationUrl = new URL(String(login.headers.location));
+  tokenClient.expectedNonce = authorizationUrl.searchParams.get("nonce")!;
+  const stateCookie = String(login.headers["set-cookie"]);
+  const callback = await runtime.completeLogin(
+    request(
+      "GET",
+      `/auth/callback?code=${"c".repeat(43)}&state=${authorizationUrl.searchParams.get("state")!}`,
+      { cookie: cookiePair(stateCookie) }
+    ),
+    new Date(now.getTime() + 1_000)
+  );
+  return cookiePair((callback.headers["set-cookie"] as readonly string[])[0]!);
 }
 
 function request(

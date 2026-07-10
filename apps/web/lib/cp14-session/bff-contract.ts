@@ -149,7 +149,12 @@ export interface Cp14BffResponse {
 }
 
 export class Cp14BffError extends Error {
-  readonly code: "BAD_REQUEST" | "UNAUTHENTICATED" | "PERMISSION_DENIED" | "PAYLOAD_TOO_LARGE";
+  readonly code:
+    | "BAD_REQUEST"
+    | "UNAUTHENTICATED"
+    | "PERMISSION_DENIED"
+    | "PAYLOAD_TOO_LARGE"
+    | "UPSTREAM_REJECTED";
 
   constructor(code: Cp14BffError["code"], message: string) {
     super(message);
@@ -203,7 +208,7 @@ export interface Cp14ApiTransport {
     maximumResponseBytes: number;
   }): Promise<{
     status: number;
-    headers: Readonly<Record<string, string>>;
+    headers: Readonly<Record<string, Cp14HeaderValue>>;
     body: Uint8Array;
   }>;
 }
@@ -445,18 +450,12 @@ export class Cp14BffRuntime {
           timeoutMs: 15_000,
           maximumResponseBytes: 2_097_152
         });
+        const upstreamHeaders = validateUpstreamResponseHeaders(response.headers);
         return {
           status: response.status,
           headers: {
             ...this.#security.sensitiveHeaders(),
-            "content-type": response.headers["content-type"] ?? "application/json; charset=utf-8",
-            ...(response.headers.etag ? { etag: response.headers.etag } : {}),
-            ...(response.headers["retry-after"]
-              ? { "retry-after": response.headers["retry-after"] }
-              : {}),
-            ...(response.headers["x-request-id"]
-              ? { "x-request-id": response.headers["x-request-id"] }
-              : {})
+            ...upstreamHeaders
           },
           body: response.body
         };
@@ -667,6 +666,62 @@ function acceptedHeader(request: Cp14BffRequest, name: string, fallback: string)
   }
   if (!SAFE_HEADER_NAME.test(name)) throw new Error("BFF forwarded header name is invalid.");
   return value;
+}
+
+function validateUpstreamResponseHeaders(
+  headers: Readonly<Record<string, Cp14HeaderValue>>
+): Readonly<Record<string, string>> {
+  const selected = new Map<string, string>();
+  const allowed = new Set(["content-type", "etag", "retry-after", "x-request-id"]);
+  for (const [rawName, rawValue] of Object.entries(headers)) {
+    const name = rawName.toLowerCase();
+    if (!allowed.has(name) || rawValue === undefined || rawValue === null) continue;
+    if (selected.has(name) || typeof rawValue !== "string") {
+      throw new Cp14BffError(
+        "UPSTREAM_REJECTED",
+        "Upstream response contains an ambiguous allowlisted header."
+      );
+    }
+    if (rawValue.length === 0 || rawValue.length > 512 || !/^[\x20-\x7E]+$/.test(rawValue)) {
+      throw new Cp14BffError(
+        "UPSTREAM_REJECTED",
+        "Upstream response contains a malformed allowlisted header."
+      );
+    }
+    selected.set(name, rawValue);
+  }
+
+  const contentType = selected.get("content-type") ?? "application/json; charset=utf-8";
+  if (!/^application\/(?:json|problem\+json)(?:;\s*charset=utf-8)?$/i.test(contentType)) {
+    throw new Cp14BffError("UPSTREAM_REJECTED", "Upstream response content type is not accepted.");
+  }
+  const result: Record<string, string> = { "content-type": contentType.toLowerCase() };
+
+  const etag = selected.get("etag");
+  if (etag) {
+    if (etag.length > 128 || !/^(?:W\/)?"[\x21\x23-\x7E]{1,96}"$/.test(etag)) {
+      throw new Cp14BffError("UPSTREAM_REJECTED", "Upstream ETag is malformed.");
+    }
+    result.etag = etag;
+  }
+
+  const retryAfter = selected.get("retry-after");
+  if (retryAfter) {
+    const seconds = Number(retryAfter);
+    if (!/^\d{1,5}$/.test(retryAfter) || !Number.isSafeInteger(seconds) || seconds > 3600) {
+      throw new Cp14BffError("UPSTREAM_REJECTED", "Upstream Retry-After is malformed.");
+    }
+    result["retry-after"] = retryAfter;
+  }
+
+  const requestId = selected.get("x-request-id");
+  if (requestId) {
+    if (!/^[A-Za-z0-9._:-]{8,128}$/.test(requestId)) {
+      throw new Cp14BffError("UPSTREAM_REJECTED", "Upstream request id is malformed.");
+    }
+    result["x-request-id"] = requestId;
+  }
+  return Object.freeze(result);
 }
 
 function assertMethod(request: Cp14BffRequest, expected: string): void {

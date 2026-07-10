@@ -1,4 +1,8 @@
-import type { AccessContext, KeycloakAccessTokenClaims } from "@clinic-os/auth";
+import type {
+  AccessContext,
+  KeycloakAccessTokenClaims,
+  RequiredSecurityAuditOutbox
+} from "@clinic-os/auth";
 import type { Clinic, UUID } from "@clinic-os/domain";
 
 export interface TokenRevocationQuery {
@@ -14,6 +18,11 @@ export interface TokenRevocationStore {
   readonly durability: "distributed_durable" | "in_memory_test_double";
   readiness(): Promise<void>;
   isRevoked(query: TokenRevocationQuery): Promise<boolean>;
+}
+
+export interface IdentitySecurityAuditOutbox extends RequiredSecurityAuditOutbox {
+  readonly durability: "distributed_durable" | "in_memory_test_double";
+  readiness(): Promise<void>;
 }
 
 export interface IdentitySessionEdgeConfiguration {

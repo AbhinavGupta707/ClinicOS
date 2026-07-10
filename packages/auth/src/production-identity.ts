@@ -4,6 +4,12 @@ import {
   type AuthenticatedPrincipal,
   type KeycloakAccessTokenClaims
 } from "./keycloak.ts";
+import {
+  persistRequiredSecurityAudit,
+  validateRequiredSecurityAuditIntent,
+  type RequiredSecurityAuditIntent,
+  type RequiredSecurityAuditOutbox
+} from "./security-audit.ts";
 
 const TOKEN_IDENTIFIER_PATTERN = /^[A-Za-z0-9._:-]{8,255}$/;
 const MFA_METHODS = new Set(["otp", "totp", "webauthn", "webauthn-passwordless", "hwk", "mfa"]);
@@ -115,15 +121,41 @@ export function hasMfaEvidence(input: { amr: readonly string[]; acr?: string | n
   return Boolean(input.acr && /(?:^|[.:_-])(2|mfa|loa2|aal2)(?:$|[.:_-])/i.test(input.acr));
 }
 
-export function assertMfaForAccess(input: {
+export async function assertMfaForAccess(input: {
   roleSlugs: readonly ClinicRoleSlug[];
   amr: readonly string[];
   acr?: string | null;
   breakGlass?: boolean;
-}): void {
+  subject: string;
+  issuer: string;
+  authorizedParty: string;
+  auditDeduplicationKey: string;
+  now: Date;
+  auditOutbox: RequiredSecurityAuditOutbox;
+}): Promise<void> {
   const privileged = input.breakGlass || input.roleSlugs.some((role) => PRIVILEGED_ROLES.has(role));
   if (privileged && !hasMfaEvidence(input)) {
-    throw new AuthenticationError("Multi-factor authentication is required for privileged access.");
+    await persistRequiredSecurityAudit(
+      input.auditOutbox,
+      validateRequiredSecurityAuditIntent({
+        schemaVersion: 1,
+        action: "auth.mfa.denied",
+        occurredAt: trustedInstant(input.now, "MFA denial audit time").toISOString(),
+        deduplicationKey: `auth.mfa.denied:${input.auditDeduplicationKey}:${
+          input.breakGlass ? "break_glass" : "privileged_role"
+        }`,
+        subject: input.subject,
+        issuer: input.issuer,
+        authorizedParty: input.authorizedParty,
+        reasonCode: input.breakGlass ? "break_glass" : "privileged_role",
+        roleSlugs: [...new Set(input.roleSlugs)].sort()
+      })
+    );
+    throw new AuthenticationError(
+      input.breakGlass
+        ? "Break-glass access requires multi-factor authentication."
+        : "Multi-factor authentication is required for privileged access."
+    );
   }
 }
 
@@ -142,8 +174,7 @@ export type JmlControlStep =
   | "remove_product_roles"
   | "deactivate_memberships"
   | "enable_keycloak_identity"
-  | "unlock_application_access"
-  | "emit_attributable_audit";
+  | "unlock_application_access";
 
 export interface JmlCommand {
   commandId: string;
@@ -167,10 +198,13 @@ export interface JmlControlPlan {
 }
 
 export interface JmlControlPort {
+  readonly atomicity: "security_state_and_required_audit_outbox";
+  /** The final state mutation and non-null requiredAudit commit in one durable transaction. */
   executeStep(input: {
     command: JmlCommand;
     step: JmlControlStep;
     idempotencyKey: string;
+    requiredAudit: RequiredSecurityAuditIntent | null;
   }): Promise<void>;
 }
 
@@ -188,8 +222,7 @@ export function buildJmlControlPlan(command: JmlCommand): JmlControlPlan {
           ...(requiresMfaEnrollment ? (["require_privileged_mfa"] as const) : []),
           "bump_authority_revision",
           "enable_keycloak_identity",
-          "unlock_application_access",
-          "emit_attributable_audit"
+          "unlock_application_access"
         ]
       : command.transition === "mover"
         ? [
@@ -200,8 +233,7 @@ export function buildJmlControlPlan(command: JmlCommand): JmlControlPlan {
             "set_product_roles",
             ...(requiresMfaEnrollment ? (["require_privileged_mfa"] as const) : []),
             "bump_authority_revision",
-            "unlock_application_access",
-            "emit_attributable_audit"
+            "unlock_application_access"
           ]
         : [
             "lock_application_access",
@@ -210,8 +242,7 @@ export function buildJmlControlPlan(command: JmlCommand): JmlControlPlan {
             "disable_keycloak_identity",
             "remove_product_roles",
             "deactivate_memberships",
-            "bump_authority_revision",
-            "emit_attributable_audit"
+            "bump_authority_revision"
           ];
 
   return {
@@ -227,14 +258,34 @@ export function buildJmlControlPlan(command: JmlCommand): JmlControlPlan {
 
 export async function executeJmlControlPlan(
   command: JmlCommand,
-  port: JmlControlPort
+  port: JmlControlPort,
+  now: Date
 ): Promise<JmlControlPlan> {
+  if (port.atomicity !== "security_state_and_required_audit_outbox") {
+    throw new Error("JML coordinator must atomically persist state and required audit outbox.");
+  }
   const plan = buildJmlControlPlan(command);
+  const occurredAt = trustedInstant(now, "JML completion audit time");
   for (const [index, step] of plan.steps.entries()) {
+    const requiredAudit =
+      index === plan.steps.length - 1
+        ? validateRequiredSecurityAuditIntent({
+            schemaVersion: 1,
+            action: `identity.${command.transition}.completed`,
+            occurredAt: occurredAt.toISOString(),
+            deduplicationKey: `identity.${command.transition}.completed:${command.commandId}`,
+            subject: command.subject,
+            tenantId: command.tenantId,
+            transition: command.transition,
+            commandId: command.commandId,
+            reasonCode: "jml_completed"
+          })
+        : null;
     await port.executeStep({
       command,
       step,
-      idempotencyKey: `${command.commandId}:${String(index + 1).padStart(2, "0")}:${step}`
+      idempotencyKey: `${command.commandId}:${String(index + 1).padStart(2, "0")}:${step}`,
+      requiredAudit
     });
   }
   return plan;
@@ -255,7 +306,7 @@ export interface BreakGlassGrant {
   allowedCapabilities: readonly string[];
 }
 
-export function assertActiveBreakGlassGrant(
+export async function assertActiveBreakGlassGrant(
   grant: BreakGlassGrant,
   input: {
     actorUserId: string;
@@ -266,8 +317,12 @@ export function assertActiveBreakGlassGrant(
     now: Date;
     amr: readonly string[];
     acr?: string | null;
+    issuer: string;
+    authorizedParty: string;
+    auditDeduplicationKey: string;
+    auditOutbox: RequiredSecurityAuditOutbox;
   }
-): void {
+): Promise<void> {
   const now = trustedInstant(input.now, "break-glass evaluation time");
   if (grant.requesterUserId === grant.approverUserId) {
     throw new AuthenticationError("Break-glass access requires independent approval.");
@@ -310,7 +365,18 @@ export function assertActiveBreakGlassGrant(
     throw new AuthenticationError("Break-glass grant does not authorize the required capability.");
   }
   if (!hasMfaEvidence(input)) {
-    throw new AuthenticationError("Break-glass access requires multi-factor authentication.");
+    await assertMfaForAccess({
+      roleSlugs: [],
+      amr: input.amr,
+      acr: input.acr,
+      breakGlass: true,
+      subject: input.actorUserId,
+      issuer: input.issuer,
+      authorizedParty: input.authorizedParty,
+      auditDeduplicationKey: input.auditDeduplicationKey,
+      now,
+      auditOutbox: input.auditOutbox
+    });
   }
 }
 

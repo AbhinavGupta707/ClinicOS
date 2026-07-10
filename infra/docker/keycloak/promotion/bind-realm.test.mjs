@@ -4,11 +4,16 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { bindRealm } from "./bind-realm.mjs";
+import { bindRealm, validateRealm } from "./bind-realm.mjs";
 
 const promotionDirectory = dirname(fileURLToPath(import.meta.url));
 const templatePath = resolve(promotionDirectory, "../production/clinic-os-realm.template.json");
 const exampleBindingPath = resolve(promotionDirectory, "runtime-binding.example.json");
+const privilegedMfaBoundaryPath = resolve(
+  promotionDirectory,
+  "../operations/privileged-mfa-boundary.json"
+);
+const topologyPath = resolve(promotionDirectory, "../topology/production-ha.json");
 
 test("realm promotion is deterministic, exact-bound, and secret-free", async () => {
   const directory = await mkdtemp(join(tmpdir(), "clinicos-keycloak-promotion-"));
@@ -31,6 +36,12 @@ test("realm promotion is deterministic, exact-bound, and secret-free", async () 
   const realm = JSON.parse(firstOutput);
   assert.equal(realm.revokeRefreshToken, true);
   assert.equal(realm.refreshTokenMaxReuse, 0);
+  assert.equal(
+    realm.clients.find((client) => client.clientId === "clinic-os-web-bff").attributes[
+      "post.logout.redirect.uris"
+    ],
+    "https://app.staging.example.invalid/auth/signed-out"
+  );
   assert.deepEqual(
     realm.clients
       .filter((client) => client.standardFlowEnabled)
@@ -39,20 +50,94 @@ test("realm promotion is deterministic, exact-bound, and secret-free", async () 
   );
 });
 
-test("realm promotion rejects wildcard redirects, missing bindings, and secret injection", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "clinicos-keycloak-negative-"));
+test("realm promotion accepts only the approved exact mobile custom scheme", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "clinicos-keycloak-custom-mobile-"));
   const binding = JSON.parse(await readFile(exampleBindingPath, "utf8"));
-  binding.CLINIC_OS_WEB_CALLBACK_URI = "https://app.example.invalid/*";
-  const wildcardBinding = join(directory, "wildcard.json");
-  await writeFile(wildcardBinding, JSON.stringify(binding));
-  await assert.rejects(
-    bindRealm({
+  binding.CLINIC_OS_MOBILE_REDIRECT_URI = "clinic-os://auth/callback";
+  const bindingPath = join(directory, "binding.json");
+  await writeFile(bindingPath, JSON.stringify(binding));
+  const realm = JSON.parse(
+    await bindRealm({
       templatePath,
-      bindingPath: wildcardBinding,
-      outputPath: join(directory, "wildcard-realm.json")
-    }),
-    /exact redirect/
+      bindingPath,
+      outputPath: join(directory, "realm.json")
+    })
   );
+  assert.deepEqual(
+    realm.clients.find((client) => client.clientId === "clinic-os-mobile").redirectUris,
+    ["clinic-os://auth/callback"]
+  );
+});
+
+test("realm promotion rejects malformed public realm, web, and mobile bindings", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "clinicos-keycloak-negative-"));
+  const base = JSON.parse(await readFile(exampleBindingPath, "utf8"));
+  const cases = [
+    ["realm-uppercase", "CLINIC_OS_REALM", "Clinic-OS", /lowercase slug/],
+    ["realm-path", "CLINIC_OS_REALM", "clinic/os", /lowercase slug/],
+    ["origin-http", "CLINIC_OS_WEB_ORIGIN", "http://app.example.invalid", /HTTPS origin/],
+    ["origin-path", "CLINIC_OS_WEB_ORIGIN", "https://app.example.invalid/path", /HTTPS origin/],
+    [
+      "callback-other-origin",
+      "CLINIC_OS_WEB_CALLBACK_URI",
+      "https://attacker.example/auth/callback",
+      /configured web origin/
+    ],
+    [
+      "callback-query",
+      "CLINIC_OS_WEB_CALLBACK_URI",
+      "https://app.staging.example.invalid/auth/callback?next=/",
+      /userinfo, query, or fragment/
+    ],
+    [
+      "logout-fragment",
+      "CLINIC_OS_WEB_POST_LOGOUT_URI",
+      "https://app.staging.example.invalid/auth/signed-out#fragment",
+      /userinfo, query, or fragment/
+    ],
+    [
+      "mobile-http",
+      "CLINIC_OS_MOBILE_REDIRECT_URI",
+      "http://mobile.example.invalid/auth/callback",
+      /approved claimed HTTPS/
+    ],
+    [
+      "mobile-custom-query",
+      "CLINIC_OS_MOBILE_REDIRECT_URI",
+      "clinic-os://auth/callback?token=bad",
+      /userinfo, query, or fragment/
+    ],
+    [
+      "mobile-wildcard",
+      "CLINIC_OS_MOBILE_REDIRECT_URI",
+      "https://mobile.example.invalid/*",
+      /malformed or unbounded/
+    ],
+    [
+      "mobile-userinfo",
+      "CLINIC_OS_MOBILE_REDIRECT_URI",
+      "https://user@mobile.example.invalid/auth/callback",
+      /userinfo, query, or fragment/
+    ]
+  ];
+  for (const [name, key, value, expected] of cases) {
+    const binding = { ...base, [key]: value };
+    const bindingPath = join(directory, `${name}.json`);
+    await writeFile(bindingPath, JSON.stringify(binding));
+    await assert.rejects(
+      bindRealm({
+        templatePath,
+        bindingPath,
+        outputPath: join(directory, `${name}-realm.json`)
+      }),
+      expected
+    );
+  }
+});
+
+test("realm promotion rejects missing, extra, secret, and post-logout drift", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "clinicos-keycloak-shape-negative-"));
+  const binding = JSON.parse(await readFile(exampleBindingPath, "utf8"));
 
   delete binding.CLINIC_OS_MOBILE_REDIRECT_URI;
   const missingBinding = join(directory, "missing.json");
@@ -78,4 +163,27 @@ test("realm promotion rejects wildcard redirects, missing bindings, and secret i
     }),
     /extra=/
   );
+
+  const validBinding = JSON.parse(await readFile(exampleBindingPath, "utf8"));
+  const renderedPath = join(directory, "rendered.json");
+  const rendered = JSON.parse(
+    await bindRealm({ templatePath, bindingPath: exampleBindingPath, outputPath: renderedPath })
+  );
+  rendered.clients.find((client) => client.clientId === "clinic-os-web-bff").attributes[
+    "post.logout.redirect.uris"
+  ] = "https://app.staging.example.invalid/drift";
+  assert.throws(() => validateRealm(rendered, validBinding), /web-origin policy/);
+});
+
+test("privileged product, administrator, and break-glass MFA boundaries are explicit", async () => {
+  const boundary = JSON.parse(await readFile(privilegedMfaBoundaryPath, "utf8"));
+  const topology = JSON.parse(await readFile(topologyPath, "utf8"));
+  assert.equal(boundary.productWorkforce.realmTemplateEnforcesRoleConditionalMfa, false);
+  assert.equal(boundary.productWorkforce.applicationRequiresVerifiedAmrOrAcr, true);
+  assert.equal(boundary.keycloakAdministration.productionRealmTemplateEnforcesAdminMfa, false);
+  assert.equal(boundary.keycloakAdministration.managementRealmOrFederatedOperatorMfaRequired, true);
+  assert.equal(boundary.keycloakAdministration.failReadinessUntilRuntimeMfaEvidenceExists, true);
+  assert.equal(boundary.clinicalBreakGlass.verifiedAmrOrAcrRequired, true);
+  assert.equal(topology.network.adminReadinessRequiresRuntimeMfaEvidence, true);
+  assert.equal(topology.network.adminMfaBoundaryPolicy, "operations/privileged-mfa-boundary.json");
 });

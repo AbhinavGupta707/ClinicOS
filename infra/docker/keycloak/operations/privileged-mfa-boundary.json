@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "productWorkforce": {
+    "realmTemplateCapability": "registers-mfa-methods-and-required-actions-only",
+    "realmTemplateEnforcesRoleConditionalMfa": false,
+    "jmlCoordinatorAssignsRequiredActionBeforePrivilege": true,
+    "applicationRequiresVerifiedAmrOrAcr": true,
+    "mfaDenialRequiresDurableAuditOutbox": true
+  },
+  "keycloakAdministration": {
+    "separateAdminHostnameRequired": true,
+    "privateOrJitOperatorIngressRequired": true,
+    "productionRealmTemplateEnforcesAdminMfa": false,
+    "managementRealmOrFederatedOperatorMfaRequired": true,
+    "phishingResistantMfaPreferred": "webauthn",
+    "breakGlassAdminIdentitiesOfflineEscrowed": true,
+    "breakGlassAdminUseRequiresTwoPersonApproval": true,
+    "failReadinessUntilRuntimeMfaEvidenceExists": true
+  },
+  "clinicalBreakGlass": {
+    "keycloakRealmTemplateEnforcesBreakGlassScope": false,
+    "applicationGrantScopeRequired": ["tenant", "clinic", "patient", "capability"],
+    "maximumGrantMinutes": 15,
+    "independentApprovalRequired": true,
+    "verifiedAmrOrAcrRequired": true,
+    "mfaDenialRequiresDurableAuditOutbox": true
+  },
+  "requiredEvidence": [
+    "privileged-product-role-login-denied-without-mfa",
+    "privileged-product-role-login-allowed-with-mfa",
+    "admin-console-login-denied-without-mfa",
+    "admin-console-login-allowed-with-approved-mfa",
+    "admin-break-glass-two-person-use-and-revocation",
+    "clinical-break-glass-scope-expiry-and-mfa-denial-audit"
+  ]
+}

@@ -5,6 +5,10 @@ import {
   randomBytes,
   timingSafeEqual
 } from "node:crypto";
+import {
+  validateRequiredSecurityAuditIntent,
+  type RequiredSecurityAuditIntent
+} from "./security-audit.ts";
 
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const COOKIE_NAME_PATTERN = /^(?:__Host-)?[A-Za-z0-9_-]{3,64}$/;
@@ -21,6 +25,7 @@ export type WebSessionRevocationReason =
   | "expired"
   | "refresh_rejected"
   | "refresh_replay"
+  | "refresh_recovery_uncertain"
   | "administrator_revoked"
   | "jml_transition";
 
@@ -37,13 +42,14 @@ export interface WebSessionPolicy {
   absoluteTtlSeconds: number;
   rotateAfterSeconds: number;
   refreshLeewaySeconds: number;
+  refreshLeaseSeconds: number;
   lookupHmacKey: Uint8Array;
   csrfHmacKey: Uint8Array;
   encryptionKeys: readonly [SessionEncryptionKey, ...SessionEncryptionKey[]];
 }
 
 export interface WebSessionEnvelope {
-  schemaVersion: 1;
+  schemaVersion: 2;
   recordVersion: number;
   familyKey: string;
   keyId: string;
@@ -53,34 +59,98 @@ export interface WebSessionEnvelope {
   expiresAt: string;
 }
 
+export interface WebSessionStoredEntry {
+  envelope: WebSessionEnvelope;
+  lastSeenAt: string;
+}
+
+export type WebSessionRotateResult =
+  | { status: "rotated" }
+  | { status: "refresh_in_progress"; leaseExpiresAt: string }
+  | { status: "version_changed" }
+  | { status: "missing_or_revoked" };
+
+export type WebSessionRefreshClaimResult =
+  | { status: "claimed" }
+  | { status: "refresh_in_progress"; leaseExpiresAt: string }
+  | { status: "orphaned_dispatched_refresh" }
+  | { status: "version_changed" }
+  | { status: "missing_or_revoked" };
+
+export type WebSessionRefreshWaitResult =
+  | { status: "completed"; entry: WebSessionStoredEntry }
+  | { status: "retry_claim" }
+  | { status: "orphaned_dispatched_refresh" }
+  | { status: "missing_or_revoked" };
+
+export type WebSessionRevocationResult = "revoked" | "already_revoked" | "missing";
+
 /**
  * The production store must implement these operations atomically (Redis Lua or an equivalent
  * transactional store). A process-local store is suitable only as a test double.
  */
 export interface WebSessionStore {
-  readonly atomicity: "required";
-  create(sessionKey: string, envelope: WebSessionEnvelope, expiresAt: Date): Promise<boolean>;
-  read(sessionKey: string, now: Date): Promise<WebSessionEnvelope | null>;
-  compareAndSwap(
+  readonly atomicity: "session_state_and_required_audit_outbox";
+  create(
     sessionKey: string,
-    expectedRecordVersion: number,
     envelope: WebSessionEnvelope,
-    expiresAt: Date
+    lastSeenAt: Date,
+    expiresAt: Date,
+    requiredAudit: RequiredSecurityAuditIntent
   ): Promise<boolean>;
+  read(sessionKey: string, now: Date): Promise<WebSessionStoredEntry | null>;
+  /** Monotonic activity update; concurrent touches never mutate token recordVersion. */
+  touchActivity(
+    sessionKey: string,
+    observedAt: Date,
+    expiresAt: Date
+  ): Promise<"touched" | "missing">;
   rotate(
     previousSessionKey: string,
     nextSessionKey: string,
     expectedRecordVersion: number,
     envelope: WebSessionEnvelope,
-    expiresAt: Date
-  ): Promise<boolean>;
+    lastSeenAt: Date,
+    expiresAt: Date,
+    requiredAudit: RequiredSecurityAuditIntent
+  ): Promise<WebSessionRotateResult>;
+  claimRefresh(input: {
+    sessionKey: string;
+    expectedRecordVersion: number;
+    leaseId: string;
+    claimedAt: Date;
+    leaseExpiresAt: Date;
+  }): Promise<WebSessionRefreshClaimResult>;
+  markRefreshDispatched(input: {
+    sessionKey: string;
+    expectedRecordVersion: number;
+    leaseId: string;
+    dispatchedAt: Date;
+  }): Promise<boolean>;
+  completeRefresh(input: {
+    sessionKey: string;
+    expectedRecordVersion: number;
+    leaseId: string;
+    envelope: WebSessionEnvelope;
+    /** Store must retain max(current lastSeenAt, supplied lastSeenAt). */
+    lastSeenAt: Date;
+    expiresAt: Date;
+  }): Promise<boolean>;
+  /** Wait via bounded polling/pub-sub without holding a process-local lock. */
+  waitForRefresh(input: {
+    sessionKey: string;
+    observedRecordVersion: number;
+    waitUntil: Date;
+  }): Promise<WebSessionRefreshWaitResult>;
   delete(sessionKey: string): Promise<void>;
-  revokeFamily(
-    familyKey: string,
-    reason: WebSessionRevocationReason,
-    revokedAt: Date,
-    expiresAt: Date
-  ): Promise<void>;
+  revokeSessionFamily(input: {
+    sessionKey: string;
+    familyKey: string;
+    reason: WebSessionRevocationReason;
+    revokedAt: Date;
+    expiresAt: Date;
+    requiredAudits: readonly [RequiredSecurityAuditIntent, ...RequiredSecurityAuditIntent[]];
+  }): Promise<WebSessionRevocationResult>;
   isFamilyRevoked(familyKey: string, now: Date): Promise<boolean>;
 }
 
@@ -127,7 +197,7 @@ export interface WebSessionProviderRevoker {
 }
 
 interface StoredWebSessionRecord {
-  schemaVersion: 1;
+  schemaVersion: 2;
   recordVersion: number;
   familyId: string;
   subject: string;
@@ -140,7 +210,6 @@ interface StoredWebSessionRecord {
   accessExpiresAt: string;
   refreshExpiresAt: string;
   createdAt: string;
-  lastSeenAt: string;
   rotatedAt: string;
   absoluteExpiresAt: string;
   authorityRevision: string;
@@ -180,7 +249,8 @@ export class WebSessionError extends Error {
     | "authority_changed"
     | "rotation_conflict"
     | "refresh_rejected"
-    | "refresh_replay";
+    | "refresh_replay"
+    | "refresh_recovery_required";
 
   constructor(code: WebSessionError["code"], message: string) {
     super(message);
@@ -199,9 +269,9 @@ export class WebSessionManager {
     policy: WebSessionPolicy;
     randomBytesImpl?: (size: number) => Buffer;
   }) {
-    if (input.store.atomicity !== "required") {
+    if (input.store.atomicity !== "session_state_and_required_audit_outbox") {
       throw new Error(
-        "Web session storage must provide atomic create, CAS, rotation, and revocation."
+        "Web session storage must atomically persist state and required audit-outbox evidence."
       );
     }
     this.#store = input.store;
@@ -238,7 +308,7 @@ export class WebSessionManager {
       const familyId = randomOpaqueId(this.#randomBytes);
       const absoluteExpiresAt = new Date(now.getTime() + this.#policy.absoluteTtlSeconds * 1000);
       const record: StoredWebSessionRecord = {
-        schemaVersion: 1,
+        schemaVersion: 2,
         recordVersion: 1,
         familyId,
         subject: input.subject,
@@ -251,7 +321,6 @@ export class WebSessionManager {
         accessExpiresAt: input.tokens.accessExpiresAt.toISOString(),
         refreshExpiresAt: input.tokens.refreshExpiresAt.toISOString(),
         createdAt: now.toISOString(),
-        lastSeenAt: now.toISOString(),
         rotatedAt: now.toISOString(),
         absoluteExpiresAt: absoluteExpiresAt.toISOString(),
         authorityRevision: input.authorityRevision,
@@ -260,9 +329,15 @@ export class WebSessionManager {
       };
       const sessionKey = this.#sessionKey(sessionId);
       const envelope = encryptRecord(record, sessionKey, this.#policy, this.#randomBytes);
-      const created = await this.#store.create(sessionKey, envelope, absoluteExpiresAt);
+      const created = await this.#store.create(
+        sessionKey,
+        envelope,
+        now,
+        absoluteExpiresAt,
+        this.#sessionAudit(record, envelope.familyKey, "auth.session.created", "login", now)
+      );
       if (!created) continue;
-      return this.#createdSession(sessionId, record, now);
+      return this.#createdSession(sessionId, record, now, now);
     }
     throw new WebSessionError(
       "invalid_configuration",
@@ -276,7 +351,7 @@ export class WebSessionManager {
     now: Date
   ): Promise<SafeWebSession> {
     const loaded = await this.#loadActive(sessionId, authorityResolver, now, true);
-    return this.#safeSession(sessionId, loaded.record, loaded.now);
+    return this.#safeSession(sessionId, loaded.record, loaded.now, loaded.lastSeenAt);
   }
 
   async rotate(
@@ -284,30 +359,50 @@ export class WebSessionManager {
     authorityResolver: WebSessionAuthorityResolver,
     now: Date
   ): Promise<RotatedWebSession> {
-    const loaded = await this.#loadActive(sessionId, authorityResolver, now, false);
-    const nextSessionId = randomOpaqueId(this.#randomBytes);
-    const nextRecord: StoredWebSessionRecord = {
-      ...loaded.record,
-      recordVersion: loaded.record.recordVersion + 1,
-      lastSeenAt: loaded.now.toISOString(),
-      rotatedAt: loaded.now.toISOString()
-    };
-    const nextSessionKey = this.#sessionKey(nextSessionId);
-    const envelope = encryptRecord(nextRecord, nextSessionKey, this.#policy, this.#randomBytes);
-    const rotated = await this.#store.rotate(
-      loaded.sessionKey,
-      nextSessionKey,
-      loaded.record.recordVersion,
-      envelope,
-      new Date(nextRecord.absoluteExpiresAt)
-    );
-    if (!rotated) {
-      throw new WebSessionError(
-        "rotation_conflict",
-        "Session was concurrently rotated or revoked."
+    let loaded = await this.#loadActive(sessionId, authorityResolver, now, false);
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const nextSessionId = randomOpaqueId(this.#randomBytes);
+      const nextRecord: StoredWebSessionRecord = {
+        ...loaded.record,
+        recordVersion: loaded.record.recordVersion + 1,
+        rotatedAt: loaded.now.toISOString()
+      };
+      const nextSessionKey = this.#sessionKey(nextSessionId);
+      const envelope = encryptRecord(nextRecord, nextSessionKey, this.#policy, this.#randomBytes);
+      const result = await this.#store.rotate(
+        loaded.sessionKey,
+        nextSessionKey,
+        loaded.record.recordVersion,
+        envelope,
+        loaded.now,
+        new Date(nextRecord.absoluteExpiresAt),
+        this.#sessionAudit(
+          nextRecord,
+          envelope.familyKey,
+          "auth.session.rotated",
+          "periodic_rotation",
+          loaded.now
+        )
       );
+      if (result.status === "rotated") {
+        return this.#createdSession(nextSessionId, nextRecord, loaded.now, loaded.now);
+      }
+      if (result.status === "refresh_in_progress") {
+        const waited = await this.#store.waitForRefresh({
+          sessionKey: loaded.sessionKey,
+          observedRecordVersion: loaded.record.recordVersion,
+          waitUntil: new Date(result.leaseExpiresAt)
+        });
+        if (waited.status === "orphaned_dispatched_refresh") {
+          await this.#revokeUncertainRefresh(loaded);
+        }
+        if (waited.status === "missing_or_revoked") break;
+      } else if (result.status === "missing_or_revoked") {
+        break;
+      }
+      loaded = await this.#loadActive(sessionId, authorityResolver, now, false);
     }
-    return this.#createdSession(nextSessionId, nextRecord, loaded.now);
+    throw new WebSessionError("rotation_conflict", "Session was concurrently rotated or revoked.");
   }
 
   async withAccessToken<T>(input: {
@@ -327,7 +422,7 @@ export class WebSessionManager {
     }
     return input.execute(
       loaded.record.accessToken,
-      this.#safeSession(input.sessionId, loaded.record, loaded.now)
+      this.#safeSession(input.sessionId, loaded.record, loaded.now, loaded.lastSeenAt)
     );
   }
 
@@ -339,8 +434,9 @@ export class WebSessionManager {
   ): Promise<void> {
     const revokedAt = trustedInstant(now, "session revocation time");
     const sessionKey = this.#sessionKey(sessionId);
-    const envelope = await this.#store.read(sessionKey, revokedAt);
-    if (!envelope) return;
+    const entry = await this.#store.read(sessionKey, revokedAt);
+    if (!entry) return;
+    const envelope = entry.envelope;
     let record: StoredWebSessionRecord;
     try {
       record = decryptRecord(envelope, sessionKey, this.#policy);
@@ -350,9 +446,17 @@ export class WebSessionManager {
       throw new WebSessionError("invalid_session", "Session record could not be verified.");
     }
     const absoluteExpiresAt = new Date(record.absoluteExpiresAt);
-    await this.#store.revokeFamily(envelope.familyKey, reason, revokedAt, absoluteExpiresAt);
-    await this.#store.delete(sessionKey);
-    if (providerRevoker) {
+    const revocation = await this.#store.revokeSessionFamily({
+      sessionKey,
+      familyKey: envelope.familyKey,
+      reason,
+      revokedAt,
+      expiresAt: absoluteExpiresAt,
+      requiredAudits: [
+        this.#sessionAudit(record, envelope.familyKey, "auth.session.revoked", reason, revokedAt)
+      ]
+    });
+    if (providerRevoker && revocation === "revoked") {
       try {
         await providerRevoker.revoke({
           refreshToken: record.refreshToken,
@@ -404,8 +508,9 @@ export class WebSessionManager {
   ): Promise<LoadedSession> {
     const now = trustedInstant(nowInput, "session access time");
     const sessionKey = this.#sessionKey(sessionId);
-    const envelope = await this.#store.read(sessionKey, now);
-    if (!envelope) throw new WebSessionError("invalid_session", "Session is unavailable.");
+    const entry = await this.#store.read(sessionKey, now);
+    if (!entry) throw new WebSessionError("invalid_session", "Session is unavailable.");
+    const envelope = entry.envelope;
     if (await this.#store.isFamilyRevoked(envelope.familyKey, now)) {
       await this.#store.delete(sessionKey);
       throw new WebSessionError("revoked_session", "Session has been revoked.");
@@ -414,14 +519,17 @@ export class WebSessionManager {
     validateStoredRecord(record, envelope, this.#policy);
     const absoluteExpiresAt = new Date(record.absoluteExpiresAt);
     const refreshExpiresAt = new Date(record.refreshExpiresAt);
-    const lastSeenAt = new Date(record.lastSeenAt);
+    const lastSeenAt = new Date(entry.lastSeenAt);
+    if (Number.isNaN(lastSeenAt.getTime())) {
+      await this.#store.delete(sessionKey);
+      throw new WebSessionError("invalid_session", "Session activity timestamp is invalid.");
+    }
     if (
       absoluteExpiresAt.getTime() <= now.getTime() ||
       refreshExpiresAt.getTime() <= now.getTime() ||
       lastSeenAt.getTime() + this.#policy.idleTtlSeconds * 1000 <= now.getTime()
     ) {
-      await this.#store.revokeFamily(envelope.familyKey, "expired", now, absoluteExpiresAt);
-      await this.#store.delete(sessionKey);
+      await this.#revokeLoaded({ sessionKey, envelope, record, now, lastSeenAt }, "expired", false);
       throw new WebSessionError("expired_session", "Session has expired.");
     }
 
@@ -430,140 +538,277 @@ export class WebSessionManager {
       issuer: record.issuer
     });
     if (!authority.active || !AUTHORITY_REVISION_PATTERN.test(authority.authorityRevision)) {
-      await this.#store.revokeFamily(
-        envelope.familyKey,
+      await this.#revokeLoaded(
+        { sessionKey, envelope, record, now, lastSeenAt },
         "membership_revoked",
-        now,
-        absoluteExpiresAt
+        false
       );
-      await this.#store.delete(sessionKey);
       throw new WebSessionError("authority_changed", "Verified membership is inactive.");
     }
     if (authority.authorityRevision !== record.authorityRevision) {
-      await this.#store.revokeFamily(
-        envelope.familyKey,
+      await this.#revokeLoaded(
+        { sessionKey, envelope, record, now, lastSeenAt },
         "authority_changed",
-        now,
-        absoluteExpiresAt
+        false
       );
-      await this.#store.delete(sessionKey);
       throw new WebSessionError("authority_changed", "Session authority is stale.");
     }
 
-    const loaded = { sessionKey, envelope, record, now };
+    const loaded = { sessionKey, envelope, record, now, lastSeenAt };
     if (!touch) return loaded;
-    const touchedRecord: StoredWebSessionRecord = {
-      ...record,
-      recordVersion: record.recordVersion + 1,
-      lastSeenAt: now.toISOString()
-    };
-    const touchedEnvelope = encryptRecord(
-      touchedRecord,
-      sessionKey,
-      this.#policy,
-      this.#randomBytes
-    );
-    const updated = await this.#store.compareAndSwap(
-      sessionKey,
-      record.recordVersion,
-      touchedEnvelope,
-      absoluteExpiresAt
-    );
-    if (!updated) {
-      throw new WebSessionError("rotation_conflict", "Session was concurrently changed.");
-    }
-    return { ...loaded, envelope: touchedEnvelope, record: touchedRecord };
+    const touched = await this.#store.touchActivity(sessionKey, now, absoluteExpiresAt);
+    return { ...loaded, lastSeenAt: touched === "touched" ? now : lastSeenAt };
   }
 
   async #refresh(
     loaded: LoadedSession,
     refresher: WebSessionTokenRefresher
   ): Promise<LoadedSession> {
-    let refreshed: RefreshedWebSessionTokenSet;
-    try {
-      refreshed = await refresher.refresh({
-        refreshToken: loaded.record.refreshToken,
-        subject: loaded.record.subject,
-        issuer: loaded.record.issuer,
-        authorizedParty: loaded.record.authorizedParty
+    let current = loaded;
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const leaseId = randomOpaqueId(this.#randomBytes);
+      const leaseExpiresAt = new Date(
+        current.now.getTime() + this.#policy.refreshLeaseSeconds * 1000
+      );
+      const claim = await this.#store.claimRefresh({
+        sessionKey: current.sessionKey,
+        expectedRecordVersion: current.record.recordVersion,
+        leaseId,
+        claimedAt: current.now,
+        leaseExpiresAt
       });
-    } catch {
-      await this.#store.revokeFamily(
-        loaded.envelope.familyKey,
-        "refresh_rejected",
-        loaded.now,
-        new Date(loaded.record.absoluteExpiresAt)
+      if (claim.status === "orphaned_dispatched_refresh") {
+        await this.#revokeUncertainRefresh(current);
+      }
+      if (claim.status === "missing_or_revoked") {
+        throw new WebSessionError("revoked_session", "Session is unavailable or revoked.");
+      }
+      if (claim.status === "version_changed") {
+        current = await this.#reloadAfterRefresh(current);
+        if (!this.#needsRefresh(current)) return current;
+        continue;
+      }
+      if (claim.status === "refresh_in_progress") {
+        const waited = await this.#store.waitForRefresh({
+          sessionKey: current.sessionKey,
+          observedRecordVersion: current.record.recordVersion,
+          waitUntil: new Date(claim.leaseExpiresAt)
+        });
+        if (waited.status === "orphaned_dispatched_refresh") {
+          await this.#revokeUncertainRefresh(current);
+        }
+        if (waited.status === "missing_or_revoked") {
+          throw new WebSessionError("revoked_session", "Session is unavailable or revoked.");
+        }
+        if (waited.status === "retry_claim") continue;
+        if (waited.status !== "completed") continue;
+        current = this.#loadedFromEntry(current.sessionKey, waited.entry, current.now);
+        if (!this.#needsRefresh(current)) return current;
+        continue;
+      }
+
+      const dispatched = await this.#store.markRefreshDispatched({
+        sessionKey: current.sessionKey,
+        expectedRecordVersion: current.record.recordVersion,
+        leaseId,
+        dispatchedAt: current.now
+      });
+      if (!dispatched) {
+        const waited = await this.#store.waitForRefresh({
+          sessionKey: current.sessionKey,
+          observedRecordVersion: current.record.recordVersion,
+          waitUntil: leaseExpiresAt
+        });
+        if (waited.status === "orphaned_dispatched_refresh") {
+          await this.#revokeUncertainRefresh(current);
+        }
+        if (waited.status === "completed") {
+          current = this.#loadedFromEntry(current.sessionKey, waited.entry, current.now);
+          if (!this.#needsRefresh(current)) return current;
+        }
+        continue;
+      }
+
+      let refreshed: RefreshedWebSessionTokenSet;
+      try {
+        refreshed = await refresher.refresh({
+          refreshToken: current.record.refreshToken,
+          subject: current.record.subject,
+          issuer: current.record.issuer,
+          authorizedParty: current.record.authorizedParty
+        });
+        validateTokenSet(refreshed, current.now);
+        if (
+          refreshed.subject !== current.record.subject ||
+          refreshed.issuer !== current.record.issuer ||
+          refreshed.authorizedParty !== current.record.authorizedParty ||
+          (current.record.keycloakSessionId &&
+            refreshed.keycloakSessionId !== current.record.keycloakSessionId)
+        ) {
+          throw new WebSessionError(
+            "refresh_rejected",
+            "Refreshed token identity does not match session."
+          );
+        }
+      } catch (error) {
+        const replayDetected = hasErrorCode(error, "refresh_replay");
+        await this.#revokeLoaded(
+          current,
+          replayDetected ? "refresh_replay" : "refresh_rejected",
+          replayDetected
+        );
+        throw new WebSessionError(
+          replayDetected ? "refresh_replay" : "refresh_rejected",
+          replayDetected
+            ? "Identity provider detected refresh-token replay; the session family was revoked."
+            : "Identity provider rejected or invalidated session refresh."
+        );
+      }
+
+      const nextRecord: StoredWebSessionRecord = {
+        ...current.record,
+        recordVersion: current.record.recordVersion + 1,
+        accessToken: refreshed.accessToken,
+        refreshToken: refreshed.refreshToken,
+        idToken: refreshed.idToken ?? current.record.idToken,
+        accessExpiresAt: refreshed.accessExpiresAt.toISOString(),
+        refreshExpiresAt: refreshed.refreshExpiresAt.toISOString()
+      };
+      const nextEnvelope = encryptRecord(
+        nextRecord,
+        current.sessionKey,
+        this.#policy,
+        this.#randomBytes
       );
-      await this.#store.delete(loaded.sessionKey);
-      throw new WebSessionError("refresh_rejected", "Identity provider rejected session refresh.");
+      const completed = await this.#store.completeRefresh({
+        sessionKey: current.sessionKey,
+        expectedRecordVersion: current.record.recordVersion,
+        leaseId,
+        envelope: nextEnvelope,
+        lastSeenAt: current.now,
+        expiresAt: new Date(nextRecord.absoluteExpiresAt)
+      });
+      if (!completed) {
+        await this.#revokeUncertainRefresh(current);
+      }
+      return {
+        ...current,
+        envelope: nextEnvelope,
+        record: nextRecord,
+        lastSeenAt: current.now
+      };
     }
-    validateTokenSet(refreshed, loaded.now);
-    if (
-      refreshed.subject !== loaded.record.subject ||
-      refreshed.issuer !== loaded.record.issuer ||
-      refreshed.authorizedParty !== loaded.record.authorizedParty ||
-      (loaded.record.keycloakSessionId &&
-        refreshed.keycloakSessionId !== loaded.record.keycloakSessionId)
-    ) {
-      await this.#store.revokeFamily(
-        loaded.envelope.familyKey,
-        "refresh_rejected",
-        loaded.now,
-        new Date(loaded.record.absoluteExpiresAt)
-      );
-      await this.#store.delete(loaded.sessionKey);
-      throw new WebSessionError(
-        "refresh_rejected",
-        "Refreshed token identity does not match session."
-      );
-    }
-    const nextRecord: StoredWebSessionRecord = {
-      ...loaded.record,
-      recordVersion: loaded.record.recordVersion + 1,
-      accessToken: refreshed.accessToken,
-      refreshToken: refreshed.refreshToken,
-      idToken: refreshed.idToken ?? loaded.record.idToken,
-      accessExpiresAt: refreshed.accessExpiresAt.toISOString(),
-      refreshExpiresAt: refreshed.refreshExpiresAt.toISOString(),
-      lastSeenAt: loaded.now.toISOString()
-    };
-    const nextEnvelope = encryptRecord(
-      nextRecord,
-      loaded.sessionKey,
-      this.#policy,
-      this.#randomBytes
+    throw new WebSessionError(
+      "refresh_recovery_required",
+      "Session refresh did not reach a durable terminal state."
     );
-    const updated = await this.#store.compareAndSwap(
-      loaded.sessionKey,
-      loaded.record.recordVersion,
-      nextEnvelope,
-      new Date(nextRecord.absoluteExpiresAt)
-    );
-    if (!updated) {
-      await this.#store.revokeFamily(
-        loaded.envelope.familyKey,
-        "refresh_replay",
-        loaded.now,
-        new Date(loaded.record.absoluteExpiresAt)
-      );
-      await this.#store.delete(loaded.sessionKey);
-      throw new WebSessionError(
-        "refresh_replay",
-        "Concurrent refresh detected; the session family was revoked."
-      );
-    }
-    return { ...loaded, envelope: nextEnvelope, record: nextRecord };
   }
 
-  #createdSession(sessionId: string, record: StoredWebSessionRecord, now: Date): CreatedWebSession {
+  async #reloadAfterRefresh(loaded: LoadedSession): Promise<LoadedSession> {
+    const entry = await this.#store.read(loaded.sessionKey, loaded.now);
+    if (!entry) throw new WebSessionError("invalid_session", "Session is unavailable.");
+    return this.#loadedFromEntry(loaded.sessionKey, entry, loaded.now);
+  }
+
+  #loadedFromEntry(sessionKey: string, entry: WebSessionStoredEntry, now: Date): LoadedSession {
+    const record = decryptRecord(entry.envelope, sessionKey, this.#policy);
+    validateStoredRecord(record, entry.envelope, this.#policy);
+    const lastSeenAt = trustedInstant(new Date(entry.lastSeenAt), "session activity time");
+    return { sessionKey, envelope: entry.envelope, record, now, lastSeenAt };
+  }
+
+  #needsRefresh(loaded: LoadedSession): boolean {
+    return (
+      new Date(loaded.record.accessExpiresAt).getTime() - loaded.now.getTime() <=
+      this.#policy.refreshLeewaySeconds * 1000
+    );
+  }
+
+  async #revokeLoaded(
+    loaded: LoadedSession,
+    reason: WebSessionRevocationReason,
+    replayOrUncertain: boolean
+  ): Promise<void> {
+    const sessionRevoked = this.#sessionAudit(
+      loaded.record,
+      loaded.envelope.familyKey,
+      "auth.session.revoked",
+      reason,
+      loaded.now
+    );
+    const requiredAudits: readonly [RequiredSecurityAuditIntent, ...RequiredSecurityAuditIntent[]] =
+      replayOrUncertain
+        ? [
+            this.#sessionAudit(
+              loaded.record,
+              loaded.envelope.familyKey,
+              "auth.refresh.replay_detected",
+              reason,
+              loaded.now
+            ),
+            sessionRevoked
+          ]
+        : [sessionRevoked];
+    await this.#store.revokeSessionFamily({
+      sessionKey: loaded.sessionKey,
+      familyKey: loaded.envelope.familyKey,
+      reason,
+      revokedAt: loaded.now,
+      expiresAt: new Date(loaded.record.absoluteExpiresAt),
+      requiredAudits
+    });
+  }
+
+  async #revokeUncertainRefresh(loaded: LoadedSession): Promise<never> {
+    await this.#revokeLoaded(loaded, "refresh_recovery_uncertain", false);
+    throw new WebSessionError(
+      "refresh_recovery_required",
+      "A dispatched refresh did not commit durably; the session family was revoked."
+    );
+  }
+
+  #sessionAudit(
+    record: StoredWebSessionRecord,
+    familyKey: string,
+    action:
+      | "auth.session.created"
+      | "auth.session.rotated"
+      | "auth.session.revoked"
+      | "auth.refresh.replay_detected",
+    reasonCode: string,
+    occurredAt: Date
+  ): RequiredSecurityAuditIntent {
+    return validateRequiredSecurityAuditIntent({
+      schemaVersion: 1,
+      action,
+      occurredAt: occurredAt.toISOString(),
+      deduplicationKey: `${action}:${familyKey}:${record.recordVersion}:${reasonCode}`,
+      subject: record.subject,
+      issuer: record.issuer,
+      authorizedParty: record.authorizedParty,
+      reasonCode
+    });
+  }
+
+  #createdSession(
+    sessionId: string,
+    record: StoredWebSessionRecord,
+    now: Date,
+    lastSeenAt: Date
+  ): CreatedWebSession {
     return {
       cookie: serializeCookie(sessionId, this.#policy, this.#policy.absoluteTtlSeconds),
       csrfToken: this.#csrfToken(sessionId),
-      safeSession: this.#safeSession(sessionId, record, now)
+      safeSession: this.#safeSession(sessionId, record, now, lastSeenAt)
     };
   }
 
-  #safeSession(sessionId: string, record: StoredWebSessionRecord, now: Date): SafeWebSession {
+  #safeSession(
+    sessionId: string,
+    record: StoredWebSessionRecord,
+    now: Date,
+    lastSeenAt: Date
+  ): SafeWebSession {
     const rotatedAt = new Date(record.rotatedAt);
     return {
       subject: record.subject,
@@ -571,7 +816,7 @@ export class WebSessionManager {
       authorizedParty: record.authorizedParty,
       keycloakSessionId: record.keycloakSessionId,
       createdAt: record.createdAt,
-      lastSeenAt: record.lastSeenAt,
+      lastSeenAt: lastSeenAt.toISOString(),
       absoluteExpiresAt: record.absoluteExpiresAt,
       authorityRevision: record.authorityRevision,
       amr: record.amr,
@@ -601,6 +846,7 @@ interface LoadedSession {
   envelope: WebSessionEnvelope;
   record: StoredWebSessionRecord;
   now: Date;
+  lastSeenAt: Date;
 }
 
 interface NormalizedWebSessionPolicy extends Omit<
@@ -638,6 +884,7 @@ function normalizePolicy(policy: WebSessionPolicy): NormalizedWebSessionPolicy {
   assertPolicySeconds(policy.absoluteTtlSeconds, 900, 43_200, "absolute TTL");
   assertPolicySeconds(policy.rotateAfterSeconds, 300, 1800, "rotation interval");
   assertPolicySeconds(policy.refreshLeewaySeconds, 15, 120, "refresh leeway");
+  assertPolicySeconds(policy.refreshLeaseSeconds, 5, 30, "refresh lease");
   if (policy.idleTtlSeconds >= policy.absoluteTtlSeconds) {
     throw new WebSessionError(
       "invalid_configuration",
@@ -692,7 +939,7 @@ function encryptRecord(
   cipher.setAAD(aad);
   const ciphertext = Buffer.concat([cipher.update(JSON.stringify(record), "utf8"), cipher.final()]);
   return {
-    schemaVersion: 1,
+    schemaVersion: 2,
     recordVersion: record.recordVersion,
     familyKey,
     keyId: currentKey.id,
@@ -708,7 +955,7 @@ function decryptRecord(
   sessionKey: string,
   policy: NormalizedWebSessionPolicy
 ): StoredWebSessionRecord {
-  if (envelope.schemaVersion !== 1 || !KEY_ID_PATTERN.test(envelope.keyId)) {
+  if (envelope.schemaVersion !== 2 || !KEY_ID_PATTERN.test(envelope.keyId)) {
     throw new WebSessionError("invalid_session", "Session envelope version or key is invalid.");
   }
   const key = policy.encryptionKeys.find((candidate) => candidate.id === envelope.keyId);
@@ -745,7 +992,7 @@ function validateStoredRecord(
     .update(`session-family\u0000${record.familyId}`)
     .digest("hex");
   if (
-    record.schemaVersion !== 1 ||
+    record.schemaVersion !== 2 ||
     !Number.isSafeInteger(record.recordVersion) ||
     record.recordVersion < 1 ||
     record.recordVersion !== envelope.recordVersion ||
@@ -758,7 +1005,6 @@ function validateStoredRecord(
   assertOpaqueId(record.familyId, "session family id");
   for (const value of [
     record.createdAt,
-    record.lastSeenAt,
     record.rotatedAt,
     record.absoluteExpiresAt,
     record.accessExpiresAt,
@@ -901,4 +1147,13 @@ function secureEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left, "utf8");
   const rightBuffer = Buffer.from(right, "utf8");
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
+}
+
+function hasErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
 }

@@ -8,6 +8,7 @@ import {
   buildBrowserSecurityHeaders,
   buildSensitiveApiHeaders,
   classifyAuditAction,
+  createVerifiedTrustedProxyBoundary,
   evaluateCorsRequest,
   normalizeTrustedEdgePolicy
 } from "../src/index.ts";
@@ -16,8 +17,18 @@ const productionPolicy = normalizeTrustedEdgePolicy({
   productionLike: true,
   trustedHosts: ["app.clinicos.example"],
   trustedOrigins: ["https://app.clinicos.example"],
-  trustForwardedHeaders: true,
+  proxyBoundary: "verified_alb_adapter_required",
   hsts: "disabled_until_domain_ready"
+});
+
+const verifiedProxyBoundary = createVerifiedTrustedProxyBoundary({
+  connectionVerified: true,
+  forwardingHeadersOverwritten: true,
+  forwardedChainLength: 1,
+  canonicalHostHeader: "app.clinicos.example",
+  canonicalProtoHeader: "https",
+  verificationId: "alb-verification-0001",
+  productionLike: true
 });
 
 test("trusted edge boundary requires exact host, origin, and normalized proxy protocol", () => {
@@ -25,8 +36,7 @@ test("trusted edge boundary requires exact host, origin, and normalized proxy pr
     assertTrustedRequestBoundary({
       policy: productionPolicy,
       hostHeader: "internal-alb.local",
-      forwardedHostHeader: "app.clinicos.example",
-      forwardedProtoHeader: "https",
+      proxyBoundary: verifiedProxyBoundary,
       originHeader: "https://app.clinicos.example"
     }),
     {
@@ -40,8 +50,8 @@ test("trusted edge boundary requires exact host, origin, and normalized proxy pr
       assertTrustedRequestBoundary({
         policy: productionPolicy,
         hostHeader: "internal-alb.local",
-        forwardedHostHeader: "attacker.example",
-        forwardedProtoHeader: "https",
+        untrustedForwardedHostHeader: "attacker.example",
+        proxyBoundary: verifiedProxyBoundary,
         originHeader: "https://app.clinicos.example"
       }),
     (error) => error instanceof BoundaryError && error.code === "PERMISSION_DENIED"
@@ -50,11 +60,72 @@ test("trusted edge boundary requires exact host, origin, and normalized proxy pr
     () =>
       assertTrustedRequestBoundary({
         policy: productionPolicy,
-        hostHeader: "internal-alb.local",
-        forwardedHostHeader: ["app.clinicos.example", "attacker.example"],
-        forwardedProtoHeader: "https"
+        hostHeader: "internal-alb.local"
+      }),
+    /Verified trusted-proxy boundary is required/
+  );
+  assert.throws(
+    () =>
+      createVerifiedTrustedProxyBoundary({
+        connectionVerified: false,
+        forwardingHeadersOverwritten: true,
+        forwardedChainLength: 1,
+        canonicalHostHeader: "app.clinicos.example",
+        canonicalProtoHeader: "https",
+        verificationId: "alb-verification-0002",
+        productionLike: true
+      }),
+    /not proven/
+  );
+  assert.throws(
+    () =>
+      createVerifiedTrustedProxyBoundary({
+        connectionVerified: true,
+        forwardingHeadersOverwritten: true,
+        forwardedChainLength: 2,
+        canonicalHostHeader: "app.clinicos.example",
+        canonicalProtoHeader: "https",
+        verificationId: "alb-verification-0003",
+        productionLike: true
+      }),
+    /one normalized forwarding hop/
+  );
+  assert.throws(
+    () =>
+      createVerifiedTrustedProxyBoundary({
+        connectionVerified: true,
+        forwardingHeadersOverwritten: true,
+        forwardedChainLength: 1,
+        canonicalHostHeader: ["app.clinicos.example", "attacker.example"],
+        canonicalProtoHeader: "https,http",
+        verificationId: "alb-verification-0004",
+        productionLike: true
       }),
     /ambiguous/
+  );
+  assert.throws(
+    () =>
+      createVerifiedTrustedProxyBoundary({
+        connectionVerified: true,
+        forwardingHeadersOverwritten: true,
+        forwardedChainLength: 1,
+        canonicalHostHeader: "app.clinicos.example",
+        canonicalProtoHeader: "https,http",
+        verificationId: "alb-verification-0005",
+        productionLike: true
+      }),
+    /ambiguous/
+  );
+  assert.throws(
+    () =>
+      assertTrustedRequestBoundary({
+        policy: productionPolicy,
+        hostHeader: "internal-alb.local",
+        proxyBoundary: verifiedProxyBoundary,
+        untrustedForwardedProtoHeader: "http",
+        originHeader: "https://app.clinicos.example"
+      }),
+    /must be stripped/
   );
 });
 
@@ -63,8 +134,7 @@ test("browser mutations require same-origin fetch metadata, a CSRF token, and no
     policy: productionPolicy,
     method: "POST",
     hostHeader: "internal-alb.local",
-    forwardedHostHeader: "app.clinicos.example",
-    forwardedProtoHeader: "https",
+    proxyBoundary: verifiedProxyBoundary,
     originHeader: "https://app.clinicos.example",
     csrfHeader: "csrf-token-00000000000000000000000000000000",
     contentTypeHeader: "application/json; charset=utf-8",

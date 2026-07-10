@@ -21,7 +21,15 @@ realm export is not a backup of sessions, revocations, workflow state, or admin 
 rotation keeps the previous public key available until the maximum token lifetime and skew window
 have elapsed.
 
-Privileged MFA is enforced twice: JML assigns a Keycloak required action, and ClinicOS rejects
-privileged/break-glass access unless verified token `amr`/`acr` demonstrates MFA. Product roles,
-tenant membership, clinic assignment, capabilities, break-glass scope, and authority revision stay
-in ClinicOS rather than realm roles.
+The realm template registers OTP/WebAuthn methods and required actions, but it does **not** by itself
+enforce role-conditional MFA for product roles or MFA for Keycloak administrators. JML must assign
+the required action before product privilege, and ClinicOS must reject privileged or clinical
+break-glass access unless verified token `amr`/`acr` demonstrates MFA. The separate admin hostname
+must use a management-realm or federated operator MFA flow and remain unready until runtime denial
+and success evidence exists. `operations/privileged-mfa-boundary.json` makes those distinct
+enforcement owners and break-glass evidence requirements machine-readable.
+
+Product roles, tenant membership, clinic assignment, capabilities, clinical break-glass scope, and
+authority revision stay in ClinicOS rather than realm roles. Keycloak administrative break-glass is
+a separate two-person, offline-escrowed operator process and is not granted by a ClinicOS product
+role.

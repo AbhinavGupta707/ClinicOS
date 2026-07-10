@@ -11,9 +11,20 @@ export interface TrustedEdgePolicy {
   productionLike: boolean;
   trustedHosts: readonly string[];
   trustedOrigins: readonly string[];
-  trustForwardedHeaders: boolean;
+  proxyBoundary: "direct_canonical" | "verified_alb_adapter_required";
   hsts: "disabled_until_domain_ready" | "enabled_preloaded";
   cspReportUri?: string | null;
+}
+
+const VERIFIED_PROXY_BOUNDARY = Symbol("clinic-os-verified-proxy-boundary");
+
+export interface VerifiedTrustedProxyBoundary {
+  readonly kind: "verified_trusted_proxy_boundary";
+  readonly source: "aws_alb_normalizing_adapter";
+  readonly canonicalHost: string;
+  readonly canonicalProtocol: "http" | "https";
+  readonly verificationId: string;
+  readonly [VERIFIED_PROXY_BOUNDARY]: true;
 }
 
 export interface TrustedRequestBoundary {
@@ -118,8 +129,8 @@ export function normalizeTrustedEdgePolicy(policy: TrustedEdgePolicy): TrustedEd
       throw new Error("Every trusted origin host must be present in the trusted-host allowlist.");
     }
   }
-  if (policy.productionLike && policy.trustForwardedHeaders === false) {
-    throw new Error("Production edge policy must explicitly consume normalized proxy headers.");
+  if (!["direct_canonical", "verified_alb_adapter_required"].includes(policy.proxyBoundary)) {
+    throw new Error("Trusted proxy boundary mode is invalid.");
   }
   if (policy.hsts === "enabled_preloaded" && !policy.productionLike) {
     throw new Error("HSTS preload policy is valid only for a production-like HTTPS origin.");
@@ -135,31 +146,95 @@ export function normalizeTrustedEdgePolicy(policy: TrustedEdgePolicy): TrustedEd
   return Object.freeze({ ...policy, trustedHosts, trustedOrigins, cspReportUri });
 }
 
+/**
+ * Called only by the master-owned adapter after it verifies the connection peer and proves that the
+ * ALB overwrote client-supplied forwarding headers. Raw request code must not call this factory.
+ */
+export function createVerifiedTrustedProxyBoundary(input: {
+  connectionVerified: boolean;
+  forwardingHeadersOverwritten: boolean;
+  forwardedChainLength: number;
+  canonicalHostHeader: SecurityHeaderValue;
+  canonicalProtoHeader: SecurityHeaderValue;
+  verificationId: string;
+  productionLike: boolean;
+}): VerifiedTrustedProxyBoundary {
+  if (!input.connectionVerified || !input.forwardingHeadersOverwritten) {
+    throw boundaryDenied("Trusted proxy connection and header normalization were not proven.");
+  }
+  if (input.forwardedChainLength !== 1) {
+    throw boundaryDenied("Trusted proxy adapter requires one normalized forwarding hop.");
+  }
+  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(input.verificationId)) {
+    throw boundaryDenied("Trusted proxy verification id is malformed.");
+  }
+  return Object.freeze({
+    kind: "verified_trusted_proxy_boundary",
+    source: "aws_alb_normalizing_adapter",
+    canonicalHost: normalizeHost(
+      singleHeader(input.canonicalHostHeader, "Normalized proxy host", true)
+    ),
+    canonicalProtocol: normalizeProtocol(
+      singleHeader(input.canonicalProtoHeader, "Normalized proxy protocol", true),
+      input.productionLike
+    ),
+    verificationId: input.verificationId,
+    [VERIFIED_PROXY_BOUNDARY]: true as const
+  });
+}
+
 export function assertTrustedRequestBoundary(input: {
   policy: TrustedEdgePolicy;
   hostHeader: SecurityHeaderValue;
   originHeader?: SecurityHeaderValue;
-  forwardedHostHeader?: SecurityHeaderValue;
-  forwardedProtoHeader?: SecurityHeaderValue;
+  directProtocol?: SecurityHeaderValue;
+  untrustedForwardedHostHeader?: SecurityHeaderValue;
+  untrustedForwardedProtoHeader?: SecurityHeaderValue;
+  proxyBoundary?: VerifiedTrustedProxyBoundary | null;
 }): TrustedRequestBoundary {
   const policy = normalizeTrustedEdgePolicy(input.policy);
   const directHost = singleHeader(input.hostHeader, "Host", true);
-  const forwardedHost = singleHeader(input.forwardedHostHeader, "X-Forwarded-Host", false);
-  const forwardedProto = singleHeader(input.forwardedProtoHeader, "X-Forwarded-Proto", false);
-  if (!policy.trustForwardedHeaders && (forwardedHost || forwardedProto)) {
-    throw boundaryDenied("Forwarded host/protocol headers are not trusted on this connection.");
-  }
-  const host = normalizeHost(
-    policy.trustForwardedHeaders && forwardedHost ? forwardedHost : directHost
+  const untrustedForwardedHost = singleHeader(
+    input.untrustedForwardedHostHeader,
+    "Unverified X-Forwarded-Host",
+    false
   );
+  const untrustedForwardedProto = singleHeader(
+    input.untrustedForwardedProtoHeader,
+    "Unverified X-Forwarded-Proto",
+    false
+  );
+  if (untrustedForwardedHost || untrustedForwardedProto) {
+    throw boundaryDenied(
+      "Raw forwarded host/protocol headers must be stripped by the verified proxy adapter."
+    );
+  }
+  let host: string;
+  let protocol: "http" | "https";
+  if (policy.proxyBoundary === "verified_alb_adapter_required") {
+    if (
+      !input.proxyBoundary ||
+      input.proxyBoundary[VERIFIED_PROXY_BOUNDARY] !== true ||
+      input.proxyBoundary.kind !== "verified_trusted_proxy_boundary" ||
+      input.proxyBoundary.source !== "aws_alb_normalizing_adapter"
+    ) {
+      throw boundaryDenied("Verified trusted-proxy boundary is required.");
+    }
+    host = input.proxyBoundary.canonicalHost;
+    protocol = input.proxyBoundary.canonicalProtocol;
+  } else {
+    if (input.proxyBoundary) {
+      throw boundaryDenied("Proxy boundary is not accepted for direct-canonical requests.");
+    }
+    host = normalizeHost(directHost);
+    protocol = normalizeProtocol(
+      singleHeader(input.directProtocol, "Direct request protocol", true),
+      policy.productionLike
+    );
+  }
   if (!policy.trustedHosts.includes(host)) {
     throw boundaryDenied("Request host is not trusted.");
   }
-  const protocol = policy.trustForwardedHeaders
-    ? normalizeProtocol(forwardedProto, policy.productionLike)
-    : policy.productionLike
-      ? "https"
-      : "http";
   const originValue = singleHeader(input.originHeader, "Origin", false);
   const origin = originValue ? normalizeOrigin(originValue, policy.productionLike) : null;
   if (origin && !policy.trustedOrigins.includes(origin)) {
@@ -176,8 +251,10 @@ export function assertBrowserMutationRequest(input: {
   method: string;
   hostHeader: SecurityHeaderValue;
   originHeader: SecurityHeaderValue;
-  forwardedHostHeader?: SecurityHeaderValue;
-  forwardedProtoHeader?: SecurityHeaderValue;
+  directProtocol?: SecurityHeaderValue;
+  untrustedForwardedHostHeader?: SecurityHeaderValue;
+  untrustedForwardedProtoHeader?: SecurityHeaderValue;
+  proxyBoundary?: VerifiedTrustedProxyBoundary | null;
   csrfHeader: SecurityHeaderValue;
   contentTypeHeader?: SecurityHeaderValue;
   authorizationHeader?: SecurityHeaderValue;

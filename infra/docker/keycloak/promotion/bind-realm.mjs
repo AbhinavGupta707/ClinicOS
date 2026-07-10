@@ -26,6 +26,7 @@ export async function bindRealm({ templatePath, bindingPath, outputPath }) {
       `Keycloak runtime binding mismatch; missing=[${missing.sort()}], extra=[${extra.sort()}]`
     );
   }
+  validatePublicBindings(bindings);
   for (const [name, value] of Object.entries(bindings)) {
     if (SECRET_BINDING.test(name) || SECRET_BINDING.test(String(value))) {
       throw new Error("Keycloak realm promotion bindings must remain secret-free.");
@@ -49,6 +50,7 @@ export async function bindRealm({ templatePath, bindingPath, outputPath }) {
 }
 
 export function validateRealm(realm, bindings) {
+  validatePublicBindings(bindings);
   if (realm.realm !== bindings.CLINIC_OS_REALM || realm.enabled !== true) {
     throw new Error("Realm identity does not match the runtime binding.");
   }
@@ -93,10 +95,94 @@ export function validateRealm(realm, bindings) {
   if (
     web.webOrigins?.length !== 1 ||
     web.webOrigins[0] !== bindings.CLINIC_OS_WEB_ORIGIN ||
+    web.attributes?.["post.logout.redirect.uris"] !== bindings.CLINIC_OS_WEB_POST_LOGOUT_URI ||
     mobile.webOrigins?.length !== 0
   ) {
     throw new Error("Interactive clients must use exact web-origin policy without wildcards.");
   }
+}
+
+export function validatePublicBindings(bindings) {
+  const realm = bindings.CLINIC_OS_REALM;
+  if (typeof realm !== "string" || !/^[a-z][a-z0-9-]{2,62}$/.test(realm) || realm.includes("--")) {
+    throw new Error("Keycloak realm binding must be a bounded lowercase slug.");
+  }
+  const webOrigin = exactHttpsOrigin(bindings.CLINIC_OS_WEB_ORIGIN, "web origin");
+  exactHttpsEndpoint(bindings.CLINIC_OS_WEB_CALLBACK_URI, "web callback", webOrigin);
+  exactHttpsEndpoint(bindings.CLINIC_OS_WEB_POST_LOGOUT_URI, "web post-logout redirect", webOrigin);
+  exactMobileRedirect(bindings.CLINIC_OS_MOBILE_REDIRECT_URI);
+}
+
+function exactHttpsOrigin(value, label) {
+  const parsed = parseBoundedPublicUrl(value, label);
+  if (parsed.protocol !== "https:" || parsed.pathname !== "/" || value !== parsed.origin) {
+    throw new Error(`Keycloak ${label} must be an exact canonical HTTPS origin.`);
+  }
+  return parsed.origin;
+}
+
+function exactHttpsEndpoint(value, label, requiredOrigin) {
+  const parsed = parseBoundedPublicUrl(value, label);
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.origin !== requiredOrigin ||
+    parsed.pathname === "/" ||
+    parsed.pathname.includes("//") ||
+    parsed.pathname.includes("%") ||
+    value !== `${parsed.origin}${parsed.pathname}`
+  ) {
+    throw new Error(
+      `Keycloak ${label} must be an exact canonical HTTPS path on the configured web origin.`
+    );
+  }
+}
+
+function exactMobileRedirect(value) {
+  const parsed = parseBoundedPublicUrl(value, "mobile redirect");
+  if (parsed.protocol === "https:") {
+    if (
+      parsed.pathname === "/" ||
+      parsed.pathname.includes("//") ||
+      parsed.pathname.includes("%") ||
+      value !== `${parsed.origin}${parsed.pathname}`
+    ) {
+      throw new Error("Keycloak mobile claimed-HTTPS redirect must be an exact canonical path.");
+    }
+    return;
+  }
+  if (
+    parsed.protocol !== "clinic-os:" ||
+    parsed.hostname !== "auth" ||
+    parsed.port ||
+    parsed.pathname !== "/callback" ||
+    value !== "clinic-os://auth/callback"
+  ) {
+    throw new Error(
+      "Keycloak mobile redirect must use approved claimed HTTPS or clinic-os://auth/callback."
+    );
+  }
+}
+
+function parseBoundedPublicUrl(value, label) {
+  if (
+    typeof value !== "string" ||
+    value.length < 8 ||
+    value.length > 2048 ||
+    value.trim() !== value ||
+    /[\u0000-\u001F\u007F*\\]/.test(value)
+  ) {
+    throw new Error(`Keycloak ${label} binding is malformed or unbounded.`);
+  }
+  let parsed;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw new Error(`Keycloak ${label} binding is not a valid URL.`);
+  }
+  if (parsed.username || parsed.password || parsed.search || parsed.hash) {
+    throw new Error(`Keycloak ${label} cannot contain userinfo, query, or fragment.`);
+  }
+  return parsed;
 }
 
 function assertInteractiveClient(client, publicClient, redirectUri) {

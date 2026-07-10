@@ -3,7 +3,8 @@ import test from "node:test";
 import {
   buildAccessContext,
   principalFromVerifiedKeycloakClaims,
-  type KeycloakAccessTokenClaims
+  type KeycloakAccessTokenClaims,
+  type RequiredSecurityAuditIntent
 } from "@clinic-os/auth";
 import type { AccessContext } from "@clinic-os/auth";
 import { BoundaryError } from "@clinic-os/security";
@@ -21,7 +22,8 @@ const clinicId = "10000000-0000-4000-8000-000000000101";
 const userId = "10000000-0000-4000-8000-000000001001";
 
 test("identity edge preserves verified tenant/clinic authority and MFA for privileged roles", async () => {
-  const guard = createGuard(new TestRevocationStore());
+  const auditOutbox = new TestSecurityAuditOutbox();
+  const guard = createGuard(new TestRevocationStore(), auditOutbox);
   const claims = tokenClaims(["pwd", "otp"]);
   const verified = await guard.verify({
     claims,
@@ -45,6 +47,18 @@ test("identity edge preserves verified tenant/clinic authority and MFA for privi
       now
     }),
     (error) => error instanceof BoundaryError && error.code === "UNAUTHENTICATED"
+  );
+  assert.equal(auditOutbox.intents.at(-1)?.action, "auth.mfa.denied");
+  auditOutbox.fail = true;
+  await assert.rejects(
+    guard.verify({
+      claims: tokenClaims(["pwd"]),
+      accessContext: context("owner_admin"),
+      clinics: [clinic()],
+      selectedClinicId: clinicId,
+      now
+    }),
+    /audit outbox unavailable/
   );
 });
 
@@ -129,12 +143,75 @@ test("identity edge refuses an in-memory revocation store in production and emit
         revocations: {
           ...new TestRevocationStore(),
           durability: "in_memory_test_double"
-        }
+        },
+        securityAuditOutbox: new TestSecurityAuditOutbox()
       }),
     /distributed durable/
   );
+  assert.throws(
+    () =>
+      new IdentitySessionEdgeGuard({
+        configuration: configuration(),
+        revocations: new TestRevocationStore(),
+        securityAuditOutbox: {
+          ...new TestSecurityAuditOutbox(),
+          durability: "in_memory_test_double"
+        }
+      }),
+    /distributed durable outbox/
+  );
   assert.match(IDENTITY_SESSION_EDGE_RESPONSE_HEADERS["cache-control"]!, /no-store/);
   assert.equal(IDENTITY_SESSION_EDGE_RESPONSE_HEADERS["x-content-type-options"], "nosniff");
+});
+
+test("identity issuer is canonical in production and HTTP remains loopback-only locally", () => {
+  for (const expectedIssuer of [
+    "https://user@identity.example/realms/clinic-os",
+    "https://identity.example/realms/clinic-os?query=1",
+    "https://identity.example/realms/clinic-os#fragment",
+    "https://identity.example/realms/clinic-os/",
+    "https://identity.example/realms/../clinic-os",
+    "https://IDENTITY.example/realms/clinic-os",
+    "https://identity.example:443/realms/clinic-os"
+  ]) {
+    assert.throws(
+      () =>
+        new IdentitySessionEdgeGuard({
+          configuration: { ...configuration(), expectedIssuer },
+          revocations: new TestRevocationStore(),
+          securityAuditOutbox: new TestSecurityAuditOutbox()
+        }),
+      /issuer/
+    );
+  }
+
+  assert.doesNotThrow(
+    () =>
+      new IdentitySessionEdgeGuard({
+        configuration: {
+          ...configuration(),
+          productionLike: false,
+          expectedIssuer: "http://localhost:8080/realms/clinic-os",
+          browserSessionCookieName: "clinicos_session"
+        },
+        revocations: new TestRevocationStore(),
+        securityAuditOutbox: new TestSecurityAuditOutbox()
+      })
+  );
+  assert.throws(
+    () =>
+      new IdentitySessionEdgeGuard({
+        configuration: {
+          ...configuration(),
+          productionLike: false,
+          expectedIssuer: "http://identity.internal/realms/clinic-os",
+          browserSessionCookieName: "clinicos_session"
+        },
+        revocations: new TestRevocationStore(),
+        securityAuditOutbox: new TestSecurityAuditOutbox()
+      }),
+    /loopback/
+  );
 });
 
 class TestRevocationStore implements TokenRevocationStore {
@@ -150,8 +227,29 @@ class TestRevocationStore implements TokenRevocationStore {
   }
 }
 
-function createGuard(revocations: TokenRevocationStore): IdentitySessionEdgeGuard {
-  return new IdentitySessionEdgeGuard({ configuration: configuration(), revocations });
+class TestSecurityAuditOutbox {
+  readonly atomicity = "durable_transactional_outbox" as const;
+  readonly durability = "distributed_durable" as const;
+  readonly intents: RequiredSecurityAuditIntent[] = [];
+  fail = false;
+
+  async readiness(): Promise<void> {}
+
+  async persistRequired(intent: RequiredSecurityAuditIntent): Promise<void> {
+    if (this.fail) throw new Error("required audit outbox unavailable");
+    this.intents.push(structuredClone(intent));
+  }
+}
+
+function createGuard(
+  revocations: TokenRevocationStore,
+  securityAuditOutbox = new TestSecurityAuditOutbox()
+): IdentitySessionEdgeGuard {
+  return new IdentitySessionEdgeGuard({
+    configuration: configuration(),
+    revocations,
+    securityAuditOutbox
+  });
 }
 
 function configuration() {

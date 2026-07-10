@@ -9,6 +9,7 @@ import {
 import { BoundaryError } from "@clinic-os/security";
 import type {
   IdentitySessionEdgeConfiguration,
+  IdentitySecurityAuditOutbox,
   TokenRevocationStore,
   VerifyIdentitySessionEdgeInput
 } from "./contracts.ts";
@@ -21,10 +22,12 @@ export interface VerifiedIdentitySessionEdgeContext {
 export class IdentitySessionEdgeGuard {
   readonly #configuration: IdentitySessionEdgeConfiguration;
   readonly #revocations: TokenRevocationStore;
+  readonly #securityAuditOutbox: IdentitySecurityAuditOutbox;
 
   constructor(input: {
     configuration: IdentitySessionEdgeConfiguration;
     revocations: TokenRevocationStore;
+    securityAuditOutbox: IdentitySecurityAuditOutbox;
   }) {
     this.#configuration = normalizeConfiguration(input.configuration);
     if (
@@ -33,11 +36,18 @@ export class IdentitySessionEdgeGuard {
     ) {
       throw new Error("Production API token revocation requires a distributed durable store.");
     }
+    if (
+      this.#configuration.productionLike &&
+      input.securityAuditOutbox.durability !== "distributed_durable"
+    ) {
+      throw new Error("Production API security audit requires a distributed durable outbox.");
+    }
     this.#revocations = input.revocations;
+    this.#securityAuditOutbox = input.securityAuditOutbox;
   }
 
   async readiness(): Promise<void> {
-    await this.#revocations.readiness();
+    await Promise.all([this.#revocations.readiness(), this.#securityAuditOutbox.readiness()]);
   }
 
   async verify(input: VerifyIdentitySessionEdgeInput): Promise<VerifiedIdentitySessionEdgeContext> {
@@ -88,18 +98,29 @@ export class IdentitySessionEdgeGuard {
         clinics: input.clinics,
         selectedClinicId: input.selectedClinicId
       });
-      assertMfaForAccess({
+    } catch {
+      throw new BoundaryError({
+        code: "PERMISSION_DENIED",
+        message: "Verified identity has no active ClinicOS membership for this request."
+      });
+    }
+    try {
+      await assertMfaForAccess({
         roleSlugs: scope.roleSlugs,
         amr: principal.amr,
-        acr: principal.acr
+        acr: principal.acr,
+        subject: principal.subject,
+        issuer: principal.issuer,
+        authorizedParty: principal.authorizedParty,
+        auditDeduplicationKey: principal.tokenId,
+        now: input.now,
+        auditOutbox: this.#securityAuditOutbox
       });
     } catch (error) {
+      if (!(error instanceof AuthenticationError)) throw error;
       throw new BoundaryError({
-        code: error instanceof AuthenticationError ? "UNAUTHENTICATED" : "PERMISSION_DENIED",
-        message:
-          error instanceof AuthenticationError
-            ? error.message
-            : "Verified identity has no active ClinicOS membership for this request."
+        code: "UNAUTHENTICATED",
+        message: error.message
       });
     }
     return { principal, scope };
@@ -132,15 +153,10 @@ export function assertNoBrowserSessionCookie(
 function normalizeConfiguration(
   configuration: IdentitySessionEdgeConfiguration
 ): IdentitySessionEdgeConfiguration {
-  let issuer: URL;
-  try {
-    issuer = new URL(configuration.expectedIssuer);
-  } catch {
-    throw new Error("Identity edge issuer is malformed.");
-  }
-  if (configuration.productionLike && issuer.protocol !== "https:") {
-    throw new Error("Production identity issuer must use HTTPS.");
-  }
+  const expectedIssuer = normalizeIdentityIssuer(
+    configuration.expectedIssuer,
+    configuration.productionLike
+  );
   if (
     !/^[A-Za-z0-9._:-]{3,128}$/.test(configuration.requiredAudience) ||
     configuration.acceptedAuthorizedParties.some(
@@ -167,5 +183,45 @@ function normalizeConfiguration(
   ) {
     throw new Error("Production browser sessions require a __Host- cookie name.");
   }
-  return Object.freeze({ ...configuration, expectedIssuer: issuer.toString().replace(/\/$/, "") });
+  return Object.freeze({ ...configuration, expectedIssuer });
+}
+
+function normalizeIdentityIssuer(value: string, productionLike: boolean): string {
+  if (
+    typeof value !== "string" ||
+    value.length < 16 ||
+    value.length > 512 ||
+    value.trim() !== value ||
+    /[\u0000-\u001F\u007F\\]/.test(value)
+  ) {
+    throw new Error("Identity edge issuer is malformed or unbounded.");
+  }
+  let issuer: URL;
+  try {
+    issuer = new URL(value);
+  } catch {
+    throw new Error("Identity edge issuer is malformed.");
+  }
+  if (issuer.username || issuer.password || issuer.search || issuer.hash) {
+    throw new Error("Identity edge issuer cannot contain userinfo, query, or fragment.");
+  }
+  if (!/^\/realms\/[a-z][a-z0-9-]{2,62}$/.test(issuer.pathname)) {
+    throw new Error("Identity edge issuer must use one canonical bounded Keycloak realm path.");
+  }
+  if (productionLike) {
+    if (issuer.protocol !== "https:" || issuer.port) {
+      throw new Error("Production identity issuer must use canonical HTTPS without a port.");
+    }
+  } else if (issuer.protocol === "http:") {
+    if (!["localhost", "127.0.0.1", "::1"].includes(issuer.hostname)) {
+      throw new Error("Local HTTP identity issuer is restricted to the loopback host.");
+    }
+  } else if (issuer.protocol !== "https:") {
+    throw new Error("Identity edge issuer protocol is not accepted.");
+  }
+  const canonical = `${issuer.origin}${issuer.pathname}`;
+  if (value !== canonical) {
+    throw new Error("Identity edge issuer is not in canonical form.");
+  }
+  return canonical;
 }
