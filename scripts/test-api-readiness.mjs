@@ -146,6 +146,7 @@ async function verifyKeycloakDependency(realAuthEnv) {
     assert.deepEqual(initial.body.dependencies, [
       { name: "postgres_schema", required: true, status: "ready" },
       { name: "keycloak_jwks", required: true, status: "ready" },
+      { name: "identity_session_edge", required: true, status: "ready" },
       { name: "redis_abuse_budget", required: true, status: "ready" },
       { name: "transactional_mutation_coordinator", required: true, status: "ready" }
     ]);
@@ -158,6 +159,7 @@ async function verifyKeycloakDependency(realAuthEnv) {
       (dependency) => dependency.name === "keycloak_jwks"
     );
     assert.equal(keycloak?.status, "unavailable");
+    assertDependencyStatus(unavailable.body, "identity_session_edge", "ready");
     assert.equal((await fetch(`${baseUrl}/health/live`)).status, 200);
     assert.equal((await fetch(`${baseUrl}/v1/me`)).status, 503);
 
