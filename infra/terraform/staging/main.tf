@@ -1,12 +1,3 @@
-check "audit_compliance_authorization" {
-  assert {
-    condition = !var.enable_audit_compliance_lock || (
-      var.audit_compliance_authorized_by != null && length(trimspace(var.audit_compliance_authorized_by)) >= 3
-    )
-    error_message = "Pilot COMPLIANCE Object Lock requires the explicit opt-in and a named authority."
-  }
-}
-
 check "runtime_admin_ingress" {
   assert {
     condition = !contains(["runtime", "edge"], var.activation_phase) || (
@@ -29,7 +20,7 @@ module "platform" {
     aws.dr = aws.dr
   }
 
-  environment                    = "pilot-prod"
+  environment                    = "staging"
   account_id                     = var.aws_account_id
   primary_region                 = var.primary_region
   dr_region                      = var.dr_region
@@ -39,19 +30,19 @@ module "platform" {
   audit_compliance_authorized_by = var.audit_compliance_authorized_by
 
   primary_network = {
-    vpc_cidr             = "10.30.0.0/16"
+    vpc_cidr             = "10.20.0.0/16"
     availability_zones   = ["ap-south-1a", "ap-south-1b", "ap-south-1c"]
-    public_subnet_cidrs  = ["10.30.0.0/24", "10.30.1.0/24", "10.30.2.0/24"]
-    private_subnet_cidrs = ["10.30.16.0/20", "10.30.32.0/20", "10.30.48.0/20"]
-    data_subnet_cidrs    = ["10.30.64.0/20", "10.30.80.0/20", "10.30.96.0/20"]
-    nat_gateway_count    = 3
+    public_subnet_cidrs  = ["10.20.0.0/24", "10.20.1.0/24", "10.20.2.0/24"]
+    private_subnet_cidrs = ["10.20.16.0/20", "10.20.32.0/20", "10.20.48.0/20"]
+    data_subnet_cidrs    = ["10.20.64.0/20", "10.20.80.0/20", "10.20.96.0/20"]
+    nat_gateway_count    = 1
   }
   dr_network = {
-    vpc_cidr             = "10.130.0.0/16"
+    vpc_cidr             = "10.120.0.0/16"
     availability_zones   = ["ap-south-2a", "ap-south-2b", "ap-south-2c"]
-    public_subnet_cidrs  = ["10.130.0.0/24", "10.130.1.0/24", "10.130.2.0/24"]
-    private_subnet_cidrs = ["10.130.16.0/20", "10.130.32.0/20", "10.130.48.0/20"]
-    data_subnet_cidrs    = ["10.130.64.0/20", "10.130.80.0/20", "10.130.96.0/20"]
+    public_subnet_cidrs  = ["10.120.0.0/24", "10.120.1.0/24", "10.120.2.0/24"]
+    private_subnet_cidrs = ["10.120.16.0/20", "10.120.32.0/20", "10.120.48.0/20"]
+    data_subnet_cidrs    = ["10.120.64.0/20", "10.120.80.0/20", "10.120.96.0/20"]
     nat_gateway_count    = 0
     interface_endpoints  = false
   }
@@ -59,29 +50,25 @@ module "platform" {
   database = {
     engine_version                      = var.postgres_engine_version
     parameter_group_family              = "postgres16"
-    instance_class                      = "db.t4g.medium"
-    allocated_storage_gib               = 100
-    max_allocated_storage_gib           = 1000
+    instance_class                      = "db.t4g.small"
+    allocated_storage_gib               = 50
+    max_allocated_storage_gib           = 200
     multi_az                            = true
-    backup_retention_days               = 35
-    performance_insights_retention_days = 731
+    backup_retention_days               = 14
+    performance_insights_retention_days = 7
   }
   cache = {
     engine_version          = var.cache_engine_version
     node_type               = "cache.t4g.small"
     node_count              = 2
-    snapshot_retention_days = 14
+    snapshot_retention_days = 7
   }
   retention = {
-    log_days        = 365
-    media_lock_days = 90
-    audit_lock_days = 2555
-    audit_lock_mode = (
-      var.enable_audit_compliance_lock && var.audit_compliance_authorized_by != null
-      ? "COMPLIANCE"
-      : "GOVERNANCE"
-    )
-    access_log_days      = 365
+    log_days             = 90
+    media_lock_days      = 30
+    audit_lock_days      = 365
+    audit_lock_mode      = "GOVERNANCE"
+    access_log_days      = 90
     secret_recovery_days = 30
   }
   ingress = {
@@ -109,19 +96,19 @@ module "platform" {
     images        = var.image_uris
     image_users   = var.image_users
     capacity = {
-      api               = { cpu = 1024, memory = 2048, desired_count = 2, minimum_count = 2, maximum_count = 6, use_fargate_spot = false }
-      web               = { cpu = 512, memory = 1024, desired_count = 2, minimum_count = 2, maximum_count = 6, use_fargate_spot = false }
-      worker            = { cpu = 1024, memory = 2048, desired_count = 2, minimum_count = 2, maximum_count = 6, use_fargate_spot = false }
-      keycloak          = { cpu = 1024, memory = 2048, desired_count = 3, minimum_count = 3, maximum_count = 6, use_fargate_spot = false }
-      temporal-frontend = { cpu = 1024, memory = 2048, desired_count = 2, minimum_count = 2, maximum_count = 4, use_fargate_spot = false }
-      temporal-history  = { cpu = 2048, memory = 4096, desired_count = 2, minimum_count = 2, maximum_count = 6, use_fargate_spot = false }
-      temporal-matching = { cpu = 1024, memory = 2048, desired_count = 2, minimum_count = 2, maximum_count = 4, use_fargate_spot = false }
-      temporal-worker   = { cpu = 1024, memory = 2048, desired_count = 1, minimum_count = 1, maximum_count = 3, use_fargate_spot = false }
+      api               = { cpu = 512, memory = 1024, desired_count = 1, minimum_count = 1, maximum_count = 3, use_fargate_spot = false }
+      web               = { cpu = 512, memory = 1024, desired_count = 1, minimum_count = 1, maximum_count = 3, use_fargate_spot = false }
+      worker            = { cpu = 512, memory = 1024, desired_count = 1, minimum_count = 1, maximum_count = 3, use_fargate_spot = false }
+      keycloak          = { cpu = 1024, memory = 2048, desired_count = 1, minimum_count = 1, maximum_count = 2, use_fargate_spot = false }
+      temporal-frontend = { cpu = 512, memory = 1024, desired_count = 1, minimum_count = 1, maximum_count = 2, use_fargate_spot = false }
+      temporal-history  = { cpu = 1024, memory = 2048, desired_count = 1, minimum_count = 1, maximum_count = 2, use_fargate_spot = false }
+      temporal-matching = { cpu = 512, memory = 1024, desired_count = 1, minimum_count = 1, maximum_count = 2, use_fargate_spot = false }
+      temporal-worker   = { cpu = 512, memory = 1024, desired_count = 1, minimum_count = 1, maximum_count = 2, use_fargate_spot = false }
     }
   }
   backup = {
     daily_retention_days       = 35
-    monthly_retention_days     = 2555
+    monthly_retention_days     = 365
     primary_vault_lock_enabled = var.enable_backup_vault_lock
     dr_vault_lock_enabled      = var.enable_backup_vault_lock
     vault_lock_changeable_days = 7
@@ -137,7 +124,7 @@ module "platform" {
   state_backend = {
     bucket_name = var.terraform_state_bucket
     lock_table  = var.terraform_lock_table
-    state_key   = "clinicos/pilot-prod/terraform.tfstate"
+    state_key   = "clinicos/staging/terraform.tfstate"
     kms_key_arn = var.terraform_state_kms_key_arn
   }
   additional_alarm_action_arns = var.additional_alarm_action_arns

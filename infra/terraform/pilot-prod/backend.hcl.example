@@ -1,0 +1,7 @@
+bucket         = "REPLACE_WITH_EXISTING_STATE_BUCKET"
+key            = "clinicos/pilot-prod/terraform.tfstate"
+region         = "ap-south-1"
+dynamodb_table = "REPLACE_WITH_EXISTING_LOCK_TABLE"
+encrypt        = true
+kms_key_id     = "REPLACE_WITH_DEDICATED_STATE_KMS_KEY_ARN"
+use_lockfile   = true
