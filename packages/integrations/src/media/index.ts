@@ -3,6 +3,7 @@ export * from "./aws-s3-presigning-transport.js";
 export * from "./aws-s3-private-object-transport.js";
 export * from "./errors.js";
 export * from "./file-type-magic-byte-detector.js";
+export * from "./guardduty-s3-malware-scanner.js";
 export * from "./magic-bytes.js";
 export * from "./operation-fingerprint.js";
 export * from "./s3-private-media-provider.js";
