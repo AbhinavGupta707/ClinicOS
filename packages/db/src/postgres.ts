@@ -3189,7 +3189,8 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
               completed_at = now(),
               completion_evidence = $5::jsonb,
               updated_by_user_id = $4,
-              status_changed_at = now()
+              status_changed_at = now(),
+              row_version = row_version + 1
             where tenant_id = $1 and clinic_id = $2 and id = $3 and status <> 'done'
           `,
           [
@@ -9925,6 +9926,7 @@ interface PatientRow {
   id: UUID;
   tenant_id: UUID;
   clinic_id: UUID;
+  row_version: number | string;
   full_name: string;
   phone: string | null;
   email: string | null;
@@ -10210,6 +10212,7 @@ interface LeadRow {
   id: UUID;
   tenant_id: UUID;
   clinic_id: UUID;
+  row_version: number | string;
   patient_id: UUID | null;
   primary_contact: string;
   status: LeadRecord["status"];
@@ -10258,6 +10261,7 @@ interface AppointmentRow {
   id: UUID;
   tenant_id: UUID;
   clinic_id: UUID;
+  row_version: number | string;
   patient_id: UUID;
   lead_id: UUID | null;
   provider_user_id: UUID;
@@ -10277,6 +10281,7 @@ interface QueueEntryRow {
   id: UUID;
   tenant_id: UUID;
   clinic_id: UUID;
+  row_version: number | string;
   appointment_id: UUID;
   patient_id: UUID;
   provider_user_id: UUID;
@@ -10291,6 +10296,7 @@ interface TaskRow {
   id: UUID;
   tenant_id: UUID;
   clinic_id: UUID;
+  row_version: number | string;
   patient_id: UUID | null;
   lead_id: UUID | null;
   appointment_id: UUID | null;
@@ -10414,6 +10420,7 @@ interface SopRunRow {
   id: UUID;
   tenant_id: UUID;
   clinic_id: UUID;
+  row_version: number | string;
   template_id: UUID;
   schedule_id: UUID;
   task_id: UUID | null;
@@ -10519,6 +10526,7 @@ interface EncounterRow {
   id: UUID;
   tenant_id: UUID;
   clinic_id: UUID;
+  row_version: number | string;
   patient_id: UUID;
   appointment_id: UUID | null;
   provider_user_id: UUID;
@@ -10796,6 +10804,7 @@ interface DentalFindingRow {
   id: UUID;
   tenant_id: UUID;
   clinic_id: UUID;
+  row_version: number | string;
   patient_id: UUID;
   encounter_id: UUID | null;
   tooth_number: DentalFindingRecord["toothNumber"];
@@ -10868,6 +10877,7 @@ interface TreatmentPlanRow {
   id: UUID;
   tenant_id: UUID;
   clinic_id: UUID;
+  row_version: number | string;
   patient_id: UUID;
   encounter_id: UUID | null;
   title: string;
@@ -11084,6 +11094,7 @@ interface LabCaseRow {
   id: UUID;
   tenant_id: UUID;
   clinic_id: UUID;
+  row_version: number | string;
   vendor_id: UUID;
   patient_id: UUID;
   encounter_id: UUID | null;
@@ -11255,6 +11266,7 @@ interface InventoryCheckRunRow {
   id: UUID;
   tenant_id: UUID;
   clinic_id: UUID;
+  row_version: number | string;
   template_id: UUID;
   status: InventoryCheckRunRecord["status"];
   started_by_user_id: UUID;
@@ -11332,6 +11344,7 @@ interface CorrectiveActionRow {
   id: UUID;
   tenant_id: UUID;
   clinic_id: UUID;
+  row_version: number | string;
   incident_id: UUID | null;
   action_type: CorrectiveActionRecord["actionType"];
   title: string;
@@ -11354,6 +11367,7 @@ function mapPatientRow(row: PatientRow): PatientRecord {
     id: row.id,
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
+    rowVersion: positiveRowVersion(row.row_version),
     fullName: row.full_name,
     phone: row.phone,
     email: row.email,
@@ -11692,6 +11706,7 @@ function mapLeadRow(row: LeadRow): LeadRecord {
     id: row.id,
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
+    rowVersion: positiveRowVersion(row.row_version),
     patientId: row.patient_id,
     primaryContact: row.primary_contact,
     status: row.status,
@@ -11748,6 +11763,7 @@ function mapAppointmentRow(row: AppointmentRow): AppointmentRecord {
     id: row.id,
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
+    rowVersion: positiveRowVersion(row.row_version),
     patientId: row.patient_id,
     leadId: row.lead_id,
     providerUserId: row.provider_user_id,
@@ -11769,6 +11785,7 @@ function mapQueueEntryRow(row: QueueEntryRow): QueueEntryRecord {
     id: row.id,
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
+    rowVersion: positiveRowVersion(row.row_version),
     appointmentId: row.appointment_id,
     patientId: row.patient_id,
     providerUserId: row.provider_user_id,
@@ -11785,6 +11802,7 @@ function mapTaskRow(row: TaskRow): TaskRecord {
     id: row.id,
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
+    rowVersion: positiveRowVersion(row.row_version),
     patientId: row.patient_id,
     leadId: row.lead_id,
     appointmentId: row.appointment_id,
@@ -11920,6 +11938,7 @@ function mapSopRunRow(row: SopRunRow): SopRunRecord {
     id: row.id,
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
+    rowVersion: positiveRowVersion(row.row_version),
     templateId: row.template_id,
     scheduleId: row.schedule_id,
     taskId: row.task_id,
@@ -12037,6 +12056,7 @@ function mapEncounterRow(row: EncounterRow): EncounterRecord {
     id: row.id,
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
+    rowVersion: positiveRowVersion(row.row_version),
     patientId: row.patient_id,
     appointmentId: row.appointment_id,
     providerUserId: row.provider_user_id,
@@ -12351,6 +12371,7 @@ function mapDentalFindingRow(row: DentalFindingRow): DentalFindingRecord {
     id: row.id,
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
+    rowVersion: positiveRowVersion(row.row_version),
     patientId: row.patient_id,
     encounterId: row.encounter_id,
     toothNumber: row.tooth_number,
@@ -12431,6 +12452,7 @@ function mapTreatmentPlanRow(row: TreatmentPlanRow): TreatmentPlanRecord {
     id: row.id,
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
+    rowVersion: positiveRowVersion(row.row_version),
     patientId: row.patient_id,
     encounterId: row.encounter_id,
     title: row.title,
@@ -12665,6 +12687,7 @@ function mapLabCaseRow(row: LabCaseRow): LabCaseRecord {
     id: row.id,
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
+    rowVersion: positiveRowVersion(row.row_version),
     vendorId: row.vendor_id,
     patientId: row.patient_id,
     encounterId: row.encounter_id,
@@ -12862,6 +12885,7 @@ function mapInventoryCheckRunRow(row: InventoryCheckRunRow): InventoryCheckRunRe
     id: row.id,
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
+    rowVersion: positiveRowVersion(row.row_version),
     templateId: row.template_id,
     status: row.status,
     startedByUserId: row.started_by_user_id,
@@ -12947,6 +12971,7 @@ function mapCorrectiveActionRow(row: CorrectiveActionRow): CorrectiveActionRecor
     id: row.id,
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
+    rowVersion: positiveRowVersion(row.row_version),
     incidentId: row.incident_id,
     actionType: row.action_type,
     title: row.title,
@@ -13057,6 +13082,17 @@ function daysBetween(startDate: string, endDate: string): number {
 
 function toIso(value: Date | string): string {
   return value instanceof Date ? value.toISOString() : new Date(value).toISOString();
+}
+
+function positiveRowVersion(value: number | string): number {
+  if (typeof value !== "number" && (typeof value !== "string" || !/^[1-9][0-9]*$/u.test(value))) {
+    throw new Error("Database row_version must be a positive safe integer.");
+  }
+  const parsed = typeof value === "number" ? value : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed <= 0) {
+    throw new Error("Database row_version must be a positive safe integer.");
+  }
+  return parsed;
 }
 
 function isoDateOnly(value: Date | string): string {
