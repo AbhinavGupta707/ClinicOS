@@ -254,7 +254,7 @@ test("CP5 patient instructions create print/send-request evidence without fake d
   assert.equal(whatsappInstruction.status, 202);
   assert.equal(whatsappInstruction.body.instruction.status, "send_requested");
   assert.equal(whatsappInstruction.body.instruction.printJobId, null);
-  assert.ok(whatsappInstruction.body.instruction.outboxEventId);
+  assert.equal(whatsappInstruction.body.instruction.outboxEventId, null);
   assert.equal(whatsappInstruction.body.instruction.providerConfirmationReceived, false);
   assert.equal(whatsappInstruction.body.instruction.deliveredAt, null);
   assert.equal(whatsappInstruction.body.instruction.readAt, null);

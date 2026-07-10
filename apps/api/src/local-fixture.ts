@@ -4490,7 +4490,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       status: input.channel === "print" ? "ready_for_print" : "send_requested",
       renderedAt: now,
       printJobId: input.channel === "print" ? `print_${uuid()}` : null,
-      outboxEventId: input.channel === "whatsapp" ? (input.outboxEventId ?? uuid()) : null,
+      outboxEventId: input.channel === "whatsapp" ? (input.outboxEventId ?? null) : null,
       providerConfirmationReceived: false,
       providerDeliveryConfirmedAt: null,
       deliveredAt: null,

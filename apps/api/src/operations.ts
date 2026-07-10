@@ -4291,14 +4291,10 @@ export async function createPatientInstruction(
   authorize(context, { permission: "patient.read" });
   authorize(context, { permission: "patient_instruction.write" });
   const input = parseCreatePatientInstruction(body);
-  const outboxEventId = input.channel === "whatsapp" ? (randomUUID() as UUID) : null;
   const instruction = await dependencies.repository.createPatientInstruction(
     scopeFrom(context),
     patientId,
-    {
-      ...input,
-      outboxEventId
-    }
+    input
   );
   if (!instruction) throw notFound("Patient not found.", { patient_id: patientId });
 
