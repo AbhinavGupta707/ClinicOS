@@ -131,6 +131,7 @@ export interface EncounterRecord {
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
+  rowVersion: number;
   patientId: UUID;
   appointmentId: UUID | null;
   providerUserId: UUID;

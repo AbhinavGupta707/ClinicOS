@@ -2,7 +2,7 @@
 
 Owner: platform/backend workstream.
 
-Checkpoint 1 exposes a bootable Node HTTP API surface for production session context and health checks. Later checkpoints can replace the transport with NestJS/OpenAPI without changing the typed `/v1/me` contract.
+Checkpoint 12 runs the API through a real NestJS modular-monolith bootstrap. The exported `createClinicOsApiServer` compatibility surface remains available to existing tests and local scripts, but it now initializes and closes the Nest application rather than exposing a separate native-router production path.
 
 Runtime commands:
 
@@ -13,9 +13,38 @@ npm run test --workspace @clinic-os/api
 npm run build --workspace @clinic-os/api
 ```
 
+## Checkpoint 12 Production Boundary
+
+The frozen generated registry contains exactly 128 operations. Every operation is selected deterministically and passes through one common boundary before dispatch:
+
+1. Match the exact method/path policy and establish a request ID using the injected clock.
+2. Enforce query/body limits, duplicate critical-header and query rejection, and bounded abuse budgets.
+3. Verify Keycloak identity, active tenant/clinic scope, clinic-scoped permissions, and any explicit role predicate.
+4. Parse and normalize path, query, headers, and body with the frozen runtime contract before handler dispatch.
+5. Validate the public response body and allowlisted response headers before sending or committing a mutation.
+6. Serialize centralized, redacted errors against the matched operation's declared error contract.
+
+`GET /health/live`, `GET /health/ready`, `GET /health/startup`, `GET /v1/me`, and the Razorpay webhook entry are native Nest paths. Other registered operations currently use one guarded strangler adapter to the existing typed operation handlers. The adapter applies the same contract, authentication, authorization, abuse, idempotency, concurrency, response-validation, and error controls; there is no bare native-router fallback. Moving the remaining business handlers into dedicated Nest controllers/modules is still future work and is not represented as complete here.
+
+### Durable mutation coordination
+
+Authenticated contract-marked mutations require `idempotency-key`. Production composition automatically supplies the Postgres `AtomicMutationCoordinator` from the same pool as the repositories. Within one database unit of work it claims the actor/clinic/operation/key plus canonical request digest, applies required row-version advances, executes the handler with the transaction-bound repository and audit sink, validates the response, and completes the replay record. Thrown and returned error responses roll the claim, row-version advance, domain writes, audit, and outbox work back together.
+
+Successful first responses emit `idempotency-replayed: false`; durable replays return the stored status, body, and safe effect headers with `idempotency-replayed: true`. Versioned singleton responses emit the canonical strong `ETag: "rv-N"`, including contracts whose version source is nested. Conditional mutations accept only the corresponding strong `If-Match` form.
+
+Production-like request budgets use the atomic Redis implementation and fail closed when Redis is unavailable. No production path falls back to an in-memory coordinator or budget store. The bounded process-local health-probe budget is intentionally dependency-independent so `/health/live` remains available while readiness and startup honestly report Redis/Postgres/auth dependency loss.
+
+### Raw webhook ordering
+
+Nest is created with official raw-body support. The Razorpay `application/json` route retains the original bytes and verifies the provider signature before JSON parsing or business-event dispatch. Unsupported media types and invalid signatures are rejected without parsing or applying an event.
+
+### Fixture mode and lifecycle
+
+Local fixture mode is explicitly synthetic and non-durable. It wires typed in-memory coordinator/budget/repository doubles only for deterministic development and tests; it is blocked as a production-like persistence substitute. `server.close()` closes the Nest application and owned Redis/Postgres resources idempotently. Programming/bootstrap failures reject startup without leaving a listener behind, while dependency failures remain observable through live/ready/startup admission semantics.
+
 ## Checkpoint 1 Data/Auth Contract
 
-This lane adds a framework-neutral `/v1/me` handler in `src/me.ts` so the later NestJS route can be a thin adapter:
+The framework-neutral `/v1/me` handler in `src/me.ts` remains the typed identity service behind the native Nest route:
 
 1. OIDC middleware verifies the Keycloak access token signature.
 2. The route passes verified claims to `getMe`.
@@ -23,10 +52,11 @@ This lane adds a framework-neutral `/v1/me` handler in `src/me.ts` so the later 
 
 The identity repository is an interface from `@clinic-os/db`; production code must back it with PostgreSQL and the Checkpoint 1 RLS context. Tests use an in-memory repository double only inside `test/`.
 
-## HTTP Runtime
+## Health And Identity Runtime
 
 - `GET /health/live` proves the API process is serving.
-- `GET /health/ready` proves the identity repository and auth mode are configured.
+- `GET /health/ready` reports current required dependency readiness and never hides dependency loss behind process failure.
+- `GET /health/startup` reports whether required startup dependencies have completed successfully.
 - `GET /v1/me` resolves authenticated tenant, clinic, role, permission, and audit context.
 
 By default `/v1/me` verifies Keycloak RS256 bearer tokens against the realm JWKS endpoint. For local synthetic boot checks only, set `CLINIC_OS_API_USE_DEV_AUTH_FIXTURE=true`; this accepts `x-clinic-os-dev-subject` values such as `seed-assistant` and is blocked for production-like environments.

@@ -44,6 +44,10 @@ const checkpoint11OutboxMigration = readFileSync(
   resolve(import.meta.dirname, "../migrations/0014_durable_outbox_worker.sql"),
   "utf8"
 );
+const checkpoint12ApiIdempotencyMigration = readFileSync(
+  resolve(import.meta.dirname, "../migrations/0015_api_request_idempotency.sql"),
+  "utf8"
+);
 const checkpoint1Seed = readFileSync(
   resolve(import.meta.dirname, "../seeds/checkpoint1_identity_auth.sql"),
   "utf8"
@@ -91,6 +95,51 @@ test("checkpoint 11 worker tables retain tenant attribution and forced RLS", () 
       new RegExp(`alter table ${table} force row level security`, "u")
     );
     assert.match(checkpoint11OutboxMigration, new RegExp(`${table}_tenant_clinic_isolation`, "u"));
+  }
+});
+
+test("checkpoint 12 API idempotency records are request-scoped and replay-safe", () => {
+  assert.match(
+    checkpoint12ApiIdempotencyMigration,
+    /unique \(tenant_id, clinic_id, actor_user_id, operation_id, idempotency_key\)/u
+  );
+  assert.match(checkpoint12ApiIdempotencyMigration, /request_digest ~ '\^\[0-9a-f\]\{64\}\$'/u);
+  assert.match(
+    checkpoint12ApiIdempotencyMigration,
+    /alter table api_idempotency_records force row level security/u
+  );
+  assert.match(
+    checkpoint12ApiIdempotencyMigration,
+    /actor_user_id = clinic_os\.current_user_id\(\)/u
+  );
+  assert.match(checkpoint12ApiIdempotencyMigration, /request_digest char\(64\)/u);
+  assert.match(checkpoint12ApiIdempotencyMigration, /lease_expires_at timestamptz/u);
+  assert.match(
+    checkpoint12ApiIdempotencyMigration,
+    /Completed API idempotency responses are immutable/u
+  );
+  assert.match(
+    checkpoint12ApiIdempotencyMigration,
+    /revoke all on table api_idempotency_records from clinic_os_worker/u
+  );
+  for (const table of [
+    "patients",
+    "leads",
+    "appointments",
+    "queue_entries",
+    "encounters",
+    "dental_findings",
+    "treatment_plans",
+    "tasks",
+    "sop_runs",
+    "lab_cases",
+    "inventory_check_runs",
+    "corrective_actions"
+  ]) {
+    assert.match(
+      checkpoint12ApiIdempotencyMigration,
+      new RegExp(`alter table ${table} add column if not exists row_version`, "u")
+    );
   }
 });
 

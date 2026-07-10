@@ -117,6 +117,7 @@ export interface DentalFindingRecord {
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
+  rowVersion: number;
   patientId: UUID;
   encounterId: UUID | null;
   toothNumber: DentalToothNumber;

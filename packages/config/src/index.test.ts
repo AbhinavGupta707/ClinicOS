@@ -39,6 +39,7 @@ describe("parseClinicOsEnv", () => {
     expect(config.operations.cloud.drRegion).toBe("ap-south-2");
     expect(config.operations.backupRestore.drillMode).toBe("dry_run");
     expect(config.operations.backupRestore.rpoMinutes).toBe(60);
+    expect(config.security.abuseBudgetKeySecret).toBeUndefined();
   });
 
   it("rejects simulator providers in production-like environments", () => {
@@ -70,6 +71,7 @@ describe("parseClinicOsEnv", () => {
       TELEPHONY_PROVIDER: "unconfigured",
       LLM_PROVIDER: "unconfigured",
       TRANSCRIPTION_PROVIDER: "unconfigured",
+      CLINIC_OS_ABUSE_BUDGET_KEY_SECRET: "staging-abuse-budget-key-secret-0001",
       AWS_ACCOUNT_ID: "123456789012",
       AWS_TERRAFORM_STATE_BUCKET: "clinic-os-terraform-state",
       AWS_TERRAFORM_LOCK_TABLE: "clinic-os-terraform-locks",
@@ -82,6 +84,26 @@ describe("parseClinicOsEnv", () => {
     expect(config.providers.whatsapp.provider).toBe("unconfigured");
     expect(config.providers.payment.provider).toBe("manual_clinic_approved");
     expect(config.operations.alerting.provider).toBe("email");
+    expect(config.security.abuseBudgetKeySecret).toBe("staging-abuse-budget-key-secret-0001");
+  });
+
+  it("requires a strong abuse-budget key secret in production-like environments", () => {
+    const result = safeParseClinicOsEnv({
+      ...baseEnv,
+      CLINIC_OS_ENV: "staging",
+      WHATSAPP_PROVIDER: "unconfigured",
+      PAYMENT_PROVIDER: "unconfigured",
+      TELEPHONY_PROVIDER: "unconfigured",
+      LLM_PROVIDER: "unconfigured",
+      TRANSCRIPTION_PROVIDER: "unconfigured",
+      CLINIC_OS_ABUSE_BUDGET_KEY_SECRET: "too-short"
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.map((issue) => issue.path.join("."))).toContain(
+      "CLINIC_OS_ABUSE_BUDGET_KEY_SECRET"
+    );
   });
 
   it("requires pilot-prod cloud backend, KMS, and alerting posture", () => {

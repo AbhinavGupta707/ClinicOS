@@ -6,7 +6,11 @@ import {
   PERMISSIONS,
   isClinicalPermission
 } from "@clinic-os/domain";
-import { CHECKPOINT1_SEED_IDS, CHECKPOINT1_SEED_USERS } from "@clinic-os/db";
+import {
+  CHECKPOINT1_SEED_IDS,
+  CHECKPOINT1_SEED_USERS,
+  LATEST_DATABASE_SCHEMA_VERSION
+} from "@clinic-os/db";
 
 const command = process.argv[2];
 const ADMIN_URL =
@@ -177,6 +181,9 @@ async function grantRuntimePrivileges() {
     );
     await client.query(
       "revoke update, delete, truncate on table audit_events from clinic_os_runtime"
+    );
+    await client.query(
+      "revoke delete, truncate on table api_idempotency_records from clinic_os_runtime"
     );
     await client.query("revoke all on table flyway_schema_history from clinic_os_runtime");
     await client.query("grant select on table flyway_schema_history to clinic_os_runtime");
@@ -488,10 +495,12 @@ async function verifyDatabase() {
 
   const unprotected = inventory.rows.filter((row) => !row.rls_enabled || !row.rls_forced);
   if (
-    migrationHistory.rowCount !== 14 ||
+    migrationHistory.rowCount !== Number.parseInt(LATEST_DATABASE_SCHEMA_VERSION, 10) ||
     migrationHistory.rows.some((row) => !row.success || row.checksum === null)
   ) {
-    throw new Error("Expected fourteen successful checksum-tracked SQL migrations.");
+    throw new Error(
+      `Expected ${LATEST_DATABASE_SCHEMA_VERSION} successful checksum-tracked SQL migrations.`
+    );
   }
   if (unprotected.length > 0) {
     throw new Error(
@@ -547,6 +556,7 @@ async function verifyDatabase() {
          has_schema_privilege(current_user, 'public', 'CREATE') as schema_create,
          has_table_privilege(current_user, 'audit_events', 'UPDATE') as audit_update,
          has_table_privilege(current_user, 'audit_events', 'DELETE') as audit_delete,
+         has_table_privilege(current_user, 'api_idempotency_records', 'DELETE') as idempotency_delete,
          has_table_privilege(current_user, 'flyway_schema_history', 'INSERT') as history_insert,
          has_table_privilege(current_user, 'flyway_schema_history', 'SELECT') as history_select`
     );
@@ -555,6 +565,7 @@ async function verifyDatabase() {
       row?.schema_create ||
       row?.audit_update ||
       row?.audit_delete ||
+      row?.idempotency_delete ||
       row?.history_insert ||
       !row?.history_select
     ) {
@@ -576,6 +587,15 @@ async function verifyDatabase() {
     }
     if (!productReadDenied) {
       throw new Error("Worker role can read product tables outside the durable outbox surface.");
+    }
+    let idempotencyReadDenied = false;
+    try {
+      await worker.query("select id from api_idempotency_records limit 1");
+    } catch (error) {
+      idempotencyReadDenied = error?.code === "42501";
+    }
+    if (!idempotencyReadDenied) {
+      throw new Error("Worker role can read API idempotency records.");
     }
   } finally {
     await worker.end();

@@ -1,6 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { buildAccessContext, authorize, permissionsForScope, principalFromVerifiedKeycloakClaims } from "../src/index.ts";
+import {
+  RequestScopeResolutionError,
+  buildAccessContext,
+  authorize,
+  deriveVerifiedRequestScope,
+  permissionsForScope,
+  principalFromVerifiedKeycloakClaims
+} from "../src/index.ts";
 
 const now = new Date("2026-07-06T10:00:00Z");
 
@@ -267,7 +274,172 @@ test("CP3 authorization denies accountant auditor and wrong-tenant clinical muta
   );
 });
 
-function contextForRole(roleSlug: "assistant" | "doctor" | "accountant" | "auditor", userId = context.user.id) {
+test("access context discards roles and memberships that do not belong to the verified user", () => {
+  const poisoned = buildAccessContext({
+    ...context,
+    memberships: [
+      ...context.memberships,
+      {
+        tenantId: context.tenant.id,
+        userId: "10000000-0000-4000-8000-000000009999",
+        status: "active"
+      }
+    ],
+    clinicAssignments: [
+      ...context.clinicAssignments,
+      {
+        tenantId: context.tenant.id,
+        clinicId: "10000000-0000-4000-8000-000000000202",
+        userId: "10000000-0000-4000-8000-000000009999",
+        status: "active"
+      }
+    ],
+    roleAssignments: [
+      ...context.roleAssignments,
+      {
+        tenantId: context.tenant.id,
+        clinicId: context.clinicAssignments[0]!.clinicId,
+        userId: "10000000-0000-4000-8000-000000009999",
+        roleSlug: "doctor"
+      },
+      {
+        tenantId: context.tenant.id,
+        clinicId: "10000000-0000-4000-8000-000000000202",
+        userId: context.user.id,
+        roleSlug: "owner"
+      }
+    ]
+  });
+
+  assert.deepEqual(poisoned.roleSlugs, ["assistant"]);
+  assert.equal(poisoned.memberships.length, 1);
+  assert.equal(poisoned.clinicAssignments.length, 1);
+  assert.equal(poisoned.permissions.includes("clinical.note.sign"), false);
+  assert.equal(poisoned.permissions.includes("clinic.manage"), false);
+});
+
+test("inactive tenant user and membership states fail closed", () => {
+  const request = {
+    tenantId: context.tenant.id,
+    clinicId: context.clinicAssignments[0]!.clinicId,
+    permission: "schedule.write" as const
+  };
+
+  assert.equal(
+    authorize(
+      buildAccessContext({ ...context, tenant: { ...context.tenant, status: "suspended" } }),
+      request
+    ).reason,
+    "inactive_identity"
+  );
+  assert.equal(
+    authorize(
+      buildAccessContext({ ...context, user: { ...context.user, status: "suspended" } }),
+      request
+    ).reason,
+    "inactive_identity"
+  );
+  assert.equal(
+    authorize(
+      buildAccessContext({
+        ...context,
+        memberships: context.memberships.map((membership) => ({
+          ...membership,
+          status: "suspended"
+        }))
+      }),
+      request
+    ).reason,
+    "inactive_membership"
+  );
+});
+
+test("verified request scope derives actor tenant and clinic only from active identity records", () => {
+  const scope = deriveVerifiedRequestScope({
+    context,
+    clinics: [
+      {
+        id: context.clinicAssignments[0]!.clinicId,
+        tenantId: context.tenant.id,
+        slug: "verified-clinic",
+        displayName: "Verified Clinic",
+        status: "active",
+        timezone: "Asia/Kolkata"
+      },
+      {
+        id: "10000000-0000-4000-8000-000000000202",
+        tenantId: context.tenant.id,
+        slug: "unassigned-clinic",
+        displayName: "Unassigned Clinic",
+        status: "active",
+        timezone: "Asia/Kolkata"
+      }
+    ],
+    selectedClinicId: context.clinicAssignments[0]!.clinicId
+  });
+
+  assert.equal(scope.actorUserId, context.user.id);
+  assert.equal(scope.tenantId, context.tenant.id);
+  assert.equal(scope.clinicId, context.clinicAssignments[0]!.clinicId);
+  assert.equal(scope.provenance.actor, "verified_identity_subject");
+  assert.equal(scope.provenance.tenant, "verified_active_membership");
+  assert.equal(scope.provenance.clinic, "verified_active_assignment");
+  assert.throws(
+    () =>
+      deriveVerifiedRequestScope({
+        context,
+        clinics: [
+          {
+            id: "10000000-0000-4000-8000-000000000202",
+            tenantId: context.tenant.id,
+            slug: "unassigned-clinic",
+            displayName: "Unassigned Clinic",
+            status: "active",
+            timezone: "Asia/Kolkata"
+          }
+        ],
+        selectedClinicId: "10000000-0000-4000-8000-000000000202"
+      }),
+    (error: unknown) =>
+      error instanceof RequestScopeResolutionError && error.reason === "clinic_mismatch"
+  );
+});
+
+test("auth role and tenant negative matrix denies every disallowed critical capability", () => {
+  const matrix = {
+    assistant: ["clinical.note.sign", "prescription.sign", "billing.write", "clinic.manage"],
+    accountant: ["patient.write", "clinical.note.write", "clinical.note.sign", "media.write"],
+    auditor: ["patient.write", "schedule.write", "clinical.note.write", "billing.write"]
+  } as const;
+
+  for (const [role, permissions] of Object.entries(matrix)) {
+    const scoped = contextForRole(role as keyof typeof matrix);
+    for (const permission of permissions) {
+      assert.equal(
+        authorize(scoped, {
+          tenantId: context.tenant.id,
+          clinicId: context.clinicAssignments[0]!.clinicId,
+          permission
+        }).allowed,
+        false,
+        `${role} must not receive ${permission}`
+      );
+      assert.equal(
+        authorize(scoped, {
+          tenantId: "20000000-0000-4000-8000-000000000001",
+          clinicId: context.clinicAssignments[0]!.clinicId,
+          permission
+        }).reason,
+        "tenant_mismatch"
+      );
+    }
+  }
+});
+
+function contextForRole(
+  roleSlug: "assistant" | "doctor" | "accountant" | "auditor",
+  userId = context.user.id
+) {
   return buildAccessContext({
     principal,
     tenant: context.tenant,

@@ -95,6 +95,7 @@ const runtimeEnvSchema = z
       (url) => url.startsWith("redis://") || url.startsWith("rediss://"),
       "REDIS_URL must use redis:// or rediss://"
     ),
+    CLINIC_OS_ABUSE_BUDGET_KEY_SECRET: optionalString,
     TEMPORAL_ADDRESS: requiredString.default("localhost:7233"),
 
     KEYCLOAK_BASE_URL: requiredUrl,
@@ -186,6 +187,18 @@ const runtimeEnvSchema = z
     const pilotProdCloud = requiresPilotProdCloudPosture(env.CLINIC_OS_ENV);
 
     if (productionLike) {
+      if (
+        !env.CLINIC_OS_ABUSE_BUDGET_KEY_SECRET ||
+        Buffer.byteLength(env.CLINIC_OS_ABUSE_BUDGET_KEY_SECRET, "utf8") < 32
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["CLINIC_OS_ABUSE_BUDGET_KEY_SECRET"],
+          message:
+            "Production-like API runtime requires CLINIC_OS_ABUSE_BUDGET_KEY_SECRET with at least 32 UTF-8 bytes."
+        });
+      }
+
       const simulatorFields = [
         "WHATSAPP_PROVIDER",
         "PAYMENT_PROVIDER",
@@ -407,6 +420,9 @@ export type ClinicOsConfig = {
     redisUrl: string;
     temporalAddress: string;
   };
+  security: {
+    abuseBudgetKeySecret?: string | undefined;
+  };
   auth: {
     keycloakBaseUrl: string;
     keycloakRealm: string;
@@ -523,6 +539,9 @@ function toConfig(env: RuntimeEnv): ClinicOsConfig {
       databaseUrl: env.DATABASE_URL,
       redisUrl: env.REDIS_URL,
       temporalAddress: env.TEMPORAL_ADDRESS
+    },
+    security: {
+      abuseBudgetKeySecret: env.CLINIC_OS_ABUSE_BUDGET_KEY_SECRET
     },
     auth: {
       keycloakBaseUrl: env.KEYCLOAK_BASE_URL,

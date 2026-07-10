@@ -581,3 +581,142 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 - Canonical program: `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`.
 - Active packet: `docs/orchestration/CHECKPOINT_12_MODULAR_API_GENERATED_CONTRACTS.md`.
 - CP12 launch is not part of this planning session. The future master must record the clean planning-complete `main` HEAD, create `codex/integration/checkpoint-12`, resolve the ClinicOS project through `list_projects`, create/verify the heartbeat, run the adaptive lane gate, and only then launch the three independently justified initial worktrees.
+
+## Checkpoint 12 Launch - 2026-07-10
+
+- Master task: `gpt-5.6-sol` at `xhigh`, executing the complete `orchestrate-worktrees` skill and referenced runbook.
+- Exact launch base: clean verified `main` commit `1166baa7a816b614d896cf267066f31f40eac142`; the only working-tree entries were preserved user-owned untracked `research/` and `scripts/research/`.
+- Integration branch: `codex/integration/checkpoint-12`, created directly from the recorded launch base before worker creation.
+- Saved project: `/Users/abhinavgupta/Desktop/ClinicOS`, resolved through `list_projects`; all workers use project-scoped Codex worktree threads.
+- Heartbeat: `clinicos-cp12-18-orchestrator-heartbeat`, thread-attached to the master task, verified `ACTIVE` with `FREQ=SECONDLY;INTERVAL=90`.
+- GitHub preflight: the sandboxed CLI check could not access authoritative keyring state; the approved external check verified `AbhinavGupta707` with `repo` and `workflow` scopes.
+- Secret boundary: `.secrets/orchestration.env` is ignored, mode `0600`, selects `AWS_PROFILE=clinicos-human`, `WHATSAPP_PROVIDER=simulator`, and `PAYMENT_PROVIDER=simulator`. Workers must not read, source, copy, or receive this file or run live AWS/provider/dashboard operations.
+- Historical worktrees: all 12 existing CP8-CP10-era worktrees were freshly rechecked as clean ancestors of `main` with zero unique commits. They remain historical and excluded from CP12.
+- CP11 invalidation-sensitive preflight passed from `1166baa`: `npm run check`, `npm run typecheck`, `npm run lint`, full socket-enabled zero-skip `npm run test`, `npm run build`, `npm run db:verify`, and `git diff --check`. Database verification reported 14 migrations, 96/96 forced-RLS tenant tables, role separation, zero no-context rows, worker product-table denial, and cross-tenant isolation.
+- Adaptive worker decision: three initial workers are justified. Each owns a substantial namespace, consumes only stable CP11 contracts, has independent narrow tests, produces a useful standalone commit, and does not mutate a shared external environment. The API framework is a dependent consumer and is not launched until these producer interfaces are reviewed, merged, and frozen.
+
+### CP12 Initial Conflict And Dependency Matrix
+
+| Lane                                            | Model / effort                         | Writable ownership                                                                                                               | Stable inputs and independent verification                                                                                                                    | Parallel-safety decision                                                                                              |
+| ----------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Runtime Contracts / OpenAPI / Client Generation | `gpt-5.6-sol` / `xhigh`                | `packages/api-contracts/**`, new namespaced generated-client package if needed, `scripts/cp12-openapi*`, `docs/api/**`           | Existing native route inventory and CP11 public behavior; package contract tests, deterministic generation, client compile and inventory coverage             | Launch: no overlap with database/auth/security/app paths                                                              |
+| Repository Module Seams                         | `gpt-5.6-sol` / `xhigh`                | new `packages/db/src/modules/**`, CP12-namespaced DB tests/docs only                                                             | Existing `postgres.ts`/repository behavior and CP11 RLS/unit-of-work invariants; repository parity, tenant/context, rollback/idempotency and dependency tests | Launch: additive namespaced paths; canonical migrations, `postgres.ts`, shared barrels and manifests remain forbidden |
+| Security Pipeline / Parity Foundation           | `gpt-5.6-sol` / `xhigh`                | `packages/auth/**`, `packages/security/**`, `tests/acceptance/cp12/**`, `docs/qa/checkpoint-12*`, `docs/security/checkpoint-12*` | Current route/security inventory and CP11 auth/tenant behavior; auth/tenant matrix, mass-assignment/body/pagination/rate-budget corpus and parity plan        | Launch: disjoint from contracts, DB modules and API app implementation                                                |
+| API Framework / Modularization                  | `gpt-5.6-sol` / `xhigh` when justified | `apps/api/**` only in a later wave                                                                                               | Requires frozen outputs from all three producer lanes                                                                                                         | Sequenced: not parallel-safe at initial launch                                                                        |
+
+- Master-only surfaces for this launch: root manifests/lockfile, `AGENTS.md`, `.github/**`, shared env/CI/Docker files, canonical migrations, `packages/db/src/postgres.ts`, shared export barrels, aggregate OpenAPI/client output, API bootstrap/route composition, memory/checkpoint/remediation/release truth, and all user research.
+- Initial worker thread IDs, pending worktree IDs, resolved paths, commits and handoffs are recorded below as they become available.
+
+### CP12 Initial Worker Launch Records
+
+- Runtime Contracts / OpenAPI / Client Generation:
+  - pending worktree ID: `client-new-thread:47ab951a-8398-4a23-a0a3-1a32f3832139`;
+  - thread ID: `019f4953-a946-7cd2-8cb9-135a45812f9f`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/3178/ClinicOS`;
+  - verified base: detached `1166baa7a816b614d896cf267066f31f40eac142`, initially clean;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - ownership: `packages/api-contracts/**`, optional `packages/api-client-generated/**`, `scripts/cp12-openapi*`, `docs/api/**`.
+- Repository Module Seams:
+  - pending worktree ID: `client-new-thread:7abaf225-d365-4f59-89a8-f74c615c9b55`;
+  - thread ID: `019f4953-a947-7251-b025-8daa0d5c502a`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/e6f6/ClinicOS`;
+  - verified base: detached `1166baa7a816b614d896cf267066f31f40eac142`, initially clean;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - ownership: new `packages/db/src/modules/**`, `packages/db/test/cp12-*.test.ts`, and CP12-namespaced module-seam documentation under `packages/db/`.
+- Security Pipeline / Legacy Parity Foundation:
+  - pending worktree ID: `client-new-thread:5ae5a8c7-5d40-4480-945f-9eac634383a3`;
+  - thread ID: `019f4953-a949-77a0-9aad-accef6517096`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/2556/ClinicOS`;
+  - verified base: detached `1166baa7a816b614d896cf267066f31f40eac142`, initially clean;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - ownership: `packages/auth/**`, `packages/security/**`, `tests/acceptance/cp12/**`, `docs/qa/checkpoint-12*`, `docs/security/checkpoint-12*`.
+- All three resolved as active project-scoped worktree threads at launch. Each prompt requires early blocker reporting, forbidden-path discipline, deterministic narrow checks, a committed clean handoff, and no merge/push/release claim.
+
+### CP12 Producer Review, Integration, And Dependent Wave
+
+- Runtime Contracts / OpenAPI / Client Generation handed off `53eb160e0d3b49605b60871e09500fb5fab69e8a` after master review found and the worker corrected recursive unsafe JSON-key acceptance plus permissive date/date-time validation. Master reproduced 21/21 contract tests, 3/3 generated-client tests, exact 128-route generation/inventory checks, typechecks, the clock guard and `git diff --check`. It merged first as `4252938`.
+- Repository Module Seams handed off `5a779b85ef52680606881db9c9db4f77d084a095`. Master verified 12 domain/evidence ports, exact one-owner coverage for all 140 legacy repository operations, transaction-leased authority-bound adapters, clean path ownership, DB typecheck, 48/48 package tests including 9/9 focused CP12 tests, lint and `git diff --check`. It merged second as `869cb43`.
+- Security Pipeline / Legacy Parity Foundation handed off `52ee744f971f7e584d4648bc9552a6096bf40165` after master review found three CP11 clock-ownership regressions and the worker corrected them by requiring injected valid instants. Master reproduced auth 10/10, security 25/25, CP12 acceptance 10/10, typechecks, the exact 37-callsite clock guard and `git diff --check`. It merged third as `779f830`.
+- Master integration commit `e399209cacc5ea8035ed502d9d6c30432cc8906a` exports the reviewed DB module seams, registers the generated-client workspace in the lockfile, and freezes the API lane's direct internal, NestJS `11.1.28`, Redis `6.1.0`, reflection and RxJS dependencies. `npm ci --ignore-scripts --dry-run`, focused typechecks, generated drift/inventory checks, secret scan, clock guard and `git diff --check` passed. The live npm audit remains a promotion-time authority gate because policy rejected external disclosure of the private dependency inventory without separate approval; no audit pass is claimed.
+- Dependent API Framework / Modularization worker:
+  - pending worktree ID: `client-new-thread:b13d5ea9-d028-4d9c-b623-73ee6721bb51`;
+  - thread ID: `019f4985-d2f6-71d2-a8f2-288bfc5ec6dd`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/a707/ClinicOS`;
+  - verified base: detached `e399209cacc5ea8035ed502d9d6c30432cc8906a`, initially clean;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - exclusive ownership: `apps/api/src/**` and `apps/api/test/**`; manifests, lockfile, packages, migrations, generated contracts and release/evidence truth remain master-only;
+  - mandate: real Nest modular-monolith bootstrap, uniform 128-operation contract/security strangler pipeline, atomic Redis abuse budgets, raw-body Razorpay verification, native health/readiness and identity routes, adversarial parity tests, committed clean handoff and no release claim.
+- API framework review identified a genuine remaining persistence dependency rather than treating OpenAPI metadata as runtime compliance: 80 contract-marked mutations require durable request replay/conflict semantics, and 12 PATCH operations require atomic `If-Match` version advancement. Master commit `75e75f960dcaac41dc1e6412aa8bed55f2d703dd` freezes migration 0015 with forced-RLS actor/clinic/operation/key idempotency state, bounded replay fields, processing leases, expired tombstones and `row_version` columns on the 12 resources. A clean local bootstrap applied all 15 migrations; `db:verify` reported 97/97 forced-RLS tenant tables, three least-privilege roles, zero no-context rows, worker denial and passing cross-tenant isolation.
+- Durable API Request-Guards DB Adapter worker:
+  - pending worktree ID: `client-new-thread:4361920b-7baf-4f89-9ffc-cbc03294f440`;
+  - thread ID: `019f498f-86a4-70d2-8d46-bd5f691573d8`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/3b15/ClinicOS`;
+  - verified base: detached `75e75f960dcaac41dc1e6412aa8bed55f2d703dd`, initially clean;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - ownership: focused `packages/db` request-guard/Postgres unit-of-work adapter and tests only; migration 0015 is frozen and apps/manifests/docs remain forbidden;
+  - adaptive-lane decision: launch is justified because the work is substantial, path-disjoint from the active `apps/api` worker, independently testable against a frozen schema, and must be transaction-coupled to the CP11 unit of work rather than implemented in Redis or an API-local parallel transaction.
+
+### CP12 Dependent-Wave Integration Candidate - 2026-07-10
+
+- Request-guard adapter `bfc74e8` merged as `182a5e1`. It supplies a transaction-bound scoped
+  Postgres idempotency/concurrency port inside `PostgresClinicUnitOfWork`; fixture-only typed doubles
+  remain isolated from non-fixture durability claims.
+- Contract follow-ups `448f1c7`, `66c3691` and `352ed5c` preserved the bounded `/v1/me` Keycloak
+  provenance object, aligned the boundary error taxonomy, added canonical `rowVersion` response
+  sources and strong `"rv-N"` response metadata. Version-contract work merged as `35ad667`.
+- Master configuration commit `a7688af` requires a minimum 32-byte abuse-budget secret in
+  production-like environments while retaining a local-only synthetic fallback.
+- Domain/DB projection commits `19faf7a` and `18a7b7b` add strict positive safe-integer row versions
+  to the 12 resource families and exact-once overflow-safe linked-task advancement for
+  `recordRecallAction`; merged as `fd62e50`.
+- Master route scanner `df80764` inventories real Nest decorators plus the strangler registration.
+- API worker `fd65630` handed off a NestJS boundary, exact 128-operation policy/contract pipeline,
+  Redis atomic budgets, durable Postgres mutation coordinator, strict request/response/error
+  handling, raw Razorpay verification, health-safe local probe budgets and exact-once teardown.
+  Master reproduced 72/72 API tests with zero skips and merged it as `d01b0a3`.
+- Master integration commits `d9bfcfd`, `f3f3e1a` and `4b33165` expanded API lint to every Nest
+  source/test file, formatted integration-owned checks and reconciled the acceptance inventory with
+  the actual runtime/policy/Nest state. CP12 acceptance is 10/10; OpenAPI/client/inventory drift is
+  exact for 128 operations.
+- Final master transport review found that a chunked body using an unsupported content type could
+  avoid a populated raw buffer. The pipeline now treats `transfer-encoding` as a security header and
+  rejects an unparsed chunked body before route dispatch. Commit `8e05f7f` adds both in-process and
+  real-socket regressions; the complete API package now passes 74/74 with zero skips.
+- Readiness reconciliation `023226d` requires the Postgres coordinator and Redis abuse-budget store,
+  and exercises real Redis stop/start denial, bounded liveness and recovery. Repetition exposed an
+  offline-queue recovery defect; `6169bbd` disables the unbounded queue, caps commands, fails fast
+  while reconnecting and admits traffic only after the client is ready.
+- Durable smoke reconciliation `1b571ed` updates the CP11 runtime-ID harness to supply CP12's strict
+  idempotency, semantic validation and ETag preconditions without weakening the public contracts.
+- Complete candidate checks pass: `npm run check`, `npm run typecheck`, `npm run lint`,
+  socket-enabled `npm run test` with zero skips, `npm run build`, CP12 acceptance, generated
+  drift/inventory, secret scan and `git diff --check`.
+- A stale local volume made the first `db:verify` fail its exact canonical-patient count. The master
+  discarded that state as evidence. Repeated clean bootstrap/restore points passed with 15
+  migrations, 97/97 forced-RLS tenant tables, three least-privilege roles, runtime no-context rows
+  zero, worker product access denied and cross-tenant isolation pass. Migration concurrency,
+  checksum drift, rollback, repositories, request guards 10/10, row projection 5/5, worker
+  persistence 5/5 and real Postgres/Redis/Keycloak loss/recovery all pass.
+- Durable runtime smoke passed twice consecutively and once after API restart. Two clean worker
+  restart cycles passed against the canonical database. A 25-iteration local API comparison recorded
+  `health_ready` p95 5.35 ms, `runtime_identity` p95 17.28 ms and `patient_list` p95 17.81 ms.
+- Browser evidence passes: assistant Playwright 3/3; targeted owner Playwright 3/3; in-app browser
+  inspection for both roles; 390px no horizontal overflow, reachable primary controls, truthful
+  fixture/provider/cloud unavailable states and no browser warnings/errors.
+- Promotion was temporarily blocked by an external-execution requirement. `npm run security:audit` transmits
+  the dependency inventory to the configured npm registry. The user explicitly authorized the
+  disclosure after being informed of the contents and destination, but the managed execution policy
+  still rejected it and prohibited retry, indirect execution or workaround. An authorized operator
+  or approved CI environment must run the exact command and provide its complete output and exit
+  status. `main` stays at `1166baa`; CP13 has not started.
+- The authorized operator supplied the complete `npm run security:audit` transcript. The configured
+  `--audit-level=high` gate passes with zero high/critical advisories. Twenty-one moderate advisories
+  remain in the Next/PostCSS, Temporal/protobufjs and Expo/xcode/uuid transitive paths. No automatic
+  or force fix was run; the moderate findings remain visible under PRR-018 for CP14/CP17.
+- With the audit evidence accepted, every CP12 exit gate passes. Promotion is authorized after the
+  final repository rerun; CP13 remains stopped until the controlled merge and post-promotion checks
+  are green.
+- Candidate evidence: `docs/qa/checkpoint-12-evidence.md`; integrated threat/control truth:
+  `docs/security/checkpoint-12-route-control-inventory.md` and
+  `docs/security/checkpoint-12-security-foundation-delta.md`; candidate report:
+  `docs/orchestration/CHECKPOINT_12_FINAL_REPORT.md`.

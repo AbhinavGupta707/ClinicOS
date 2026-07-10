@@ -193,6 +193,7 @@ export interface LabCaseRecord {
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
+  rowVersion: number;
   vendorId: UUID;
   patientId: UUID;
   encounterId: UUID | null;
@@ -402,6 +403,7 @@ export interface InventoryCheckRunRecord {
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
+  rowVersion: number;
   templateId: UUID;
   status: InventoryCheckRunStatus;
   startedByUserId: UUID;
@@ -538,6 +540,7 @@ export interface CorrectiveActionRecord {
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
+  rowVersion: number;
   incidentId: UUID | null;
   actionType: CorrectiveActionType;
   title: string;

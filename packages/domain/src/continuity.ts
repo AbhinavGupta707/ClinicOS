@@ -62,6 +62,7 @@ export interface TaskRecord {
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
+  rowVersion: number;
   patientId: UUID | null;
   leadId: UUID | null;
   appointmentId: UUID | null;
@@ -232,6 +233,7 @@ export interface SopRunRecord {
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
+  rowVersion: number;
   templateId: UUID;
   scheduleId: UUID;
   taskId: UUID | null;

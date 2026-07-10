@@ -48,6 +48,7 @@ export interface AppointmentRecord {
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
+  rowVersion: number;
   patientId: UUID;
   leadId: UUID | null;
   providerUserId: UUID;
@@ -81,6 +82,7 @@ export interface QueueEntryRecord {
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
+  rowVersion: number;
   appointmentId: UUID;
   patientId: UUID;
   providerUserId: UUID;
