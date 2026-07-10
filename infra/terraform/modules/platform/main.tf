@@ -499,17 +499,30 @@ locals {
       command        = []
       environment = {
         NODE_ENV                  = "production"
+        CLINIC_OS_ENV             = var.environment
         REPOSITORY_MODE           = "postgres"
         AUTH_MODE                 = "keycloak"
         PILOT_SYNTHETIC_DATA_ONLY = "true"
         TEMPORAL_ADDRESS          = "temporal-frontend.${local.name_prefix}.internal:7233"
+        KEYCLOAK_BASE_URL         = "https://${var.ingress.auth_hostname}"
+        KEYCLOAK_REALM            = "clinic-os"
+        KEYCLOAK_CLIENT_ID        = "clinic-os-web-bff"
+        S3_REGION                 = var.primary_region
+        S3_BUCKET                 = module.storage_primary.bucket_ids.media
+        WHATSAPP_PROVIDER         = "unconfigured"
+        PAYMENT_PROVIDER          = "unconfigured"
+        TELEPHONY_PROVIDER        = "unconfigured"
+        LLM_PROVIDER              = "unconfigured"
+        TRANSCRIPTION_PROVIDER    = "unconfigured"
+        ALERTING_PROVIDER         = "unconfigured"
       }
       secrets = {
-        DATABASE_URL              = "${local.application_secret_arn}:url::"
-        REDIS_URL                 = "${module.cache[0].auth_secret_arn}:url::"
-        PROVIDER_CREDENTIALS_JSON = local.provider_secret_arn
+        DATABASE_URL                          = "${local.application_secret_arn}:url::"
+        REDIS_URL                             = "${module.cache[0].auth_secret_arn}:url::"
+        CLINIC_OS_ABUSE_BUDGET_KEY_SECRET     = "${local.session_secret_arn}:abuse_budget_key::"
+        CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET = "${local.session_secret_arn}:token_revocation_key::"
       }
-      execution_secret_arns        = [local.application_secret_arn, module.cache[0].auth_secret_arn, local.provider_secret_arn]
+      execution_secret_arns        = [local.application_secret_arn, module.cache[0].auth_secret_arn, local.session_secret_arn]
       task_policy_json             = local.media_task_policy
       target_group_arn             = try(module.edge.target_group_arns.api, null)
       additional_target_group_arns = []
@@ -552,15 +565,18 @@ locals {
       maximum_count  = var.runtime.capacity.worker.maximum_count
       command        = []
       environment = {
-        NODE_ENV         = "production"
-        TEMPORAL_ADDRESS = "temporal-frontend.${local.name_prefix}.internal:7233"
+        NODE_ENV           = "production"
+        CLINIC_OS_ENV      = var.environment
+        TEMPORAL_ADDRESS   = "temporal-frontend.${local.name_prefix}.internal:7233"
+        WORKER_HEALTH_PORT = "3001"
+        PAYMENT_PROVIDER   = "unconfigured"
       }
       secrets = {
-        WORKER_DATABASE_URL       = "${local.application_secret_arn}:worker_url::"
-        REDIS_URL                 = "${module.cache[0].auth_secret_arn}:url::"
-        PROVIDER_CREDENTIALS_JSON = local.provider_secret_arn
+        DATABASE_URL                      = "${local.application_secret_arn}:url::"
+        WORKER_DATABASE_URL               = "${local.application_secret_arn}:worker_url::"
+        CLINIC_OS_ABUSE_BUDGET_KEY_SECRET = "${local.session_secret_arn}:abuse_budget_key::"
       }
-      execution_secret_arns        = [local.application_secret_arn, module.cache[0].auth_secret_arn, local.provider_secret_arn]
+      execution_secret_arns        = [local.application_secret_arn, local.session_secret_arn]
       task_policy_json             = local.media_task_policy
       target_group_arn             = null
       additional_target_group_arns = []

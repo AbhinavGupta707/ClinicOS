@@ -73,6 +73,10 @@ require 'runtime_admin_ingress' "$pilot" "pilot runtime must fail closed without
 require 'KC_HOSTNAME_ADMIN' "$platform" "Keycloak must bind a distinct admin hostname"
 require 'KC_HOSTNAME_BACKCHANNEL_DYNAMIC' "$platform" "Keycloak backchannel binding must be fail closed"
 require '57800.*7800|7800.*57800' "$platform" "Keycloak clustering ports must be self-only workload ports"
+require 'CLINIC_OS_ENV[[:space:]]*=[[:space:]]*var.environment' "$platform" "application tasks must receive the real production-like environment"
+require 'WORKER_HEALTH_PORT[[:space:]]*=[[:space:]]*"3001"' "$platform" "worker health listener must match its ECS health check port"
+require 'CLINIC_OS_ABUSE_BUDGET_KEY_SECRET' "$platform" "API and worker must receive the production abuse/cursor signing key"
+require 'CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET' "$platform" "API must receive a distinct token-revocation key"
 require 'internal[[:space:]]*=[[:space:]]*true' "$admin_ingress" "Keycloak admin ALB must be internal"
 require 'allowed_operator_cidrs' "$admin_ingress" "Keycloak admin ingress must use explicit operator CIDRs"
 
