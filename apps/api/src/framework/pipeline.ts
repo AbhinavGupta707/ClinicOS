@@ -160,6 +160,18 @@ export class ClinicOsRequestPipeline {
       if (!verifiedClinic) {
         throw new Error("Clinic operation reached dispatch without verified clinic context.");
       }
+      if (this.#runtime.handleClinicOperation) {
+        return this.#runtime.handleClinicOperation(
+          request,
+          matched.operation.operationId,
+          correlation.requestId,
+          verifiedClinic,
+          parsedRequest,
+          now,
+          rawRequestBody(request),
+          transaction
+        );
+      }
       return this.#runtime.handleLegacyOperation(
         request,
         correlation.requestId,

@@ -31,7 +31,11 @@ import {
   type Clock,
   type UUID
 } from "@clinic-os/domain";
-import { createAuditEvent, type AtomicBudgetStore, type AuditEventRecord } from "@clinic-os/security";
+import {
+  createAuditEvent,
+  type AtomicBudgetStore,
+  type AuditEventRecord
+} from "@clinic-os/security";
 import { Pool } from "pg";
 import { ApiError, toApiErrorBody } from "./errors.ts";
 import { ApiHealthMonitor, type ApiDependencyProbe, type ApiRepositoryMode } from "./health.ts";
@@ -189,6 +193,9 @@ import {
 } from "./framework/nest-application.ts";
 import { RedisAtomicBudgetStore } from "./framework/redis-budget-store.ts";
 import { PostgresAtomicMutationCoordinator } from "./framework/postgres-mutation-coordinator.ts";
+import type { ClinicFeatureHandlerMap } from "./features/contracts.ts";
+import type { Cp13ClinicFeatureOperationId } from "./features/cp13-operation-ownership.ts";
+import { runClinicFeatureOperation } from "./features/runtime.ts";
 
 interface AuditSink {
   appendAuditEvent(event: AuditEventRecord): Promise<void>;
@@ -228,6 +235,7 @@ export interface ClinicOsApiServerOptions {
   budgetStore?: AtomicBudgetStore;
   budgetKeySecret?: string;
   mutationCoordinator?: AtomicMutationCoordinator;
+  featureHandlers?: ClinicFeatureHandlerMap;
 }
 
 interface RuntimeOptions {
@@ -269,8 +277,7 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
     options.budgetKeySecret ??
     (fixtureMode ? "clinicos-cp12-fixture-budget-secret-000000000000" : null);
   const mutationCoordinator =
-    options.mutationCoordinator ??
-    (fixtureMode ? new InMemoryAtomicMutationCoordinator() : null);
+    options.mutationCoordinator ?? (fixtureMode ? new InMemoryAtomicMutationCoordinator() : null);
   if (!budgetStore || !budgetKeySecret || !mutationCoordinator) {
     throw new ApiError(
       503,
@@ -312,6 +319,48 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
       }
     ]
   });
+
+  const dispatchLegacyOperation: ClinicOsNestRuntime["handleLegacyOperation"] = async (
+    request,
+    requestId,
+    access,
+    body,
+    rawBody,
+    transaction
+  ) => {
+    const repository = transaction?.repository ?? options.operationsRepository;
+    const auditSink = transaction?.auditSink ?? options.auditSink;
+    if (!repository) throw missingOperationsRepository();
+    const routeInput = {
+      request,
+      requestId,
+      tokenVerifier,
+      expectedIssuer,
+      acceptedAudience,
+      config: options.config,
+      identityRepository: options.identityRepository,
+      mediaStorage: options.mediaStorage,
+      paymentProvider: options.paymentProvider ?? createRuntimePaymentProvider(options.config),
+      aiGatewayProvider: options.aiGatewayProvider,
+      useLocalAuthFixture: options.useLocalAuthFixture ?? false,
+      fixtureSubject: options.fixtureSubject,
+      clock: options.clock,
+      resolvedAccess: access,
+      preparedBody: body,
+      preparedRawBody: rawBody
+    };
+    if (transaction) return routeOperationsRequest({ ...routeInput, repository, auditSink });
+    return options.operationsUnitOfWork
+      ? options.operationsUnitOfWork.run(
+          ({ repository: activeRepository, auditSink: activeAudit }) =>
+            routeOperationsRequest({
+              ...routeInput,
+              repository: activeRepository,
+              auditSink: activeAudit
+            })
+        )
+      : routeOperationsRequest({ ...routeInput, repository, auditSink });
+  };
 
   return {
     clock: options.clock ?? systemClock,
@@ -391,44 +440,60 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
         );
       if (transaction) return handle(repository, auditSink);
       return options.operationsUnitOfWork
-        ? options.operationsUnitOfWork.run(({ repository: activeRepository, auditSink: activeAudit }) =>
-            handle(activeRepository, activeAudit)
+        ? options.operationsUnitOfWork.run(
+            ({ repository: activeRepository, auditSink: activeAudit }) =>
+              handle(activeRepository, activeAudit)
           )
         : handle(repository, auditSink);
     },
-    async handleLegacyOperation(request, requestId, access, body, rawBody, transaction) {
-      const repository = transaction?.repository ?? options.operationsRepository;
-      const auditSink = transaction?.auditSink ?? options.auditSink;
-      if (!repository) throw missingOperationsRepository();
-      const routeInput = {
-        request,
-        requestId,
-        tokenVerifier,
-        expectedIssuer,
-        acceptedAudience,
-        config: options.config,
-        identityRepository: options.identityRepository,
-        mediaStorage: options.mediaStorage,
-        paymentProvider: options.paymentProvider ?? createRuntimePaymentProvider(options.config),
-        aiGatewayProvider: options.aiGatewayProvider,
-        useLocalAuthFixture: options.useLocalAuthFixture ?? false,
-        fixtureSubject: options.fixtureSubject,
-        clock: options.clock,
-        resolvedAccess: access,
-        preparedBody: body,
-        preparedRawBody: rawBody
-      };
-      if (transaction) return routeOperationsRequest({ ...routeInput, repository, auditSink });
-      return options.operationsUnitOfWork
-        ? options.operationsUnitOfWork.run(({ repository: activeRepository, auditSink: activeAudit }) =>
-            routeOperationsRequest({
-              ...routeInput,
-              repository: activeRepository,
-              auditSink: activeAudit
-            })
-          )
-        : routeOperationsRequest({ ...routeInput, repository, auditSink });
-    }
+    async handleClinicOperation(
+      request,
+      operationId,
+      requestId,
+      access,
+      parsedRequest,
+      receivedAt,
+      rawBody,
+      transaction
+    ) {
+      const featureOperationId = operationId as Cp13ClinicFeatureOperationId;
+      const handler = options.featureHandlers?.[featureOperationId];
+      if (!handler) {
+        return dispatchLegacyOperation(
+          request,
+          requestId,
+          access,
+          parsedRequest.body,
+          rawBody,
+          transaction
+        );
+      }
+
+      const execute = (activeTransaction: ApiTransactionContext) =>
+        runClinicFeatureOperation({
+          operationId: featureOperationId,
+          handler,
+          request,
+          requestId,
+          access,
+          parsedRequest,
+          receivedAt,
+          transaction: activeTransaction,
+          clock: options.clock ?? systemClock
+        });
+      if (transaction) return execute(transaction);
+      if (!options.operationsUnitOfWork) {
+        throw new ApiError(
+          503,
+          "CONFIGURATION_ERROR",
+          "ClinicOS feature transaction dependencies are not configured."
+        );
+      }
+      return options.operationsUnitOfWork.run(({ repository, auditSink, requestGuards }) =>
+        execute({ repository, auditSink, requestGuards })
+      );
+    },
+    handleLegacyOperation: dispatchLegacyOperation
   };
 }
 
@@ -497,9 +562,7 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
   const configuredBudgetKeySecret = parsed.data.security.abuseBudgetKeySecret;
   const runtimeBudgetKeySecret =
     configuredBudgetKeySecret ??
-    (parsed.data.isProductionLike
-      ? null
-      : "clinicos-local-synthetic-budget-secret-000000000000");
+    (parsed.data.isProductionLike ? null : "clinicos-local-synthetic-budget-secret-000000000000");
   if (!useFixtureRepository && !runtimeBudgetKeySecret) {
     throw new ApiError(
       503,
@@ -1747,10 +1810,7 @@ function allowlistedWebhookHeaders(
     "x-razorpay-signature": headerValue(request, "x-razorpay-signature"),
     ...(useLocalAuthFixture
       ? {
-          "x-clinic-os-simulator-signature": headerValue(
-            request,
-            "x-clinic-os-simulator-signature"
-          )
+          "x-clinic-os-simulator-signature": headerValue(request, "x-clinic-os-simulator-signature")
         }
       : {})
   };

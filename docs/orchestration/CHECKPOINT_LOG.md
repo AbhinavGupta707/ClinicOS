@@ -764,3 +764,21 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   `apps/api/src/features/cp13-operation-ownership.ts`, existing web components/loaders/navigation,
   worker/workflow composition, root configuration, checkpoint/release/security truth and all user
   research. Workers must propose shared changes in handoff rather than editing these paths.
+- Visible project worktree threads were created from the frozen integration ref:
+  - Front Office and Intake: `019f4b66-834a-7c61-8ba5-d6da42f8882e`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/ddac/ClinicOS`;
+  - Clinical and Dental: `019f4b66-834b-7470-9974-64f0478b4957`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/2b90/ClinicOS`;
+  - Treatment, Billing and Instructions: `019f4b66-837b-7bc3-b763-cd9b13a98b80`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/6bc8/ClinicOS`;
+  - Continuity, Operations and Analytics: `019f4b66-8359-71e1-b8b6-e6cd8338aa38`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/a010/ClinicOS`.
+- The initial worker prompts contained a short-hash typo (`3d3c5c2f`). Front-office and continuity
+  correctly stopped before editing. The master corrected all lanes to the exact frozen revision
+  `3d3c5c2e64a4cbb1af6da318c995cdda90b9fb83`; detached worktree HEAD is expected. No worker changed
+  files on the mistaken instruction.
+- While lanes run, the master added the optional CP13 feature dispatch path after CP12 parsing,
+  authorization, budgets and mutation coordination. Registered feature handlers bind verified
+  scope and namespaced ports inside the existing transaction; absent handlers retain legacy parity,
+  and a registered feature fails closed without a unit of work. API typecheck, the 76-test zero-skip
+  socket suite and the focused transaction-scope/lease test pass.

@@ -1,9 +1,11 @@
 import type { IncomingMessage } from "node:http";
+import type { ParsedOperationRequest } from "@clinic-os/api-contracts";
 import type { AccessContext } from "@clinic-os/auth";
 import type {
   ClinicOperationsRepository,
   IdentityRepository,
-  OptimisticConcurrencyOperationId
+  OptimisticConcurrencyOperationId,
+  ScopedApiRequestGuardsPort
 } from "@clinic-os/db";
 import type { Clinic, Clock, UUID } from "@clinic-os/domain";
 import type { AtomicBudgetStore } from "@clinic-os/security";
@@ -18,6 +20,7 @@ export interface ApiResponse {
 export interface ApiTransactionContext {
   repository: ClinicOperationsRepository;
   auditSink: AuditSink;
+  requestGuards: ScopedApiRequestGuardsPort;
 }
 
 export interface AuditSink {
@@ -93,10 +96,7 @@ export interface ClinicOsNestRuntime {
   repositoryMode: "postgres" | "fixture" | "injected";
   useLocalAuthFixture: boolean;
   identityRepository: IdentityRepository;
-  health(
-    kind: "liveness" | "readiness" | "startup",
-    requestId: string
-  ): Promise<ApiResponse>;
+  health(kind: "liveness" | "readiness" | "startup", requestId: string): Promise<ApiResponse>;
   admitTraffic(): Promise<boolean>;
   resolveAccess(request: IncomingMessage): Promise<ResolvedAccessContext>;
   handleIdentity(
@@ -108,6 +108,16 @@ export interface ClinicOsNestRuntime {
     request: IncomingMessage,
     requestId: string,
     rawBody: Buffer,
+    transaction?: ApiTransactionContext
+  ): Promise<ApiResponse>;
+  handleClinicOperation?(
+    request: IncomingMessage,
+    operationId: string,
+    requestId: string,
+    access: VerifiedClinicRequestContext,
+    parsedRequest: ParsedOperationRequest,
+    receivedAt: Date,
+    rawBody: Buffer | undefined,
     transaction?: ApiTransactionContext
   ): Promise<ApiResponse>;
   handleLegacyOperation(
