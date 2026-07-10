@@ -8,8 +8,8 @@ modules, forced RLS, atomic audit/outbox evidence, durable worker/Temporal recov
 role-scoped web loaders. The integration passed twice on a clean-origin database with runtime IDs
 and no fixture repository fallback.
 
-Launch base was verified `main` revision `c3802b73`. The final code candidate before evidence was
-`9116a8ea`; promotion and post-promotion hashes are recorded after the controlled merge.
+Launch base was verified `main` revision `c3802b73`. The verified integration candidate was
+`b2283ee4`; it was promoted by no-fast-forward merge `aa2a12e1`.
 
 ## What is built
 
@@ -65,8 +65,9 @@ Authoritative evidence is in `docs/qa/checkpoint-13-evidence.md`; the security d
 
 ## Promotion and release truth
 
-The checkpoint integration is promoted only after the evidence commit and post-promotion checks.
-CP14 has **not** started and must consume the verified promoted CP13 base.
+The checkpoint integration is promoted to `main` at `aa2a12e1`. Exact integration/main tree
+equivalence, post-promotion `npm run check`, `git diff --check`, and durable database verification
+pass. CP14 has **not** started and must consume this verified promoted CP13 base.
 
 ClinicOS remains **NO-GO** for pilot or production. CP13 does not claim deployed Keycloak/BFF,
 official provider activation, production media scanning, cloud apply, alerting, signed artifacts,

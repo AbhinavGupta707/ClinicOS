@@ -17,7 +17,7 @@ Changed:
 
 Release truth:
 
-- CP13 passes at E3 durable-local scope and is ready for controlled promotion to `main`.
+- CP13 passes at E3 durable-local scope and is promoted to `main` at `aa2a12e1`.
 - ClinicOS remains **NO-GO** for pilot/production; CP14-CP18 cloud/session/provider/media/device/
   recovery/clinic evidence remains mandatory, and CP14 has not started.
 

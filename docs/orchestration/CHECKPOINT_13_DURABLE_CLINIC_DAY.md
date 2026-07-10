@@ -1,6 +1,6 @@
 # Checkpoint 13 — Durable Clinic-Day Vertical Slices
 
-**Status:** E3 candidate verified; controlled promotion to `main` pending
+**Status:** Complete at E3; promoted to `main` at `aa2a12e1`; CP14 paused
 **Evidence target:** E3 complete durable local, E4 staging where available
 **Workers:** provisionally three to four initial vertical worktrees, selected after the CP12 seam audit
 **Primary findings:** PRR-014, remaining PRR-027, durable workflow portion of PRR-025

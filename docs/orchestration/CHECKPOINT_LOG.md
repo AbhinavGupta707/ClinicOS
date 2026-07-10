@@ -882,3 +882,15 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   `docs/security/checkpoint-13-threat-model-delta.md`; final report:
   `docs/orchestration/CHECKPOINT_13_FINAL_REPORT.md`. Promotion and post-promotion checks remain the
   only CP13 steps. CP14 has not started.
+
+### CP13 Promotion And Pause — 2026-07-10
+
+- Evidence candidate `b2283ee459998f1d353e56d786d8b58adf0c8aaf` was promoted from
+  `codex/integration/checkpoint-13` to `main` by no-fast-forward merge
+  `aa2a12e16ccbf4e1afabd96b8e7c6acbce368010`.
+- The promoted tree is exactly equivalent to the integration candidate. Post-promotion
+  `npm run check`, `git diff --check`, and durable database verification pass with 17 migrations,
+  100/100 forced-RLS tenant tables, zero no-context rows, least-privilege worker grants, denied
+  worker patient/idempotency access and cross-tenant isolation.
+- CP13 is complete at E3. The release remains NO-GO, CP14 has not started, and orchestration is
+  paused at the user's requested checkpoint boundary.

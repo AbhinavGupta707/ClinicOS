@@ -4,9 +4,10 @@
 
 - Result: **PASS at E3 durable-local scope**.
 - Launch base: `c3802b73e135246d56d12efc9ab399ecd6f47fde` (verified CP12 `main`).
-- Verified code candidate: `9116a8ea` plus the evidence commit that contains this record.
-- Promotion: pending at candidate-record time; the post-promotion record is appended after the
-  controlled merge to `main`.
+- Verified integration candidate: `b2283ee459998f1d353e56d786d8b58adf0c8aaf`.
+- Promotion merge: `aa2a12e16ccbf4e1afabd96b8e7c6acbce368010` on `main`.
+- Post-promotion: exact integration/main tree equivalence, `npm run check`, `git diff --check`, and
+  durable `db:verify` all pass.
 - Release decision: **NO-GO** for pilot/production. CP14-CP18 cloud, production session, official
   provider, media, device, restore/failover, security-operations, and real-clinic gates remain open.
 
