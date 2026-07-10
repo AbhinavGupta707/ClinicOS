@@ -28,6 +28,9 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Build shared package outputs
+        run: npm run build:shared
+
       - name: Workspace check
         run: npm run check
 
