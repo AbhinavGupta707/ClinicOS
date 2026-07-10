@@ -1,0 +1,16 @@
+{
+  "name": "@clinic-os/api-client-generated",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Deterministically generated ClinicOS native HTTP client for the CP12 strangler contract.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "find src test -name '*.ts' -exec node --check {} \\;",
+    "test": "node --test test/*.test.ts",
+    "build": "tsc --noEmit -p tsconfig.json"
+  }
+}
