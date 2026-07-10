@@ -75,7 +75,10 @@
           "storageKey",
           "storagePath",
           "webhookVerifyToken",
-          "webhookSecret"
+          "webhookSecret",
+          "__proto__",
+          "constructor",
+          "prototype"
         ],
         "x-clinicos-json-kind": "public"
       },
@@ -114,7 +117,10 @@
           "totalAuthority",
           "totalMinor",
           "unitPrice",
-          "unitPriceMinor"
+          "unitPriceMinor",
+          "__proto__",
+          "constructor",
+          "prototype"
         ],
         "x-clinicos-json-kind": "writable"
       }

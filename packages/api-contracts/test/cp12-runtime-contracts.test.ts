@@ -4,12 +4,15 @@ import {
   ACTIVE_NATIVE_HTTP_OPERATIONS,
   API_ERROR_CODES,
   DEFERRED_OR_UNREGISTERED_HTTP_WORKFLOWS,
+  UNSAFE_JSON_PROPERTY_NAMES,
   getNativeHttpOperation,
   parseNativeOperationRequest,
   parseNativeOperationResponse,
+  parseRuntimeSchema,
   renderGeneratedClient,
   renderNativeOpenApi,
-  renderNativeRouteInventory
+  renderNativeRouteInventory,
+  schema
 } from "../src/index.ts";
 
 const patientId = "10000000-0000-4000-8000-000000000001";
@@ -107,6 +110,80 @@ test("patient create rejects unknown, tenant, actor and nested authority fields"
     const parsed = parseNativeOperationRequest("createPatient", { headers: bearerHeaders, body });
     assert.equal(parsed.success, false);
     assert.match(JSON.stringify(parsed), /unknown_field|authority_field/);
+  }
+});
+
+test("free-form writable and public JSON reject prototype-pollution keys recursively", () => {
+  for (const definition of [schema.writableJsonObject(), schema.publicJsonObject()]) {
+    for (const unsafeName of UNSAFE_JSON_PROPERTY_NAMES) {
+      assert.ok(definition["x-clinicos-forbidden-property-names"]?.includes(unsafeName));
+    }
+  }
+  const corpus = [
+    '{"nested":{"__proto__":{"polluted":true}}}',
+    '{"nested":[{"constructor":{"polluted":true}}]}',
+    '{"nested":{"deeper":{"prototype":{"polluted":true}}}}'
+  ];
+
+  for (const serialized of corpus) {
+    const parsedJson = JSON.parse(serialized) as Record<string, unknown>;
+    const writable = parseRuntimeSchema(schema.writableJsonObject(), parsedJson);
+    assert.equal(writable.success, false, serialized);
+    assert.match(JSON.stringify(writable), /unsafe_field/);
+
+    const publicRecord = parseRuntimeSchema(schema.publicJsonObject(), parsedJson);
+    assert.equal(publicRecord.success, false, serialized);
+    assert.match(JSON.stringify(publicRecord), /unsafe_field/);
+
+    const operationRequest = parseNativeOperationRequest("createPatient", {
+      headers: bearerHeaders,
+      body: {
+        fullName: "Synthetic Patient",
+        phone: "+919876543210",
+        source: "manual",
+        sourceDetail: parsedJson
+      }
+    });
+    assert.equal(operationRequest.success, false, serialized);
+    assert.match(JSON.stringify(operationRequest), /unsafe_field/);
+  }
+
+  const inheritedPrototype = Object.create({ polluted: true }) as Record<string, unknown>;
+  inheritedPrototype.safe = "value";
+  const inherited = parseRuntimeSchema(schema.writableJsonObject(), inheritedPrototype);
+  assert.equal(inherited.success, false);
+  assert.match(JSON.stringify(inherited), /plain JSON prototype/);
+  assert.equal(({} as { polluted?: boolean }).polluted, undefined);
+});
+
+test("date and date-time formats require real calendar values and explicit RFC3339 offsets", () => {
+  for (const value of ["2024-02-29", "2000-02-29", "2026-12-31"]) {
+    assert.equal(parseRuntimeSchema(schema.date(), value).success, true, value);
+  }
+  for (const value of ["2026-02-30", "2026-99-99", "1900-02-29", "0000-01-01"]) {
+    const result = parseRuntimeSchema(schema.date(), value);
+    assert.equal(result.success, false, value);
+    assert.match(JSON.stringify(result), /format/);
+  }
+
+  for (const value of [
+    "2026-07-10T12:34:56Z",
+    "2026-07-10T12:34:56.123456789+05:30",
+    "2024-02-29T00:00:00-04:00"
+  ]) {
+    assert.equal(parseRuntimeSchema(schema.dateTime(), value).success, true, value);
+  }
+  for (const value of [
+    "2026-02-30T12:00:00Z",
+    "2026-07-10T12:00:00",
+    "2026-07-10 12:00:00Z",
+    "2026-07-10T24:00:00Z",
+    "2026-07-10T12:00:00+24:00",
+    "July 10, 2026 12:00 PM UTC"
+  ]) {
+    const result = parseRuntimeSchema(schema.dateTime(), value);
+    assert.equal(result.success, false, value);
+    assert.match(JSON.stringify(result), /format/);
   }
 });
 

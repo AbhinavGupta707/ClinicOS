@@ -37,6 +37,7 @@ export interface RuntimeSchemaIssue {
     | "invalid_type"
     | "missing_required"
     | "out_of_range"
+    | "unsafe_field"
     | "unknown_field"
     | "unsupported_value";
   readonly message: string;
@@ -58,8 +59,14 @@ export class RuntimeSchemaValidationError extends Error {
 }
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
-const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
+const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
+const DATE_TIME_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
+export const UNSAFE_JSON_PROPERTY_NAMES = ["__proto__", "constructor", "prototype"] as const;
+const NORMALIZED_UNSAFE_JSON_PROPERTY_NAMES = new Set(
+  UNSAFE_JSON_PROPERTY_NAMES.map(normalizePropertyName)
+);
 
 export const schema = {
   string(options: Omit<RuntimeSchema, "type"> = {}): RuntimeSchema {
@@ -114,7 +121,10 @@ export const schema = {
       additionalProperties: true,
       maxProperties: 64,
       "x-clinicos-json-kind": "writable",
-      "x-clinicos-forbidden-property-names": WRITABLE_AUTHORITY_FIELDS,
+      "x-clinicos-forbidden-property-names": [
+        ...WRITABLE_AUTHORITY_FIELDS,
+        ...UNSAFE_JSON_PROPERTY_NAMES
+      ],
       ...options
     };
   },
@@ -126,7 +136,10 @@ export const schema = {
       additionalProperties: true,
       maxProperties: 256,
       "x-clinicos-json-kind": "public",
-      "x-clinicos-forbidden-property-names": PUBLIC_PRIVATE_FIELDS,
+      "x-clinicos-forbidden-property-names": [
+        ...PUBLIC_PRIVATE_FIELDS,
+        ...UNSAFE_JSON_PROPERTY_NAMES
+      ],
       ...options
     };
   },
@@ -310,11 +323,16 @@ function validateString(
   if (definition.format === "uuid" && !UUID_PATTERN.test(input)) {
     issue(issues, path, "format", "Expected a UUID.");
   }
-  if (definition.format === "date" && !DATE_PATTERN.test(input)) {
-    issue(issues, path, "format", "Expected a YYYY-MM-DD date.");
+  if (definition.format === "date" && !isCalendarDate(input)) {
+    issue(issues, path, "format", "Expected a real YYYY-MM-DD calendar date.");
   }
-  if (definition.format === "date-time" && Number.isNaN(Date.parse(input))) {
-    issue(issues, path, "format", "Expected an ISO date-time.");
+  if (definition.format === "date-time" && !isRfc3339DateTime(input)) {
+    issue(
+      issues,
+      path,
+      "format",
+      "Expected a real RFC3339 date-time with an explicit Z or numeric offset."
+    );
   }
   if (definition.format === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input)) {
     issue(issues, path, "format", "Expected an email address.");
@@ -385,6 +403,10 @@ function validateObject(
     issue(issues, path, "invalid_type", "Expected an object.");
     return;
   }
+  if (!hasPlainJsonPrototype(input)) {
+    issue(issues, path, "unsafe_field", "Object must use a plain JSON prototype.");
+    return;
+  }
   const record = input as Record<string, unknown>;
   const keys = Object.keys(record);
   if (definition.minProperties !== undefined && keys.length < definition.minProperties) {
@@ -413,6 +435,15 @@ function validateObject(
   );
   for (const key of keys) {
     const propertyPath = `${path}.${key}`;
+    if (isUnsafeJsonPropertyName(key)) {
+      issue(
+        issues,
+        propertyPath,
+        "unsafe_field",
+        "Prototype-mutating property names are not allowed."
+      );
+      continue;
+    }
     if (forbidden.has(normalizePropertyName(key))) {
       issue(
         issues,
@@ -475,13 +506,24 @@ function validateJsonValue(
     issue(issues, path, "invalid_type", "Expected a JSON value.");
     return;
   }
+  if (!hasPlainJsonPrototype(input)) {
+    issue(issues, path, "unsafe_field", "Object must use a plain JSON prototype.");
+    return;
+  }
   const record = input as Record<string, unknown>;
   if (Object.keys(record).length > 256)
     issue(issues, path, "out_of_range", "Object exceeds 256 properties.");
   const forbidden = new Set(forbiddenNames.map(normalizePropertyName));
   for (const [key, value] of Object.entries(record)) {
     const propertyPath = `${path}.${key}`;
-    if (forbidden.has(normalizePropertyName(key))) {
+    if (isUnsafeJsonPropertyName(key)) {
+      issue(
+        issues,
+        propertyPath,
+        "unsafe_field",
+        "Prototype-mutating property names are not allowed."
+      );
+    } else if (forbidden.has(normalizePropertyName(key))) {
       issue(
         issues,
         propertyPath,
@@ -492,6 +534,49 @@ function validateJsonValue(
       validateJsonValue(value, propertyPath, issues, depth + 1, forbiddenNames);
     }
   }
+}
+
+function isCalendarDate(value: string): boolean {
+  const match = DATE_PATTERN.exec(value);
+  if (!match) return false;
+  return isCalendarDateParts(Number(match[1]), Number(match[2]), Number(match[3]));
+}
+
+function isRfc3339DateTime(value: string): boolean {
+  const match = DATE_TIME_PATTERN.exec(value);
+  if (!match) return false;
+  if (!isCalendarDateParts(Number(match[1]), Number(match[2]), Number(match[3]))) return false;
+  const hour = Number(match[4]);
+  const minute = Number(match[5]);
+  const second = Number(match[6]);
+  if (hour > 23 || minute > 59 || second > 59) return false;
+  const offset = match[8];
+  if (!offset) return false;
+  if (offset !== "Z") {
+    const offsetHour = Number(offset.slice(1, 3));
+    const offsetMinute = Number(offset.slice(4, 6));
+    if (offsetHour > 23 || offsetMinute > 59) return false;
+  }
+  return true;
+}
+
+function isCalendarDateParts(year: number, month: number, day: number): boolean {
+  if (year < 1 || year > 9999 || month < 1 || month > 12 || day < 1) return false;
+  const daysInMonth = [31, isLeapYear(year) ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31];
+  return day <= (daysInMonth[month - 1] ?? 0);
+}
+
+function isLeapYear(year: number): boolean {
+  return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+function hasPlainJsonPrototype(value: object): boolean {
+  const prototype = Object.getPrototypeOf(value);
+  return prototype === Object.prototype || prototype === null;
+}
+
+function isUnsafeJsonPropertyName(value: string): boolean {
+  return NORMALIZED_UNSAFE_JSON_PROPERTY_NAMES.has(normalizePropertyName(value));
 }
 
 function normalizePropertyName(value: string): string {
