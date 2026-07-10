@@ -1,6 +1,9 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import { ClinicOsApiError } from "@clinic-os/api-client-generated";
+import {
+  ClinicOsApiError,
+  type ClinicOsApiErrorCode
+} from "@clinic-os/api-client-generated";
 import {
   classifyFrontOfficeLoadFailure,
   loadFrontOfficeDay,
@@ -86,7 +89,7 @@ describe("CP13 front-office durable loaders", () => {
   });
 
   it("distinguishes authentication from permission denial and masks unknown errors", () => {
-    const apiError = (status: number, code: string, requestId: string) =>
+    const apiError = (status: number, code: ClinicOsApiErrorCode, requestId: string) =>
       new ClinicOsApiError(status, {
         error: { code, message: "Sensitive upstream detail", details: {}, request_id: requestId }
       });
