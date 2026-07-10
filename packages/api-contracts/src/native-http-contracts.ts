@@ -34,6 +34,9 @@ const date = schema.date({ minLength: 10, maxLength: 10 });
 const dateTime = schema.dateTime({ minLength: 20, maxLength: 40 });
 const nullableText = schema.nullable(text);
 const nullableDateTime = schema.nullable(dateTime);
+const dueGenerationCursor = schema.nullable(schema.string({ minLength: 1, maxLength: 2_048 }));
+const dueGenerationBatchSize = schema.integer({ minimum: 1, maximum: 25 });
+const dueGenerationProcessedCount = schema.integer({ minimum: 0, maximum: 25 });
 const nonNegativeInteger = schema.integer({ minimum: 0, maximum: 2_147_483_647 });
 const positiveInteger = schema.integer({ minimum: 1, maximum: 2_147_483_647 });
 const positiveNumber = schema.number({ minimum: 0, maximum: 1_000_000_000 });
@@ -1837,7 +1840,8 @@ function cp5Operations(): HttpOperationContract[] {
         }
       ),
       success: {
-        201: responseSchema({ invoice: entity, paymentRequest: entity, provider: entity })
+        201: responseSchema({ invoice: entity, paymentRequest: entity, provider: entity }),
+        202: responseSchema({ invoice: entity, paymentIntent: entity, provider: entity })
       }
     }),
     operation({
@@ -2025,13 +2029,20 @@ function cp6Operations(): HttpOperationContract[] {
       path: "/v1/tasks/generate-due",
       summary: "Generate due recall and follow-up tasks idempotently",
       tags: ["Tasks", "Recalls"],
-      body: bodySchema({ asOf: dateTime }),
+      body: bodySchema({
+        asOf: dateTime,
+        batchSize: dueGenerationBatchSize,
+        cursor: dueGenerationCursor
+      }),
       success: {
         202: responseSchema({
           recallTasksCreated: versionedEntities,
           followUpTasksCreated: versionedEntities,
           recallsCreated: entities,
-          skippedExistingKeys: stringList
+          skippedExistingKeys: stringList,
+          processedCount: dueGenerationProcessedCount,
+          complete: schema.boolean(),
+          nextCursor: dueGenerationCursor
         })
       }
     }),
@@ -2293,11 +2304,18 @@ function sopOperations(taskPriorities: readonly string[]): HttpOperationContract
       path: "/v1/sop-runs/generate-due",
       summary: "Generate due SOP runs idempotently",
       tags: ["SOP"],
-      body: bodySchema({ asOf: dateTime }),
+      body: bodySchema({
+        asOf: dateTime,
+        batchSize: dueGenerationBatchSize,
+        cursor: dueGenerationCursor
+      }),
       success: {
         202: responseSchema({
           sopRunsCreated: versionedEntities,
-          skippedExistingKeys: stringList
+          skippedExistingKeys: stringList,
+          processedCount: dueGenerationProcessedCount,
+          complete: schema.boolean(),
+          nextCursor: dueGenerationCursor
         })
       }
     }),

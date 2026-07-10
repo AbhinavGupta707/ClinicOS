@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import type { Clock, UUID } from "@clinic-os/domain";
 import {
   CLINIC_MODULE_OPERATION_OWNERS,
+  DURABLE_INTEGRITY_OPERATIONS,
   createPostgresClinicModuleUnitOfWork,
   type PatientAdministrationRepositoryPort
 } from "../src/modules/index.ts";
@@ -48,11 +49,17 @@ test("CP12 adapters expose only their owned behavior and no caller scope paramet
 
     for (const [portName, expectedOperations] of Object.entries(expectedByPort)) {
       const port = repositories[portName as keyof typeof repositories];
+      assert.ok(port);
       assert.deepEqual(Object.keys(port).sort(), [...expectedOperations].sort());
       assert.equal(Object.isFrozen(port), true);
     }
 
     assert.deepEqual(Object.keys(evidence).sort(), ["appendAuditEvent", "appendOutboxEvent"]);
+    assert.ok(repositories.durableIntegrity);
+    assert.deepEqual(
+      Object.keys(repositories.durableIntegrity).sort(),
+      [...DURABLE_INTEGRITY_OPERATIONS].sort()
+    );
     assert.equal(Object.isFrozen(repositories), true);
     assert.equal(Object.isFrozen(evidence), true);
   });

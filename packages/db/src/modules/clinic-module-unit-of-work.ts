@@ -30,6 +30,10 @@ import {
 } from "./clinical-media/index.ts";
 import { bindContinuityRepository, type ContinuityRepositoryPort } from "./continuity/index.ts";
 import {
+  bindDurableIntegrityRepository,
+  type DurableIntegrityRepositoryPort
+} from "./durable-integrity/index.ts";
+import {
   bindDataIntegrationsRepository,
   type DataIntegrationsRepositoryPort
 } from "./data-integrations/index.ts";
@@ -61,6 +65,11 @@ export interface ClinicRepositoryModules {
   readonly dataIntegrations: DataIntegrationsRepositoryPort;
   readonly aiScribe: AiScribeRepositoryPort;
   readonly clinicalMedia: ClinicalMediaRepositoryPort;
+  /**
+   * Additive CP13 production durability seam. Optional at the structural type boundary so legacy
+   * fixture contexts remain compilable; production transaction composition always binds it.
+   */
+  readonly durableIntegrity?: DurableIntegrityRepositoryPort;
 }
 
 export interface ClinicModuleTransactionContext {
@@ -107,37 +116,59 @@ export class ClinicModuleUnitOfWork<TAuthorizedContext> {
     const scope = normalizeResolvedScope(this.#resolveScope(authorizedContext));
 
     return this.#unitOfWork.run(async ({ repository, auditSink, requestGuards }) => {
-      const lease = createRepositoryPortTransactionLease();
-
-      try {
-        const result = await callback({
-          repositories: Object.freeze({
-            patientAdministration: bindPatientAdministrationRepository(repository, scope, lease),
-            scheduling: bindSchedulingRepository(repository, scope, lease),
-            clinicalCare: bindClinicalCareRepository(repository, scope, lease),
-            dentalTreatment: bindDentalTreatmentRepository(repository, scope, lease),
-            billing: bindBillingRepository(repository, scope, lease),
-            continuity: bindContinuityRepository(repository, scope, lease),
-            clinicOperations: bindClinicOperationsRepository(repository, scope, lease),
-            privacySecurity: bindPrivacySecurityRepository(repository, scope, lease),
-            dataIntegrations: bindDataIntegrationsRepository(repository, scope, lease),
-            aiScribe: bindAiScribeRepository(repository, scope, lease),
-            clinicalMedia: bindClinicalMediaRepository(repository, scope, lease)
-          }),
-          evidence: bindTransactionEvidence(repository, auditSink, scope, lease),
-          requestGuards: bindApiRequestGuardsPort(requestGuards, scope, lease)
-        });
-        await lease.close();
-        return result;
-      } catch (error) {
-        try {
-          await lease.close();
-        } catch {
-          // Preserve the first domain/database error so the existing error taxonomy is unchanged.
-        }
-        throw error;
-      }
+      return runWithClinicModuleTransactionContext(
+        { repository, auditSink, requestGuards, scope },
+        callback
+      );
     });
+  }
+}
+
+/**
+ * Binds the CP12 repository modules to an already-open transaction. CP13 feature handlers use this
+ * adapter so idempotency/version guards, domain writes, audit and outbox evidence remain inside the
+ * transaction opened by the API mutation coordinator rather than starting a nested unit of work.
+ */
+export async function runWithClinicModuleTransactionContext<TResult>(
+  input: {
+    repository: ClinicOperationsRepository;
+    auditSink: AuditEventSink<PersistableAuditEvent>;
+    requestGuards: ScopedApiRequestGuardsPort;
+    scope: Readonly<RepositoryScope>;
+  },
+  callback: (context: ClinicModuleTransactionContext) => Promise<TResult>
+): Promise<TResult> {
+  const scope = normalizeResolvedScope(input.scope);
+  const lease = createRepositoryPortTransactionLease();
+
+  try {
+    const result = await callback({
+      repositories: Object.freeze({
+        patientAdministration: bindPatientAdministrationRepository(input.repository, scope, lease),
+        scheduling: bindSchedulingRepository(input.repository, scope, lease),
+        clinicalCare: bindClinicalCareRepository(input.repository, scope, lease),
+        dentalTreatment: bindDentalTreatmentRepository(input.repository, scope, lease),
+        billing: bindBillingRepository(input.repository, scope, lease),
+        continuity: bindContinuityRepository(input.repository, scope, lease),
+        clinicOperations: bindClinicOperationsRepository(input.repository, scope, lease),
+        privacySecurity: bindPrivacySecurityRepository(input.repository, scope, lease),
+        dataIntegrations: bindDataIntegrationsRepository(input.repository, scope, lease),
+        aiScribe: bindAiScribeRepository(input.repository, scope, lease),
+        clinicalMedia: bindClinicalMediaRepository(input.repository, scope, lease),
+        durableIntegrity: bindDurableIntegrityRepository(input.repository, scope, lease)
+      }),
+      evidence: bindTransactionEvidence(input.repository, input.auditSink, scope, lease),
+      requestGuards: bindApiRequestGuardsPort(input.requestGuards, scope, lease)
+    });
+    await lease.close();
+    return result;
+  } catch (error) {
+    try {
+      await lease.close();
+    } catch {
+      // Preserve the first domain/database error so the existing error taxonomy is unchanged.
+    }
+    throw error;
   }
 }
 
@@ -146,9 +177,13 @@ export function createPostgresClinicModuleUnitOfWork<TAuthorizedContext>(input: 
   client: SqlConnectionFactory;
   resolveScope: ClinicModuleScopeResolver<TAuthorizedContext>;
   clock?: Clock;
+  dueGenerationCursorSecret?: string;
 }): ClinicModuleUnitOfWork<TAuthorizedContext> {
   return new ClinicModuleUnitOfWork({
-    unitOfWork: new PostgresClinicUnitOfWork(input.client, { clock: input.clock }),
+    unitOfWork: new PostgresClinicUnitOfWork(input.client, {
+      clock: input.clock,
+      dueGenerationCursorSecret: input.dueGenerationCursorSecret
+    }),
     resolveScope: input.resolveScope
   });
 }

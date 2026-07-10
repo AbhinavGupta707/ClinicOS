@@ -4,10 +4,16 @@
   "private": true,
   "description": "Shared domain types, invariants, state machines, and policy helpers.",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "node --check src/index.ts && node --check src/ai.ts && node --check src/appointment.ts && node --check src/audit.ts && node --check src/billing.ts && node --check src/clinical.ts && node --check src/continuity.ts && node --check src/dashboard.ts && node --check src/dental.ts && node --check src/events.ts && node --check src/ids.ts && node --check src/lead.ts && node --check src/media.ts && node --check src/migration.ts && node --check src/operations.ts && node --check src/patient.ts && node --check src/payments.ts && node --check src/permissions.ts && node --check src/privacy.ts && node --check src/provider-events.ts && node --check src/source-attribution.ts && node --check src/tenancy.ts && node --check test/*.test.ts",
     "test": "node --test test/*.test.ts"

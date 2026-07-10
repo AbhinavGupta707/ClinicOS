@@ -69,6 +69,9 @@ export const DOMAIN_EVENT_TYPES = [
   "payment.failed",
   "payment.manually_recorded",
   "payment.reconciliation_required",
+  "workflow.cp13.continuity_due_generation.requested",
+  "workflow.cp13.sop_due_generation.requested",
+  "workflow.cp13.payment_request_recovery.requested",
   "receipt.generated",
   "lab_vendor.created",
   "lab_slip.generated",
@@ -200,7 +203,7 @@ export const CP5_PAYMENT_EVENT_TYPES = [
   "payment.failed",
   "payment.refunded",
   "payment.manually_recorded",
-  "payment.reconciliation_required",
+  "payment.reconciliation_required"
 ] as const;
 
 export const CP5_EVENT_TYPES = [
@@ -314,10 +317,7 @@ export const CP9_PRIVACY_SECURITY_EVENT_TYPES = [
   "break_glass.reviewed"
 ] as const;
 
-export const CP9_EVENT_TYPES = [
-  ...CP8_EVENT_TYPES,
-  ...CP9_PRIVACY_SECURITY_EVENT_TYPES
-] as const;
+export const CP9_EVENT_TYPES = [...CP8_EVENT_TYPES, ...CP9_PRIVACY_SECURITY_EVENT_TYPES] as const;
 
 export type Cp2LeadEventType = (typeof CP2_LEAD_EVENT_TYPES)[number];
 export type Cp2PatientEventType = (typeof CP2_PATIENT_EVENT_TYPES)[number];

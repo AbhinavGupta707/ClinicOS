@@ -90,7 +90,8 @@ export class OutboxProcessor {
       workerId: this.#workerId,
       batchSize: this.#batchSize,
       leaseUntil: new Date(startedAt.getTime() + this.#leaseMs).toISOString(),
-      now: startedAt.toISOString()
+      now: startedAt.toISOString(),
+      eventTypes: this.#registry.eventTypes()
     });
 
     const result = {
@@ -130,7 +131,11 @@ export class OutboxProcessor {
 
   async #processEvent(
     event: OutboxEventRecord
-  ): Promise<{ readonly processed: number; readonly retried: number; readonly deadLettered: number }> {
+  ): Promise<{
+    readonly processed: number;
+    readonly retried: number;
+    readonly deadLettered: number;
+  }> {
     const attempt = await this.#repository.recordAttemptStarted(
       event,
       this.#workerId,
@@ -152,7 +157,10 @@ export class OutboxProcessor {
       return this.#failEvent(
         event,
         attempt,
-        permanentOutboxFailure("OUTBOX_HANDLER_NOT_REGISTERED", `No outbox handler for ${event.eventType}`),
+        permanentOutboxFailure(
+          "OUTBOX_HANDLER_NOT_REGISTERED",
+          `No outbox handler for ${event.eventType}`
+        ),
         logFields
       );
     }
@@ -188,7 +196,11 @@ export class OutboxProcessor {
     attempt: OutboxAttemptRecord,
     error: unknown,
     logFields: Record<string, unknown>
-  ): Promise<{ readonly processed: number; readonly retried: number; readonly deadLettered: number }> {
+  ): Promise<{
+    readonly processed: number;
+    readonly retried: number;
+    readonly deadLettered: number;
+  }> {
     const failure = classifyOutboxFailure(error);
     const attemptsExhausted = attempt.attemptNumber >= this.#maxAttempts;
 
@@ -238,6 +250,9 @@ export class OutboxProcessor {
   }
 
   #retryDelayMs(attemptNumber: number): number {
-    return Math.min(this.#baseRetryDelayMs * 2 ** Math.max(0, attemptNumber - 1), this.#maxRetryDelayMs);
+    return Math.min(
+      this.#baseRetryDelayMs * 2 ** Math.max(0, attemptNumber - 1),
+      this.#maxRetryDelayMs
+    );
   }
 }

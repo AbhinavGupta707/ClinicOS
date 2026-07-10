@@ -18,10 +18,7 @@ import type {
   AuditSink
 } from "./contracts.ts";
 
-const PROCESSING_LEASE_MILLISECONDS = Math.min(
-  60_000,
-  API_IDEMPOTENCY_MAX_LEASE_MILLISECONDS
-);
+const PROCESSING_LEASE_MILLISECONDS = Math.min(60_000, API_IDEMPOTENCY_MAX_LEASE_MILLISECONDS);
 const REPLAY_RETENTION_MILLISECONDS = Math.min(
   24 * 60 * 60 * 1_000,
   API_IDEMPOTENCY_MAX_REPLAY_RETENTION_MILLISECONDS
@@ -174,7 +171,8 @@ export class PostgresAtomicMutationCoordinator implements AtomicMutationCoordina
 
         const transaction: ApiTransactionContext = {
           repository,
-          auditSink: auditSink as AuditSink
+          auditSink: auditSink as AuditSink,
+          requestGuards
         };
         const effectResponse = await effect(transaction);
         if (!isSuccessfulResponse(effectResponse.status)) {
@@ -264,8 +262,8 @@ function replayResponse(response: {
     status: response.status,
     body: structuredClone(response.body),
     headers: Object.fromEntries(
-      Object.entries(response.headers).filter((entry): entry is [string, string] =>
-        typeof entry[1] === "string"
+      Object.entries(response.headers).filter(
+        (entry): entry is [string, string] => typeof entry[1] === "string"
       )
     )
   };
@@ -325,10 +323,7 @@ function assertResponseEtagMatchesAdvance(
   }
 }
 
-function versionAdvanceKey(resource: {
-  operationId: string;
-  resourceId: string;
-}): string {
+function versionAdvanceKey(resource: { operationId: string; resourceId: string }): string {
   return `${resource.operationId}:${resource.resourceId}`;
 }
 

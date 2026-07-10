@@ -1,6 +1,7 @@
 import { Client, Connection } from "@temporalio/client";
 import { NativeConnection, Worker, type WorkerOptions } from "@temporalio/worker";
 import type { ApprovalActivities } from "./activities/approval-activities.js";
+import type { Cp13WorkflowActivities } from "./activities/cp13-activities.js";
 
 export const CLINIC_OS_TASK_QUEUE = "clinic-os-default";
 export const CLINIC_OS_NAMESPACE = "default";
@@ -14,7 +15,7 @@ export interface TemporalWorkerRuntimeOptions {
   readonly address: string;
   readonly namespace?: string;
   readonly taskQueue?: string;
-  readonly activities: ApprovalActivities;
+  readonly activities: Partial<ApprovalActivities> & Cp13WorkflowActivities;
   readonly shutdownGraceTimeMs?: number;
 }
 

@@ -1,5 +1,11 @@
 import { randomUUID } from "node:crypto";
-import type { AuditActor, AuditCategory, AuditClassification, AuditRiskLevel, UUID } from "@clinic-os/domain";
+import type {
+  AuditActor,
+  AuditCategory,
+  AuditClassification,
+  AuditRiskLevel,
+  UUID
+} from "@clinic-os/domain";
 
 export const AUDIT_ACTION_CLASSIFICATIONS = {
   "auth.login.succeeded": {
@@ -278,6 +284,24 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "instruction.send_failed": {
+    category: "integration",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "workflow.cp13.instruction_send_requested": {
+    category: "integration",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "workflow.cp13.instruction_send_failed": {
+    category: "integration",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
   "media.viewed": {
     category: "phi_access",
     riskLevel: "high",
@@ -367,6 +391,42 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     riskLevel: "medium",
     phiInvolved: true,
     requiresPatientId: true
+  },
+  "payment.request_intent_created": {
+    category: "billing",
+    riskLevel: "medium",
+    phiInvolved: true,
+    requiresPatientId: true
+  },
+  "workflow.cp13.due_generation_requested": {
+    category: "operations",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "workflow.cp13.due_generation_batch_completed": {
+    category: "operations",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "workflow.cp13.due_generation_completed": {
+    category: "operations",
+    riskLevel: "medium",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "workflow.cp13.due_generation_failed": {
+    category: "operations",
+    riskLevel: "high",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
+  "workflow.cp13.payment_intent_missing": {
+    category: "integration",
+    riskLevel: "high",
+    phiInvolved: false,
+    requiresPatientId: false
   },
   "payment.recorded": {
     category: "billing",

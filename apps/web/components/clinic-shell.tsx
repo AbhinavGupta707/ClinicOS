@@ -21,6 +21,8 @@ import {
   PilotReadinessWorkflow
 } from "@/components/pilot-readiness-workflow";
 import { SurfaceView } from "@/components/surface-view";
+import { Cp13Workspace } from "@/features/cp13/Cp13Workspace";
+import { isCp13WorkspaceSurface } from "@/features/cp13/runtime-helpers";
 import { loadMe, type MeState } from "@/lib/me";
 import {
   canAccessSurface,
@@ -184,6 +186,12 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
         <main className="clinic-main" id="clinic-main">
           {!canAccessSurface(activeSurface, profile.roles) ? (
             <SurfaceView profile={profile} surface={activeSurface} />
+          ) : isCp13WorkspaceSurface(activeSurface.id) ? (
+            <Cp13Workspace
+              activeSurfaceId={activeSurface.id}
+              key={activeSurface.id}
+              profile={profile}
+            />
           ) : isCp2WorkflowSurface(activeSurface.id) ? (
             <AssistantWorkflow
               activeSurfaceId={activeSurface.id}

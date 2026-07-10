@@ -256,7 +256,7 @@ export type AcceptTreatmentPlanRequest = { readonly path: { readonly treatmentPl
 export type AcceptTreatmentPlanResponse = { readonly treatmentPlan: VersionedPublicResource };
 export type CreateEncounterProcedurePerformedRequest = { readonly path: { readonly encounterId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly treatmentPlanId: string; readonly treatmentPlanEstimateItemId: string; readonly performedAt?: string | null; readonly notes?: string | null; readonly outcome?: string | null; readonly provenance?: WritableJsonObject } };
 export type CreateEncounterProcedurePerformedResponse = { readonly procedure: PublicJsonObject; readonly treatmentPlan: VersionedPublicResource };
-export type CreateInvoiceRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: Readonly<Record<string, never>> | Readonly<Record<string, never>> };
+export type CreateInvoiceRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly patientId?: string | null; readonly treatmentPlanId: string | null; readonly procedurePerformedIds?: readonly (string)[]; readonly dueAt?: string | null } | { readonly patientId?: string | null; readonly treatmentPlanId?: string | null; readonly procedurePerformedIds: readonly (string)[]; readonly dueAt?: string | null } };
 export type CreateInvoiceResponse = { readonly invoice: PublicJsonObject };
 export type GetInvoiceRequest = { readonly path: { readonly invoiceId: string } };
 export type GetInvoiceResponse = { readonly invoice: PublicJsonObject };
@@ -265,7 +265,7 @@ export type CreateInvoiceReceiptResponse = { readonly receipt: PublicJsonObject;
 export type CreatePatientInstructionRequest = { readonly path: { readonly patientId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly channel?: "print" | "whatsapp"; readonly templateId: string; readonly title?: string | null; readonly body?: string | null } };
 export type CreatePatientInstructionResponse = { readonly instruction: PublicJsonObject };
 export type CreateInvoicePaymentRequestRequest = { readonly path: { readonly invoiceId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly requestType?: "payment_link" | "invoice_qr"; readonly amountMinor?: number; readonly expiresAt?: string | null; readonly description?: string | null; readonly customer?: { readonly name?: string | null; readonly email?: string | null; readonly contact?: string | null }; readonly metadata?: WritableJsonObject } };
-export type CreateInvoicePaymentRequestResponse = { readonly invoice: PublicJsonObject; readonly paymentRequest: PublicJsonObject; readonly provider: PublicJsonObject };
+export type CreateInvoicePaymentRequestResponse = { readonly invoice: PublicJsonObject; readonly paymentRequest: PublicJsonObject; readonly provider: PublicJsonObject } | { readonly invoice: PublicJsonObject; readonly paymentIntent: PublicJsonObject; readonly provider: PublicJsonObject };
 export type RecordInvoiceManualPaymentRequest = { readonly path: { readonly invoiceId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly amountMinor: number; readonly currency?: "INR"; readonly method: "cash" | "upi" | "card" | "bank_transfer" | "cheque" | "other"; readonly reason: string; readonly reference: string; readonly receivedAt?: string | null; readonly evidence: WritableJsonObject } };
 export type RecordInvoiceManualPaymentResponse = { readonly invoice: PublicJsonObject; readonly transaction: PublicJsonObject; readonly reconciliationItem: PublicJsonObject | null; readonly replayed: boolean };
 export type GetOwnerDashboardRequest = { readonly query?: { readonly from?: string; readonly to?: string } };
@@ -276,8 +276,8 @@ export type CreateTaskRequest = { readonly headers: { readonly "idempotency-key"
 export type CreateTaskResponse = { readonly task: VersionedPublicResource };
 export type UpdateTaskRequest = { readonly path: { readonly taskId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly status?: "open" | "in_progress" | "done" | "cancelled"; readonly assignedToUserId?: string | null; readonly priority?: "low" | "normal" | "high" | "urgent"; readonly dueAt?: string | null; readonly title?: string; readonly description?: string | null; readonly completionEvidence?: WritableJsonObject; readonly cancelledReason?: string | null } };
 export type UpdateTaskResponse = { readonly task: VersionedPublicResource };
-export type GenerateDueContinuityTasksRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly asOf?: string } };
-export type GenerateDueContinuityTasksResponse = { readonly recallTasksCreated: readonly (VersionedPublicResource)[]; readonly followUpTasksCreated: readonly (VersionedPublicResource)[]; readonly recallsCreated: readonly (PublicJsonObject)[]; readonly skippedExistingKeys: readonly (string)[] };
+export type GenerateDueContinuityTasksRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly asOf?: string; readonly batchSize?: number; readonly cursor?: string | null } };
+export type GenerateDueContinuityTasksResponse = { readonly recallTasksCreated: readonly (VersionedPublicResource)[]; readonly followUpTasksCreated: readonly (VersionedPublicResource)[]; readonly recallsCreated: readonly (PublicJsonObject)[]; readonly skippedExistingKeys: readonly (string)[]; readonly processedCount: number; readonly complete: boolean; readonly nextCursor: string | null };
 export type CreateRecallRuleRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly code: string; readonly title: string; readonly anchor?: "procedure_completed" | "checkout_completed"; readonly offsetDays?: number; readonly procedureCategory?: string | null; readonly pricebookProcedureId?: string | null; readonly defaultTaskTitle?: string | null; readonly defaultTaskPriority?: "low" | "normal" | "high" | "urgent" } };
 export type CreateRecallRuleResponse = { readonly recallRule: PublicJsonObject };
 export type ListRecallsRequest = { readonly query?: { readonly status?: "due" | "contact_requested" | "contacted" | "booked" | "completed" | "cancelled" | "skipped"; readonly dueBefore?: string; readonly patientId?: string; readonly limit?: number } };
@@ -290,8 +290,8 @@ export type CreateSopScheduleRequest = { readonly headers: { readonly "idempoten
 export type CreateSopScheduleResponse = { readonly sopSchedule: PublicJsonObject };
 export type ListSopRunsRequest = { readonly query?: { readonly date?: string; readonly status?: "due" | "in_progress" | "completed" | "cancelled" | "overdue"; readonly dueBefore?: string; readonly limit?: number } };
 export type ListSopRunsResponse = { readonly sopRuns: readonly (VersionedPublicResource)[] };
-export type GenerateDueSopRunsRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly asOf?: string } };
-export type GenerateDueSopRunsResponse = { readonly sopRunsCreated: readonly (VersionedPublicResource)[]; readonly skippedExistingKeys: readonly (string)[] };
+export type GenerateDueSopRunsRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly asOf?: string; readonly batchSize?: number; readonly cursor?: string | null } };
+export type GenerateDueSopRunsResponse = { readonly sopRunsCreated: readonly (VersionedPublicResource)[]; readonly skippedExistingKeys: readonly (string)[]; readonly processedCount: number; readonly complete: boolean; readonly nextCursor: string | null };
 export type UpdateSopRunRequest = { readonly path: { readonly sopRunId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly status?: "due" | "in_progress" | "completed" | "cancelled" | "overdue"; readonly completionEvidence?: WritableJsonObject; readonly items?: readonly ({ readonly itemId: string; readonly status: "pending" | "done" | "skipped"; readonly evidence: WritableJsonObject })[] } };
 export type UpdateSopRunResponse = { readonly sopRun: VersionedPublicResource };
 export type ListLabVendorsRequest = { readonly query?: { readonly limit?: number } };
@@ -344,7 +344,7 @@ export type ReplayDeadLetterEventRequest = { readonly path: { readonly deadLette
 export type ReplayDeadLetterEventResponse = { readonly replay: PublicJsonObject };
 export type ListMigrationBatchesRequest = { readonly query?: { readonly status?: "uploaded" | "parsed" | "validated" | "needs_review" | "ready_to_commit" | "committed" | "partially_committed" | "failed" | "rolled_back"; readonly limit?: number } };
 export type ListMigrationBatchesResponse = { readonly migrationBatches: readonly (PublicJsonObject)[] };
-export type CreateMigrationBatchRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: Readonly<Record<string, never>> | Readonly<Record<string, never>> };
+export type CreateMigrationBatchRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly importType: "patients"; readonly sourceSystem?: string; readonly sourceFileName?: string | null; readonly sourceChecksum?: string | null; readonly csv: string | null; readonly rows?: readonly (WritableJsonObject)[] } | { readonly importType: "patients"; readonly sourceSystem?: string; readonly sourceFileName?: string | null; readonly sourceChecksum?: string | null; readonly csv?: string | null; readonly rows: readonly (WritableJsonObject)[] } };
 export type CreateMigrationBatchResponse = { readonly batch: PublicJsonObject; readonly rows: readonly (PublicJsonObject)[]; readonly conflicts: readonly (PublicJsonObject)[] };
 export type GetMigrationBatchRequest = { readonly path: { readonly batchId: string } };
 export type GetMigrationBatchResponse = { readonly batch: PublicJsonObject; readonly rows: readonly (PublicJsonObject)[]; readonly conflicts: readonly (PublicJsonObject)[] };
@@ -551,14 +551,16 @@ export class ClinicOsApiClient {
     }
     const requestId = this.#options.getRequestId?.();
     if (requestId) headers["x-request-id"] = requestId;
-    let body: string | Uint8Array | undefined;
+    let body: string | Uint8Array<ArrayBuffer> | undefined;
     if (operation.bodyEncoding === "raw") {
       if (!operation.contentType) throw new TypeError("Raw ClinicOS operations require a content type.");
       headers["content-type"] = operation.contentType;
       if (!(operation.input.body instanceof Uint8Array)) {
         throw new TypeError("Binary ClinicOS operations require a Uint8Array body.");
       }
-      body = operation.input.body;
+      const rawBody = new Uint8Array(operation.input.body.byteLength);
+      rawBody.set(operation.input.body);
+      body = rawBody;
     } else if (operation.contentType === "application/json") {
       headers["content-type"] = "application/json";
       body = JSON.stringify(operation.input.body ?? {});
@@ -2069,7 +2071,7 @@ export class ClinicOsApiClient {
       auth: "bearer",
       contentType: "application/json",
       bodyEncoding: "json",
-      successStatuses: [201],
+      successStatuses: [201,202],
       input: input ?? {}
     });
   }
@@ -2081,7 +2083,7 @@ export class ClinicOsApiClient {
       auth: "bearer",
       contentType: "application/json",
       bodyEncoding: "json",
-      successStatuses: [201],
+      successStatuses: [201,202],
       input: input ?? {}
     });
   }

@@ -1,5 +1,26 @@
 # CHANGELOG
 
+## 2026-07-10 — CP13 durable clinic-day E3 candidate
+
+Changed:
+
+- Integrated exact front-office, clinical/dental, treatment/billing and continuity/operations
+  feature maps behind the generated contract and transaction-bound PostgreSQL module boundary.
+- Added canonical migration 0017 durability controls, signed bounded due-generation cursors,
+  provider-event/payment-intent recovery, least-privilege worker activities and deterministic
+  Temporal workflows.
+- Mounted role-scoped generated-client web workspaces with transient record selection, fail-closed
+  token registration, clinic-timezone operations, honest payment/media states and desktop/390px
+  coverage.
+- Added clean-origin two-pass runtime smoke, crash/restart/replay recovery, post-smoke RLS
+  verification and final CP13 evidence/threat/final-report artifacts.
+
+Release truth:
+
+- CP13 passes at E3 durable-local scope and is ready for controlled promotion to `main`.
+- ClinicOS remains **NO-GO** for pilot/production; CP14-CP18 cloud/session/provider/media/device/
+  recovery/clinic evidence remains mandatory, and CP14 has not started.
+
 ## 2026-07-10 — Orchestrator credential-boundary preflight
 
 Changed:

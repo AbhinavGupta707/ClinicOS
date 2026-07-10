@@ -7,7 +7,12 @@ import {
   parseNativeOperationResponseHeaders
 } from "@clinic-os/api-contracts";
 import { buildAccessContext } from "@clinic-os/auth";
-import { CHECKPOINT1_SEED_IDS, OPTIMISTIC_CONCURRENCY_RESOURCE_TABLES } from "@clinic-os/db";
+import {
+  CHECKPOINT1_SEED_IDS,
+  DueGenerationConfigurationError,
+  DueGenerationInputError,
+  OPTIMISTIC_CONCURRENCY_RESOURCE_TABLES
+} from "@clinic-os/db";
 import { FixedClock } from "@clinic-os/domain";
 import { BoundaryError } from "@clinic-os/security";
 import {
@@ -489,12 +494,24 @@ test("central error serializers satisfy the matched operation body and header co
       request,
       new ApiError(200, "NOT_FOUND", "An invalid status must fail closed."),
       "cp12-invalid-error-status"
+    ),
+    serializeCentralizedError(
+      request,
+      new DueGenerationInputError("Synthetic private cursor detail."),
+      "cp13-due-generation-input"
+    ),
+    serializeCentralizedError(
+      request,
+      new DueGenerationConfigurationError("Synthetic private template detail."),
+      "cp13-due-generation-configuration"
     )
   ];
   assert.equal(cases[0].status, 429);
   assert.equal(cases[0].headers["retry-after"], "17");
   assert.equal(cases[1].status, 422);
   assert.equal(cases[2].status, 500);
+  assert.equal(cases[3].status, 422);
+  assert.equal(cases[4].status, 409);
   for (const response of cases) {
     assert.equal(typeof response.headers["x-request-id"], "string");
     assert.equal(

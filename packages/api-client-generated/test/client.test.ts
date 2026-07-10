@@ -151,7 +151,8 @@ test("generated webhook client sends raw bytes with production JSON media type",
   });
 
   assert.equal((captured?.headers as Record<string, string>)["content-type"], "application/json");
-  assert.equal(captured?.body, rawBody);
+  assert.notEqual(captured?.body, rawBody);
+  assert.deepEqual(captured?.body, rawBody);
 });
 
 test("generated health client returns the declared unavailable health response", async () => {

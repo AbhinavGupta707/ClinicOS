@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { FixedClock, clinicLocalDate, clinicLocalDateFromClock } from "../src/time.ts";
+import {
+  FixedClock,
+  clinicLocalDate,
+  clinicLocalDateFromClock,
+  clinicLocalDateTimeToInstant
+} from "../src/time.ts";
 
 test("fixed clocks return defensive copies of the configured instant", () => {
   const clock = new FixedClock("2026-07-07T18:29:00.000Z");
@@ -16,11 +21,43 @@ test("clinic-local dates cross the Asia Kolkata midnight boundary deterministica
 
 test("clinic-local dates handle leap day and DST without slicing UTC", () => {
   assert.equal(clinicLocalDate(new Date("2028-02-29T00:15:00.000Z"), "Asia/Kolkata"), "2028-02-29");
-  assert.equal(clinicLocalDate(new Date("2026-03-08T04:30:00.000Z"), "America/New_York"), "2026-03-07");
-  assert.equal(clinicLocalDate(new Date("2026-03-08T07:30:00.000Z"), "America/New_York"), "2026-03-08");
+  assert.equal(
+    clinicLocalDate(new Date("2026-03-08T04:30:00.000Z"), "America/New_York"),
+    "2026-03-07"
+  );
+  assert.equal(
+    clinicLocalDate(new Date("2026-03-08T07:30:00.000Z"), "America/New_York"),
+    "2026-03-08"
+  );
 });
 
 test("clinic-local dates can be derived through the injected clock boundary", () => {
   const clock = new FixedClock("2026-07-08T18:31:00.000Z");
   assert.equal(clinicLocalDateFromClock(clock, "Asia/Kolkata"), "2026-07-09");
+});
+
+test("clinic-local schedule times resolve across fixed offsets and daylight-saving seasons", () => {
+  assert.equal(
+    clinicLocalDateTimeToInstant("2026-07-10", "09:00:00", "Asia/Kolkata").toISOString(),
+    "2026-07-10T03:30:00.000Z"
+  );
+  assert.equal(
+    clinicLocalDateTimeToInstant("2026-07-10", "09:00:00", "Europe/London").toISOString(),
+    "2026-07-10T08:00:00.000Z"
+  );
+  assert.equal(
+    clinicLocalDateTimeToInstant("2026-01-10", "09:00:00", "Europe/London").toISOString(),
+    "2026-01-10T09:00:00.000Z"
+  );
+});
+
+test("clinic-local schedule times reject impossible dates and DST gaps", () => {
+  assert.throws(
+    () => clinicLocalDateTimeToInstant("2026-02-30", "09:00:00", "Asia/Kolkata"),
+    /real calendar date/u
+  );
+  assert.throws(
+    () => clinicLocalDateTimeToInstant("2026-03-08", "02:30:00", "America/New_York"),
+    /cannot be resolved/u
+  );
 });

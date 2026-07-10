@@ -247,6 +247,7 @@ test("CP5 local HTTP webhook route uses raw body signature verification", async 
     config,
     identityRepository: new LocalFixtureIdentityRepository(),
     operationsRepository: repository,
+    auditSink: new InMemoryAuditSink(),
     paymentProvider: new RazorpayPaymentProvider({
       keyId: "rzp_test_key",
       keySecret: "rzp_test_secret",
@@ -294,8 +295,9 @@ test("CP5 local HTTP webhook route uses raw body signature verification", async 
       body: rawBody
     });
 
-    assert.equal(response.status, 200);
-    assert.equal((await response.json()).invoice.paidMinor, 2_000);
+    const responseBody = await response.json();
+    assert.equal(response.status, 200, JSON.stringify(responseBody));
+    assert.equal(responseBody.invoice.paidMinor, 2_000);
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));

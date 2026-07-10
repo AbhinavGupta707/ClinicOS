@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { randomUUID } from "node:crypto";
+import { clinicLocalDate, clinicLocalDateTimeToInstant } from "@clinic-os/domain";
 import { Pool } from "pg";
 
 const tokenEnvByActor = {
@@ -26,6 +27,7 @@ export async function runCp11RuntimeSmoke(options) {
   const baseUrl = new URL(options.baseUrl);
   const identities = new Map();
   const runtimeToken = randomUUID();
+  const runtimePatientName = syntheticPatientName(runtimeToken);
   const idempotencyPrefix = `cp11-${runtimeToken}`;
 
   const health = await requestRaw("GET", "/health/ready", { expectedStatus: 200 });
@@ -79,7 +81,7 @@ export async function runCp11RuntimeSmoke(options) {
   ).padStart(9, "0");
   const patient = await request("assistant", "POST", "/v1/patients", {
     body: {
-      fullName: `CP11 Runtime Synthetic ${runtimeToken.slice(0, 8)}`,
+      fullName: runtimePatientName,
       phone: `+919${phoneSuffix}`,
       source: "manual",
       sourceDetail: { evidence: "cp11_runtime_id_smoke" }
@@ -107,7 +109,11 @@ export async function runCp11RuntimeSmoke(options) {
     idempotencyKey: `${idempotencyPrefix}-lead-match`
   });
 
-  const clinicDate = clinicLocalDate(new Date(), clinic.timezone);
+  const scheduledDay = nextActiveProviderSchedule(
+    clinicLocalDate(new Date(), clinic.timezone),
+    providerSchedules.body.providerSchedules
+  );
+  const clinicDate = scheduledDay.date;
   const existingAppointments = await request(
     "assistant",
     "GET",
@@ -117,13 +123,20 @@ export async function runCp11RuntimeSmoke(options) {
   const bookedStartTimes = new Set(
     existingAppointments.body.appointments.map((candidate) => candidate.startAt)
   );
-  const startAt = Array.from({ length: 24 }, (_, index) => {
-    const totalMinutes = 8 * 60 + index * 30;
-    const hour = String(Math.floor(totalMinutes / 60)).padStart(2, "0");
-    const minute = String(totalMinutes % 60).padStart(2, "0");
-    return `${clinicDate}T${hour}:${minute}:00.000Z`;
-  }).find((candidate) => !bookedStartTimes.has(candidate));
+  const startAt = providerScheduleSlots(scheduledDay.schedule, 30).find((localTime) => {
+    const candidate = clinicLocalDateTimeToInstant(
+      clinicDate,
+      localTime,
+      clinic.timezone
+    ).toISOString();
+    return !bookedStartTimes.has(candidate);
+  });
   assert.ok(startAt, "No free synthetic appointment slot remained for the clinic-local day.");
+  const startAtInstant = clinicLocalDateTimeToInstant(
+    clinicDate,
+    startAt,
+    clinic.timezone
+  ).toISOString();
   const appointment = await request(
     "assistant",
     "POST",
@@ -133,7 +146,7 @@ export async function runCp11RuntimeSmoke(options) {
         providerUserId: doctor.user.id,
         appointmentTypeId: appointmentType.id,
         chairId: chair.id,
-        startAt,
+        startAt: startAtInstant,
         durationMinutes: 30,
         reason: "CP11 runtime synthetic consultation"
       },
@@ -149,7 +162,7 @@ export async function runCp11RuntimeSmoke(options) {
       providerUserId: doctor.user.id,
       appointmentTypeId: appointmentType.id,
       chairId: chair.id,
-      startAt: `${clinicDate}T11:00:00.000Z`,
+      startAt: startAtInstant,
       durationMinutes: 30,
       source: "manual"
     },
@@ -185,13 +198,34 @@ export async function runCp11RuntimeSmoke(options) {
   );
   assert.ok(dayQueue.body.dashboard.queue.some((entry) => entry.patientId === patientId));
 
+  const treatmentConsent = await request(
+    "assistant",
+    "POST",
+    `/v1/patients/${patientId}/consents`,
+    {
+      body: {
+        purpose: "procedure_treatment",
+        templateCode: "treatment-v1",
+        templateVersion: 1,
+        captureMethod: "clinic_staff",
+        grantedByName: runtimePatientName,
+        relationshipToPatient: "self",
+        evidence: { kind: "synthetic_runtime_smoke" },
+        provenance: { kind: "manual_entry", evidence: "cp11_runtime_id_smoke" }
+      },
+      expectedStatus: 201,
+      idempotencyKey: `${idempotencyPrefix}-consent-treatment`
+    }
+  );
+  assert.equal(treatmentConsent.body.enforcementState.treatmentAllowed, true);
+
   const consent = await request("assistant", "POST", `/v1/patients/${patientId}/consents`, {
     body: {
       purpose: "ai_audio_capture",
       templateCode: "ai-audio-v1",
       templateVersion: 1,
       captureMethod: "clinic_staff",
-      grantedByName: "CP11 Runtime Synthetic",
+      grantedByName: runtimePatientName,
       relationshipToPatient: "self",
       evidence: { kind: "synthetic_runtime_smoke" },
       provenance: { kind: "manual_entry", evidence: "cp11_runtime_id_smoke" }
@@ -359,21 +393,53 @@ function authHeaders(actorKey, authMode) {
   return { authorization: `Bearer ${token}` };
 }
 
-function clinicLocalDate(date, timeZone) {
-  const parts = new Intl.DateTimeFormat("en-CA", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit"
-  }).formatToParts(date);
-  const part = (type) => parts.find((candidate) => candidate.type === type)?.value;
-  return `${part("year")}-${part("month")}-${part("day")}`;
-}
-
 function addClinicDays(date, days) {
   const result = new Date(`${date}T00:00:00.000Z`);
   result.setUTCDate(result.getUTCDate() + days);
   return result.toISOString().slice(0, 10);
+}
+
+function syntheticPatientName(token) {
+  const letters = token
+    .replaceAll("-", "")
+    .replace(/[0-9a-f]/gu, (character) =>
+      String.fromCharCode("a".charCodeAt(0) + Number.parseInt(character, 16))
+    );
+  return `Patient ${letters.slice(0, 8)} ${letters.slice(8, 16)}`;
+}
+
+function nextActiveProviderSchedule(fromDate, schedules) {
+  for (let offset = 0; offset <= 14; offset += 1) {
+    const date = addClinicDays(fromDate, offset);
+    const dayOfWeek = new Date(`${date}T00:00:00.000Z`).getUTCDay();
+    const schedule = schedules.find(
+      (candidate) =>
+        candidate.active === true &&
+        candidate.dayOfWeek === dayOfWeek &&
+        candidate.effectiveFrom <= date &&
+        (!candidate.effectiveTo || candidate.effectiveTo >= date)
+    );
+    if (schedule) return { date, schedule };
+  }
+  throw new Error("No active provider schedule occurs within the next 14 clinic-local days.");
+}
+
+function providerScheduleSlots(schedule, durationMinutes) {
+  const start = localTimeMinutes(schedule.startsAt);
+  const end = localTimeMinutes(schedule.endsAt);
+  const slots = [];
+  for (let minute = start; minute + durationMinutes <= end; minute += durationMinutes) {
+    const hour = String(Math.floor(minute / 60)).padStart(2, "0");
+    const minutePart = String(minute % 60).padStart(2, "0");
+    slots.push(`${hour}:${minutePart}:00`);
+  }
+  return slots;
+}
+
+function localTimeMinutes(value) {
+  const match = /^(?<hour>[01]\d|2[0-3]):(?<minute>[0-5]\d)(?::[0-5]\d)?$/u.exec(value);
+  assert.ok(match?.groups, `Invalid provider schedule time ${value}.`);
+  return Number(match.groups.hour) * 60 + Number(match.groups.minute);
 }
 
 async function readOutboxEvidence(databaseUrl, scope) {

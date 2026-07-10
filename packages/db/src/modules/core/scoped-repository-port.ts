@@ -32,6 +32,7 @@ export interface RepositoryPortTransactionLease {
 /** @internal Prevents transaction-bound ports from escaping or leaving unawaited work behind. */
 export function createRepositoryPortTransactionLease(): RepositoryPortTransactionLease {
   let active = true;
+  let tail: Promise<void> = Promise.resolve();
   const pending = new Set<Promise<unknown>>();
 
   return Object.freeze({
@@ -40,7 +41,13 @@ export function createRepositoryPortTransactionLease(): RepositoryPortTransactio
         throw new Error("Repository port is no longer inside its active unit of work.");
       }
 
-      const result = operation();
+      // node-postgres permits only one in-flight query per transaction-bound Client. Queue every
+      // bound repository operation so callers cannot accidentally overlap queries with Promise.all.
+      const result = tail.then(operation);
+      tail = result.then(
+        () => undefined,
+        () => undefined
+      );
       pending.add(result);
       void result.then(
         () => pending.delete(result),
@@ -51,6 +58,7 @@ export function createRepositoryPortTransactionLease(): RepositoryPortTransactio
     async close(): Promise<void> {
       active = false;
       await Promise.all([...pending]);
+      await tail;
     }
   });
 }

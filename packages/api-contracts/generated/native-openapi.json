@@ -22879,6 +22879,57 @@
               }
             }
           },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 3,
+                  "properties": {
+                    "invoice": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    },
+                    "paymentIntent": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    },
+                    "provider": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    }
+                  },
+                  "required": [
+                    "invoice",
+                    "paymentIntent",
+                    "provider"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "idempotency-replayed": {
+                "description": "Literal wire value false on first execution and true when the response was replayed from the persisted idempotency record.",
+                "schema": {
+                  "description": "Required wire boolean: false on first execution and true when a persisted response is replayed.",
+                  "enum": [
+                    "false",
+                    "true"
+                  ],
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
           "400": {
             "content": {
               "application/json": {
@@ -46901,13 +46952,26 @@
             "application/json": {
               "schema": {
                 "additionalProperties": false,
-                "maxProperties": 1,
+                "maxProperties": 3,
                 "properties": {
                   "asOf": {
                     "format": "date-time",
                     "maxLength": 40,
                     "minLength": 20,
                     "type": "string"
+                  },
+                  "batchSize": {
+                    "maximum": 25,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "cursor": {
+                    "maxLength": 2048,
+                    "minLength": 1,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   }
                 },
                 "required": [],
@@ -46924,8 +46988,24 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": false,
-                  "maxProperties": 2,
+                  "maxProperties": 5,
                   "properties": {
+                    "complete": {
+                      "type": "boolean"
+                    },
+                    "nextCursor": {
+                      "maxLength": 2048,
+                      "minLength": 1,
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "processedCount": {
+                      "maximum": 25,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
                     "skippedExistingKeys": {
                       "items": {
                         "maxLength": 256,
@@ -46945,7 +47025,10 @@
                   },
                   "required": [
                     "sopRunsCreated",
-                    "skippedExistingKeys"
+                    "skippedExistingKeys",
+                    "processedCount",
+                    "complete",
+                    "nextCursor"
                   ],
                   "type": "object"
                 }
@@ -49522,13 +49605,26 @@
             "application/json": {
               "schema": {
                 "additionalProperties": false,
-                "maxProperties": 1,
+                "maxProperties": 3,
                 "properties": {
                   "asOf": {
                     "format": "date-time",
                     "maxLength": 40,
                     "minLength": 20,
                     "type": "string"
+                  },
+                  "batchSize": {
+                    "maximum": 25,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "cursor": {
+                    "maxLength": 2048,
+                    "minLength": 1,
+                    "type": [
+                      "string",
+                      "null"
+                    ]
                   }
                 },
                 "required": [],
@@ -49545,14 +49641,30 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": false,
-                  "maxProperties": 4,
+                  "maxProperties": 7,
                   "properties": {
+                    "complete": {
+                      "type": "boolean"
+                    },
                     "followUpTasksCreated": {
                       "items": {
                         "$ref": "#/components/schemas/VersionedPublicResource"
                       },
                       "maxItems": 100,
                       "type": "array"
+                    },
+                    "nextCursor": {
+                      "maxLength": 2048,
+                      "minLength": 1,
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "processedCount": {
+                      "maximum": 25,
+                      "minimum": 0,
+                      "type": "integer"
                     },
                     "recallsCreated": {
                       "items": {
@@ -49582,7 +49694,10 @@
                     "recallTasksCreated",
                     "followUpTasksCreated",
                     "recallsCreated",
-                    "skippedExistingKeys"
+                    "skippedExistingKeys",
+                    "processedCount",
+                    "complete",
+                    "nextCursor"
                   ],
                   "type": "object"
                 }

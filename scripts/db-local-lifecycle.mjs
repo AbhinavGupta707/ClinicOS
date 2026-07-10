@@ -188,7 +188,24 @@ async function grantRuntimePrivileges() {
     await client.query("revoke all on table flyway_schema_history from clinic_os_runtime");
     await client.query("grant select on table flyway_schema_history to clinic_os_runtime");
     await client.query("revoke all on all tables in schema public from clinic_os_worker");
-    await client.query("grant select, update on table outbox_events to clinic_os_worker");
+    await client.query(
+      `grant select on table
+         external_accounts, external_systems, invoices, payment_transactions, payment_requests,
+         payment_provider_request_intents, outbox_events, pricebook_procedures, procedure_performed_records,
+         recall_rules, recalls, tasks, sop_schedules, sop_templates, sop_template_items,
+         sop_runs, sop_run_items
+       to clinic_os_worker`
+    );
+    await client.query(
+      `grant insert on table
+         audit_events, outbox_events, payment_requests, recalls, tasks, sop_runs, sop_run_items
+       to clinic_os_worker`
+    );
+    await client.query(
+      `grant update on table
+         invoices, outbox_events, payment_provider_request_intents, recalls, sop_runs
+       to clinic_os_worker`
+    );
     await client.query(
       "grant select, insert, update on table outbox_attempts, dead_letter_events to clinic_os_worker"
     );
@@ -267,6 +284,24 @@ async function seedLocal() {
       patientId: TENANT_B.patientId,
       patientName: "Ira Isolation Synthetic",
       patientPhone: "+919000000002"
+    });
+    await seedPaymentSimulatorAccount(client, {
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      systemId: CHECKPOINT1_SEED_IDS.integrations.paymentSimulatorSystem,
+      accountId: CHECKPOINT1_SEED_IDS.integrations.paymentSimulatorAccount,
+      qrCapabilityId: CHECKPOINT1_SEED_IDS.integrations.paymentSimulatorQrCapability,
+      linkCapabilityId: CHECKPOINT1_SEED_IDS.integrations.paymentSimulatorLinkCapability,
+      webhookCapabilityId: CHECKPOINT1_SEED_IDS.integrations.paymentSimulatorWebhookCapability
+    });
+    await seedPaymentSimulatorAccount(client, {
+      tenantId: TENANT_B.tenantId,
+      clinicId: TENANT_B.clinicId,
+      systemId: "20000000-0000-4000-8000-000000006001",
+      accountId: "20000000-0000-4000-8000-000000006002",
+      qrCapabilityId: "20000000-0000-4000-8000-000000006003",
+      linkCapabilityId: "20000000-0000-4000-8000-000000006004",
+      webhookCapabilityId: "20000000-0000-4000-8000-000000006005"
     });
     await client.query("commit");
   } catch (error) {
@@ -396,10 +431,12 @@ async function seedClinicData(client, input) {
     input.tenantId === CHECKPOINT1_SEED_IDS.tenantId
       ? CHECKPOINT1_SEED_IDS.chairs.operatoryOne
       : "20000000-0000-4000-8000-000000004001";
-  const scheduleId =
+  const scheduleIdPrefix =
+    input.tenantId === CHECKPOINT1_SEED_IDS.tenantId ? "10000000" : "20000000";
+  const pricebookProcedureId =
     input.tenantId === CHECKPOINT1_SEED_IDS.tenantId
-      ? CHECKPOINT1_SEED_IDS.providerSchedules.doctorWeekday
-      : "20000000-0000-4000-8000-000000005001";
+      ? CHECKPOINT1_SEED_IDS.pricebookProcedures.consultation
+      : "20000000-0000-4000-8000-000000007001";
   await client.query(
     `insert into appointment_types
        (id, tenant_id, clinic_id, code, display_name, default_duration_minutes, color, active)
@@ -413,13 +450,80 @@ async function seedClinicData(client, input) {
      on conflict (id) do update set active = true`,
     [chairId, input.tenantId, input.clinicId]
   );
+  for (let dayOfWeek = 0; dayOfWeek <= 6; dayOfWeek += 1) {
+    const scheduleId = `${scheduleIdPrefix}-0000-4000-8000-${String(5000 + dayOfWeek).padStart(12, "0")}`;
+    await client.query(
+      `insert into provider_schedules
+         (id, tenant_id, clinic_id, provider_user_id, day_of_week, starts_at, ends_at, effective_from, active)
+       values ($1, $2, $3, $4, $5, '09:00', '17:00', '2026-01-01', true)
+       on conflict (id) do update
+         set provider_user_id = excluded.provider_user_id,
+             day_of_week = excluded.day_of_week,
+             starts_at = excluded.starts_at,
+             ends_at = excluded.ends_at,
+             effective_from = excluded.effective_from,
+             effective_until = null,
+             active = true`,
+      [scheduleId, input.tenantId, input.clinicId, input.doctorUserId, dayOfWeek]
+    );
+  }
   await client.query(
-    `insert into provider_schedules
-       (id, tenant_id, clinic_id, provider_user_id, day_of_week, starts_at, ends_at, effective_from, active)
-     values ($1, $2, $3, $4, 1, '09:00', '17:00', '2026-01-01', true)
-     on conflict (id) do update set provider_user_id = excluded.provider_user_id, active = true`,
-    [scheduleId, input.tenantId, input.clinicId, input.doctorUserId]
+    `insert into pricebook_procedures
+       (id, tenant_id, clinic_id, code, display_name, category, description,
+        default_unit_price_minor, currency, tax_rate_basis_points, status,
+        created_by_user_id, updated_by_user_id)
+     values ($1, $2, $3, 'cp13-synthetic-consultation', 'Synthetic consultation',
+       'consultation', 'Synthetic-only local durable verification item', 12500, 'INR',
+       0, 'active', $4, $4)
+     on conflict (id) do update
+       set display_name = excluded.display_name,
+           description = excluded.description,
+           default_unit_price_minor = excluded.default_unit_price_minor,
+           status = 'active',
+           updated_by_user_id = excluded.updated_by_user_id`,
+    [pricebookProcedureId, input.tenantId, input.clinicId, input.actorUserId]
   );
+}
+
+async function seedPaymentSimulatorAccount(client, input) {
+  await setSeedContext(client, input.tenantId, input.clinicId);
+  await client.query(
+    `insert into external_systems
+       (id, tenant_id, provider_key, display_name, status)
+     values ($1, $2, 'simulator', 'ClinicOS local payment simulator', 'available')
+     on conflict (tenant_id, provider_key) do update
+       set display_name = excluded.display_name, status = 'available'`,
+    [input.systemId, input.tenantId]
+  );
+  await client.query(
+    `insert into external_accounts
+       (id, tenant_id, clinic_id, external_system_id, account_type, status, capability_keys, configuration)
+     values ($1, $2, $3, $4, 'payment', 'available', $5::text[], '{"synthetic":true}'::jsonb)
+     on conflict (id) do update
+       set status = 'available', capability_keys = excluded.capability_keys,
+           configuration = excluded.configuration`,
+    [
+      input.accountId,
+      input.tenantId,
+      input.clinicId,
+      input.systemId,
+      ["CREATE_PAYMENT_QR", "CREATE_PAYMENT_LINKS", "VERIFY_WEBHOOKS"]
+    ]
+  );
+  for (const [capabilityId, capabilityKey] of [
+    [input.qrCapabilityId, "CREATE_PAYMENT_QR"],
+    [input.linkCapabilityId, "CREATE_PAYMENT_LINKS"],
+    [input.webhookCapabilityId, "VERIFY_WEBHOOKS"]
+  ]) {
+    await client.query(
+      `insert into external_provider_capabilities
+         (id, tenant_id, clinic_id, external_account_id, capability_key, status, evidence, checked_at)
+       values ($1, $2, $3, $4, $5, 'available', '{"source":"local_synthetic_seed"}'::jsonb, now())
+       on conflict (tenant_id, external_account_id, capability_key) do update
+         set status = 'available', evidence = excluded.evidence, checked_at = excluded.checked_at`,
+      [capabilityId, input.tenantId, input.clinicId, input.accountId, capabilityKey]
+    );
+  }
 }
 
 async function setSeedContext(client, tenantId, clinicId) {
@@ -535,19 +639,19 @@ async function verifyDatabase() {
     await runtime.query("select set_config('app.user_id', $1, true)", [
       CHECKPOINT1_SEED_IDS.users.owner
     ]);
-    const tenantA = await runtime.query("select id from patients order by id");
+    const tenantA = await runtime.query("select tenant_id, id from patients order by id");
     await runtime.query("rollback");
     await runtime.query("begin");
     await runtime.query("select set_config('app.tenant_id', $1, true)", [TENANT_B.tenantId]);
     await runtime.query("select set_config('app.clinic_id', $1, true)", [TENANT_B.clinicId]);
     await runtime.query("select set_config('app.user_id', $1, true)", [TENANT_B.ownerUserId]);
-    const tenantB = await runtime.query("select id from patients order by id");
+    const tenantB = await runtime.query("select tenant_id, id from patients order by id");
     await runtime.query("rollback");
     if (
-      tenantA.rows.length !== 1 ||
-      tenantA.rows[0]?.id !== CHECKPOINT1_SEED_IDS.patients.rheaSynthetic ||
-      tenantB.rows.length !== 1 ||
-      tenantB.rows[0]?.id !== TENANT_B.patientId
+      !tenantA.rows.some((row) => row.id === CHECKPOINT1_SEED_IDS.patients.rheaSynthetic) ||
+      tenantA.rows.some((row) => row.tenant_id !== CHECKPOINT1_SEED_IDS.tenantId) ||
+      !tenantB.rows.some((row) => row.id === TENANT_B.patientId) ||
+      tenantB.rows.some((row) => row.tenant_id !== TENANT_B.tenantId)
     ) {
       throw new Error("Direct runtime RLS tenant isolation failed.");
     }
@@ -579,6 +683,39 @@ async function verifyDatabase() {
   await worker.connect();
   try {
     await worker.query("select count(*)::integer as count from outbox_events");
+    const privileges = await worker.query(
+      `select
+         (has_table_privilege(current_user, 'payment_provider_request_intents', 'SELECT')
+          and has_table_privilege(current_user, 'payment_provider_request_intents', 'UPDATE')) as payment_intent_activity,
+         (has_table_privilege(current_user, 'recalls', 'SELECT')
+          and has_table_privilege(current_user, 'recalls', 'INSERT')
+          and has_table_privilege(current_user, 'recalls', 'UPDATE')) as recall_activity,
+         (has_table_privilege(current_user, 'sop_runs', 'SELECT')
+          and has_table_privilege(current_user, 'sop_runs', 'INSERT')
+          and has_table_privilege(current_user, 'sop_runs', 'UPDATE')) as sop_activity,
+         has_table_privilege(current_user, 'audit_events', 'INSERT') as audit_append,
+         (has_table_privilege(current_user, 'outbox_events', 'SELECT')
+          and has_table_privilege(current_user, 'outbox_events', 'INSERT')
+          and has_table_privilege(current_user, 'outbox_events', 'UPDATE')) as outbox_activity,
+         has_table_privilege(current_user, 'patients', 'SELECT') as patient_read,
+         has_table_privilege(current_user, 'api_idempotency_records', 'SELECT') as idempotency_read,
+         (has_table_privilege(current_user, 'payment_transactions', 'INSERT')
+          or has_table_privilege(current_user, 'payment_transactions', 'UPDATE')
+          or has_table_privilege(current_user, 'payment_transactions', 'DELETE')) as payment_mutation`
+    );
+    const privilege = privileges.rows[0];
+    if (
+      !privilege?.payment_intent_activity ||
+      !privilege?.recall_activity ||
+      !privilege?.sop_activity ||
+      !privilege?.audit_append ||
+      !privilege?.outbox_activity ||
+      privilege?.patient_read ||
+      privilege?.idempotency_read ||
+      privilege?.payment_mutation
+    ) {
+      throw new Error("Worker role does not match the exact CP13 activity privilege boundary.");
+    }
     let productReadDenied = false;
     try {
       await worker.query("select id from patients limit 1");
@@ -586,7 +723,7 @@ async function verifyDatabase() {
       productReadDenied = error?.code === "42501";
     }
     if (!productReadDenied) {
-      throw new Error("Worker role can read product tables outside the durable outbox surface.");
+      throw new Error("Worker role can read patient records outside its CP13 activity boundary.");
     }
     let idempotencyReadDenied = false;
     try {
@@ -610,7 +747,9 @@ async function verifyDatabase() {
         roles: roles.rows.map((role) => role.rolname),
         syntheticTenants: seedCounts.tenants,
         runtimeNoContextRows: 0,
-        workerProductTableAccess: "denied",
+        workerCp13ActivityPrivileges: "least_privilege_pass",
+        workerUnauthorizedPatientAccess: "denied",
+        workerApiIdempotencyAccess: "denied",
         crossTenantIsolation: "pass"
       },
       null,

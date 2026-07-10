@@ -1,6 +1,7 @@
 export {
   ClinicModuleUnitOfWork,
   createPostgresClinicModuleUnitOfWork,
+  runWithClinicModuleTransactionContext,
   type ClinicModuleScopeResolver,
   type ClinicModuleTransactionContext,
   type ClinicRepositoryModules,
@@ -20,6 +21,11 @@ export type { ClinicalMediaRepositoryPort } from "./clinical-media/index.ts";
 export type { ContinuityRepositoryPort } from "./continuity/index.ts";
 export type { DataIntegrationsRepositoryPort } from "./data-integrations/index.ts";
 export type { DentalTreatmentRepositoryPort } from "./dental-treatment/index.ts";
+export {
+  DURABLE_INTEGRITY_OPERATIONS,
+  DurableIntegrityRepositoryUnavailableError,
+  type DurableIntegrityRepositoryPort
+} from "./durable-integrity/index.ts";
 export type { PatientAdministrationRepositoryPort } from "./patient-administration/index.ts";
 export type { PrivacySecurityRepositoryPort } from "./privacy-security/index.ts";
 export type { SchedulingRepositoryPort } from "./scheduling/index.ts";

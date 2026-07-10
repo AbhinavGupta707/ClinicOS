@@ -726,3 +726,159 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   `docs/security/checkpoint-12-route-control-inventory.md` and
   `docs/security/checkpoint-12-security-foundation-delta.md`; candidate report:
   `docs/orchestration/CHECKPOINT_12_FINAL_REPORT.md`.
+
+## Checkpoint 13 — Durable Clinic-Day Vertical Slices
+
+### CP13 Launch And Seam Freeze — 2026-07-10
+
+- CP13 launch base is verified `main` revision
+  `c3802b73e135246d56d12efc9ab399ecd6f47fde`, containing the CP12 promotion merge and final
+  post-promotion record. The root integration branch is `codex/integration/checkpoint-13`; the only
+  pre-existing working-tree entries remain user-owned untracked `research/` and `scripts/research/`.
+- The seam audit confirmed CP12's 140-operation repository ownership and transaction-leased ports,
+  but found that the API transaction callback still exposed only the legacy repository/audit sink.
+  The master extracted `runWithClinicModuleTransactionContext` so CP13 handlers can bind verified
+  scope, namespaced repositories, request guards and audit/outbox evidence inside the already-open
+  Postgres mutation transaction. No nested transaction or caller-supplied authority is allowed.
+- Master-frozen API contracts assign all 94 CP2-CP6 clinic-day operations exactly once: front
+  office/intake 26, clinical/dental 22, treatment/billing 12 and continuity/operations 34. The 93
+  authenticated clinic operations accept only the parsed CP12 request, verified clinic context,
+  bounded request metadata, injected clock and transaction-bound module context. The Razorpay
+  webhook remains a separate raw-signature/provider-event contract owned by the treatment lane and
+  composed by the master. Workers do not parse raw authority or bypass CP12
+  policy/idempotency/concurrency/response enforcement.
+- Initial adaptive launch decision: four lanes are justified because each writes only a new
+  namespaced feature tree plus lane-specific tests/proposals, consumes the frozen master contract,
+  and can commit useful independently testable work without touching shared composition files.
+
+| Lane                                 | Model / effort          | Writable ownership                                                                                                                                                                                                                                           | Stable inputs and verification                                                                                                                                  | Parallel-safety decision               |
+| ------------------------------------ | ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------- |
+| Front Office and Intake              | `gpt-5.6-sol` / `high`  | new `apps/api/src/features/front-office/**`, `apps/web/features/cp13/front-office/**`, `packages/domain/src/cp13/front-office/**`, lane-named API/web/domain/DB tests, `packages/db/schema-proposals/cp13/front-office.sql`, lane evidence                   | frozen 26-operation list, CP12 contracts/client and patient-administration/scheduling/clinical-care ports; success/role/tenant/state/retry/audit-outbox tests   | Launch: additive namespaced paths only |
+| Clinical and Dental                  | `gpt-5.6-sol` / `xhigh` | new `apps/api/src/features/clinical-dental/**`, `apps/web/features/cp13/clinical-dental/**`, `packages/domain/src/cp13/clinical-dental/**`, lane-named tests, `packages/db/schema-proposals/cp13/clinical-dental.sql`, lane evidence                         | frozen 22-operation list, clinical-care/dental-treatment/clinical-media ports and existing provider interfaces; consent/signature/tenant/media disclosure tests | Launch: additive namespaced paths only |
+| Treatment, Billing and Instructions  | `gpt-5.6-sol` / `xhigh` | new `apps/api/src/features/treatment-billing/**`, `apps/web/features/cp13/treatment-billing/**`, `packages/domain/src/cp13/treatment-billing/**`, lane-named tests, `packages/db/schema-proposals/cp13/treatment-billing.sql`, lane evidence                 | frozen 12-operation list, dental-treatment/billing/clinical-care ports and provider verification interfaces; money/idempotency/overpayment/role tests           | Launch: additive namespaced paths only |
+| Continuity, Operations and Analytics | `gpt-5.6-sol` / `high`  | new `apps/api/src/features/continuity-operations/**`, `apps/web/features/cp13/continuity-operations/**`, `packages/domain/src/cp13/continuity-operations/**`, lane-named tests, `packages/db/schema-proposals/cp13/continuity-operations.sql`, lane evidence | frozen 34-operation list, continuity/clinic-operations ports; due/retry/reconciliation/freshness/PHI-safe analytics tests                                       | Launch: additive namespaced paths only |
+
+- Master-only and forbidden worker paths: canonical migrations, all manifests/lockfiles, shared
+  exports, `packages/api-contracts/**`, generated clients/artifacts, `apps/api/src/framework/**`,
+  `apps/api/src/server.ts`, `apps/api/src/operations.ts`, `apps/api/src/features/contracts.ts`,
+  `apps/api/src/features/cp13-operation-ownership.ts`, existing web components/loaders/navigation,
+  worker/workflow composition, root configuration, checkpoint/release/security truth and all user
+  research. Workers must propose shared changes in handoff rather than editing these paths.
+- Visible project worktree threads were created from the frozen integration ref:
+  - Front Office and Intake: `019f4b66-834a-7c61-8ba5-d6da42f8882e`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/ddac/ClinicOS`;
+  - Clinical and Dental: `019f4b66-834b-7470-9974-64f0478b4957`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/2b90/ClinicOS`;
+  - Treatment, Billing and Instructions: `019f4b66-837b-7bc3-b763-cd9b13a98b80`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/6bc8/ClinicOS`;
+  - Continuity, Operations and Analytics: `019f4b66-8359-71e1-b8b6-e6cd8338aa38`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/a010/ClinicOS`.
+- The initial worker prompts contained a short-hash typo (`3d3c5c2f`). Front-office and continuity
+  correctly stopped before editing. The master corrected all lanes to the exact frozen revision
+  `3d3c5c2e64a4cbb1af6da318c995cdda90b9fb83`; detached worktree HEAD is expected. No worker changed
+  files on the mistaken instruction.
+- While lanes run, the master added the optional CP13 feature dispatch path after CP12 parsing,
+  authorization, budgets and mutation coordination. Registered feature handlers bind verified
+  scope and namespaced ports inside the existing transaction; absent handlers retain legacy parity,
+  and a registered feature fails closed without a unit of work. API typecheck, the 76-test zero-skip
+  socket suite and the focused transaction-scope/lease test pass.
+- The continuity lane's early contract audit found that the Postgres owner projection still returned
+  empty CP6 operational arrays marked `schema_dependency`, even though the durable forced-RLS tables
+  already exist. The master corrected the shared adapter to project recalls, SOP runs with stable
+  template codes, lab reconciliation, inventory exceptions/procurement suggestions, incidents and
+  incident-linked CAPA. Both data-source groups are now `ready` with counts matching their declared
+  provenance; the aggregate projection remains PHI-safe. DB typecheck and all 68 DB tests pass, and
+  an authorized read-only local-runtime query exercised the real SQL successfully. Bounded due
+  generation/catch-up remains a separate master-owned integration gate; no lane may claim it from
+  request headers or an unbounded repository loop.
+- The master-owned bounded due-generation candidate now pages procedure recalls, checkout-anchored
+  recalls, post-operative follow-ups, payment follow-ups and clinic-local SOP occurrences through
+  opaque snapshot cursors with a maximum batch size of 25. Checkout recalls use the durable invoice
+  source and a partial unique index; generated task insertion returns an exact insert-versus-replay
+  outcome, and invalid cursors/configuration fail through bounded public errors. The local fixture
+  remains explicitly non-durable and does not contribute E3 evidence. Domain 56/56, DB 72/72,
+  contracts 27/27, generated client 7/7 and the 128-route drift/inventory gates pass; API typecheck
+  and all 60 runnable package tests pass with 17 expected sandbox socket skips, superseded later by
+  the required socket-enabled integration gate.
+- Docker Desktop reports an engine process in the UI, but every direct CLI engine query continues to
+  hang. Read-only Docker VM logs identify an ext4 writeback/I/O failure warning on the Docker data
+  disk. No reset, data deletion or other destructive recovery has been attempted. Canonical migration
+  0016 therefore has deterministic schema tests but no E3 clean-Postgres claim yet; CP13 promotion
+  remains gated on safe Docker recovery and a complete clean lifecycle.
+
+### CP13 Candidate Review, Correction And Wave 2 — 2026-07-10
+
+- The four initial lane commits were merged as integration candidates only: Front Office
+  `753b02d1`, Clinical/Dental `54aa0f1c`, Treatment/Billing `3cd923ce`, and
+  Continuity/Operations `a80de311`. Read-only cross-review then identified material patient,
+  provider, payment, media, cursor and durability gaps; none of the candidates was treated as a
+  checkpoint-complete claim.
+- Master hardening `69e31530` signs and tenant/clinic-binds due-generation cursors, rejects future
+  passes and tampering, advances safely across DST gaps, scopes outbox idempotency, fixes generated
+  client binary typing and restores the web generated-client dependency. Migration preflight
+  `aab16d1d` now aborts legacy-invalid checkout recall state with actionable evidence before DDL.
+- Reviewed lane corrections are integrated: Front Office `85e155c9` as `13b621c0` plus the full-web
+  type correction `e48c7875`; Treatment/Billing `f7c9cd41` as `9ccfe774`; Clinical/Dental
+  `e5934893` as `a01e8f45`. The master also corrected Continuity request-authority fixtures in
+  `7223e29b`, removed false patient-instruction outbox linkage in `4303639c`, and froze exact
+  93-operation clinic composition in `13737a60`. Focused lane tests, API/domain/DB/web typechecks,
+  the 116-test API package with only sandbox socket skips, root `npm run check`, secret scan and
+  diff checks pass at this stage.
+- Durable Integrity and Provider Recovery Wave 2 lane:
+  - pending worktree ID: `client-new-thread:4d17a953-5ae0-451e-87ce-d026a0066501`;
+  - thread ID: `019f4bb6-3daf-7283-9129-f09425ba8322`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/b1dc/ClinicOS`;
+  - verified base: clean detached `e48c787560fc693a43bbefa72849a46bf7683502`;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - exclusive ownership: canonical migration 0017, Postgres/repository/module durability adapters,
+    DB tests/proposal reconciliation and lane evidence. API/web/workflow and release truth remain
+    forbidden.
+- Durable Workflow, Replay and Reconciliation Wave 2 lane:
+  - pending worktree ID: `client-new-thread:274a80c6-532d-44ca-8394-b1cdbb07849c`;
+  - thread ID: `019f4bc0-11a6-70b1-8ae3-5640147df917`;
+  - worktree: `/Users/abhinavgupta/.codex/worktrees/4fb2/ClinicOS`;
+  - verified base: clean detached `a01e8f453bcaea1b973ef43f6f594cfcf66965be`;
+  - model/effort: `gpt-5.6-sol` / `xhigh`;
+  - exclusive ownership: deterministic CP13 Temporal contracts, action-event handlers, worker
+    composition helpers, focused tests and lane evidence. API, DB, web, worker main and release
+    truth remain forbidden.
+- Both Wave 2 lanes are path-disjoint and independently testable. The DB lane consumes the reviewed
+  provider/media/front-office requirements; the workflow lane consumes the frozen CP13 event
+  taxonomy and exposes typed future activity adapters without depending on unfinished DB code.
+  Runtime API/worker wiring, generated-client web mounting, E3 lifecycle and promotion remain with
+  the master after both producer handoffs are reviewed.
+- A renewed authorized `docker info` outside the sandbox still hangs and required interruption;
+  localhost Postgres is not running. Homebrew PostgreSQL 16 binaries are available, so a fresh
+  isolated temporary cluster can provide migration/RLS/adapter evidence after migration 0017 is
+  frozen, but it does not substitute for Redis/Keycloak/Temporal or the complete Docker lifecycle.
+
+### CP13 E3 Integration Candidate — 2026-07-10
+
+- Wave 2 durability and workflow candidates were reviewed and integrated as `328540b7` and
+  `6e4f612a`; master runtime wiring landed in `ad12fe17`. The stopped final web worktree did not
+  provide a committed handoff, so the master completed its scope directly and rejected URL/browser-
+  storage record identity.
+- Final implementation commits are `d5e5e0f4` (durable E3 runtime and recovery corrections) and
+  `9116a8ea` (generated-client web workspaces and enabled Playwright coverage).
+- A fresh isolated PostgreSQL 16.14 database applied Flyway migrations 001-017 from zero. Final
+  verification reports 100/100 forced-RLS tenant tables, three least-privilege roles, two synthetic
+  tenants, zero no-context runtime rows, denied worker patient/idempotency access and cross-tenant
+  isolation pass. Flyway validate/info/no-op migrate pass.
+- The full CP13 API smoke passed twice on the same clean-origin state with independent runtime IDs,
+  fixture fallback false and direct media/payment/provider/prescription/recovery evidence. The
+  crash/restart test proves stale-lease recovery, duplicate delivery, worker restart, replay and one
+  payment request.
+- E3 found and closed real integration defects in worker outbox grants, migration-runner options,
+  SQL parameter typing, invoice FK ordering, public media projection, due-generation progress and
+  transaction-client query overlap. Repeatability defects in the smoke/verifier were also corrected.
+- Final gates: API 123/123, DB 93/93, web 86/86, worker 16/16, workflow 10/10, enabled Playwright
+  4/4, root check/typecheck/lint/test/build, 128-route drift/inventory, secret scan, CycloneDX 1.5
+  SBOM with 756 production components and diff checks all pass with zero skips. In-app Browser was
+  unavailable with `no Codex IAB backends discovered`.
+- The managed registry-audit rerun was rejected as external dependency-inventory disclosure. The
+  unchanged lockfile retains the user-provided evidence of 21 moderate and zero high/critical
+  advisories; no force fix was run.
+- Evidence: `docs/qa/checkpoint-13-evidence.md`; threat delta:
+  `docs/security/checkpoint-13-threat-model-delta.md`; final report:
+  `docs/orchestration/CHECKPOINT_13_FINAL_REPORT.md`. Promotion and post-promotion checks remain the
+  only CP13 steps. CP14 has not started.

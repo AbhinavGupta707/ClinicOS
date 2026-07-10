@@ -1,6 +1,6 @@
 # Checkpoint 13 — Durable Clinic-Day Vertical Slices
 
-**Status:** Planned; launch only after CP12 promotion
+**Status:** E3 candidate verified; controlled promotion to `main` pending
 **Evidence target:** E3 complete durable local, E4 staging where available
 **Workers:** provisionally three to four initial vertical worktrees, selected after the CP12 seam audit
 **Primary findings:** PRR-014, remaining PRR-027, durable workflow portion of PRR-025
@@ -86,3 +86,21 @@ These four lanes are candidates, not a required launch set. The master launches 
 - role/tenant/consent/signature/financial negative matrices pass;
 - full repository/security/build/browser gates pass;
 - CP13 evidence/threat/register/memory/log/final report complete and integration promoted to `main`.
+
+## 7. Final E3 Result — 2026-07-10
+
+The integrated code candidate `9116a8ea` satisfies the CP13 exit gate at durable-local E3:
+
+- the selected clinic day passed twice on clean-origin PostgreSQL with runtime IDs and no fixture
+  repository fallback;
+- 17 migrations, 100/100 forced-RLS tenant tables, least-privilege runtime/worker access and
+  cross-tenant isolation passed before and after the smokes;
+- domain, audit, outbox, payment/continuity recovery and reconciliation evidence matched;
+- crash-after-commit, stale lease, duplicate delivery, worker restart and Temporal replay passed;
+- generated route/client drift stayed clean across all 128 operations;
+- API 123/123, DB 93/93, web 86/86, worker 16/16 and enabled Playwright 4/4 passed with zero skips;
+- root check, typecheck, lint, test, build, secret scan, SBOM and diff gates passed.
+
+The in-app Browser backend was unavailable, so repeatable Playwright was the documented executed
+fallback. Production session/BFF, official providers, production media, cloud/security operations,
+restore/failover, devices and real-clinic evidence remain CP14-CP18 gates. CP14 is not started.
