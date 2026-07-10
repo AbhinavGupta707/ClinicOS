@@ -15,9 +15,23 @@
     "build": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
-    "pg": "^8.22.0"
+    "@clinic-os/api-contracts": "0.0.0",
+    "@clinic-os/auth": "0.0.0",
+    "@clinic-os/config": "0.0.0",
+    "@clinic-os/db": "0.0.0",
+    "@clinic-os/domain": "0.0.0",
+    "@clinic-os/integrations": "0.0.0",
+    "@clinic-os/security": "0.0.0",
+    "@nestjs/common": "11.1.28",
+    "@nestjs/core": "11.1.28",
+    "@nestjs/platform-express": "11.1.28",
+    "pg": "^8.22.0",
+    "redis": "6.1.0",
+    "reflect-metadata": "0.2.2",
+    "rxjs": "7.8.2"
   },
   "devDependencies": {
+    "@types/express": "5.0.6",
     "@types/pg": "^8.20.0"
   }
 }
