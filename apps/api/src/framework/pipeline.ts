@@ -140,12 +140,7 @@ export class ClinicOsRequestPipeline {
     );
 
     if (access) {
-      await this.#enforceAuthenticatedBudgets(
-        matched.policy,
-        access,
-        verifiedClinic,
-        now
-      );
+      await this.#enforceAuthenticatedBudgets(matched.policy, access, verifiedClinic, now);
     } else if (matched.policy.access.mode !== "authenticated") {
       await this.#enforcePublicRouteBudget(request, matched.policy, now);
     }
@@ -156,12 +151,7 @@ export class ClinicOsRequestPipeline {
       }
       if (matched.policy.access.mode === "verified_webhook") {
         const rawBody = rawRequestBody(request) ?? Buffer.alloc(0);
-        return this.#runtime.handleWebhook(
-          request,
-          correlation.requestId,
-          rawBody,
-          transaction
-        );
+        return this.#runtime.handleWebhook(request, correlation.requestId, rawBody, transaction);
       }
       if (matched.operation.operationId === "getCurrentIdentity") {
         if (!access) throw new Error("Identity route reached dispatch without verified access.");
@@ -206,9 +196,7 @@ export class ClinicOsRequestPipeline {
           message: "The response failed its runtime contract.",
           details: {
             operation: matched.operation.operationId,
-            issues: responseContract.issues
-              .slice(0, 50)
-              .map(({ path, code }) => ({ path, code }))
+            issues: responseContract.issues.slice(0, 50).map(({ path, code }) => ({ path, code }))
           }
         });
       }
@@ -223,9 +211,7 @@ export class ClinicOsRequestPipeline {
           message: "The response headers failed their runtime contract.",
           details: {
             operation: matched.operation.operationId,
-            issues: headerContract.issues
-              .slice(0, 50)
-              .map(({ path, code }) => ({ path, code }))
+            issues: headerContract.issues.slice(0, 50).map(({ path, code }) => ({ path, code }))
           }
         });
       }
@@ -287,6 +273,14 @@ export class ClinicOsRequestPipeline {
   #enforceBodyBudget(request: ParsedIncomingRequest, maximumBytes: number | null): void {
     const contentLength = headerValue(request, "content-length");
     const rawBody = rawRequestBody(request);
+    const transferEncoding = headerValue(request, "transfer-encoding");
+    if (transferEncoding !== undefined && rawBody === undefined) {
+      throw new BoundaryError({
+        code: "BAD_REQUEST",
+        message: "A chunked request body must use the operation's supported content type.",
+        details: { source: "body", reason: "unparsed_chunked_body" }
+      });
+    }
     if (maximumBytes === null) {
       if (contentLength !== undefined && contentLength !== "0") {
         throw new BoundaryError({
@@ -481,12 +475,7 @@ function parseRequestContract(
   const result = parseNativeOperationRequest(operationId, {
     path: pathParameters,
     query: url.searchParams,
-    headers: selectContractHeaders(
-      request,
-      matched.operation,
-      requestId,
-      useLocalAuthFixture
-    ),
+    headers: selectContractHeaders(request, matched.operation, requestId, useLocalAuthFixture),
     body: requestBodyForContract(request, matched.operation)
   });
   if (!result.success) {
@@ -542,7 +531,8 @@ function resolveVerifiedClinic(
     selectedClinicId: (selected as UUID | undefined) ?? null
   });
   const clinic = access.clinics.find((candidate) => candidate.id === scope.clinicId);
-  if (!clinic) throw new Error("Verified clinic scope did not resolve to an identity snapshot clinic.");
+  if (!clinic)
+    throw new Error("Verified clinic scope did not resolve to an identity snapshot clinic.");
   return { ...access, clinicId: scope.clinicId, clinic };
 }
 

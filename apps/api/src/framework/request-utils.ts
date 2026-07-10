@@ -9,6 +9,7 @@ const SECURITY_HEADER_NAMES = new Set([
   "content-type",
   "idempotency-key",
   "if-match",
+  "transfer-encoding",
   "x-clinic-id",
   "x-clinic-os-dev-subject",
   "x-clinicos-dev-subject",
@@ -65,11 +66,7 @@ export function selectContractHeaders(
     const value = headerValue(request, name);
     if (value !== undefined) selected[name] = value;
   }
-  if (
-    useLocalAuthFixture &&
-    operation.auth === "bearer" &&
-    selected.authorization === undefined
-  ) {
+  if (useLocalAuthFixture && operation.auth === "bearer" && selected.authorization === undefined) {
     selected.authorization = "Bearer local-synthetic-fixture";
   }
   if (
@@ -131,7 +128,7 @@ export function canonicalRequestDigest(
             byteLength: request.body.byteLength,
             sha256: createHash("sha256").update(request.body).digest("hex")
           }
-        : request.body ?? null
+        : (request.body ?? null)
   };
   return createHash("sha256").update(canonicalJson(canonical)).digest("hex");
 }

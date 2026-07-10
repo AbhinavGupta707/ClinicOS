@@ -7,10 +7,7 @@ import {
   parseNativeOperationResponseHeaders
 } from "@clinic-os/api-contracts";
 import { buildAccessContext } from "@clinic-os/auth";
-import {
-  CHECKPOINT1_SEED_IDS,
-  OPTIMISTIC_CONCURRENCY_RESOURCE_TABLES
-} from "@clinic-os/db";
+import { CHECKPOINT1_SEED_IDS, OPTIMISTIC_CONCURRENCY_RESOURCE_TABLES } from "@clinic-os/db";
 import { FixedClock } from "@clinic-os/domain";
 import { BoundaryError } from "@clinic-os/security";
 import {
@@ -64,10 +61,11 @@ test("CP12 app registry covers exactly 128 operations and separates doctor roles
   assert.deepEqual(permissionsForOperation("signPrescription"), ["prescription.sign"]);
   assert.deepEqual(requiredRolesForOperation("signPrescription"), ["doctor"]);
   assert.equal(
-    CLINIC_OS_ROUTE_POLICIES.some((policy) =>
-      policy.access.mode === "authenticated" &&
-      policy.access.authorization.mode === "all_permissions" &&
-      policy.access.authorization.permissions.some((permission) => permission.startsWith("role:"))
+    CLINIC_OS_ROUTE_POLICIES.some(
+      (policy) =>
+        policy.access.mode === "authenticated" &&
+        policy.access.authorization.mode === "all_permissions" &&
+        policy.access.authorization.permissions.some((permission) => permission.startsWith("role:"))
     ),
     false
   );
@@ -110,10 +108,10 @@ test("fixture mutation coordinator replays one digest and conflicts on key reuse
   assert.deepEqual(replay.response, first.response);
   assert.equal(effects, 1);
   await assert.rejects(
-    coordinator.execute(
-      mutationRequest("stable-key", "different-digest", '"rv-2"'),
-      async () => ({ status: 200, body: {} })
-    ),
+    coordinator.execute(mutationRequest("stable-key", "different-digest", '"rv-2"'), async () => ({
+      status: 200,
+      body: {}
+    })),
     (error) =>
       error instanceof BoundaryError &&
       error.code === "CONFLICT" &&
@@ -133,13 +131,7 @@ test("directly derivable action writes map to the DB row-version allowlist", () 
     ["confirmAppointment", { appointmentId }, {}, "updateAppointment", appointmentId],
     ["checkInAppointment", { appointmentId }, {}, "updateAppointment", appointmentId],
     ["markAppointmentNoShow", { appointmentId }, {}, "updateAppointment", appointmentId],
-    [
-      "startEncounter",
-      { encounterId },
-      {},
-      "saveEncounterClinicalNoteDraft",
-      encounterId
-    ],
+    ["startEncounter", { encounterId }, {}, "saveEncounterClinicalNoteDraft", encounterId],
     [
       "signEncounterClinicalNote",
       { encounterId },
@@ -183,32 +175,38 @@ test("fixture mutation coordinator serializes different keys for one resource an
   const firstEffect = new Promise<never>((_resolve, reject) => {
     rejectFirst = reject;
   });
-  const first = coordinator.execute(mutationRequest("key-first", "digest-first", "\"rv-1\""), async () => {
-    firstStarted?.();
-    return firstEffect;
-  });
+  const first = coordinator.execute(
+    mutationRequest("key-first", "digest-first", '"rv-1"'),
+    async () => {
+      firstStarted?.();
+      return firstEffect;
+    }
+  );
   await started;
   let secondRan = false;
-  const second = coordinator.execute(mutationRequest("key-second", "digest-second", "\"rv-1\""), async () => {
-    secondRan = true;
-    return { status: 200, body: { patient: {} }, headers: { etag: '"rv-2"' } };
-  });
+  const second = coordinator.execute(
+    mutationRequest("key-second", "digest-second", '"rv-1"'),
+    async () => {
+      secondRan = true;
+      return { status: 200, body: { patient: {} }, headers: { etag: '"rv-2"' } };
+    }
+  );
   await Promise.resolve();
   assert.equal(secondRan, false);
   rejectFirst?.(new Error("synthetic rollback"));
   await assert.rejects(first, /synthetic rollback/);
   const secondResult = await second;
-  assert.equal(secondResult.etag, "\"rv-2\"");
+  assert.equal(secondResult.etag, '"rv-2"');
   assert.equal(secondRan, true);
   const third = await coordinator.execute(
-    mutationRequest("key-third", "digest-third", "\"rv-2\""),
+    mutationRequest("key-third", "digest-third", '"rv-2"'),
     async () => ({
       status: 200,
       body: { patient: {} },
       headers: { etag: '"rv-3"' }
     })
   );
-  assert.equal(third.etag, "\"rv-3\"");
+  assert.equal(third.etag, '"rv-3"');
 });
 
 test("Redis budget adapter consumes atomically and fails closed when Redis is unavailable", async () => {
@@ -401,6 +399,46 @@ test("the central response boundary strips undeclared sensitive effect headers",
   assert.equal(response.headers["x-request-id"], "cp12-safe-header-request");
 });
 
+test("unparsed chunked bodies fail before route dispatch", async () => {
+  const identityRepository = new LocalFixtureIdentityRepository();
+  let dispatches = 0;
+  const pipeline = new ClinicOsRequestPipeline({
+    clock: new FixedClock("2026-07-10T10:00:00.000Z"),
+    budgetStore: new InMemoryAtomicBudgetStore(),
+    budgetKeySecret: "cp12-chunked-transport-test-budget-key-000000000000",
+    mutationCoordinator: new InMemoryAtomicMutationCoordinator(),
+    repositoryMode: "fixture",
+    useLocalAuthFixture: true,
+    identityRepository,
+    health: async () => {
+      dispatches += 1;
+      return { status: 200, body: {} };
+    },
+    admitTraffic: async () => true,
+    resolveAccess: async () => {
+      throw new Error("Unparsed chunked health request must not resolve access.");
+    },
+    handleIdentity: async () => ({ status: 500, body: {} }),
+    handleWebhook: async () => ({ status: 500, body: {} }),
+    handleLegacyOperation: async () => ({ status: 500, body: {} })
+  });
+  await assert.rejects(
+    pipeline.execute({
+      method: "GET",
+      url: "/health/live",
+      originalUrl: "/health/live",
+      headers: { "transfer-encoding": "chunked" },
+      rawHeaders: ["transfer-encoding", "chunked"],
+      socket: { remoteAddress: "127.0.0.1" }
+    } as unknown as ParsedIncomingRequest),
+    (error) =>
+      error instanceof BoundaryError &&
+      error.code === "BAD_REQUEST" &&
+      error.safeDetails.reason === "unparsed_chunked_body"
+  );
+  assert.equal(dispatches, 0);
+});
+
 test("central error serializers satisfy the matched operation body and header contracts", () => {
   const request = {
     method: "GET",
@@ -442,11 +480,8 @@ test("central error serializers satisfy the matched operation body and header co
       true
     );
     assert.equal(
-      parseNativeOperationResponseHeaders(
-        "listPatients",
-        response.status,
-        response.headers
-      ).success,
+      parseNativeOperationResponseHeaders("listPatients", response.status, response.headers)
+        .success,
       true
     );
   }
@@ -593,6 +628,20 @@ test("chunked JSON body over the route limit returns 413 without Content-Length"
   });
 });
 
+test("chunked body with an unsupported content type fails before unbounded dispatch", async (t) => {
+  await withFixtureServer(t, {}, async (baseUrl) => {
+    const url = new URL("/v1/patients", baseUrl);
+    const response = await chunkedRequest(
+      url,
+      Buffer.from('{"fullName":"unsupported transport"}'),
+      "text/plain"
+    );
+    assert.equal(response.status, 400);
+    assert.equal(response.body.error.code, "BAD_REQUEST");
+    assert.equal(response.body.error.details.reason, "unparsed_chunked_body");
+  });
+});
+
 test("production-shaped Razorpay JSON verifies Nest raw bytes before parsing and rejects other media", async (t) => {
   let verifyCalls = 0;
   let parseCalls = 0;
@@ -606,10 +655,7 @@ test("production-shaped Razorpay JSON verifies Nest raw bytes before parsing and
       throw new Error("Must not parse an invalid signature.");
     }
   };
-  await withFixtureServer(
-    t,
-    { paymentProvider, useLocalAuthFixture: false },
-    async (baseUrl) => {
+  await withFixtureServer(t, { paymentProvider, useLocalAuthFixture: false }, async (baseUrl) => {
     const response = await fetch(`${baseUrl}/v1/payment-webhooks/razorpay`, {
       method: "POST",
       headers: {
@@ -621,20 +667,19 @@ test("production-shaped Razorpay JSON verifies Nest raw bytes before parsing and
     assert.equal(response.status, 403);
     assert.equal(verifyCalls, 1);
     assert.equal(parseCalls, 0);
-      const unsupported = await fetch(`${baseUrl}/v1/payment-webhooks/razorpay`, {
-        method: "POST",
-        headers: {
-          "content-type": "text/plain",
-          "x-razorpay-signature": "unsupported-media-signature"
-        },
-        body: "unsupported"
-      });
-      assert.equal(unsupported.status, 422);
-      assert.equal((await unsupported.json()).error.code, "VALIDATION_ERROR");
-      assert.equal(verifyCalls, 1);
-      assert.equal(parseCalls, 0);
-    }
-  );
+    const unsupported = await fetch(`${baseUrl}/v1/payment-webhooks/razorpay`, {
+      method: "POST",
+      headers: {
+        "content-type": "text/plain",
+        "x-razorpay-signature": "unsupported-media-signature"
+      },
+      body: "unsupported"
+    });
+    assert.equal(unsupported.status, 422);
+    assert.equal((await unsupported.json()).error.code, "VALIDATION_ERROR");
+    assert.equal(verifyCalls, 1);
+    assert.equal(parseCalls, 0);
+  });
 });
 
 test("liveness stays 200 while Redis loss removes readiness, startup, and v1 admission", async (t) => {
@@ -725,25 +770,22 @@ test("compatibility server shutdown closes Nest and runtime resources exactly on
       runtimeCloseCalls += 1;
     }
   };
-  const server = createClinicOsNestCompatibilityServer(
-    runtime,
-    async (activeRuntime, adapter) => {
-      const application = await createClinicOsNestApplication(activeRuntime, adapter);
-      const closeNest = application.app.close.bind(application.app);
-      return {
-        ...application,
-        app: new Proxy(application.app, {
-          get(target, property, receiver) {
-            if (property !== "close") return Reflect.get(target, property, receiver);
-            return async () => {
-              nestCloseCalls += 1;
-              await closeNest();
-            };
-          }
-        })
-      };
-    }
-  );
+  const server = createClinicOsNestCompatibilityServer(runtime, async (activeRuntime, adapter) => {
+    const application = await createClinicOsNestApplication(activeRuntime, adapter);
+    const closeNest = application.app.close.bind(application.app);
+    return {
+      ...application,
+      app: new Proxy(application.app, {
+        get(target, property, receiver) {
+          if (property !== "close") return Reflect.get(target, property, receiver);
+          return async () => {
+            nestCloseCalls += 1;
+            await closeNest();
+          };
+        }
+      })
+    };
+  });
   try {
     await new Promise((resolve, reject) => {
       server.once("error", reject);
@@ -759,10 +801,17 @@ test("compatibility server shutdown closes Nest and runtime resources exactly on
   await new Promise<void>((resolve, reject) => {
     server.close((error) => (error ? reject(error) : resolve()));
   });
-  assert.deepEqual({ nestCloseCalls, runtimeCloseCalls }, { nestCloseCalls: 1, runtimeCloseCalls: 1 });
+  assert.deepEqual(
+    { nestCloseCalls, runtimeCloseCalls },
+    { nestCloseCalls: 1, runtimeCloseCalls: 1 }
+  );
 });
 
-function mutationRequest(key: string, requestDigest: string, expectedEtag: string): AtomicMutationRequest {
+function mutationRequest(
+  key: string,
+  requestDigest: string,
+  expectedEtag: string
+): AtomicMutationRequest {
   return {
     identity: {
       tenantId: CHECKPOINT1_SEED_IDS.tenantId,
@@ -775,9 +824,7 @@ function mutationRequest(key: string, requestDigest: string, expectedEtag: strin
       resourceId: CHECKPOINT1_SEED_IDS.patientId,
       expectedEtag
     },
-    versionAdvances: [
-      { operationId: "updatePatient", resourceId: CHECKPOINT1_SEED_IDS.patientId }
-    ],
+    versionAdvances: [{ operationId: "updatePatient", resourceId: CHECKPOINT1_SEED_IDS.patientId }],
     requestId: `request-${key}`,
     now: new Date("2026-07-10T10:00:00.000Z")
   };
@@ -827,14 +874,18 @@ function fixtureMutationHeaders(key: string) {
   };
 }
 
-function chunkedRequest(url: URL, body: Buffer): Promise<{ status: number; body: any }> {
+function chunkedRequest(
+  url: URL,
+  body: Buffer,
+  contentType = "application/json"
+): Promise<{ status: number; body: any }> {
   return new Promise((resolve, reject) => {
     const request = httpRequest(
       url,
       {
         method: "POST",
         headers: {
-          "content-type": "application/json",
+          "content-type": contentType,
           "x-clinic-os-dev-subject": "seed-assistant",
           "idempotency-key": "cp12-chunked-body-limit"
         }
