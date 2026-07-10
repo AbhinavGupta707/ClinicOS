@@ -84,9 +84,7 @@ describe("parseClinicOsEnv", () => {
     expect(config.providers.whatsapp.provider).toBe("unconfigured");
     expect(config.providers.payment.provider).toBe("manual_clinic_approved");
     expect(config.operations.alerting.provider).toBe("email");
-    expect(config.security.abuseBudgetKeySecret).toBe(
-      "staging-abuse-budget-key-secret-0001"
-    );
+    expect(config.security.abuseBudgetKeySecret).toBe("staging-abuse-budget-key-secret-0001");
   });
 
   it("requires a strong abuse-budget key secret in production-like environments", () => {

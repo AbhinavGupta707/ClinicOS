@@ -54,10 +54,7 @@ export async function extractNativeRouterRoutes() {
   }
   walk(sourceFile);
 
-  const nestApplicationPath = resolve(
-    repositoryRoot,
-    "apps/api/src/framework/nest-application.ts"
-  );
+  const nestApplicationPath = resolve(repositoryRoot, "apps/api/src/framework/nest-application.ts");
   const nestSource = await readOptionalSource(nestApplicationPath);
   if (nestSource !== null) {
     const nestSourceFile = ts.createSourceFile(
@@ -186,11 +183,7 @@ function collectNestDecoratorRoutes(sourceFile, routes) {
       node.arguments.length >= 3
     ) {
       const decorator = node.arguments[2];
-      if (
-        decorator &&
-        ts.isCallExpression(decorator) &&
-        ts.isIdentifier(decorator.expression)
-      ) {
+      if (decorator && ts.isCallExpression(decorator) && ts.isIdentifier(decorator.expression)) {
         const method = methods.get(decorator.expression.text);
         const path = decorator.arguments[0];
         if (method && path && ts.isStringLiteral(path)) {
