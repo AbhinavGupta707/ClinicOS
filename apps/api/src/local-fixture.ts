@@ -3,6 +3,7 @@ import type { KeycloakAccessTokenClaims } from "@clinic-os/auth";
 import {
   CHECKPOINT1_SEED_IDS,
   CHECKPOINT1_SEED_USERS,
+  DueGenerationInputError,
   type AppointmentSearchFilter,
   type AcceptTreatmentPlanInput,
   type AmendClinicalNoteInput,
@@ -127,7 +128,9 @@ import {
   buildPostOpFollowUpKey,
   buildRecallGenerationKey,
   buildSopRunGenerationKey,
+  clinicLocalDate,
   clinicLocalDateFromClock,
+  clinicLocalDateTimeToInstant,
   calculateBillingLineTotals,
   calculateInvoicePaymentStatus,
   calculateInventoryVariance,
@@ -2401,6 +2404,14 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     scope: RepositoryScope,
     input: CreateRecallRuleInput
   ): Promise<RecallRuleRecord> {
+    if (
+      input.anchor === "checkout_completed" &&
+      (input.procedureCategory != null || input.pricebookProcedureId != null)
+    ) {
+      throw new DueGenerationInputError(
+        "Checkout-anchored recall rules cannot include procedure filters."
+      );
+    }
     const now = this.#nowIso();
     const rule: RecallRuleRecord = {
       id: uuid(),
@@ -2502,6 +2513,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     const rules = this.recallRules.filter((rule) => matchesScope(rule, scope) && rule.status === "active");
 
     for (const rule of rules) {
+      if (rule.anchor !== "procedure_completed") continue;
       for (const procedure of this.proceduresPerformed.filter(
         (candidate) => matchesScope(candidate, scope) && candidate.status === "completed"
       )) {
@@ -2578,6 +2590,84 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       }
     }
 
+    for (const rule of rules.filter((candidate) => candidate.anchor === "checkout_completed")) {
+      for (const invoice of this.invoices.filter(
+        (candidate) => matchesScope(candidate, scope) && candidate.status === "issued"
+      )) {
+        const dueAt = addDaysIso(invoice.issuedAt, rule.offsetDays);
+        if (new Date(dueAt).getTime() > asOfMs) continue;
+        const key = buildRecallGenerationKey({
+          recallRuleId: rule.id,
+          sourceInvoiceId: invoice.id,
+          patientId: invoice.patientId,
+          dueAt
+        });
+        const existingRecall = this.recalls.find(
+          (recall) =>
+            matchesScope(recall, scope) &&
+            recall.recallRuleId === rule.id &&
+            recall.sourceInvoiceId === invoice.id
+        );
+        if (
+          existingRecall ||
+          this.tasks.some((task) => matchesScope(task, scope) && task.idempotencyKey === key)
+        ) {
+          skippedExistingKeys.push(key);
+          continue;
+        }
+        const now = this.#nowIso();
+        const recall: RecallRecord = {
+          id: uuid(),
+          tenantId: scope.tenantId,
+          clinicId: scope.clinicId,
+          recallRuleId: rule.id,
+          patientId: invoice.patientId,
+          sourceProcedurePerformedId: null,
+          sourceInvoiceId: invoice.id,
+          taskId: null,
+          appointmentId: null,
+          status: "due",
+          dueAt,
+          lastActionAt: null,
+          actionEvidence: {},
+          createdByUserId: scope.actorUserId,
+          updatedByUserId: scope.actorUserId,
+          createdAt: now,
+          updatedAt: now
+        };
+        this.recalls.push(recall);
+        recallsCreated.push(recall);
+        const task = this.insertTask(scope, {
+          patientId: invoice.patientId,
+          invoiceId: invoice.id,
+          treatmentPlanId: invoice.treatmentPlanId,
+          taskType: "recall",
+          sourceWorkflow: "recall_generation",
+          sourceRecordType: "recall",
+          sourceRecordId: recall.id,
+          title: rule.defaultTaskTitle,
+          description: `Recall generated from ${rule.title}.`,
+          priority: rule.defaultTaskPriority,
+          dueAt,
+          idempotencyKey: key
+        });
+        recall.taskId = task.id;
+        recall.updatedAt = this.#nowIso();
+        recallTasksCreated.push(task);
+        this.timelineItems.push(
+          this.#timeline(
+            scope,
+            recall.patientId,
+            "recall_due",
+            "recalls",
+            recall.id,
+            "Recall due",
+            { recallRuleId: rule.id, taskId: task.id }
+          )
+        );
+      }
+    }
+
     for (const procedure of this.proceduresPerformed.filter(
       (candidate) => matchesScope(candidate, scope) && candidate.status === "completed"
     )) {
@@ -2639,7 +2729,16 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       );
     }
 
-    return { recallTasksCreated, followUpTasksCreated, recallsCreated, skippedExistingKeys };
+    return {
+      recallTasksCreated,
+      followUpTasksCreated,
+      recallsCreated,
+      skippedExistingKeys,
+      processedCount:
+        recallTasksCreated.length + followUpTasksCreated.length + skippedExistingKeys.length,
+      complete: true,
+      nextCursor: null
+    };
   }
 
   async createSopTemplate(scope: RepositoryScope, input: CreateSopTemplateInput): Promise<SopTemplateDetail> {
@@ -2791,7 +2890,13 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       if (detail) runsCreated.push(detail);
     }
 
-    return { runsCreated, skippedExistingKeys };
+    return {
+      runsCreated,
+      skippedExistingKeys,
+      processedCount: runsCreated.length + skippedExistingKeys.length,
+      complete: true,
+      nextCursor: null
+    };
   }
 
   async listSopRuns(scope: RepositoryScope, filter: SopRunSearchFilter = {}): Promise<SopRunDetail[]> {
@@ -6273,22 +6378,25 @@ function taskSortKey(task: TaskRecord): string {
 }
 
 function sopDueAtForAsOf(schedule: SopScheduleRecord, asOf: Date): string | null {
-  const asOfDate = asOf.toISOString().slice(0, 10);
+  const asOfDate = clinicLocalDate(asOf, schedule.timezone);
+  const localDay = new Date(`${asOfDate}T00:00:00.000Z`);
   if (asOfDate < schedule.startsOn) return null;
   if (schedule.endsOn && asOfDate > schedule.endsOn) return null;
 
   const dayMatches =
     schedule.recurrenceType === "daily" ||
-    (schedule.recurrenceType === "weekly" && asOf.getUTCDay() === schedule.dayOfWeek) ||
-    (schedule.recurrenceType === "monthly" && asOf.getUTCDate() === schedule.dayOfMonth) ||
+    (schedule.recurrenceType === "weekly" && localDay.getUTCDay() === schedule.dayOfWeek) ||
+    (schedule.recurrenceType === "monthly" && localDay.getUTCDate() === schedule.dayOfMonth) ||
     (schedule.recurrenceType === "interval_days" &&
       schedule.intervalDays !== null &&
       daysBetween(schedule.startsOn, asOfDate) % schedule.intervalDays === 0);
   if (!dayMatches) return null;
 
-  const dueAt = new Date(`${asOfDate}T${schedule.dueTime.replace(/Z$/, "")}Z`);
-  if (Number.isNaN(dueAt.getTime())) return null;
-  return dueAt.toISOString();
+  try {
+    return clinicLocalDateTimeToInstant(asOfDate, schedule.dueTime, schedule.timezone).toISOString();
+  } catch {
+    return null;
+  }
 }
 
 function daysBetween(startDate: string, endDate: string): number {

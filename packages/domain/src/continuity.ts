@@ -223,7 +223,13 @@ export interface SopScheduleRecord {
   updatedAt: string;
 }
 
-export const SOP_RUN_STATUSES = ["due", "in_progress", "completed", "cancelled", "overdue"] as const;
+export const SOP_RUN_STATUSES = [
+  "due",
+  "in_progress",
+  "completed",
+  "cancelled",
+  "overdue"
+] as const;
 export type SopRunStatus = (typeof SOP_RUN_STATUSES)[number];
 
 export const SOP_RUN_ITEM_STATUSES = ["pending", "done", "skipped"] as const;
@@ -357,7 +363,10 @@ export function taskDueState(
   const dueMs = new Date(task.dueAt).getTime();
   const asOfMs = asOf instanceof Date ? asOf.getTime() : new Date(asOf).getTime();
   if (dueMs < asOfMs) return "overdue";
-  if (dueMs === asOfMs || new Date(task.dueAt).toISOString().slice(0, 10) === new Date(asOfMs).toISOString().slice(0, 10)) {
+  if (
+    dueMs === asOfMs ||
+    new Date(task.dueAt).toISOString().slice(0, 10) === new Date(asOfMs).toISOString().slice(0, 10)
+  ) {
     return "due";
   }
   return "not_due";
@@ -366,13 +375,14 @@ export function taskDueState(
 export function buildRecallGenerationKey(input: {
   recallRuleId: UUID;
   sourceProcedurePerformedId?: UUID | null;
+  sourceInvoiceId?: UUID | null;
   patientId: UUID;
   dueAt: string;
 }): string {
   return [
     "recall",
     input.recallRuleId,
-    input.sourceProcedurePerformedId ?? input.patientId,
+    input.sourceProcedurePerformedId ?? input.sourceInvoiceId ?? input.patientId,
     input.dueAt.slice(0, 10)
   ].join(":");
 }
@@ -401,6 +411,8 @@ export function assertSopRunCompletion(input: SopRunDetail): void {
     (item) => item.evidenceRequired && item.status !== "done"
   );
   if (incompleteRequiredItem) {
-    throw new Error(`SOP run cannot complete until required item ${incompleteRequiredItem.itemIndex} is done.`);
+    throw new Error(
+      `SOP run cannot complete until required item ${incompleteRequiredItem.itemIndex} is done.`
+    );
   }
 }

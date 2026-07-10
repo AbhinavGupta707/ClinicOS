@@ -441,6 +441,26 @@ export interface RecordRecallActionInput {
 
 export interface GenerateDueContinuityInput {
   asOf: string;
+  batchSize?: number;
+  cursor?: string | null;
+}
+
+export class DueGenerationInputError extends Error {
+  readonly code = "DUE_GENERATION_INPUT_INVALID";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "DueGenerationInputError";
+  }
+}
+
+export class DueGenerationConfigurationError extends Error {
+  readonly code = "DUE_GENERATION_CONFIGURATION_INVALID";
+
+  constructor(message: string) {
+    super(message);
+    this.name = "DueGenerationConfigurationError";
+  }
 }
 
 export interface GenerateDueContinuityResult {
@@ -448,6 +468,9 @@ export interface GenerateDueContinuityResult {
   followUpTasksCreated: TaskRecord[];
   recallsCreated: RecallRecord[];
   skippedExistingKeys: string[];
+  processedCount: number;
+  complete: boolean;
+  nextCursor: string | null;
 }
 
 export interface CreateSopTemplateInput {
@@ -495,11 +518,16 @@ export interface UpdateSopRunInput {
 
 export interface GenerateDueSopRunsInput {
   asOf: string;
+  batchSize?: number;
+  cursor?: string | null;
 }
 
 export interface GenerateDueSopRunsResult {
   runsCreated: SopRunDetail[];
   skippedExistingKeys: string[];
+  processedCount: number;
+  complete: boolean;
+  nextCursor: string | null;
 }
 
 export interface CreateLabVendorInput {

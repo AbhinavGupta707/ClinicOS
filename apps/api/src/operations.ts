@@ -2105,7 +2105,10 @@ export async function generateDueContinuityTasks(
     recallTasksCreated: result.recallTasksCreated.map(publicTask),
     followUpTasksCreated: result.followUpTasksCreated.map(publicTask),
     recallsCreated: result.recallsCreated.map(publicRecall),
-    skippedExistingKeys: result.skippedExistingKeys
+    skippedExistingKeys: result.skippedExistingKeys,
+    processedCount: result.processedCount,
+    complete: result.complete,
+    nextCursor: result.nextCursor
   });
 }
 
@@ -2268,7 +2271,10 @@ export async function generateDueSopRuns(
   }
   return accepted({
     sopRunsCreated: result.runsCreated.map(publicSopRunDetail),
-    skippedExistingKeys: result.skippedExistingKeys
+    skippedExistingKeys: result.skippedExistingKeys,
+    processedCount: result.processedCount,
+    complete: result.complete,
+    nextCursor: result.nextCursor
   });
 }
 
@@ -6710,7 +6716,12 @@ function parseGenerateDueContinuity(
 ): GenerateDueContinuityInput {
   const input = body === undefined ? {} : objectBody(body);
   return {
-    asOf: requiredString(input.asOf ?? defaultAsOf, "asOf")
+    asOf: requiredString(input.asOf ?? defaultAsOf, "asOf"),
+    batchSize:
+      input.batchSize === undefined
+        ? undefined
+        : integerField(input.batchSize, "batchSize", { min: 1, max: 25 }),
+    cursor: optionalNullableString(input.cursor, "cursor")
   };
 }
 
@@ -6720,7 +6731,7 @@ function parseCreateRecallRule(body: unknown): CreateRecallRuleInput {
     input.anchor === undefined
       ? undefined
       : parseRecallRuleAnchor(requiredString(input.anchor, "anchor"));
-  return {
+  const parsed = {
     code: requiredString(input.code, "code"),
     title: requiredString(input.title, "title"),
     anchor,
@@ -6733,6 +6744,15 @@ function parseCreateRecallRule(body: unknown): CreateRecallRuleInput {
         ? "normal"
         : parseTaskPriority(requiredString(input.defaultTaskPriority, "defaultTaskPriority"))
   };
+  if (
+    parsed.anchor === "checkout_completed" &&
+    (parsed.procedureCategory !== null || parsed.pricebookProcedureId !== null)
+  ) {
+    throw validation("Checkout-anchored recalls cannot include procedure filters.", {
+      field: "anchor"
+    });
+  }
+  return parsed;
 }
 
 function parseRecallSearch(query: URLSearchParams) {
@@ -6818,7 +6838,12 @@ function parseCreateSopSchedule(body: unknown): CreateSopScheduleInput {
 function parseGenerateDueSopRuns(body: unknown, defaultAsOf: string): GenerateDueSopRunsInput {
   const input = body === undefined ? {} : objectBody(body);
   return {
-    asOf: requiredString(input.asOf ?? defaultAsOf, "asOf")
+    asOf: requiredString(input.asOf ?? defaultAsOf, "asOf"),
+    batchSize:
+      input.batchSize === undefined
+        ? undefined
+        : integerField(input.batchSize, "batchSize", { min: 1, max: 25 }),
+    cursor: optionalNullableString(input.cursor, "cursor")
   };
 }
 

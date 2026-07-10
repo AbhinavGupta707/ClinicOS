@@ -135,7 +135,9 @@ import {
   buildPostOpFollowUpKey,
   buildRecallGenerationKey,
   buildSopRunGenerationKey,
+  clinicLocalDate,
   clinicLocalDateFromClock,
+  clinicLocalDateTimeToInstant,
   calculateBillingLineTotals,
   calculateInvoicePaymentStatus,
   calculateInventoryVariance,
@@ -156,6 +158,13 @@ import {
   type ScopedApiRequestGuardsPort
 } from "./api-request-guards.ts";
 import { createRepositoryPortTransactionLease } from "./modules/core/scoped-repository-port.ts";
+import { DueGenerationConfigurationError, DueGenerationInputError } from "./repositories.ts";
+
+const DEFAULT_DUE_GENERATION_BATCH_SIZE = 25;
+const MAX_DUE_GENERATION_BATCH_SIZE = 25;
+const MAX_DUE_GENERATION_CURSOR_LENGTH = 2_048;
+const MAX_SOP_TEMPLATE_GENERATION_ITEMS = 100;
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 import type {
   AppointmentConflictFilter,
   AppointmentSearchFilter,
@@ -3063,6 +3072,14 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     scope: RepositoryScope,
     input: CreateRecallRuleInput
   ): Promise<RecallRuleRecord> {
+    if (
+      input.anchor === "checkout_completed" &&
+      (input.procedureCategory != null || input.pricebookProcedureId != null)
+    ) {
+      throw new DueGenerationInputError(
+        "Checkout-anchored recall rules cannot include procedure filters."
+      );
+    }
     return this.#withRls(scope, async (client) => {
       const result = await client.query<RecallRuleRow>(
         `
@@ -3215,55 +3232,99 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     input: GenerateDueContinuityInput
   ): Promise<GenerateDueContinuityResult> {
     return this.#withRls(scope, async (client) => {
-      const asOf = input.asOf;
+      const asOf = dueGenerationInstant("asOf", input.asOf);
+      const cursor = decodeDueGenerationCursor(input.cursor, "continuity", asOf);
+      const snapshotAt =
+        cursor?.snapshotAt ?? dueGenerationInstant("snapshotAt", this.#clock.now());
+      const batchSize = dueGenerationBatchSize(input.batchSize);
       const recallTasksCreated: TaskRecord[] = [];
       const followUpTasksCreated: TaskRecord[] = [];
       const recallsCreated: RecallRecord[] = [];
       const skippedExistingKeys: string[] = [];
+      let processedCount = 0;
+      let remaining = batchSize;
+      let phase: ContinuityDueGenerationPhase = cursor?.phase ?? "procedure_recall";
+      let ruleId = cursor?.ruleId ?? null;
+      let recordId = cursor?.recordId ?? null;
 
-      const rules = (
-        await client.query<RecallRuleRow>(
-          `
-            select *
-            from recall_rules
-            where tenant_id = $1 and clinic_id = $2 and status = 'active'
-          `,
-          [scope.tenantId, scope.clinicId]
-        )
-      ).rows.map(mapRecallRuleRow);
+      const result = (
+        complete: boolean,
+        nextCursor: DueGenerationCursor | null
+      ): GenerateDueContinuityResult => ({
+        recallTasksCreated,
+        followUpTasksCreated,
+        recallsCreated,
+        skippedExistingKeys,
+        processedCount,
+        complete,
+        nextCursor: nextCursor ? encodeDueGenerationCursor(nextCursor) : null
+      });
+      const continuation = (
+        nextPhase: ContinuityDueGenerationPhase,
+        nextRuleId: UUID | null = null,
+        nextRecordId: UUID | null = null
+      ): ContinuityDueGenerationCursor => ({
+        version: 1,
+        kind: "continuity",
+        asOf,
+        snapshotAt,
+        phase: nextPhase,
+        ruleId: nextRuleId,
+        recordId: nextRecordId
+      });
 
-      const procedureRows = (
-        await client.query<ProcedureRecallSourceRow>(
-          `
-            select
-              procedure_performed_records.*,
-              pricebook_procedures.category as procedure_category
-            from procedure_performed_records
-            join pricebook_procedures on pricebook_procedures.tenant_id = procedure_performed_records.tenant_id
-              and pricebook_procedures.id = procedure_performed_records.pricebook_procedure_id
-            where procedure_performed_records.tenant_id = $1
-              and procedure_performed_records.clinic_id = $2
-              and procedure_performed_records.status = 'completed'
-          `,
-          [scope.tenantId, scope.clinicId]
-        )
-      ).rows;
-
-      for (const rule of rules) {
-        for (const procedure of procedureRows) {
-          if (
-            rule.pricebookProcedureId &&
-            rule.pricebookProcedureId !== procedure.pricebook_procedure_id
+      if (phase === "procedure_recall") {
+        const procedureRecallRows = (
+          await client.query<ProcedureRecallGenerationCandidateRow>(
+            `
+              select
+                procedure_performed_records.*,
+                recall_rules.id as generation_rule_id,
+                recall_rules.offset_days as generation_offset_days,
+                recall_rules.title as generation_rule_title,
+                recall_rules.default_task_title as generation_default_task_title,
+                recall_rules.default_task_priority as generation_default_task_priority
+              from recall_rules
+              join procedure_performed_records
+                on procedure_performed_records.tenant_id = recall_rules.tenant_id
+                and procedure_performed_records.clinic_id = recall_rules.clinic_id
+                and procedure_performed_records.status = 'completed'
+              join pricebook_procedures
+                on pricebook_procedures.tenant_id = procedure_performed_records.tenant_id
+                and pricebook_procedures.id = procedure_performed_records.pricebook_procedure_id
+              where recall_rules.tenant_id = $1
+                and recall_rules.clinic_id = $2
+                and recall_rules.status = 'active'
+                and recall_rules.anchor = 'procedure_completed'
+                and recall_rules.created_at <= $4
+                and procedure_performed_records.created_at <= $4
+                and (
+                  recall_rules.pricebook_procedure_id is null
+                  or recall_rules.pricebook_procedure_id = procedure_performed_records.pricebook_procedure_id
+                )
+                and (
+                  recall_rules.procedure_category is null
+                  or recall_rules.procedure_category = pricebook_procedures.category
+                )
+                and procedure_performed_records.performed_at
+                  + recall_rules.offset_days * interval '1 day' <= $3
+                and (
+                  $5::uuid is null
+                  or (recall_rules.id, procedure_performed_records.id) > ($5::uuid, $6::uuid)
+                )
+              order by recall_rules.id, procedure_performed_records.id
+              limit $7
+            `,
+            [scope.tenantId, scope.clinicId, asOf, snapshotAt, ruleId, recordId, remaining + 1]
           )
-            continue;
-          if (rule.procedureCategory && rule.procedureCategory !== procedure.procedure_category)
-            continue;
-          const dueAt = addDaysIso(toIso(procedure.performed_at), rule.offsetDays);
-          if (new Date(dueAt).getTime() > new Date(asOf).getTime()) continue;
+        ).rows;
+        const candidates = procedureRecallRows.slice(0, remaining);
+        for (const candidate of candidates) {
+          const dueAt = addDaysIso(toIso(candidate.performed_at), candidate.generation_offset_days);
           const idempotencyKey = buildRecallGenerationKey({
-            recallRuleId: rule.id,
-            sourceProcedurePerformedId: procedure.id,
-            patientId: procedure.patient_id,
+            recallRuleId: candidate.generation_rule_id,
+            sourceProcedurePerformedId: candidate.id,
+            patientId: candidate.patient_id,
             dueAt
           });
           const recallResult = await client.query<RecallRow>(
@@ -3288,9 +3349,9 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
             [
               scope.tenantId,
               scope.clinicId,
-              rule.id,
-              procedure.patient_id,
-              procedure.id,
+              candidate.generation_rule_id,
+              candidate.patient_id,
+              candidate.id,
               dueAt,
               scope.actorUserId
             ]
@@ -3301,21 +3362,27 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           }
           const recall = mapRecallRow(recallResult.rows[0]);
           recallsCreated.push(recall);
-          const task = await this.#insertTaskInTransaction(client, scope, {
-            patientId: procedure.patient_id,
-            encounterId: procedure.encounter_id,
-            treatmentPlanId: procedure.treatment_plan_id,
-            procedurePerformedId: procedure.id,
+          const taskInsert = await this.#insertTaskWithOutcomeInTransaction(client, scope, {
+            patientId: candidate.patient_id,
+            encounterId: candidate.encounter_id,
+            treatmentPlanId: candidate.treatment_plan_id,
+            procedurePerformedId: candidate.id,
             taskType: "recall",
             sourceWorkflow: "recall_generation",
             sourceRecordType: "recall",
             sourceRecordId: recall.id,
-            title: rule.defaultTaskTitle,
-            description: `Recall generated from ${rule.title}.`,
-            priority: rule.defaultTaskPriority,
+            title: candidate.generation_default_task_title,
+            description: `Recall generated from ${candidate.generation_rule_title}.`,
+            priority: candidate.generation_default_task_priority,
             dueAt,
             idempotencyKey
           });
+          if (!taskInsert.inserted) {
+            throw new DueGenerationConfigurationError(
+              "A generated procedure recall conflicts with an existing task key."
+            );
+          }
+          const task = taskInsert.task;
           recallTasksCreated.push(task);
           await client.query(
             `
@@ -3326,31 +3393,190 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
             [scope.tenantId, scope.clinicId, recall.id, task.id, scope.actorUserId]
           );
         }
+        processedCount += candidates.length;
+        remaining -= candidates.length;
+        if (procedureRecallRows.length > candidates.length) {
+          const last = candidates.at(-1);
+          if (!last) throw new Error("Due-generation procedure page made no progress.");
+          return result(false, continuation("procedure_recall", last.generation_rule_id, last.id));
+        }
+        phase = "checkout_recall";
+        ruleId = null;
+        recordId = null;
+        if (remaining === 0) return result(false, continuation(phase));
       }
 
-      for (const procedure of procedureRows) {
-        const dueAt = addDaysIso(toIso(procedure.performed_at), 1);
-        if (new Date(dueAt).getTime() > new Date(asOf).getTime()) continue;
-        const key = buildPostOpFollowUpKey(procedure.id);
-        const task = await this.#insertTaskInTransaction(client, scope, {
-          patientId: procedure.patient_id,
-          encounterId: procedure.encounter_id,
-          treatmentPlanId: procedure.treatment_plan_id,
-          procedurePerformedId: procedure.id,
-          taskType: "post_op_follow_up",
-          sourceWorkflow: "post_op_follow_up",
-          sourceRecordType: "procedure_performed_record",
-          sourceRecordId: procedure.id,
-          title: "Post-op follow-up",
-          description:
-            "Manual patient follow-up after completed procedure. Record phone/WhatsApp evidence only after staff action.",
-          priority: "normal",
-          dueAt,
-          idempotencyKey: key
-        });
-        if (task.idempotencyKey === key && task.createdAt === task.updatedAt)
-          followUpTasksCreated.push(task);
-        else skippedExistingKeys.push(key);
+      if (phase === "checkout_recall") {
+        const checkoutRecallRows = (
+          await client.query<CheckoutRecallGenerationCandidateRow>(
+            `
+              select
+                invoices.*,
+                recall_rules.id as generation_rule_id,
+                recall_rules.offset_days as generation_offset_days,
+                recall_rules.title as generation_rule_title,
+                recall_rules.default_task_title as generation_default_task_title,
+                recall_rules.default_task_priority as generation_default_task_priority
+              from recall_rules
+              join invoices
+                on invoices.tenant_id = recall_rules.tenant_id
+                and invoices.clinic_id = recall_rules.clinic_id
+                and invoices.status = 'issued'
+              where recall_rules.tenant_id = $1
+                and recall_rules.clinic_id = $2
+                and recall_rules.status = 'active'
+                and recall_rules.anchor = 'checkout_completed'
+                and recall_rules.created_at <= $4
+                and invoices.created_at <= $4
+                and invoices.issued_at + recall_rules.offset_days * interval '1 day' <= $3
+                and (
+                  $5::uuid is null
+                  or (recall_rules.id, invoices.id) > ($5::uuid, $6::uuid)
+                )
+              order by recall_rules.id, invoices.id
+              limit $7
+            `,
+            [scope.tenantId, scope.clinicId, asOf, snapshotAt, ruleId, recordId, remaining + 1]
+          )
+        ).rows;
+        const candidates = checkoutRecallRows.slice(0, remaining);
+        for (const candidate of candidates) {
+          const dueAt = addDaysIso(toIso(candidate.issued_at), candidate.generation_offset_days);
+          const idempotencyKey = buildRecallGenerationKey({
+            recallRuleId: candidate.generation_rule_id,
+            sourceInvoiceId: candidate.id,
+            patientId: candidate.patient_id,
+            dueAt
+          });
+          const recallResult = await client.query<RecallRow>(
+            `
+              insert into recalls (
+                tenant_id,
+                clinic_id,
+                recall_rule_id,
+                patient_id,
+                source_invoice_id,
+                status,
+                due_at,
+                created_by_user_id,
+                updated_by_user_id
+              )
+              values ($1, $2, $3, $4, $5, 'due', $6, $7, $7)
+              on conflict (tenant_id, clinic_id, recall_rule_id, source_invoice_id)
+                where source_invoice_id is not null
+              do nothing
+              returning *
+            `,
+            [
+              scope.tenantId,
+              scope.clinicId,
+              candidate.generation_rule_id,
+              candidate.patient_id,
+              candidate.id,
+              dueAt,
+              scope.actorUserId
+            ]
+          );
+          if (!recallResult.rows[0]) {
+            skippedExistingKeys.push(idempotencyKey);
+            continue;
+          }
+          const recall = mapRecallRow(recallResult.rows[0]);
+          recallsCreated.push(recall);
+          const taskInsert = await this.#insertTaskWithOutcomeInTransaction(client, scope, {
+            patientId: candidate.patient_id,
+            invoiceId: candidate.id,
+            treatmentPlanId: candidate.treatment_plan_id,
+            taskType: "recall",
+            sourceWorkflow: "recall_generation",
+            sourceRecordType: "recall",
+            sourceRecordId: recall.id,
+            title: candidate.generation_default_task_title,
+            description: `Recall generated from ${candidate.generation_rule_title}.`,
+            priority: candidate.generation_default_task_priority,
+            dueAt,
+            idempotencyKey
+          });
+          if (!taskInsert.inserted) {
+            throw new DueGenerationConfigurationError(
+              "A generated checkout recall conflicts with an existing task key."
+            );
+          }
+          const task = taskInsert.task;
+          recallTasksCreated.push(task);
+          await client.query(
+            `
+              update recalls
+              set task_id = $4, updated_by_user_id = $5
+              where tenant_id = $1 and clinic_id = $2 and id = $3
+            `,
+            [scope.tenantId, scope.clinicId, recall.id, task.id, scope.actorUserId]
+          );
+        }
+        processedCount += candidates.length;
+        remaining -= candidates.length;
+        if (checkoutRecallRows.length > candidates.length) {
+          const last = candidates.at(-1);
+          if (!last) throw new Error("Due-generation checkout page made no progress.");
+          return result(false, continuation("checkout_recall", last.generation_rule_id, last.id));
+        }
+        phase = "post_op";
+        ruleId = null;
+        recordId = null;
+        if (remaining === 0) return result(false, continuation(phase));
+      }
+
+      if (phase === "post_op") {
+        const procedureRows = (
+          await client.query<ProcedurePerformedRow>(
+            `
+              select *
+              from procedure_performed_records
+              where tenant_id = $1
+                and clinic_id = $2
+                and status = 'completed'
+                and created_at <= $4
+                and performed_at + interval '1 day' <= $3
+                and ($5::uuid is null or id > $5)
+              order by id
+              limit $6
+            `,
+            [scope.tenantId, scope.clinicId, asOf, snapshotAt, recordId, remaining + 1]
+          )
+        ).rows;
+        const candidates = procedureRows.slice(0, remaining);
+        for (const procedure of candidates) {
+          const dueAt = addDaysIso(toIso(procedure.performed_at), 1);
+          const key = buildPostOpFollowUpKey(procedure.id);
+          const taskInsert = await this.#insertTaskWithOutcomeInTransaction(client, scope, {
+            patientId: procedure.patient_id,
+            encounterId: procedure.encounter_id,
+            treatmentPlanId: procedure.treatment_plan_id,
+            procedurePerformedId: procedure.id,
+            taskType: "post_op_follow_up",
+            sourceWorkflow: "post_op_follow_up",
+            sourceRecordType: "procedure_performed_record",
+            sourceRecordId: procedure.id,
+            title: "Post-op follow-up",
+            description:
+              "Manual patient follow-up after completed procedure. Record phone/WhatsApp evidence only after staff action.",
+            priority: "normal",
+            dueAt,
+            idempotencyKey: key
+          });
+          if (taskInsert.inserted) followUpTasksCreated.push(taskInsert.task);
+          else skippedExistingKeys.push(key);
+        }
+        processedCount += candidates.length;
+        remaining -= candidates.length;
+        if (procedureRows.length > candidates.length) {
+          const last = candidates.at(-1);
+          if (!last) throw new Error("Due-generation post-op page made no progress.");
+          return result(false, continuation("post_op", null, last.id));
+        }
+        phase = "payment";
+        recordId = null;
+        if (remaining === 0) return result(false, continuation(phase));
       }
 
       const invoiceRows = (
@@ -3364,14 +3590,19 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
               and balance_minor > 0
               and due_at is not null
               and due_at <= $3
+              and created_at <= $4
               and payment_status in ('unpaid', 'payment_requested', 'partially_paid', 'reconciliation_required')
+              and ($5::uuid is null or id > $5)
+            order by id
+            limit $6
           `,
-          [scope.tenantId, scope.clinicId, asOf]
+          [scope.tenantId, scope.clinicId, asOf, snapshotAt, recordId, remaining + 1]
         )
       ).rows;
-      for (const invoice of invoiceRows) {
+      const invoiceCandidates = invoiceRows.slice(0, remaining);
+      for (const invoice of invoiceCandidates) {
         const key = buildPaymentFollowUpKey(invoice.id);
-        const task = await this.#insertTaskInTransaction(client, scope, {
+        const taskInsert = await this.#insertTaskWithOutcomeInTransaction(client, scope, {
           patientId: invoice.patient_id,
           invoiceId: invoice.id,
           treatmentPlanId: invoice.treatment_plan_id,
@@ -3386,12 +3617,16 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           dueAt: toIso(invoice.due_at as Date | string),
           idempotencyKey: key
         });
-        if (task.idempotencyKey === key && task.createdAt === task.updatedAt)
-          followUpTasksCreated.push(task);
+        if (taskInsert.inserted) followUpTasksCreated.push(taskInsert.task);
         else skippedExistingKeys.push(key);
       }
-
-      return { recallTasksCreated, followUpTasksCreated, recallsCreated, skippedExistingKeys };
+      processedCount += invoiceCandidates.length;
+      if (invoiceRows.length > invoiceCandidates.length) {
+        const last = invoiceCandidates.at(-1);
+        if (!last) throw new Error("Due-generation payment page made no progress.");
+        return result(false, continuation("payment", null, last.id));
+      }
+      return result(true, null);
     });
   }
 
@@ -3528,117 +3763,131 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     return this.#withRls(scope, async (client) => {
       const runsCreated: SopRunDetail[] = [];
       const skippedExistingKeys: string[] = [];
-      const asOf = new Date(input.asOf);
-      const schedules = (
-        await client.query<SopScheduleRow>(
-          `
-            select *
-            from sop_schedules
-            where tenant_id = $1 and clinic_id = $2 and status = 'active'
-          `,
-          [scope.tenantId, scope.clinicId]
-        )
-      ).rows.map(mapSopScheduleRow);
+      const asOfInstant = dueGenerationInstant("asOf", input.asOf);
+      const asOf = new Date(asOfInstant);
+      const cursor = decodeDueGenerationCursor(input.cursor, "sop", asOfInstant);
+      const snapshotAt =
+        cursor?.snapshotAt ?? dueGenerationInstant("snapshotAt", this.#clock.now());
+      const batchSize = dueGenerationBatchSize(input.batchSize);
+      let processedCount = 0;
+      let scheduleId = cursor?.recordId ?? null;
+      let occurrenceDate = cursor?.occurrenceDate ?? null;
+      let continueCurrentSchedule = occurrenceDate !== null;
+      const result = (
+        complete: boolean,
+        nextScheduleId: UUID | null,
+        nextOccurrenceDate: string | null
+      ): GenerateDueSopRunsResult => ({
+        runsCreated,
+        skippedExistingKeys,
+        processedCount,
+        complete,
+        nextCursor: complete
+          ? null
+          : encodeDueGenerationCursor({
+              version: 1,
+              kind: "sop",
+              asOf: asOfInstant,
+              snapshotAt,
+              recordId: nextScheduleId,
+              occurrenceDate: nextOccurrenceDate
+            })
+      });
 
-      for (const schedule of schedules) {
-        const dueAt = sopDueAtForAsOf(schedule, asOf);
-        if (!dueAt || new Date(dueAt).getTime() > asOf.getTime()) continue;
-        const key = buildSopRunGenerationKey(schedule.id, dueAt);
-        const runResult = await client.query<SopRunRow>(
-          `
-            insert into sop_runs (
-              tenant_id,
-              clinic_id,
-              template_id,
-              schedule_id,
-              due_at,
-              status,
-              assigned_to_user_id,
-              generated_from_key
-            )
-            values ($1, $2, $3, $4, $5, 'due', $6, $7)
-            on conflict (tenant_id, clinic_id, generated_from_key) do nothing
-            returning *
-          `,
-          [
-            scope.tenantId,
-            scope.clinicId,
-            schedule.templateId,
-            schedule.id,
-            dueAt,
-            schedule.assignedToUserId,
-            key
-          ]
-        );
-        if (!runResult.rows[0]) {
-          skippedExistingKeys.push(key);
-          continue;
-        }
-
-        const run = mapSopRunRow(runResult.rows[0]);
-        const templateItems = (
-          await client.query<SopTemplateItemRow>(
+      while (processedCount < batchSize) {
+        const scheduleRow = (
+          await client.query<SopScheduleGenerationRow>(
             `
-              select *
-              from sop_template_items
-              where tenant_id = $1 and clinic_id = $2 and template_id = $3
-              order by item_index asc
-            `,
-            [scope.tenantId, scope.clinicId, schedule.templateId]
-          )
-        ).rows.map(mapSopTemplateItemRow);
-        for (const item of templateItems) {
-          await client.query(
-            `
-              insert into sop_run_items (
-                tenant_id,
-                clinic_id,
-                sop_run_id,
-                template_item_id,
-                item_index,
-                title,
-                instructions,
-                evidence_required
-              )
-              values ($1, $2, $3, $4, $5, $6, $7, $8)
+              select
+                sop_schedules.*,
+                latest_run.latest_due_at
+              from sop_schedules
+              left join lateral (
+                select max(due_at) as latest_due_at
+                from sop_runs
+                where tenant_id = sop_schedules.tenant_id
+                  and clinic_id = sop_schedules.clinic_id
+                  and schedule_id = sop_schedules.id
+                  and due_at <= $6
+              ) as latest_run on true
+              where sop_schedules.tenant_id = $1
+                and sop_schedules.clinic_id = $2
+                and sop_schedules.status = 'active'
+                and sop_schedules.created_at <= $3
+                and (
+                  ($5::boolean = true and sop_schedules.id = $4)
+                  or (
+                    $5::boolean = false
+                    and ($4::uuid is null or sop_schedules.id > $4)
+                  )
+                )
+              order by sop_schedules.id
+              limit 1
             `,
             [
               scope.tenantId,
               scope.clinicId,
-              run.id,
-              item.id,
-              item.itemIndex,
-              item.title,
-              item.instructions,
-              item.evidenceRequired
+              snapshotAt,
+              scheduleId,
+              continueCurrentSchedule,
+              asOfInstant
             ]
-          );
+          )
+        ).rows[0];
+
+        if (!scheduleRow) {
+          if (continueCurrentSchedule) {
+            processedCount += 1;
+            occurrenceDate = null;
+            continueCurrentSchedule = false;
+            if (processedCount === batchSize) return result(false, scheduleId, null);
+            continue;
+          }
+          return result(true, null, null);
         }
-        const task = await this.#insertTaskInTransaction(client, scope, {
-          taskType: "sop",
-          sourceWorkflow: "sop_run",
-          sourceRecordType: "sop_run",
-          sourceRecordId: run.id,
-          title: schedule.title,
-          description: "Recurring SOP checklist run.",
-          priority: schedule.defaultTaskPriority,
-          dueAt,
-          assignedToUserId: schedule.assignedToUserId,
-          idempotencyKey: key
-        });
-        await client.query(
-          `
-            update sop_runs
-            set task_id = $4
-            where tenant_id = $1 and clinic_id = $2 and id = $3
-          `,
-          [scope.tenantId, scope.clinicId, run.id, task.id]
-        );
-        const detail = await this.#loadSopRunDetail(client, scope, run.id);
-        if (detail) runsCreated.push(detail);
+
+        const schedule = mapSopScheduleRow(scheduleRow);
+        const localAsOf = clinicLocalDate(asOf, schedule.timezone);
+        const lastGeneratedLocalDate = scheduleRow.latest_due_at
+          ? clinicLocalDate(new Date(scheduleRow.latest_due_at), schedule.timezone)
+          : null;
+        let nextDate = continueCurrentSchedule
+          ? nextIsoDate(requiredCursorDate(occurrenceDate))
+          : latestIsoDate(
+              schedule.startsOn,
+              lastGeneratedLocalDate ? nextIsoDate(lastGeneratedLocalDate) : schedule.startsOn
+            );
+        const endDate = earliestIsoDate(schedule.endsOn ?? localAsOf, localAsOf);
+        let scannedThisSchedule = 0;
+        let lastScannedDate: string | null = null;
+
+        while (nextDate <= endDate && processedCount < batchSize) {
+          const candidateDate = nextDate;
+          nextDate = nextIsoDate(candidateDate);
+          processedCount += 1;
+          scannedThisSchedule += 1;
+          lastScannedDate = candidateDate;
+          if (!sopScheduleOccursOnDate(schedule, candidateDate)) continue;
+
+          const dueAt = sopDueInstantForLocalDate(schedule, candidateDate);
+          if (new Date(dueAt).getTime() > asOf.getTime()) continue;
+          const generated = await this.#generateSopRunOccurrence(client, scope, schedule, dueAt);
+          if (generated.detail) runsCreated.push(generated.detail);
+          else skippedExistingKeys.push(generated.key);
+        }
+
+        if (nextDate <= endDate) {
+          return result(false, schedule.id, requiredCursorDate(lastScannedDate));
+        }
+
+        scheduleId = schedule.id;
+        occurrenceDate = null;
+        continueCurrentSchedule = false;
+        if (scannedThisSchedule === 0) processedCount += 1;
+        if (processedCount >= batchSize) return result(false, scheduleId, null);
       }
 
-      return { runsCreated, skippedExistingKeys };
+      return result(false, scheduleId, occurrenceDate);
     });
   }
 
@@ -8624,12 +8873,12 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     });
   }
 
-  async #insertTaskInTransaction(
+  async #insertTaskWithOutcomeInTransaction(
     client: SqlQueryClient,
     scope: RepositoryScope,
     input: CreateTaskInput
-  ): Promise<TaskRecord> {
-    const result = await client.query<TaskRow>(
+  ): Promise<{ task: TaskRecord; inserted: boolean }> {
+    const result = await client.query<TaskInsertOutcomeRow>(
       `
         insert into tasks (
           tenant_id,
@@ -8663,7 +8912,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         )
         on conflict (tenant_id, clinic_id, idempotency_key) where idempotency_key is not null
         do update set updated_at = tasks.updated_at
-        returning *
+        returning *, (xmax = 0) as was_inserted
       `,
       [
         scope.tenantId,
@@ -8690,7 +8939,118 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         scope.actorUserId
       ]
     );
-    return mapTaskRow(result.rows[0]);
+    return {
+      task: mapTaskRow(result.rows[0]),
+      inserted: result.rows[0].was_inserted
+    };
+  }
+
+  async #generateSopRunOccurrence(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    schedule: SopScheduleRecord,
+    dueAt: string
+  ): Promise<{ detail: SopRunDetail | null; key: string }> {
+    const key = buildSopRunGenerationKey(schedule.id, dueAt);
+    const runResult = await client.query<SopRunRow>(
+      `
+        insert into sop_runs (
+          tenant_id,
+          clinic_id,
+          template_id,
+          schedule_id,
+          due_at,
+          status,
+          assigned_to_user_id,
+          generated_from_key
+        )
+        values ($1, $2, $3, $4, $5, 'due', $6, $7)
+        on conflict (tenant_id, clinic_id, generated_from_key) do nothing
+        returning *
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        schedule.templateId,
+        schedule.id,
+        dueAt,
+        schedule.assignedToUserId,
+        key
+      ]
+    );
+    if (!runResult.rows[0]) return { detail: null, key };
+
+    const run = mapSopRunRow(runResult.rows[0]);
+    const templateItems = (
+      await client.query<SopTemplateItemRow>(
+        `
+          select *
+          from sop_template_items
+          where tenant_id = $1 and clinic_id = $2 and template_id = $3
+          order by item_index asc
+          limit $4
+        `,
+        [scope.tenantId, scope.clinicId, schedule.templateId, MAX_SOP_TEMPLATE_GENERATION_ITEMS + 1]
+      )
+    ).rows.map(mapSopTemplateItemRow);
+    if (templateItems.length > MAX_SOP_TEMPLATE_GENERATION_ITEMS) {
+      throw new DueGenerationConfigurationError(
+        `SOP template ${schedule.templateId} exceeds the ${MAX_SOP_TEMPLATE_GENERATION_ITEMS}-item generation limit.`
+      );
+    }
+    for (const item of templateItems) {
+      await client.query(
+        `
+          insert into sop_run_items (
+            tenant_id,
+            clinic_id,
+            sop_run_id,
+            template_item_id,
+            item_index,
+            title,
+            instructions,
+            evidence_required
+          )
+          values ($1, $2, $3, $4, $5, $6, $7, $8)
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          run.id,
+          item.id,
+          item.itemIndex,
+          item.title,
+          item.instructions,
+          item.evidenceRequired
+        ]
+      );
+    }
+    const taskInsert = await this.#insertTaskWithOutcomeInTransaction(client, scope, {
+      taskType: "sop",
+      sourceWorkflow: "sop_run",
+      sourceRecordType: "sop_run",
+      sourceRecordId: run.id,
+      title: schedule.title,
+      description: "Recurring SOP checklist run.",
+      priority: schedule.defaultTaskPriority,
+      dueAt,
+      assignedToUserId: schedule.assignedToUserId,
+      idempotencyKey: key
+    });
+    if (!taskInsert.inserted) {
+      throw new DueGenerationConfigurationError(
+        "A generated SOP run conflicts with an existing task key."
+      );
+    }
+    await client.query(
+      `
+        update sop_runs
+        set task_id = $4
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+      `,
+      [scope.tenantId, scope.clinicId, run.id, taskInsert.task.id]
+    );
+    return { detail: await this.#loadSopRunDetail(client, scope, run.id), key };
   }
 
   async #loadSopRunDetail(
@@ -10495,6 +10855,10 @@ interface TaskRow {
   updated_at: Date | string;
 }
 
+interface TaskInsertOutcomeRow extends TaskRow {
+  was_inserted: boolean;
+}
+
 interface RowVersionProjectionRow {
   row_version: number | string;
 }
@@ -10586,6 +10950,10 @@ interface SopScheduleRow {
   updated_by_user_id: UUID | null;
   created_at: Date | string;
   updated_at: Date | string;
+}
+
+interface SopScheduleGenerationRow extends SopScheduleRow {
+  latest_due_at: Date | string | null;
 }
 
 interface SopRunRow {
@@ -11135,8 +11503,12 @@ interface ProcedurePerformedRow {
   updated_at: Date | string;
 }
 
-interface ProcedureRecallSourceRow extends ProcedurePerformedRow {
-  procedure_category: string;
+interface ProcedureRecallGenerationCandidateRow extends ProcedurePerformedRow {
+  generation_rule_id: UUID;
+  generation_offset_days: number;
+  generation_rule_title: string;
+  generation_default_task_title: string;
+  generation_default_task_priority: RecallRuleRecord["defaultTaskPriority"];
 }
 
 interface InvoiceRow {
@@ -11162,6 +11534,14 @@ interface InvoiceRow {
   updated_by_user_id: UUID | null;
   created_at: Date | string;
   updated_at: Date | string;
+}
+
+interface CheckoutRecallGenerationCandidateRow extends InvoiceRow {
+  generation_rule_id: UUID;
+  generation_offset_days: number;
+  generation_rule_title: string;
+  generation_default_task_title: string;
+  generation_default_task_priority: RecallRuleRecord["defaultTaskPriority"];
 }
 
 interface InvoiceItemRow {
@@ -13318,23 +13698,237 @@ function normalizeUpdateDentalFindingInput(
   return normalized;
 }
 
-function sopDueAtForAsOf(schedule: SopScheduleRecord, asOf: Date): string | null {
-  const asOfDate = asOf.toISOString().slice(0, 10);
-  if (asOfDate < schedule.startsOn) return null;
-  if (schedule.endsOn && asOfDate > schedule.endsOn) return null;
+type ContinuityDueGenerationPhase = "procedure_recall" | "checkout_recall" | "post_op" | "payment";
 
-  const dayMatches =
+interface ContinuityDueGenerationCursor {
+  version: 1;
+  kind: "continuity";
+  asOf: string;
+  snapshotAt: string;
+  phase: ContinuityDueGenerationPhase;
+  ruleId: UUID | null;
+  recordId: UUID | null;
+}
+
+interface SopDueGenerationCursor {
+  version: 1;
+  kind: "sop";
+  asOf: string;
+  snapshotAt: string;
+  recordId: UUID | null;
+  occurrenceDate: string | null;
+}
+
+type DueGenerationCursor = ContinuityDueGenerationCursor | SopDueGenerationCursor;
+
+function dueGenerationBatchSize(value: number | undefined): number {
+  const batchSize = value ?? DEFAULT_DUE_GENERATION_BATCH_SIZE;
+  if (
+    !Number.isSafeInteger(batchSize) ||
+    batchSize < 1 ||
+    batchSize > MAX_DUE_GENERATION_BATCH_SIZE
+  ) {
+    throw new DueGenerationInputError(
+      `Due-generation batchSize must be an integer from 1 to ${MAX_DUE_GENERATION_BATCH_SIZE}.`
+    );
+  }
+  return batchSize;
+}
+
+function dueGenerationInstant(name: string, value: string | Date): string {
+  const parsed = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    throw new DueGenerationInputError(`Due-generation ${name} must be a valid instant.`);
+  }
+  return parsed.toISOString();
+}
+
+function encodeDueGenerationCursor(cursor: DueGenerationCursor): string {
+  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+}
+
+function decodeDueGenerationCursor(
+  value: string | null | undefined,
+  kind: "continuity",
+  asOf: string
+): ContinuityDueGenerationCursor | null;
+function decodeDueGenerationCursor(
+  value: string | null | undefined,
+  kind: "sop",
+  asOf: string
+): SopDueGenerationCursor | null;
+function decodeDueGenerationCursor(
+  value: string | null | undefined,
+  kind: DueGenerationCursor["kind"],
+  asOf: string
+): DueGenerationCursor | null {
+  if (value === undefined || value === null) return null;
+  if (
+    value.length === 0 ||
+    value.length > MAX_DUE_GENERATION_CURSOR_LENGTH ||
+    !/^[A-Za-z0-9_-]+$/u.test(value)
+  ) {
+    throw new DueGenerationInputError("Due-generation cursor is invalid.");
+  }
+
+  let decoded: unknown;
+  try {
+    const bytes = Buffer.from(value, "base64url");
+    if (bytes.toString("base64url") !== value) {
+      throw new Error("non-canonical cursor");
+    }
+    decoded = JSON.parse(bytes.toString("utf8"));
+  } catch {
+    throw new DueGenerationInputError("Due-generation cursor is invalid.");
+  }
+  if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+    throw new DueGenerationInputError("Due-generation cursor is invalid.");
+  }
+  const cursor = decoded as Record<string, unknown>;
+  if (cursor.version !== 1 || cursor.kind !== kind) {
+    throw new DueGenerationInputError("Due-generation cursor has the wrong type or version.");
+  }
+  const cursorAsOf = dueGenerationInstant("cursor asOf", requiredCursorString(cursor.asOf));
+  if (cursorAsOf !== asOf) {
+    throw new DueGenerationInputError(
+      "Due-generation cursor must be continued with the same asOf instant."
+    );
+  }
+  const snapshotAt = dueGenerationInstant(
+    "cursor snapshotAt",
+    requiredCursorString(cursor.snapshotAt)
+  );
+  const recordId = optionalCursorUuid(cursor.recordId, "recordId");
+
+  if (kind === "sop") {
+    assertCursorKeys(cursor, [
+      "version",
+      "kind",
+      "asOf",
+      "snapshotAt",
+      "recordId",
+      "occurrenceDate"
+    ]);
+    const occurrenceDate = optionalCursorDate(cursor.occurrenceDate, "occurrenceDate");
+    if (recordId === null && occurrenceDate !== null) {
+      throw new DueGenerationInputError(
+        "Due-generation SOP cursor contains an incomplete schedule position."
+      );
+    }
+    return { version: 1, kind, asOf, snapshotAt, recordId, occurrenceDate };
+  }
+
+  assertCursorKeys(cursor, [
+    "version",
+    "kind",
+    "asOf",
+    "snapshotAt",
+    "phase",
+    "ruleId",
+    "recordId"
+  ]);
+  if (
+    cursor.phase !== "procedure_recall" &&
+    cursor.phase !== "checkout_recall" &&
+    cursor.phase !== "post_op" &&
+    cursor.phase !== "payment"
+  ) {
+    throw new DueGenerationInputError("Due-generation cursor phase is invalid.");
+  }
+  const phase = cursor.phase;
+  const ruleId = optionalCursorUuid(cursor.ruleId, "ruleId");
+  if (
+    (phase === "procedure_recall" || phase === "checkout_recall") &&
+    (ruleId === null) !== (recordId === null)
+  ) {
+    throw new DueGenerationInputError("Due-generation recall cursor position is incomplete.");
+  }
+  if ((phase === "post_op" || phase === "payment") && ruleId !== null) {
+    throw new DueGenerationInputError("Due-generation cursor contains an invalid rule position.");
+  }
+  return { version: 1, kind, asOf, snapshotAt, phase, ruleId, recordId };
+}
+
+function requiredCursorString(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new DueGenerationInputError("Due-generation cursor is invalid.");
+  }
+  return value;
+}
+
+function optionalCursorUuid(value: unknown, field: string): UUID | null {
+  if (value === null) return null;
+  if (typeof value !== "string" || !UUID_PATTERN.test(value)) {
+    throw new DueGenerationInputError(`Due-generation cursor ${field} is invalid.`);
+  }
+  return value as UUID;
+}
+
+function optionalCursorDate(value: unknown, field: string): string | null {
+  if (value === null) return null;
+  try {
+    return requiredCursorDate(value);
+  } catch {
+    throw new DueGenerationInputError(`Due-generation cursor ${field} is invalid.`);
+  }
+}
+
+function requiredCursorDate(value: unknown): string {
+  if (typeof value !== "string" || !/^\d{4}-\d{2}-\d{2}$/u.test(value)) {
+    throw new DueGenerationInputError("Due-generation cursor date is invalid.");
+  }
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+    throw new DueGenerationInputError("Due-generation cursor date is invalid.");
+  }
+  return value;
+}
+
+function assertCursorKeys(cursor: Record<string, unknown>, allowed: readonly string[]): void {
+  const allowedKeys = new Set(allowed);
+  if (Object.keys(cursor).some((key) => !allowedKeys.has(key))) {
+    throw new DueGenerationInputError("Due-generation cursor contains unknown fields.");
+  }
+}
+
+function sopScheduleOccursOnDate(schedule: SopScheduleRecord, localDate: string): boolean {
+  const date = new Date(`${localDate}T00:00:00.000Z`);
+  return (
     schedule.recurrenceType === "daily" ||
-    (schedule.recurrenceType === "weekly" && asOf.getUTCDay() === schedule.dayOfWeek) ||
-    (schedule.recurrenceType === "monthly" && asOf.getUTCDate() === schedule.dayOfMonth) ||
+    (schedule.recurrenceType === "weekly" && date.getUTCDay() === schedule.dayOfWeek) ||
+    (schedule.recurrenceType === "monthly" && date.getUTCDate() === schedule.dayOfMonth) ||
     (schedule.recurrenceType === "interval_days" &&
       schedule.intervalDays !== null &&
-      daysBetween(schedule.startsOn, asOfDate) % schedule.intervalDays === 0);
+      daysBetween(schedule.startsOn, localDate) % schedule.intervalDays === 0)
+  );
+}
 
-  if (!dayMatches) return null;
-  const dueAt = new Date(`${asOfDate}T${schedule.dueTime.replace(/Z$/, "")}Z`);
-  if (Number.isNaN(dueAt.getTime())) return null;
-  return dueAt.toISOString();
+function sopDueInstantForLocalDate(schedule: SopScheduleRecord, localDate: string): string {
+  try {
+    return clinicLocalDateTimeToInstant(
+      localDate,
+      schedule.dueTime,
+      schedule.timezone
+    ).toISOString();
+  } catch {
+    throw new DueGenerationConfigurationError(
+      "An SOP schedule due time cannot be resolved in its configured timezone."
+    );
+  }
+}
+
+function nextIsoDate(value: string): string {
+  const date = new Date(`${value}T00:00:00.000Z`);
+  date.setUTCDate(date.getUTCDate() + 1);
+  return date.toISOString().slice(0, 10);
+}
+
+function latestIsoDate(left: string, right: string): string {
+  return left >= right ? left : right;
+}
+
+function earliestIsoDate(left: string, right: string): string {
+  return left <= right ? left : right;
 }
 
 function daysBetween(startDate: string, endDate: string): number {

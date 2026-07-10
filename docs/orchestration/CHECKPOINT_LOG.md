@@ -791,3 +791,17 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   an authorized read-only local-runtime query exercised the real SQL successfully. Bounded due
   generation/catch-up remains a separate master-owned integration gate; no lane may claim it from
   request headers or an unbounded repository loop.
+- The master-owned bounded due-generation candidate now pages procedure recalls, checkout-anchored
+  recalls, post-operative follow-ups, payment follow-ups and clinic-local SOP occurrences through
+  opaque snapshot cursors with a maximum batch size of 25. Checkout recalls use the durable invoice
+  source and a partial unique index; generated task insertion returns an exact insert-versus-replay
+  outcome, and invalid cursors/configuration fail through bounded public errors. The local fixture
+  remains explicitly non-durable and does not contribute E3 evidence. Domain 56/56, DB 72/72,
+  contracts 27/27, generated client 7/7 and the 128-route drift/inventory gates pass; API typecheck
+  and all 60 runnable package tests pass with 17 expected sandbox socket skips, superseded later by
+  the required socket-enabled integration gate.
+- Docker Desktop reports an engine process in the UI, but every direct CLI engine query continues to
+  hang. Read-only Docker VM logs identify an ext4 writeback/I/O failure warning on the Docker data
+  disk. No reset, data deletion or other destructive recovery has been attempted. Canonical migration
+  0016 therefore has deterministic schema tests but no E3 clean-Postgres claim yet; CP13 promotion
+  remains gated on safe Docker recovery and a complete clean lifecycle.

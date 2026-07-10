@@ -3,7 +3,12 @@ import {
   parseNativeOperationResponse,
   parseNativeOperationResponseHeaders
 } from "@clinic-os/api-contracts";
-import { AuthenticationError, AuthorizationError, RequestScopeResolutionError } from "@clinic-os/auth";
+import {
+  AuthenticationError,
+  AuthorizationError,
+  RequestScopeResolutionError
+} from "@clinic-os/auth";
+import { DueGenerationConfigurationError, DueGenerationInputError } from "@clinic-os/db";
 import {
   BoundaryError,
   maskFreeTextPhi,
@@ -77,14 +82,31 @@ function serializeKnownError(error: unknown, requestId: string): SerializedCentr
       requestId
     );
   }
+  if (error instanceof DueGenerationInputError) {
+    return serializedBoundary(
+      new BoundaryError({
+        code: "VALIDATION_ERROR",
+        message: "The due-generation continuation request is invalid.",
+        details: { reason: "due_generation_cursor_invalid" }
+      }),
+      requestId
+    );
+  }
+  if (error instanceof DueGenerationConfigurationError) {
+    return serializedBoundary(
+      new BoundaryError({
+        code: "CONFLICT",
+        message: "The due-generation source configuration requires correction.",
+        details: { reason: "due_generation_configuration_invalid" }
+      }),
+      requestId
+    );
+  }
   if (error instanceof ApiError) return serializeApiError(error, requestId);
   return serializedBoundary(normalizeUnknownBoundaryError(error), requestId);
 }
 
-function serializedBoundary(
-  error: BoundaryError,
-  requestId: string
-): SerializedCentralizedError {
+function serializedBoundary(error: BoundaryError, requestId: string): SerializedCentralizedError {
   const serialized = serializeBoundaryError(error, requestId);
   return { status: serialized.status, headers: serialized.headers, body: serialized.body };
 }
