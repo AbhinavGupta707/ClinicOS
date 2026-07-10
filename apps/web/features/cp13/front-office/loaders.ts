@@ -20,7 +20,10 @@ import {
 } from "@clinic-os/api-client-generated";
 
 export type FrontOfficeUnavailableReason =
-  "dependency_unavailable" | "endpoint_not_registered" | "authentication_unavailable";
+  | "dependency_unavailable"
+  | "endpoint_not_registered"
+  | "authentication_unavailable"
+  | "permission_denied";
 
 export type FrontOfficeLoadState<T> =
   | { readonly status: "loading" }
@@ -197,11 +200,19 @@ export function classifyFrontOfficeLoadFailure<T = never>(
   options: { readonly notFound: "endpoint" | "resource" } = { notFound: "endpoint" }
 ): FrontOfficeLoadState<T> {
   if (error instanceof ClinicOsApiError) {
-    if (error.status === 401 || error.status === 403) {
+    if (error.status === 401) {
       return {
         status: "unavailable",
         reason: "authentication_unavailable",
         message: "Your verified clinic session cannot load this front-office workspace.",
+        requestId: error.requestId
+      };
+    }
+    if (error.status === 403) {
+      return {
+        status: "unavailable",
+        reason: "permission_denied",
+        message: "Your verified clinic session does not have permission to load this workspace.",
         requestId: error.requestId
       };
     }
@@ -240,7 +251,7 @@ export function classifyFrontOfficeLoadFailure<T = never>(
 
   return {
     status: "error",
-    message: error instanceof Error ? error.message : "The front-office request failed.",
+    message: "The front-office request failed unexpectedly.",
     requestId: null,
     retryable: true
   };

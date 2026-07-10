@@ -20,6 +20,8 @@ const PATIENT_ID = "10000000-0000-4000-8000-000000000004";
 const LEAD_ID = "10000000-0000-4000-8000-000000000005";
 const APPOINTMENT_ID = "10000000-0000-4000-8000-000000000006";
 const QUEUE_ID = "10000000-0000-4000-8000-000000000007";
+const APPOINTMENT_TYPE_ID = "10000000-0000-4000-8000-000000000030";
+const CHAIR_ID = "10000000-0000-4000-8000-000000000031";
 
 test("handler factory has exact frozen coverage for all 26 front-office operations", () => {
   assert.deepEqual(
@@ -40,10 +42,10 @@ test("central policy denies wrong-role capability sets before feature dispatch",
   ]);
 });
 
-test("patient creation never silently merges ambiguous matches and carries atomic evidence keys", async () => {
+test("patient creation fails closed before writes when duplicate candidates exist", async () => {
   const patient = patientRecord();
   const events = evidenceRecorder();
-  let createInput: unknown;
+  let createCalls = 0;
   let duplicateInput: unknown;
   const context = featureContext(
     {
@@ -52,8 +54,8 @@ test("patient creation never silently merges ambiguous matches and carries atomi
           duplicateInput = input;
           return [patient];
         },
-        createPatient: async (input: unknown) => {
-          createInput = input;
+        createPatient: async () => {
+          createCalls += 1;
           return patient;
         },
         createAttributionTouch: async () => ({
@@ -66,40 +68,51 @@ test("patient creation never silently merges ambiguous matches and carries atomi
     events
   );
 
+  await assert.rejects(
+    FRONT_OFFICE_FEATURE_HANDLERS.createPatient!(
+      request("createPatient", {
+        body: { fullName: "Synthetic Patient", phone: "+919999990001", source: "manual" },
+        headers: { "idempotency-key": "cp13-create-patient-001" }
+      }),
+      context
+    ),
+    (error: unknown) => apiError(error, 409)
+  );
+  assert.deepEqual(duplicateInput, { fullName: "Synthetic Patient", phone: "+919999990001" });
+  assert.equal(createCalls, 0);
+  assert.deepEqual(events, { audit: [], outbox: [] });
+});
+
+test("unique patient creation records patient and attribution evidence", async () => {
+  const events = evidenceRecorder();
+  const context = featureContext(
+    {
+      patientAdministration: {
+        findPatientDuplicateCandidates: async () => [],
+        createPatient: async () => patientRecord(),
+        createAttributionTouch: async () => ({
+          id: "10000000-0000-4000-8000-000000000020",
+          patientId: PATIENT_ID,
+          source: "manual"
+        })
+      }
+    },
+    events
+  );
   const response = await FRONT_OFFICE_FEATURE_HANDLERS.createPatient!(
     request("createPatient", {
       body: { fullName: "Synthetic Patient", phone: "+919999990001", source: "manual" },
-      headers: { "idempotency-key": "cp13-create-patient-001" }
+      headers: { "idempotency-key": "cp13-create-patient-unique" }
     }),
     context
   );
-
-  assert.equal(response.status, 201);
   assertContractResponse("createPatient", response);
   assert.equal(
-    (response.body as { duplicateSuggestions: unknown[] }).duplicateSuggestions.length,
-    1
-  );
-  assert.deepEqual(duplicateInput, { fullName: "Synthetic Patient", phone: "+919999990001" });
-  assert.deepEqual(createInput, {
-    fullName: "Synthetic Patient",
-    phone: "+919999990001",
-    email: undefined,
-    dateOfBirth: undefined,
-    gender: "unknown",
-    source: "manual",
-    sourceDetail: {}
-  });
-  assert.equal(
-    events.outbox.every((event) => event.idempotencyKey === "cp13-create-patient-001"),
+    events.audit.some((event) => event.action === "attribution.touch.created"),
     true
   );
   assert.equal(
-    events.outbox.some((event) => event.eventType === "patient.duplicate_detected"),
-    true
-  );
-  assert.equal(
-    events.audit.some((event) => event.action === "patient.record.created"),
+    events.outbox.every((event) => event.idempotencyKey === "cp13-create-patient-unique"),
     true
   );
 });
@@ -136,17 +149,18 @@ test("lead matching refuses reassignment and wrong-tenant resources fail at scop
   );
 });
 
-test("appointment booking rejects conflicts and records explicit override evidence", async () => {
+test("appointment booking validates scoped configuration, rejects conflicts and disables override", async () => {
   const events = evidenceRecorder();
   let createCalls = 0;
+  let hasConflict = true;
   const appointment = appointmentRecord();
   const context = featureContext(
     {
       patientAdministration: { findPatientById: async () => patientRecord() },
       scheduling: {
-        findAppointmentConflicts: async () => [
-          { appointmentId: "conflict", reason: "provider_overlap" }
-        ],
+        ...validSchedulingConfiguration(),
+        findAppointmentConflicts: async () =>
+          hasConflict ? [{ appointmentId: "conflict", reason: "provider_overlap" }] : [],
         createAppointment: async () => {
           createCalls += 1;
           return appointment;
@@ -158,7 +172,7 @@ test("appointment booking rejects conflicts and records explicit override eviden
   const baseBody = {
     patientId: PATIENT_ID,
     providerUserId: ACTOR_ID,
-    appointmentTypeId: "10000000-0000-4000-8000-000000000030",
+    appointmentTypeId: APPOINTMENT_TYPE_ID,
     startAt: "2026-07-10T08:00:00.000Z"
   };
   await assert.rejects(
@@ -170,8 +184,18 @@ test("appointment booking rejects conflicts and records explicit override eviden
   );
   assert.equal(createCalls, 0);
 
+  await assert.rejects(
+    FRONT_OFFICE_FEATURE_HANDLERS.createAppointment!(
+      request("createAppointment", { body: { ...baseBody, allowConflictOverride: true } }),
+      context
+    ),
+    (error: unknown) => apiError(error, 409)
+  );
+  assert.equal(createCalls, 0);
+
+  hasConflict = false;
   const response = await FRONT_OFFICE_FEATURE_HANDLERS.createAppointment!(
-    request("createAppointment", { body: { ...baseBody, allowConflictOverride: true } }),
+    request("createAppointment", { body: baseBody }),
     context
   );
   assert.equal(response.status, 201);
@@ -183,9 +207,90 @@ test("appointment booking rejects conflicts and records explicit override eviden
   );
   assert.equal(
     events.audit.some(
-      (event) => (event.metadata as { conflictOverride?: boolean }).conflictOverride === true
+      (event) => (event.metadata as { conflictOverride?: boolean }).conflictOverride === false
     ),
     true
+  );
+});
+
+test("appointment booking rejects inactive or foreign configuration and unavailable providers", async () => {
+  const body = {
+    patientId: PATIENT_ID,
+    providerUserId: ACTOR_ID,
+    appointmentTypeId: APPOINTMENT_TYPE_ID,
+    chairId: CHAIR_ID,
+    startAt: "2026-07-10T08:00:00.000Z"
+  };
+  const patientAdministration = { findPatientById: async () => patientRecord() };
+
+  await assert.rejects(
+    FRONT_OFFICE_FEATURE_HANDLERS.createAppointment!(
+      request("createAppointment", { body }),
+      featureContext({
+        patientAdministration,
+        scheduling: {
+          ...validSchedulingConfiguration(),
+          listAppointmentTypes: async () => [appointmentTypeRecord({ active: false })]
+        }
+      })
+    ),
+    (error: unknown) => apiError(error, 404)
+  );
+  await assert.rejects(
+    FRONT_OFFICE_FEATURE_HANDLERS.createAppointment!(
+      request("createAppointment", { body }),
+      featureContext({
+        patientAdministration,
+        scheduling: {
+          ...validSchedulingConfiguration(),
+          listChairs: async () => [chairRecord({ active: false })]
+        }
+      })
+    ),
+    (error: unknown) => apiError(error, 404)
+  );
+  await assert.rejects(
+    FRONT_OFFICE_FEATURE_HANDLERS.createAppointment!(
+      request("createAppointment", { body }),
+      featureContext({
+        patientAdministration,
+        scheduling: {
+          ...validSchedulingConfiguration(),
+          listChairs: async () => [
+            chairRecord({ clinicId: "10000000-0000-4000-8000-000000000099" })
+          ]
+        }
+      })
+    ),
+    (error: unknown) => apiError(error, 404)
+  );
+  await assert.rejects(
+    FRONT_OFFICE_FEATURE_HANDLERS.createAppointment!(
+      request("createAppointment", { body }),
+      featureContext({
+        patientAdministration,
+        scheduling: {
+          ...validSchedulingConfiguration(),
+          listProviderSchedules: async () => [
+            providerScheduleRecord({ clinicId: "10000000-0000-4000-8000-000000000099" })
+          ]
+        }
+      })
+    ),
+    (error: unknown) => apiError(error, 409)
+  );
+  await assert.rejects(
+    FRONT_OFFICE_FEATURE_HANDLERS.createAppointment!(
+      request("createAppointment", { body }),
+      featureContext({
+        patientAdministration,
+        scheduling: {
+          ...validSchedulingConfiguration(),
+          listProviderSchedules: async () => [providerScheduleRecord({ active: false })]
+        }
+      })
+    ),
+    (error: unknown) => apiError(error, 409)
   );
 });
 
@@ -243,6 +348,60 @@ test("check-in creates queue and invalid terminal queue transitions are denied",
       context
     ),
     (error: unknown) => apiError(error, 409)
+  );
+});
+
+test("check-in rejects appointments outside the active clinic-local queue day before mutation", async () => {
+  let updateCalls = 0;
+  const context = featureContext({
+    scheduling: {
+      findAppointmentById: async () =>
+        appointmentRecord({ status: "confirmed", startAt: "2026-07-12T08:00:00.000Z" }),
+      updateAppointmentStatus: async () => {
+        updateCalls += 1;
+        return appointmentRecord({ status: "checked_in" });
+      }
+    }
+  });
+  await assert.rejects(
+    FRONT_OFFICE_FEATURE_HANDLERS.checkInAppointment!(
+      request("checkInAppointment", { path: { appointmentId: APPOINTMENT_ID } }),
+      context
+    ),
+    (error: unknown) => apiError(error, 409)
+  );
+  assert.equal(updateCalls, 0);
+});
+
+test("patient timeline exposes attribution as its own public category", async () => {
+  const context = featureContext({
+    patientAdministration: {
+      findPatientById: async () => patientRecord(),
+      findPatientTimeline: async () => [
+        {
+          id: "10000000-0000-4000-8000-000000000080",
+          tenantId: TENANT_ID,
+          clinicId: CLINIC_ID,
+          patientId: PATIENT_ID,
+          itemType: "attribution_touch_created",
+          sourceTable: "attribution_touches",
+          sourceId: "10000000-0000-4000-8000-000000000081",
+          occurredAt: "2026-07-10T08:00:00.000Z",
+          title: "Attribution captured",
+          summary: null,
+          metadata: {}
+        }
+      ]
+    }
+  });
+  const response = await FRONT_OFFICE_FEATURE_HANDLERS.getPatientTimeline!(
+    request("getPatientTimeline", { path: { patientId: PATIENT_ID }, query: { limit: 10 } }),
+    context
+  );
+  assertContractResponse("getPatientTimeline", response);
+  assert.equal(
+    (response.body as { timeline: Array<{ itemType: string }> }).timeline[0]?.itemType,
+    "attribution"
   );
 });
 
@@ -458,7 +617,7 @@ function appointmentRecord(overrides: Record<string, unknown> = {}) {
     patientId: PATIENT_ID,
     leadId: LEAD_ID,
     providerUserId: ACTOR_ID,
-    appointmentTypeId: "10000000-0000-4000-8000-000000000030",
+    appointmentTypeId: APPOINTMENT_TYPE_ID,
     chairId: null,
     status: "booked",
     startAt: "2026-07-11T08:00:00.000Z",
@@ -469,6 +628,57 @@ function appointmentRecord(overrides: Record<string, unknown> = {}) {
     createdAt: "2026-07-10T07:00:00.000Z",
     updatedAt: "2026-07-10T07:00:00.000Z",
     ...overrides
+  };
+}
+
+function appointmentTypeRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    id: APPOINTMENT_TYPE_ID,
+    tenantId: TENANT_ID,
+    clinicId: CLINIC_ID,
+    code: "consultation",
+    displayName: "Consultation",
+    defaultDurationMinutes: 30,
+    color: null,
+    active: true,
+    ...overrides
+  };
+}
+
+function chairRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    id: CHAIR_ID,
+    tenantId: TENANT_ID,
+    clinicId: CLINIC_ID,
+    code: "chair-1",
+    displayName: "Chair 1",
+    active: true,
+    ...overrides
+  };
+}
+
+function providerScheduleRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "10000000-0000-4000-8000-000000000032",
+    tenantId: TENANT_ID,
+    clinicId: CLINIC_ID,
+    providerUserId: ACTOR_ID,
+    dayOfWeek: 5,
+    startsAt: "09:00",
+    endsAt: "17:00",
+    effectiveFrom: "2026-07-01",
+    effectiveUntil: null,
+    active: true,
+    ...overrides
+  };
+}
+
+function validSchedulingConfiguration() {
+  return {
+    listAppointmentTypes: async () => [appointmentTypeRecord()],
+    listChairs: async () => [chairRecord()],
+    listProviderSchedules: async () => [providerScheduleRecord()],
+    findAppointmentConflicts: async () => []
   };
 }
 

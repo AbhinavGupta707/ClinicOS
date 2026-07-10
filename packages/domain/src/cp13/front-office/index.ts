@@ -3,6 +3,7 @@ import {
   calculateEndAt,
   type AppointmentRecord,
   type AppointmentStatus,
+  type ProviderScheduleRecord,
   type QueueStatus
 } from "../../appointment.ts";
 import type {
@@ -11,7 +12,7 @@ import type {
   IntakeFormSubmissionRecord
 } from "../../clinical.ts";
 import type { Clock } from "../../time.ts";
-import { clinicLocalDateFromClock } from "../../time.ts";
+import { clinicLocalDate, clinicLocalDateFromClock } from "../../time.ts";
 import type { PatientRecord, PatientTimelineItem } from "../../patient.ts";
 
 export interface FrontOfficeAppointmentDraft {
@@ -69,6 +70,73 @@ export function resolveClinicDay(input: {
   readonly clinicTimeZone: string;
 }): string {
   return input.requestedDate ?? clinicLocalDateFromClock(input.clock, input.clinicTimeZone);
+}
+
+export function appointmentClinicLocalDate(startAt: string, clinicTimeZone: string): string {
+  const instant = new Date(startAt);
+  if (Number.isNaN(instant.getTime())) {
+    throw new Error("Appointment startAt must be a valid date-time.");
+  }
+  return clinicLocalDate(instant, clinicTimeZone);
+}
+
+export function providerScheduleCoversAppointment(
+  schedule: Readonly<ProviderScheduleRecord>,
+  input: Readonly<{ startAt: string; endAt: string; clinicTimeZone: string }>
+): boolean {
+  if (!schedule.active) return false;
+  const start = new Date(input.startAt);
+  const end = new Date(input.endAt);
+  if (
+    Number.isNaN(start.getTime()) ||
+    Number.isNaN(end.getTime()) ||
+    end.getTime() <= start.getTime()
+  ) {
+    return false;
+  }
+
+  const startDate = clinicLocalDate(start, input.clinicTimeZone);
+  const endDate = clinicLocalDate(end, input.clinicTimeZone);
+  if (startDate !== endDate) return false;
+  if (startDate < schedule.effectiveFrom) return false;
+  if (schedule.effectiveUntil && startDate > schedule.effectiveUntil) return false;
+  if (new Date(`${startDate}T00:00:00.000Z`).getUTCDay() !== schedule.dayOfWeek) return false;
+
+  const startSecond = clinicLocalSecondOfDay(start, input.clinicTimeZone);
+  const endSecond = clinicLocalSecondOfDay(end, input.clinicTimeZone);
+  const scheduleStartSecond = scheduleSecondOfDay(schedule.startsAt);
+  const scheduleEndSecond = scheduleSecondOfDay(schedule.endsAt);
+  return startSecond >= scheduleStartSecond && endSecond <= scheduleEndSecond;
+}
+
+function clinicLocalSecondOfDay(instant: Date, timeZone: string): number {
+  const parts = new Intl.DateTimeFormat("en-GB", {
+    timeZone,
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hourCycle: "h23"
+  }).formatToParts(instant);
+  const byType = new Map(parts.map((part) => [part.type, part.value]));
+  const hour = Number(byType.get("hour"));
+  const minute = Number(byType.get("minute"));
+  const second = Number(byType.get("second"));
+  if (![hour, minute, second].every(Number.isInteger)) {
+    throw new Error(`Unable to derive clinic-local time for timezone ${timeZone}.`);
+  }
+  return hour * 3600 + minute * 60 + second;
+}
+
+function scheduleSecondOfDay(value: string): number {
+  const match = /^(\d{2}):(\d{2})(?::(\d{2})(?:\.\d+)?)?$/.exec(value);
+  if (!match) throw new Error("Provider schedule time is invalid.");
+  const hour = Number(match[1]);
+  const minute = Number(match[2]);
+  const second = Number(match[3] ?? "0");
+  if (hour > 23 || minute > 59 || second > 59) {
+    throw new Error("Provider schedule time is invalid.");
+  }
+  return hour * 3600 + minute * 60 + second;
 }
 
 export interface FrontOfficePrepSummary {

@@ -24,8 +24,10 @@ import {
 } from "@clinic-os/domain";
 import { createAuditEvent, type KnownAuditAction } from "@clinic-os/security";
 import {
+  appointmentClinicLocalDate,
   assertFrontOfficeAppointmentTransition,
   assertFrontOfficeQueueTransition,
+  providerScheduleCoversAppointment,
   resolveAppointmentWindow,
   resolveClinicDay
 } from "../../../../../packages/domain/src/cp13/front-office/index.ts";
@@ -125,6 +127,12 @@ async function handleCreatePatient(
       phone: input.phone
     });
   const duplicateSuggestions = buildPatientDuplicateSuggestions(input, candidates);
+  if (duplicateSuggestions.length > 0) {
+    throw conflict(
+      "Potential duplicate patients require explicit resolution before patient creation.",
+      { duplicate_suggestions: duplicateSuggestions }
+    );
+  }
   const patient = await context.repositories.patientAdministration.createPatient(input);
   const attributionSource = toLeadSource(input.source);
   if (attributionSource) {
@@ -135,6 +143,12 @@ async function handleCreatePatient(
       touchType: "first_touch",
       occurredAt: nowIso(context),
       metadata: input.sourceDetail ?? {}
+    });
+    await appendAudit(request, context, "attribution.touch.created", {
+      patientId: patient.id,
+      resourceType: "attribution_touch",
+      resourceId: touch.id,
+      metadata: { source: touch.source, touchType: "first_touch" }
     });
     await appendOutbox(request, context, {
       eventType: "attribution.touch.created",
@@ -164,15 +178,6 @@ async function handleCreatePatient(
   if (sourceLead && !matchedLead)
     throw notFound("Source lead not found after patient creation.", { lead_id: sourceLead.id });
   if (matchedLead) await recordLeadMatch(request, context, matchedLead, patient.id, true);
-  if (duplicateSuggestions.length > 0) {
-    await appendOutbox(request, context, {
-      eventType: "patient.duplicate_detected",
-      aggregateType: "patient",
-      aggregateId: patient.id,
-      patientId: patient.id,
-      payload: { patientId: patient.id, suggestions: duplicateSuggestions }
-    });
-  }
   return created({ patient, duplicateSuggestions, matchedLead });
 }
 
@@ -286,6 +291,11 @@ async function handleCreateLead(
     resourceId: lead.id,
     metadata: { source: lead.source, intent: lead.intent }
   });
+  await appendAudit(request, context, "attribution.touch.created", {
+    resourceType: "attribution_touch",
+    resourceId: touch.id,
+    metadata: { source: touch.source, touchType: "first_touch", leadId: lead.id }
+  });
   await appendOutbox(request, context, {
     eventType: "lead.created",
     aggregateType: "lead",
@@ -387,6 +397,12 @@ async function handleConvertLeadToAppointment(
     resourceType: "lead",
     resourceId: leadId,
     metadata: { appointmentId: appointment.id }
+  });
+  await appendAudit(request, context, "attribution.touch.created", {
+    patientId: appointment.patientId,
+    resourceType: "attribution_touch",
+    resourceId: touch.id,
+    metadata: { source: touch.source, touchType: "booking_touch", leadId }
   });
   await appendOutbox(request, context, {
     eventType: "lead.converted_to_appointment",
@@ -734,6 +750,12 @@ async function bookAppointment(
   context: ClinicFeatureExecutionContext,
   input: CreateAppointmentInput & { allowConflictOverride: boolean }
 ): Promise<AppointmentRecord> {
+  if (input.allowConflictOverride) {
+    throw conflict(
+      "Appointment conflict override is unavailable because durable scheduling constraints cannot honor it safely.",
+      { allow_conflict_override: false }
+    );
+  }
   const patient = await context.repositories.patientAdministration.findPatientById(input.patientId);
   if (!patient) throw notFound("Patient not found.", { patient_id: input.patientId });
   if (input.leadId) {
@@ -742,13 +764,65 @@ async function bookAppointment(
     if (lead.patientId !== input.patientId)
       throw conflict("Lead is not matched to the appointment patient.", { lead_id: lead.id });
   }
+  const [appointmentTypes, chairs, providerSchedules] = await Promise.all([
+    context.repositories.scheduling.listAppointmentTypes(),
+    context.repositories.scheduling.listChairs(),
+    context.repositories.scheduling.listProviderSchedules(input.providerUserId)
+  ]);
+  const scope = {
+    tenantId: request.access.context.tenant.id,
+    clinicId: request.access.clinicId
+  };
+  const appointmentType = appointmentTypes.find(
+    (candidate) =>
+      candidate.id === input.appointmentTypeId &&
+      candidate.active &&
+      candidate.tenantId === scope.tenantId &&
+      candidate.clinicId === scope.clinicId
+  );
+  if (!appointmentType) {
+    throw notFound("Active appointment type not found in the verified clinic scope.", {
+      appointment_type_id: input.appointmentTypeId
+    });
+  }
+  if (input.chairId) {
+    const chair = chairs.find(
+      (candidate) =>
+        candidate.id === input.chairId &&
+        candidate.active &&
+        candidate.tenantId === scope.tenantId &&
+        candidate.clinicId === scope.clinicId
+    );
+    if (!chair) {
+      throw notFound("Active chair not found in the verified clinic scope.", {
+        chair_id: input.chairId
+      });
+    }
+  }
+  const providerAvailable = providerSchedules.some(
+    (schedule) =>
+      schedule.providerUserId === input.providerUserId &&
+      schedule.tenantId === scope.tenantId &&
+      schedule.clinicId === scope.clinicId &&
+      providerScheduleCoversAppointment(schedule, {
+        startAt: input.startAt,
+        endAt: input.endAt,
+        clinicTimeZone: request.access.clinic.timezone
+      })
+  );
+  if (!providerAvailable) {
+    throw conflict("Provider is not actively scheduled for the requested clinic-local window.", {
+      provider_user_id: input.providerUserId,
+      clinic_local_date: appointmentClinicLocalDate(input.startAt, request.access.clinic.timezone)
+    });
+  }
   const conflicts = await context.repositories.scheduling.findAppointmentConflicts({
     providerUserId: input.providerUserId,
     chairId: input.chairId ?? null,
     startAt: input.startAt,
     endAt: input.endAt
   });
-  if (conflicts.length > 0 && !input.allowConflictOverride) {
+  if (conflicts.length > 0) {
     throw conflict("Appointment conflicts with an existing booking.", { conflicts });
   }
   const { allowConflictOverride: _override, ...createInput } = input;
@@ -760,7 +834,7 @@ async function bookAppointment(
     metadata: {
       source: appointment.source,
       status: appointment.status,
-      conflictOverride: conflicts.length > 0
+      conflictOverride: false
     }
   });
   await appendOutbox(request, context, {
@@ -777,7 +851,7 @@ async function bookAppointment(
       endAt: appointment.endAt,
       source: appointment.source,
       status: appointment.status,
-      conflictOverride: conflicts.length > 0
+      conflictOverride: false
     }
   });
   await appendOutbox(request, context, {
@@ -851,10 +925,20 @@ async function checkInAppointmentIdempotently(
 ) {
   const existing = await context.repositories.scheduling.findAppointmentById(appointmentId);
   if (!existing) throw notFound("Appointment not found.", { appointment_id: appointmentId });
+  const activeQueueDay = requestClinicDay(request, context);
+  const appointmentDay = appointmentClinicLocalDate(
+    existing.startAt,
+    request.access.clinic.timezone
+  );
+  if (appointmentDay !== activeQueueDay) {
+    throw conflict("Appointment clinic-local date does not match the active queue day.", {
+      appointment_id: appointmentId,
+      appointment_date: appointmentDay,
+      active_queue_date: activeQueueDay
+    });
+  }
   if (existing.status === "checked_in") {
-    const queue = await context.repositories.scheduling.listQueueEntries(
-      requestClinicDay(request, context)
-    );
+    const queue = await context.repositories.scheduling.listQueueEntries(activeQueueDay);
     const queueEntry = queue.find((entry) => entry.appointmentId === appointmentId);
     if (!queueEntry) {
       throw conflict("Checked-in appointment is missing its atomic queue entry.", {
@@ -1012,6 +1096,7 @@ function publicTimelineItem(item: PatientTimelineItem) {
 
 function publicTimelineCategory(itemType: PatientTimelineItem["itemType"]): string {
   if (itemType.startsWith("appointment")) return "appointment";
+  if (itemType.startsWith("attribution")) return "attribution";
   if (itemType.startsWith("lead")) return "lead";
   if (itemType.startsWith("queue") || itemType === "patient_checked_in") return "queue";
   if (itemType.startsWith("consent")) return "consent";

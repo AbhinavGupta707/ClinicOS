@@ -28,14 +28,18 @@ dashboard or other live external actions.
 
 ## Functional coverage
 
-- Patients: search/list, ambiguity-reporting create, explicit lead match, read, update and public
-  timeline projection. Duplicate candidates never cause an automatic merge.
+- Patients: search/list, ambiguity-safe create, explicit lead match, read, update and public timeline
+  projection. Any duplicate candidate fails closed before creation until an explicit master-owned
+  resolution contract exists.
 - Leads and attribution: manual/official-source capture, first-touch and booking-touch attribution,
   explicit patient matching, state validation and appointment conversion.
-- Scheduling: configuration reads, appointment list/create, provider/chair conflict detection,
-  explicit conflict override evidence, confirm/update/check-in/no-show transitions and runtime IDs.
+- Scheduling: configuration reads, appointment list/create, active clinic appointment-type/chair and
+  provider-schedule validation, provider/chair conflict detection, confirm/update/check-in/no-show
+  transitions and runtime IDs. Conflict override fails closed because current durable exclusion
+  constraints cannot honor it.
 - Queue/day start: clinic-local date derivation, no UTC date slicing, transition validation,
-  idempotent check-in queue behavior and authoritative morning dashboard composition.
+  idempotent same-day check-in queue behavior, clinic-local appointment/day equality and
+  authoritative morning dashboard composition.
 - Intake/preparation: versioned template list/create, active-template validation, durable form
   submission evidence and authorized patient preparation from patient, appointment, intake,
   consent and timeline ports. All reported data coverage is actually loaded; no unavailable
@@ -49,19 +53,24 @@ dashboard or other live external actions.
 
 Base revision before lane commit: `3d3c5c2e64a4cbb1af6da318c995cdda90b9fb83`.
 
-| Command                                                                                                                                                                       | Result                                                                                                                                                                                                                                                                                 | Skips |
-| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----: |
-| `node --test packages/domain/test/cp13-front-office-domain.test.ts packages/db/test/cp13-front-office-port-boundary.test.ts apps/api/test/cp13-front-office-handlers.test.ts` | Pass, 13/13. Includes exact 26-ID coverage, response-contract parsing, central permission policies, ambiguous matching, wrong-scope 404, conflict/override, semantic duplicate check-in, queue invalid state, audit/outbox keys, clinic-local date and authoritative dashboard inputs. |     0 |
-| `npm --workspace @clinic-os/web test -- cp13-front-office-loaders.test.ts`                                                                                                    | Pass, 5/5. Generated-client calls, refresh-safe failure, scoped-resource versus registration failure classification, granular patient preparation and 390px-relevant state/component structure.                                                                                        |     0 |
-| `npm --workspace @clinic-os/api run typecheck`                                                                                                                                | Pass using the existing primary-checkout dependency installation through ignored local symlinks.                                                                                                                                                                                       |     0 |
-| `npm --workspace @clinic-os/domain run typecheck`                                                                                                                             | Pass.                                                                                                                                                                                                                                                                                  |     0 |
-| `npm --workspace @clinic-os/db run typecheck`                                                                                                                                 | Pass.                                                                                                                                                                                                                                                                                  |     0 |
-| API/domain/DB lane lint and `node --check`; lane Prettier check                                                                                                               | Pass.                                                                                                                                                                                                                                                                                  |     0 |
+| Command                                                                                                                                                                       | Result                                                                                                                                                                                                                                                                                                                                         | Skips |
+| ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----: |
+| `node --test packages/domain/test/cp13-front-office-domain.test.ts packages/db/test/cp13-front-office-port-boundary.test.ts apps/api/test/cp13-front-office-handlers.test.ts` | Pass, 18/18. Includes exact 26-ID coverage, response-contract parsing, duplicate fail-closed behavior, scoped active scheduling configuration and provider-window checks, disabled override, same-day check-in, attribution category/evidence, wrong-scope defense, queue invalid state, clinic-local date and authoritative dashboard inputs. |     0 |
+| `npm --workspace @clinic-os/web test -- cp13-front-office-loaders.test.ts`                                                                                                    | Pass, 6/6. Generated-client calls, refresh-safe failure, authentication versus permission classification, unknown-error masking, scoped-resource versus registration failure classification, patient preparation and 390px-relevant structure.                                                                                                 |     0 |
+| `npm --workspace @clinic-os/api run typecheck`                                                                                                                                | Pass using the existing primary-checkout dependency installation through ignored local symlinks.                                                                                                                                                                                                                                               |     0 |
+| `npm --workspace @clinic-os/domain run typecheck`                                                                                                                             | Pass.                                                                                                                                                                                                                                                                                                                                          |     0 |
+| `npm --workspace @clinic-os/db run typecheck`                                                                                                                                 | Pass.                                                                                                                                                                                                                                                                                                                                          |     0 |
+| API/domain/DB lane lint and `node --check`; lane Prettier check                                                                                                               | Pass.                                                                                                                                                                                                                                                                                                                                          |     0 |
 
 The isolated worktree initially had no dependencies. `npm ci --ignore-scripts` was attempted but
 failed with `ENOSPC` and its partial ignored install was removed. Read-only dependency symlinks to
 the already-installed primary checkout were used for focused verification without changing a
 manifest or lockfile.
+
+For this correction pass the worktree again had no dependency links. Domain/port tests ran directly;
+API and web tests used temporary `/private/tmp` resolution configuration against the repository
+sources and the read-only primary-checkout test binaries. Targeted strict API/domain compilation
+passed. No dependency, manifest, lockfile or product path outside this lane was changed.
 
 The web package's full typecheck could not be claimed in this lane: the primary checkout currently
 provides a newer TypeScript/toolchain that fails existing `globals.css` side-effect resolution and
@@ -90,3 +99,8 @@ dashboard issue was a port-discovery issue resolved by the existing transaction-
    front-office lane does not call Lane D's continuity repository directly.
 6. Run route-level wrong-role/wrong-tenant, same-key replay, ETag conflict, clean PostgreSQL restart,
    audit/outbox/timeline reconciliation, Browser Use and repeatable Playwright at desktop and 390px.
+7. Add frozen event/audit taxonomy and durable timeline support for lead status changes and intake
+   template creation before requiring evidence for those mutations. This lane deliberately does not
+   mislabel them as existing lead-created, form-response, or unrelated audit events.
+8. Add an explicit duplicate-resolution operation/contract before allowing staff to create a patient
+   when scoped duplicate candidates exist; the lane currently fails closed without writing.

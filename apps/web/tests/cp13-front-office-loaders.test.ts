@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 import { ClinicOsApiError } from "@clinic-os/api-client-generated";
 import {
+  classifyFrontOfficeLoadFailure,
   loadFrontOfficeDay,
   loadFrontOfficePatientWorkspace,
   refreshFrontOfficeDay,
@@ -81,6 +82,35 @@ describe("CP13 front-office durable loaders", () => {
       message: "The requested clinic record was not found in the verified clinic scope.",
       requestId: "cp13-patient-not-found",
       retryable: false
+    });
+  });
+
+  it("distinguishes authentication from permission denial and masks unknown errors", () => {
+    const apiError = (status: number, code: string, requestId: string) =>
+      new ClinicOsApiError(status, {
+        error: { code, message: "Sensitive upstream detail", details: {}, request_id: requestId }
+      });
+    expect(classifyFrontOfficeLoadFailure(apiError(401, "UNAUTHENTICATED", "request-401"))).toEqual(
+      {
+        status: "unavailable",
+        reason: "authentication_unavailable",
+        message: "Your verified clinic session cannot load this front-office workspace.",
+        requestId: "request-401"
+      }
+    );
+    expect(
+      classifyFrontOfficeLoadFailure(apiError(403, "PERMISSION_DENIED", "request-403"))
+    ).toEqual({
+      status: "unavailable",
+      reason: "permission_denied",
+      message: "Your verified clinic session does not have permission to load this workspace.",
+      requestId: "request-403"
+    });
+    expect(classifyFrontOfficeLoadFailure(new Error("secret provider failure"))).toEqual({
+      status: "error",
+      message: "The front-office request failed unexpectedly.",
+      requestId: null,
+      retryable: true
     });
   });
 

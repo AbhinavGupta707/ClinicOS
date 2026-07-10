@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { FixedClock } from "../src/time.ts";
 import {
+  appointmentClinicLocalDate,
   assertFrontOfficeQueueTransition,
   buildFrontOfficePrepSummary,
+  providerScheduleCoversAppointment,
   resolveAppointmentWindow,
   resolveClinicDay
 } from "../src/cp13/front-office/index.ts";
@@ -29,6 +31,41 @@ test("clinic day is derived in the clinic timezone instead of slicing UTC", () =
   assert.equal(
     resolveClinicDay({ requestedDate: "2026-07-15", clock, clinicTimeZone: "Asia/Kolkata" }),
     "2026-07-15"
+  );
+});
+
+test("provider schedule coverage uses the clinic-local date, weekday and working window", () => {
+  const schedule = {
+    id: "10000000-0000-4000-8000-000000000001",
+    tenantId: "10000000-0000-4000-8000-000000000002",
+    clinicId: "10000000-0000-4000-8000-000000000003",
+    providerUserId: "10000000-0000-4000-8000-000000000004",
+    dayOfWeek: 5,
+    startsAt: "09:00:00",
+    endsAt: "17:00:00",
+    effectiveFrom: "2026-07-01",
+    effectiveUntil: null,
+    active: true
+  };
+  assert.equal(
+    appointmentClinicLocalDate("2026-07-10T08:00:00.000Z", "Asia/Kolkata"),
+    "2026-07-10"
+  );
+  assert.equal(
+    providerScheduleCoversAppointment(schedule, {
+      startAt: "2026-07-10T08:00:00.000Z",
+      endAt: "2026-07-10T08:30:00.000Z",
+      clinicTimeZone: "Asia/Kolkata"
+    }),
+    true
+  );
+  assert.equal(
+    providerScheduleCoversAppointment(schedule, {
+      startAt: "2026-07-10T12:00:00.000Z",
+      endAt: "2026-07-10T12:30:00.000Z",
+      clinicTimeZone: "Asia/Kolkata"
+    }),
+    false
   );
 });
 
