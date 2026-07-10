@@ -41,7 +41,7 @@ describe("CP13 continuity operations generated-client loader", () => {
     );
     expect(state.status).toBe("stale");
     if (state.status !== "stale") throw new Error("Expected stale state");
-    expect(state.data.freshness.status).toBe("stale");
+    expect(state.data.freshness?.status).toBe("stale");
   });
 
   it("returns an honest unavailable state when a durable analytics source is unavailable", async () => {

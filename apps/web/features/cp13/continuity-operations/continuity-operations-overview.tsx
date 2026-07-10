@@ -48,8 +48,11 @@ export function ContinuityOperationsOverview({ state }: ContinuityOperationsOver
         <Metric label="Corrective actions" value={data.correctiveActions.length} />
       </dl>
       <p>
-        Generated: {data.freshness.generatedAt ?? "Unavailable"}. No procurement, provider delivery,
-        payment, or workflow completion is inferred by this summary.
+        {data.freshness
+          ? `Analytics generated: ${data.freshness.generatedAt ?? "Unavailable"}. `
+          : "This role-scoped operational view does not request owner analytics. "}
+        No procurement, provider delivery, payment, or workflow completion is inferred by this
+        summary.
       </p>
     </section>
   );

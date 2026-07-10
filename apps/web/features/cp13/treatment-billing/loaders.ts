@@ -1,3 +1,5 @@
+import { isClinicOsSessionUnavailable } from "@/lib/cp13-api-client";
+
 export type TreatmentBillingPublicRecord = Readonly<Record<string, unknown>>;
 
 /**
@@ -51,6 +53,15 @@ export async function loadTreatmentBillingWorkspace(
       loadedAt
     };
   } catch (error) {
+    if (isClinicOsSessionUnavailable(error)) {
+      return {
+        status: "unavailable",
+        code: error.code,
+        message:
+          "The authenticated session token provider is unavailable. No billing fixture was substituted.",
+        requestId: null
+      };
+    }
     if (isGeneratedClientError(error)) {
       if (error.code === "PERMISSION_DENIED" || error.code === "UNAUTHENTICATED") {
         return {

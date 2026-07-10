@@ -1,3 +1,5 @@
+import { isClinicOsSessionUnavailable } from "@/lib/cp13-api-client";
+
 export type PublicJsonValue =
   string | number | boolean | null | readonly PublicJsonValue[] | PublicJsonObject;
 export interface PublicJsonObject {
@@ -258,6 +260,14 @@ export async function requestClinicalMediaAccess(
 }
 
 export function classifyClinicalCapabilityFailure(error: unknown): ClinicalCapabilityFailure {
+  if (isClinicOsSessionUnavailable(error)) {
+    return {
+      kind: "unavailable",
+      message:
+        "The authenticated session token provider is unavailable; no clinical data was loaded.",
+      requestId: null
+    };
+  }
   if (isGeneratedApiError(error)) {
     if (error.code === "CONFIGURATION_ERROR" || error.code === "DEPENDENCY_UNAVAILABLE") {
       return {

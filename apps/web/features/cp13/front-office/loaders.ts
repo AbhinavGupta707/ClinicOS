@@ -19,6 +19,8 @@ import {
   type SubmitPatientIntakeFormResponse
 } from "@clinic-os/api-client-generated";
 
+import { isClinicOsSessionUnavailable } from "@/lib/cp13-api-client";
+
 export type FrontOfficeUnavailableReason =
   | "dependency_unavailable"
   | "endpoint_not_registered"
@@ -199,6 +201,15 @@ export function classifyFrontOfficeLoadFailure<T = never>(
   error: unknown,
   options: { readonly notFound: "endpoint" | "resource" } = { notFound: "endpoint" }
 ): FrontOfficeLoadState<T> {
+  if (isClinicOsSessionUnavailable(error)) {
+    return {
+      status: "unavailable",
+      reason: "authentication_unavailable",
+      message:
+        "The authenticated session token provider is unavailable; no clinic data or fixture fallback was used.",
+      requestId: null
+    };
+  }
   if (error instanceof ClinicOsApiError) {
     if (error.status === 401) {
       return {

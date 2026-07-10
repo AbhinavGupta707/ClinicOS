@@ -7,7 +7,7 @@ export type VersionedPublicResource = PublicJsonObject & {
 };
 
 export interface ContinuityOperationsOverviewData {
-  readonly ownerDashboard: PublicJsonObject;
+  readonly ownerDashboard: PublicJsonObject | null;
   readonly tasks: readonly VersionedPublicResource[];
   readonly recalls: readonly PublicJsonObject[];
   readonly sopRuns: readonly VersionedPublicResource[];
@@ -17,8 +17,10 @@ export interface ContinuityOperationsOverviewData {
   readonly incidents: readonly PublicJsonObject[];
   readonly correctiveActions: readonly VersionedPublicResource[];
   readonly loadedAt: string;
-  readonly freshness: OwnerFreshness;
+  readonly freshness: OwnerFreshness | null;
 }
+
+export type ContinuityOperationsScope = "continuity" | "lab" | "operations" | "owner";
 
 export interface OwnerFreshness {
   readonly status: "fresh" | "stale" | "unavailable";
@@ -85,9 +87,18 @@ interface ReadQuery {
 
 export async function loadContinuityOperationsOverview(
   client: ContinuityOperationsGeneratedClient,
-  input: { readonly from: string; readonly to: string; readonly observedAt: Date }
+  input: {
+    readonly from: string;
+    readonly to: string;
+    readonly observedAt: Date;
+    readonly scope?: ContinuityOperationsScope;
+  }
 ): Promise<ContinuityOperationsLoadState> {
   try {
+    const scope = input.scope ?? "owner";
+    const includeContinuity = scope === "continuity" || scope === "owner";
+    const includeLab = scope === "lab" || scope === "owner";
+    const includeOperations = scope === "operations" || scope === "owner";
     const [
       dashboardResponse,
       tasksResponse,
@@ -99,20 +110,38 @@ export async function loadContinuityOperationsOverview(
       incidentsResponse,
       correctiveActionsResponse
     ] = await Promise.all([
-      client.getOwnerDashboard({ query: { from: input.from, to: input.to } }),
-      client.listTasks({ query: { dueBefore: endOfDay(input.to), limit: 200 } }),
-      client.listRecalls({ query: { dueBefore: endOfDay(input.to), limit: 200 } }),
-      client.listSopRuns({ query: { dueBefore: endOfDay(input.to), limit: 200 } }),
-      client.listLabCases({ query: { dueBefore: endOfDay(input.to), limit: 200 } }),
-      client.listInventoryItems({ query: { limit: 200 } }),
-      client.listInventoryExceptions({ query: { limit: 200 } }),
-      client.listIncidents({ query: { limit: 200 } }),
-      client.listCorrectiveActions({ query: { limit: 200 } })
+      scope === "owner"
+        ? client.getOwnerDashboard({ query: { from: input.from, to: input.to } })
+        : Promise.resolve(null),
+      includeContinuity
+        ? client.listTasks({ query: { dueBefore: endOfDay(input.to), limit: 200 } })
+        : Promise.resolve({ tasks: [] }),
+      includeContinuity
+        ? client.listRecalls({ query: { dueBefore: endOfDay(input.to), limit: 200 } })
+        : Promise.resolve({ recalls: [] }),
+      includeContinuity
+        ? client.listSopRuns({ query: { dueBefore: endOfDay(input.to), limit: 200 } })
+        : Promise.resolve({ sopRuns: [] }),
+      includeLab
+        ? client.listLabCases({ query: { dueBefore: endOfDay(input.to), limit: 200 } })
+        : Promise.resolve({ labCases: [] }),
+      includeOperations
+        ? client.listInventoryItems({ query: { limit: 200 } })
+        : Promise.resolve({ items: [] }),
+      includeOperations
+        ? client.listInventoryExceptions({ query: { limit: 200 } })
+        : Promise.resolve({ exceptions: [] }),
+      includeOperations
+        ? client.listIncidents({ query: { limit: 200 } })
+        : Promise.resolve({ incidents: [] }),
+      includeOperations
+        ? client.listCorrectiveActions({ query: { limit: 200 } })
+        : Promise.resolve({ correctiveActions: [] })
     ]);
 
-    const freshness = parseFreshness(dashboardResponse, input.observedAt);
+    const freshness = dashboardResponse ? parseFreshness(dashboardResponse, input.observedAt) : null;
     const data: ContinuityOperationsOverviewData = {
-      ownerDashboard: dashboardResponse.dashboard,
+      ownerDashboard: dashboardResponse?.dashboard ?? null,
       tasks: tasksResponse.tasks,
       recalls: recallsResponse.recalls,
       sopRuns: sopRunsResponse.sopRuns,
@@ -124,6 +153,7 @@ export async function loadContinuityOperationsOverview(
       loadedAt: input.observedAt.toISOString(),
       freshness
     };
+    if (!freshness) return { status: "ready", data };
     return freshness.status === "fresh"
       ? { status: "ready", data }
       : freshness.status === "stale"
@@ -138,6 +168,18 @@ export async function loadContinuityOperationsOverview(
             }
           };
   } catch (error) {
+    if (isClinicOsSessionUnavailable(error)) {
+      return {
+        status: "unauthenticated",
+        problem: {
+          code: error.code,
+          message:
+            "The authenticated session token provider is unavailable. No alternate data was substituted.",
+          requestId: null,
+          retryAfterSeconds: null
+        }
+      };
+    }
     if (isGeneratedClientError(error)) {
       const unauthenticated = error.status === 401 || error.status === 403;
       return {
@@ -241,3 +283,4 @@ function ageSeconds(generatedAt: string, observedAt: Date): number {
 function endOfDay(date: string): string {
   return `${date}T23:59:59.999Z`;
 }
+import { isClinicOsSessionUnavailable } from "@/lib/cp13-api-client";
