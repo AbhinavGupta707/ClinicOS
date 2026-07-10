@@ -296,7 +296,28 @@ function schemaType(definition: RuntimeSchema): string {
   if (definition.enum) {
     result = definition.enum.map(literalType).join(" | ");
   } else if (definition.oneOf || definition.anyOf) {
-    result = (definition.oneOf ?? definition.anyOf ?? []).map(schemaType).join(" | ");
+    const variants = definition.oneOf ?? definition.anyOf ?? [];
+    if (definition.type === "object" || definition.properties) {
+      result = variants
+        .map((variant) =>
+          schemaType({
+            ...definition,
+            ...variant,
+            type: variant.type ?? definition.type,
+            properties: {
+              ...(definition.properties ?? {}),
+              ...(variant.properties ?? {})
+            },
+            required: [...new Set([...(definition.required ?? []), ...(variant.required ?? [])])],
+            nullable: false,
+            oneOf: undefined,
+            anyOf: undefined
+          })
+        )
+        .join(" | ");
+    } else {
+      result = variants.map(schemaType).join(" | ");
+    }
   } else if (definition.type === "string") {
     result = definition.format === "binary" ? "Uint8Array" : "string";
   } else if (definition.type === "number" || definition.type === "integer") {
@@ -553,14 +574,16 @@ const GENERATED_CLIENT_CLASS_CORE = `  readonly #options: ClinicOsApiClientOptio
     }
     const requestId = this.#options.getRequestId?.();
     if (requestId) headers["x-request-id"] = requestId;
-    let body: string | Uint8Array | undefined;
+    let body: string | Uint8Array<ArrayBuffer> | undefined;
     if (operation.bodyEncoding === "raw") {
       if (!operation.contentType) throw new TypeError("Raw ClinicOS operations require a content type.");
       headers["content-type"] = operation.contentType;
       if (!(operation.input.body instanceof Uint8Array)) {
         throw new TypeError("Binary ClinicOS operations require a Uint8Array body.");
       }
-      body = operation.input.body;
+      const rawBody = new Uint8Array(operation.input.body.byteLength);
+      rawBody.set(operation.input.body);
+      body = rawBody;
     } else if (operation.contentType === "application/json") {
       headers["content-type"] = "application/json";
       body = JSON.stringify(operation.input.body ?? {});

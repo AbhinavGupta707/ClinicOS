@@ -19,7 +19,8 @@ const FIRST_SCHEDULE = "13000000-0000-4000-8000-000000000101" as UUID;
 const SECOND_SCHEDULE = "13000000-0000-4000-8000-000000000102" as UUID;
 const TEMPLATE = "13000000-0000-4000-8000-000000000103" as UUID;
 const AS_OF = "2026-07-10T12:00:00.000Z";
-const SNAPSHOT = new Date("2026-07-10T11:00:00.000Z");
+const SNAPSHOT = new Date("2026-07-10T12:05:00.000Z");
+const CURSOR_SECRET = "cp13-synthetic-cursor-signing-secret-000000000001";
 const POSTGRES_SOURCE = readFileSync(new URL("../src/postgres.ts", import.meta.url), "utf8");
 const MIGRATION = readFileSync(
   new URL("../migrations/0016_cp13_bounded_due_generation.sql", import.meta.url),
@@ -29,7 +30,8 @@ const MIGRATION = readFileSync(
 test("CP13 SOP due generation scans a bounded snapshot page and resumes from its opaque cursor", async () => {
   const client = new SopSchedulePageClient();
   const repository = new PostgresClinicOperationsRepository(client, {
-    clock: { now: () => new Date(SNAPSHOT) }
+    clock: { now: () => new Date(SNAPSHOT) },
+    dueGenerationCursorSecret: CURSOR_SECRET
   });
 
   const first = await repository.generateDueSopRuns(SCOPE, {
@@ -64,7 +66,8 @@ test("CP13 SOP due generation scans a bounded snapshot page and resumes from its
 
 test("CP13 due generation rejects oversized batches and cross-pass cursor reuse", async () => {
   const repository = new PostgresClinicOperationsRepository(new SopSchedulePageClient(), {
-    clock: { now: () => new Date(SNAPSHOT) }
+    clock: { now: () => new Date(SNAPSHOT) },
+    dueGenerationCursorSecret: CURSOR_SECRET
   });
   await assert.rejects(
     repository.generateDueSopRuns(SCOPE, { asOf: AS_OF, batchSize: 26 }),
@@ -75,7 +78,7 @@ test("CP13 due generation rejects oversized batches and cross-pass cursor reuse"
   assert.ok(first.nextCursor);
   await assert.rejects(
     repository.generateDueSopRuns(SCOPE, {
-      asOf: "2026-07-11T12:00:00.000Z",
+      asOf: "2026-07-10T11:59:00.000Z",
       cursor: first.nextCursor
     }),
     (error) => error instanceof DueGenerationInputError && /same asOf instant/u.test(error.message)
@@ -88,12 +91,30 @@ test("CP13 due generation rejects oversized batches and cross-pass cursor reuse"
     (error) =>
       error instanceof DueGenerationInputError && /wrong type or version/u.test(error.message)
   );
+
+  const tampered = `${first.nextCursor.slice(0, -1)}${first.nextCursor.endsWith("A") ? "B" : "A"}`;
+  await assert.rejects(
+    repository.generateDueSopRuns(SCOPE, { asOf: AS_OF, cursor: tampered }),
+    (error) => error instanceof DueGenerationInputError && /cursor is invalid/u.test(error.message)
+  );
+  await assert.rejects(
+    repository.generateDueSopRuns(
+      { ...SCOPE, clinicId: "10000000-0000-4000-8000-000000000102" as UUID },
+      { asOf: AS_OF, cursor: first.nextCursor }
+    ),
+    (error) => error instanceof DueGenerationInputError && /does not belong/u.test(error.message)
+  );
+  await assert.rejects(
+    repository.generateDueSopRuns(SCOPE, { asOf: "2026-07-11T12:00:00.000Z" }),
+    (error) => error instanceof DueGenerationInputError && /cannot be in the future/u.test(error.message)
+  );
 });
 
 test("CP13 SOP catch-up resumes within one schedule and preserves clinic-local due time", async () => {
   const client = new SopCatchUpClient();
   const repository = new PostgresClinicOperationsRepository(client, {
-    clock: { now: () => new Date(SNAPSHOT) }
+    clock: { now: () => new Date(SNAPSHOT) },
+    dueGenerationCursorSecret: CURSOR_SECRET
   });
 
   const first = await repository.generateDueSopRuns(SCOPE, { asOf: AS_OF, batchSize: 2 });
@@ -116,6 +137,37 @@ test("CP13 SOP catch-up resumes within one schedule and preserves clinic-local d
     "2026-07-09T03:30:00.000Z",
     "2026-07-10T03:30:00.000Z"
   ]);
+});
+
+test("CP13 SOP generation advances past a nonexistent clinic-local DST occurrence", async () => {
+  const client = new SingleSopScheduleClient({
+    ...scheduleRow(FIRST_SCHEDULE),
+    starts_on: "2026-03-08",
+    due_time: "02:30:00",
+    timezone: "America/New_York"
+  });
+  const repository = new PostgresClinicOperationsRepository(client, {
+    clock: { now: () => new Date("2026-03-08T23:30:00.000Z") },
+    dueGenerationCursorSecret: CURSOR_SECRET
+  });
+  const first = await repository.generateDueSopRuns(SCOPE, {
+    asOf: "2026-03-08T23:00:00.000Z",
+    batchSize: 1
+  });
+  assert.equal(first.processedCount, 1);
+  assert.deepEqual(first.runsCreated, []);
+  assert.deepEqual(first.skippedExistingKeys, [
+    `sop-run:${FIRST_SCHEDULE}:2026-03-08:nonexistent-local-time`
+  ]);
+  assert.equal(first.complete, false);
+  assert.ok(first.nextCursor);
+
+  const second = await repository.generateDueSopRuns(SCOPE, {
+    asOf: "2026-03-08T23:00:00.000Z",
+    batchSize: 1,
+    cursor: first.nextCursor
+  });
+  assert.equal(second.complete, true);
 });
 
 test("CP13 continuity SQL and migration enforce bounded keyset pages and checkout idempotency", () => {
@@ -223,6 +275,34 @@ class SopCatchUpClient implements SqlConnectionFactory {
       return { rows: run ? [run as TResult] : [] };
     }
     throw new Error(`Unexpected CP13 SOP catch-up SQL: ${sql}`);
+  }
+}
+
+class SingleSopScheduleClient implements SqlConnectionFactory {
+  readonly inTransaction = true;
+  readonly #row: Record<string, unknown>;
+
+  constructor(row: Record<string, unknown>) {
+    this.#row = row;
+  }
+
+  async query<TResult = Record<string, unknown>>(
+    rawSql: string,
+    values: readonly unknown[] = []
+  ): Promise<SqlQueryResult<TResult>> {
+    const sql = rawSql.replace(/\s+/gu, " ").trim().toLowerCase();
+    if (/set_config\('/u.test(sql)) return { rows: [] };
+    if (/from sop_schedules/u.test(sql)) {
+      const position = (values[3] ?? null) as UUID | null;
+      const continueCurrent = values[4] === true;
+      return {
+        rows:
+          position === null || (continueCurrent && position === FIRST_SCHEDULE)
+            ? [this.#row as TResult]
+            : []
+      };
+    }
+    throw new Error(`Unexpected CP13 single-schedule SQL: ${sql}`);
   }
 }
 

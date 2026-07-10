@@ -256,7 +256,7 @@ export type AcceptTreatmentPlanRequest = { readonly path: { readonly treatmentPl
 export type AcceptTreatmentPlanResponse = { readonly treatmentPlan: VersionedPublicResource };
 export type CreateEncounterProcedurePerformedRequest = { readonly path: { readonly encounterId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly treatmentPlanId: string; readonly treatmentPlanEstimateItemId: string; readonly performedAt?: string | null; readonly notes?: string | null; readonly outcome?: string | null; readonly provenance?: WritableJsonObject } };
 export type CreateEncounterProcedurePerformedResponse = { readonly procedure: PublicJsonObject; readonly treatmentPlan: VersionedPublicResource };
-export type CreateInvoiceRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: Readonly<Record<string, never>> | Readonly<Record<string, never>> };
+export type CreateInvoiceRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly patientId?: string | null; readonly treatmentPlanId: string | null; readonly procedurePerformedIds?: readonly (string)[]; readonly dueAt?: string | null } | { readonly patientId?: string | null; readonly treatmentPlanId?: string | null; readonly procedurePerformedIds: readonly (string)[]; readonly dueAt?: string | null } };
 export type CreateInvoiceResponse = { readonly invoice: PublicJsonObject };
 export type GetInvoiceRequest = { readonly path: { readonly invoiceId: string } };
 export type GetInvoiceResponse = { readonly invoice: PublicJsonObject };
@@ -344,7 +344,7 @@ export type ReplayDeadLetterEventRequest = { readonly path: { readonly deadLette
 export type ReplayDeadLetterEventResponse = { readonly replay: PublicJsonObject };
 export type ListMigrationBatchesRequest = { readonly query?: { readonly status?: "uploaded" | "parsed" | "validated" | "needs_review" | "ready_to_commit" | "committed" | "partially_committed" | "failed" | "rolled_back"; readonly limit?: number } };
 export type ListMigrationBatchesResponse = { readonly migrationBatches: readonly (PublicJsonObject)[] };
-export type CreateMigrationBatchRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: Readonly<Record<string, never>> | Readonly<Record<string, never>> };
+export type CreateMigrationBatchRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly importType: "patients"; readonly sourceSystem?: string; readonly sourceFileName?: string | null; readonly sourceChecksum?: string | null; readonly csv: string | null; readonly rows?: readonly (WritableJsonObject)[] } | { readonly importType: "patients"; readonly sourceSystem?: string; readonly sourceFileName?: string | null; readonly sourceChecksum?: string | null; readonly csv?: string | null; readonly rows: readonly (WritableJsonObject)[] } };
 export type CreateMigrationBatchResponse = { readonly batch: PublicJsonObject; readonly rows: readonly (PublicJsonObject)[]; readonly conflicts: readonly (PublicJsonObject)[] };
 export type GetMigrationBatchRequest = { readonly path: { readonly batchId: string } };
 export type GetMigrationBatchResponse = { readonly batch: PublicJsonObject; readonly rows: readonly (PublicJsonObject)[]; readonly conflicts: readonly (PublicJsonObject)[] };
@@ -551,14 +551,16 @@ export class ClinicOsApiClient {
     }
     const requestId = this.#options.getRequestId?.();
     if (requestId) headers["x-request-id"] = requestId;
-    let body: string | Uint8Array | undefined;
+    let body: string | Uint8Array<ArrayBuffer> | undefined;
     if (operation.bodyEncoding === "raw") {
       if (!operation.contentType) throw new TypeError("Raw ClinicOS operations require a content type.");
       headers["content-type"] = operation.contentType;
       if (!(operation.input.body instanceof Uint8Array)) {
         throw new TypeError("Binary ClinicOS operations require a Uint8Array body.");
       }
-      body = operation.input.body;
+      const rawBody = new Uint8Array(operation.input.body.byteLength);
+      rawBody.set(operation.input.body);
+      body = rawBody;
     } else if (operation.contentType === "application/json") {
       headers["content-type"] = "application/json";
       body = JSON.stringify(operation.input.body ?? {});

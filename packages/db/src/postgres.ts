@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type {
   AppointmentConflict,
   AppointmentRecord,
@@ -163,6 +163,7 @@ import { DueGenerationConfigurationError, DueGenerationInputError } from "./repo
 const DEFAULT_DUE_GENERATION_BATCH_SIZE = 25;
 const MAX_DUE_GENERATION_BATCH_SIZE = 25;
 const MAX_DUE_GENERATION_CURSOR_LENGTH = 2_048;
+const MAX_DUE_GENERATION_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const MAX_SOP_TEMPLATE_GENERATION_ITEMS = 100;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 import type {
@@ -494,13 +495,20 @@ export interface PostgresClinicUnitOfWorkContext {
   requestGuards: ScopedApiRequestGuardsPort;
 }
 
+export interface PostgresClinicRepositoryOptions {
+  readonly clock?: Clock;
+  readonly dueGenerationCursorSecret?: string;
+}
+
 export class PostgresClinicUnitOfWork {
   readonly #client: SqlConnectionFactory;
   readonly #clock: Clock;
+  readonly #dueGenerationCursorSecret: string | undefined;
 
-  constructor(client: SqlConnectionFactory, options: { clock?: Clock } = {}) {
+  constructor(client: SqlConnectionFactory, options: PostgresClinicRepositoryOptions = {}) {
     this.#client = client;
     this.#clock = options.clock ?? systemClock;
+    this.#dueGenerationCursorSecret = options.dueGenerationCursorSecret;
   }
 
   async run<T>(callback: (context: PostgresClinicUnitOfWorkContext) => Promise<T>): Promise<T> {
@@ -510,7 +518,8 @@ export class PostgresClinicUnitOfWork {
       try {
         const result = await callback({
           repository: new PostgresClinicOperationsRepository(transactionClient, {
-            clock: this.#clock
+            clock: this.#clock,
+            dueGenerationCursorSecret: this.#dueGenerationCursorSecret
           }),
           auditSink: new PostgresAuditEventSink(transactionClient),
           requestGuards: createScopedPostgresApiRequestGuards(transactionClient, requestGuardLease)
@@ -532,10 +541,12 @@ export class PostgresClinicUnitOfWork {
 export class PostgresClinicOperationsRepository implements ClinicOperationsRepository {
   readonly #client: SqlConnectionFactory;
   readonly #clock: Clock;
+  readonly #dueGenerationCursorSecret: string | undefined;
 
-  constructor(client: SqlConnectionFactory, options: { clock?: Clock } = {}) {
+  constructor(client: SqlConnectionFactory, options: PostgresClinicRepositoryOptions = {}) {
     this.#client = client;
     this.#clock = options.clock ?? systemClock;
+    this.#dueGenerationCursorSecret = options.dueGenerationCursorSecret;
   }
 
   async listPatients(
@@ -3232,10 +3243,19 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     input: GenerateDueContinuityInput
   ): Promise<GenerateDueContinuityResult> {
     return this.#withRls(scope, async (client) => {
+      const cursorSecret = dueGenerationCursorSecret(this.#dueGenerationCursorSecret);
+      const serverNow = dueGenerationInstant("server time", this.#clock.now());
       const asOf = dueGenerationInstant("asOf", input.asOf);
-      const cursor = decodeDueGenerationCursor(input.cursor, "continuity", asOf);
-      const snapshotAt =
-        cursor?.snapshotAt ?? dueGenerationInstant("snapshotAt", this.#clock.now());
+      assertDueGenerationNotFuture(asOf, serverNow);
+      const cursor = decodeDueGenerationCursor(
+        input.cursor,
+        "continuity",
+        asOf,
+        scope,
+        cursorSecret,
+        serverNow
+      );
+      const snapshotAt = cursor?.snapshotAt ?? serverNow;
       const batchSize = dueGenerationBatchSize(input.batchSize);
       const recallTasksCreated: TaskRecord[] = [];
       const followUpTasksCreated: TaskRecord[] = [];
@@ -3257,7 +3277,9 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         skippedExistingKeys,
         processedCount,
         complete,
-        nextCursor: nextCursor ? encodeDueGenerationCursor(nextCursor) : null
+        nextCursor: nextCursor
+          ? encodeDueGenerationCursor(nextCursor, cursorSecret)
+          : null
       });
       const continuation = (
         nextPhase: ContinuityDueGenerationPhase,
@@ -3268,6 +3290,8 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         kind: "continuity",
         asOf,
         snapshotAt,
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
         phase: nextPhase,
         ruleId: nextRuleId,
         recordId: nextRecordId
@@ -3763,11 +3787,20 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     return this.#withRls(scope, async (client) => {
       const runsCreated: SopRunDetail[] = [];
       const skippedExistingKeys: string[] = [];
+      const cursorSecret = dueGenerationCursorSecret(this.#dueGenerationCursorSecret);
+      const serverNow = dueGenerationInstant("server time", this.#clock.now());
       const asOfInstant = dueGenerationInstant("asOf", input.asOf);
+      assertDueGenerationNotFuture(asOfInstant, serverNow);
       const asOf = new Date(asOfInstant);
-      const cursor = decodeDueGenerationCursor(input.cursor, "sop", asOfInstant);
-      const snapshotAt =
-        cursor?.snapshotAt ?? dueGenerationInstant("snapshotAt", this.#clock.now());
+      const cursor = decodeDueGenerationCursor(
+        input.cursor,
+        "sop",
+        asOfInstant,
+        scope,
+        cursorSecret,
+        serverNow
+      );
+      const snapshotAt = cursor?.snapshotAt ?? serverNow;
       const batchSize = dueGenerationBatchSize(input.batchSize);
       let processedCount = 0;
       let scheduleId = cursor?.recordId ?? null;
@@ -3789,9 +3822,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
               kind: "sop",
               asOf: asOfInstant,
               snapshotAt,
+              tenantId: scope.tenantId,
+              clinicId: scope.clinicId,
               recordId: nextScheduleId,
               occurrenceDate: nextOccurrenceDate
-            })
+            }, cursorSecret)
       });
 
       while (processedCount < batchSize) {
@@ -3852,7 +3887,7 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           ? clinicLocalDate(new Date(scheduleRow.latest_due_at), schedule.timezone)
           : null;
         let nextDate = continueCurrentSchedule
-          ? nextIsoDate(requiredCursorDate(occurrenceDate))
+          ? latestIsoDate(schedule.startsOn, nextIsoDate(requiredCursorDate(occurrenceDate)))
           : latestIsoDate(
               schedule.startsOn,
               lastGeneratedLocalDate ? nextIsoDate(lastGeneratedLocalDate) : schedule.startsOn
@@ -3870,8 +3905,20 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           if (!sopScheduleOccursOnDate(schedule, candidateDate)) continue;
 
           const dueAt = sopDueInstantForLocalDate(schedule, candidateDate);
+          if (dueAt === null) {
+            skippedExistingKeys.push(
+              `sop-run:${schedule.id}:${candidateDate}:nonexistent-local-time`
+            );
+            continue;
+          }
           if (new Date(dueAt).getTime() > asOf.getTime()) continue;
-          const generated = await this.#generateSopRunOccurrence(client, scope, schedule, dueAt);
+          const generated = await this.#generateSopRunOccurrence(
+            client,
+            scope,
+            schedule,
+            dueAt,
+            candidateDate
+          );
           if (generated.detail) runsCreated.push(generated.detail);
           else skippedExistingKeys.push(generated.key);
         }
@@ -8949,9 +8996,10 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
     client: SqlQueryClient,
     scope: RepositoryScope,
     schedule: SopScheduleRecord,
-    dueAt: string
+    dueAt: string,
+    localOccurrenceDate: string
   ): Promise<{ detail: SopRunDetail | null; key: string }> {
-    const key = buildSopRunGenerationKey(schedule.id, dueAt);
+    const key = buildSopRunGenerationKey(schedule.id, dueAt, localOccurrenceDate);
     const runResult = await client.query<SopRunRow>(
       `
         insert into sop_runs (
@@ -13705,6 +13753,8 @@ interface ContinuityDueGenerationCursor {
   kind: "continuity";
   asOf: string;
   snapshotAt: string;
+  tenantId: UUID;
+  clinicId: UUID;
   phase: ContinuityDueGenerationPhase;
   ruleId: UUID | null;
   recordId: UUID | null;
@@ -13715,6 +13765,8 @@ interface SopDueGenerationCursor {
   kind: "sop";
   asOf: string;
   snapshotAt: string;
+  tenantId: UUID;
+  clinicId: UUID;
   recordId: UUID | null;
   occurrenceDate: string | null;
 }
@@ -13743,24 +13795,50 @@ function dueGenerationInstant(name: string, value: string | Date): string {
   return parsed.toISOString();
 }
 
-function encodeDueGenerationCursor(cursor: DueGenerationCursor): string {
-  return Buffer.from(JSON.stringify(cursor), "utf8").toString("base64url");
+function dueGenerationCursorSecret(value: string | undefined): string {
+  if (!value || Buffer.byteLength(value, "utf8") < 32) {
+    throw new DueGenerationConfigurationError(
+      "Durable due-generation cursor signing is not configured."
+    );
+  }
+  return value;
+}
+
+function assertDueGenerationNotFuture(value: string, serverNow: string): void {
+  if (new Date(value).getTime() > new Date(serverNow).getTime() + MAX_DUE_GENERATION_FUTURE_SKEW_MS) {
+    throw new DueGenerationInputError("Due-generation asOf cannot be in the future.");
+  }
+}
+
+function encodeDueGenerationCursor(cursor: DueGenerationCursor, secret: string): string {
+  const payload = JSON.stringify(cursor);
+  const signature = createHmac("sha256", secret).update(payload).digest("base64url");
+  return Buffer.from(JSON.stringify({ payload: cursor, signature }), "utf8").toString("base64url");
 }
 
 function decodeDueGenerationCursor(
   value: string | null | undefined,
   kind: "continuity",
-  asOf: string
+  asOf: string,
+  scope: RepositoryScope,
+  secret: string,
+  serverNow: string
 ): ContinuityDueGenerationCursor | null;
 function decodeDueGenerationCursor(
   value: string | null | undefined,
   kind: "sop",
-  asOf: string
+  asOf: string,
+  scope: RepositoryScope,
+  secret: string,
+  serverNow: string
 ): SopDueGenerationCursor | null;
 function decodeDueGenerationCursor(
   value: string | null | undefined,
   kind: DueGenerationCursor["kind"],
-  asOf: string
+  asOf: string,
+  scope: RepositoryScope,
+  secret: string,
+  serverNow: string
 ): DueGenerationCursor | null {
   if (value === undefined || value === null) return null;
   if (
@@ -13777,7 +13855,32 @@ function decodeDueGenerationCursor(
     if (bytes.toString("base64url") !== value) {
       throw new Error("non-canonical cursor");
     }
-    decoded = JSON.parse(bytes.toString("utf8"));
+    const envelope = JSON.parse(bytes.toString("utf8")) as unknown;
+    if (!envelope || typeof envelope !== "object" || Array.isArray(envelope)) {
+      throw new Error("invalid cursor envelope");
+    }
+    const entries = Object.entries(envelope as Record<string, unknown>);
+    if (
+      entries.length !== 2 ||
+      !("payload" in envelope) ||
+      typeof (envelope as Record<string, unknown>).signature !== "string"
+    ) {
+      throw new Error("invalid cursor envelope");
+    }
+    const payload = (envelope as Record<string, unknown>).payload;
+    const signature = (envelope as Record<string, string>).signature;
+    const expected = createHmac("sha256", secret)
+      .update(JSON.stringify(payload))
+      .digest("base64url");
+    const actualBytes = Buffer.from(signature, "utf8");
+    const expectedBytes = Buffer.from(expected, "utf8");
+    if (
+      actualBytes.byteLength !== expectedBytes.byteLength ||
+      !timingSafeEqual(actualBytes, expectedBytes)
+    ) {
+      throw new Error("invalid cursor signature");
+    }
+    decoded = payload;
   } catch {
     throw new DueGenerationInputError("Due-generation cursor is invalid.");
   }
@@ -13798,6 +13901,12 @@ function decodeDueGenerationCursor(
     "cursor snapshotAt",
     requiredCursorString(cursor.snapshotAt)
   );
+  assertDueGenerationNotFuture(snapshotAt, serverNow);
+  const tenantId = optionalCursorUuid(cursor.tenantId, "tenantId");
+  const clinicId = optionalCursorUuid(cursor.clinicId, "clinicId");
+  if (tenantId !== scope.tenantId || clinicId !== scope.clinicId) {
+    throw new DueGenerationInputError("Due-generation cursor does not belong to this clinic.");
+  }
   const recordId = optionalCursorUuid(cursor.recordId, "recordId");
 
   if (kind === "sop") {
@@ -13806,6 +13915,8 @@ function decodeDueGenerationCursor(
       "kind",
       "asOf",
       "snapshotAt",
+      "tenantId",
+      "clinicId",
       "recordId",
       "occurrenceDate"
     ]);
@@ -13815,7 +13926,7 @@ function decodeDueGenerationCursor(
         "Due-generation SOP cursor contains an incomplete schedule position."
       );
     }
-    return { version: 1, kind, asOf, snapshotAt, recordId, occurrenceDate };
+    return { version: 1, kind, asOf, snapshotAt, tenantId, clinicId, recordId, occurrenceDate };
   }
 
   assertCursorKeys(cursor, [
@@ -13823,6 +13934,8 @@ function decodeDueGenerationCursor(
     "kind",
     "asOf",
     "snapshotAt",
+    "tenantId",
+    "clinicId",
     "phase",
     "ruleId",
     "recordId"
@@ -13846,7 +13959,7 @@ function decodeDueGenerationCursor(
   if ((phase === "post_op" || phase === "payment") && ruleId !== null) {
     throw new DueGenerationInputError("Due-generation cursor contains an invalid rule position.");
   }
-  return { version: 1, kind, asOf, snapshotAt, phase, ruleId, recordId };
+  return { version: 1, kind, asOf, snapshotAt, tenantId, clinicId, phase, ruleId, recordId };
 }
 
 function requiredCursorString(value: unknown): string {
@@ -13903,7 +14016,7 @@ function sopScheduleOccursOnDate(schedule: SopScheduleRecord, localDate: string)
   );
 }
 
-function sopDueInstantForLocalDate(schedule: SopScheduleRecord, localDate: string): string {
+function sopDueInstantForLocalDate(schedule: SopScheduleRecord, localDate: string): string | null {
   try {
     return clinicLocalDateTimeToInstant(
       localDate,
@@ -13911,9 +14024,14 @@ function sopDueInstantForLocalDate(schedule: SopScheduleRecord, localDate: strin
       schedule.timezone
     ).toISOString();
   } catch {
-    throw new DueGenerationConfigurationError(
-      "An SOP schedule due time cannot be resolved in its configured timezone."
-    );
+    try {
+      clinicLocalDate(new Date(0), schedule.timezone);
+    } catch {
+      throw new DueGenerationConfigurationError(
+        "An SOP schedule uses an invalid configured timezone."
+      );
+    }
+    return null;
   }
 }
 

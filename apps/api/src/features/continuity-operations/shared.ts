@@ -11,10 +11,11 @@ import type {
 } from "@clinic-os/domain";
 import { classifyAuditAction, type KnownAuditAction } from "@clinic-os/security";
 import { ApiError } from "../../errors.ts";
-import type {
-  ClinicFeatureExecutionContext,
-  ClinicFeatureOperationHandler,
-  ClinicFeatureOperationRequest
+import {
+  featureOutboxIdempotencyKey,
+  type ClinicFeatureExecutionContext,
+  type ClinicFeatureOperationHandler,
+  type ClinicFeatureOperationRequest
 } from "../contracts.ts";
 import type { ContinuityOperationsOperationId } from "./types.ts";
 
@@ -182,7 +183,11 @@ export async function appendEvidence(
     aggregateType: input.aggregateType,
     aggregateId: input.aggregateId,
     patientId: input.patientId ?? null,
-    idempotencyKey: requestHeader(request, "idempotency-key"),
+    idempotencyKey: featureOutboxIdempotencyKey(request, {
+      eventType: input.eventType,
+      aggregateId: input.aggregateId,
+      ordinal: input.ordinal
+    }),
     correlationId: request.metadata.requestId,
     payload: input.payload,
     occurredAt

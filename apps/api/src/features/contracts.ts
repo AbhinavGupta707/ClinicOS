@@ -40,3 +40,23 @@ export interface ClinicFeatureScope {
   readonly clinicId: UUID;
   readonly actorUserId: UUID;
 }
+
+export function featureOutboxIdempotencyKey(
+  request: ClinicFeatureOperationRequest,
+  input: Readonly<{ eventType: string; aggregateId: UUID; ordinal?: number }>
+): string | null {
+  const headers = request.parsed.headers;
+  if (!headers || typeof headers !== "object" || Array.isArray(headers)) return null;
+  const requestKey = (headers as Readonly<Record<string, unknown>>)["idempotency-key"];
+  if (typeof requestKey !== "string" || requestKey.length === 0) return null;
+  return [
+    request.access.context.tenant.id,
+    request.access.clinicId,
+    request.access.context.user.id,
+    request.operationId,
+    requestKey,
+    input.eventType,
+    input.aggregateId,
+    input.ordinal ?? 0
+  ].join(":");
+}

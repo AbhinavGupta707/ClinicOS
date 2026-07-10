@@ -167,9 +167,13 @@ export function createPostgresClinicModuleUnitOfWork<TAuthorizedContext>(input: 
   client: SqlConnectionFactory;
   resolveScope: ClinicModuleScopeResolver<TAuthorizedContext>;
   clock?: Clock;
+  dueGenerationCursorSecret?: string;
 }): ClinicModuleUnitOfWork<TAuthorizedContext> {
   return new ClinicModuleUnitOfWork({
-    unitOfWork: new PostgresClinicUnitOfWork(input.client, { clock: input.clock }),
+    unitOfWork: new PostgresClinicUnitOfWork(input.client, {
+      clock: input.clock,
+      dueGenerationCursorSecret: input.dueGenerationCursorSecret
+    }),
     resolveScope: input.resolveScope
   });
 }

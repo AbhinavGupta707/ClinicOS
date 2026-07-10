@@ -395,8 +395,12 @@ export function buildPaymentFollowUpKey(invoiceId: UUID): string {
   return `payment-follow-up:${invoiceId}`;
 }
 
-export function buildSopRunGenerationKey(scheduleId: UUID, dueAt: string): string {
-  return `sop-run:${scheduleId}:${dueAt.slice(0, 10)}`;
+export function buildSopRunGenerationKey(
+  scheduleId: UUID,
+  dueAt: string,
+  localOccurrenceDate = dueAt.slice(0, 10)
+): string {
+  return `sop-run:${scheduleId}:${localOccurrenceDate}`;
 }
 
 export function addDaysIso(anchor: string, days: number): string {

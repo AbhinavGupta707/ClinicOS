@@ -579,7 +579,7 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
         operationsRepository: new LocalFixtureClinicOperationsRepository(),
         auditSink: new InMemoryAuditSink()
       }
-    : createPostgresRepositorySet(parsed.data);
+    : createPostgresRepositorySet(parsed.data, runtimeBudgetKeySecret ?? undefined);
   if ("pool" in repositorySet) pool = repositorySet.pool;
   const port = parsePort(env.PORT ?? env.API_PORT);
 
@@ -1664,7 +1664,10 @@ function resolveClinicId(request: IncomingMessage, context: AccessContext): UUID
   return assignment.clinicId;
 }
 
-function createPostgresRepositorySet(config: ClinicOsConfig): {
+function createPostgresRepositorySet(
+  config: ClinicOsConfig,
+  dueGenerationCursorSecret: string | undefined
+): {
   identityRepository: IdentityRepository;
   operationsRepository: ClinicOperationsRepository;
   auditSink: AuditSink;
@@ -1674,7 +1677,10 @@ function createPostgresRepositorySet(config: ClinicOsConfig): {
   const pool = new Pool({
     connectionString: config.services.databaseUrl
   });
-  const operationsUnitOfWork = new PostgresClinicUnitOfWork(pool, { clock: systemClock });
+  const operationsUnitOfWork = new PostgresClinicUnitOfWork(pool, {
+    clock: systemClock,
+    dueGenerationCursorSecret
+  });
   pool.on("error", (error) => {
     const code = "code" in error && typeof error.code === "string" ? error.code : "unknown";
     console.error(
@@ -1688,7 +1694,9 @@ function createPostgresRepositorySet(config: ClinicOsConfig): {
 
   return {
     identityRepository: new PostgresIdentityRepository(pool),
-    operationsRepository: new PostgresClinicOperationsRepository(pool),
+    operationsRepository: new PostgresClinicOperationsRepository(pool, {
+      dueGenerationCursorSecret
+    }),
     auditSink: new PostgresAuditEventSink(pool),
     operationsUnitOfWork,
     pool

@@ -65,7 +65,7 @@ test("CP13 operations tables force tenant and clinic RLS", () => {
 
 test("CP13 Postgres adapters use conflict-safe generation and reconciliation writes", () => {
   const continuityGeneration = methodSource("generateDueContinuityTasks", "createSopTemplate");
-  const sopGeneration = methodSource("generateDueSopRuns", "listSopRuns");
+  const sopGeneration = methodSource("#generateSopRunOccurrence", "#loadSopRunDetail");
   const reconciliation = methodSource("createLabReconciliation", "listInventoryCategories");
   assert.match(continuityGeneration, /on conflict.*do nothing/is);
   assert.match(sopGeneration, /on conflict.*do nothing/is);

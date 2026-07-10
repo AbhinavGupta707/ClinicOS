@@ -77,4 +77,12 @@ test("continuity due-state and idempotency keys are deterministic", () => {
     buildSopRunGenerationKey(recallRuleId, "2026-07-07T09:00:00.000Z"),
     `sop-run:${recallRuleId}:2026-07-07`
   );
+  assert.equal(
+    buildSopRunGenerationKey(
+      recallRuleId,
+      "2026-03-29T23:30:00.000Z",
+      "2026-03-30"
+    ),
+    `sop-run:${recallRuleId}:2026-03-30`
+  );
 });

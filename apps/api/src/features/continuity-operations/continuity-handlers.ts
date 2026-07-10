@@ -165,7 +165,11 @@ export const generateDueContinuityTasksHandler: ContinuityOperationsHandler = as
   const body = requestBody(request);
   const now = context.clock.now();
   const asOf = optionalStringValue(body.asOf) ?? now.toISOString();
-  const result = await context.repositories.continuity.generateDueContinuityTasks({ asOf });
+  const result = await context.repositories.continuity.generateDueContinuityTasks({
+    asOf,
+    batchSize: optionalNumberValue(body.batchSize) ?? undefined,
+    cursor: optionalStringValue(body.cursor)
+  });
   let ordinal = 0;
   for (const recall of result.recallsCreated) {
     await appendEvidence(request, context, {
@@ -193,7 +197,10 @@ export const generateDueContinuityTasksHandler: ContinuityOperationsHandler = as
     recallTasksCreated: result.recallTasksCreated.map(publicTask),
     followUpTasksCreated: result.followUpTasksCreated.map(publicTask),
     recallsCreated: result.recallsCreated.map(publicRecall),
-    skippedExistingKeys: result.skippedExistingKeys
+    skippedExistingKeys: result.skippedExistingKeys,
+    processedCount: result.processedCount,
+    complete: result.complete,
+    nextCursor: result.nextCursor
   });
 };
 
@@ -376,7 +383,11 @@ export const generateDueSopRunsHandler: ContinuityOperationsHandler = async (req
   const body = requestBody(request);
   const now = context.clock.now();
   const asOf = optionalStringValue(body.asOf) ?? now.toISOString();
-  const result = await context.repositories.continuity.generateDueSopRuns({ asOf });
+  const result = await context.repositories.continuity.generateDueSopRuns({
+    asOf,
+    batchSize: optionalNumberValue(body.batchSize) ?? undefined,
+    cursor: optionalStringValue(body.cursor)
+  });
   let ordinal = 0;
   for (const detail of result.runsCreated) {
     await appendEvidence(request, context, {
@@ -390,7 +401,10 @@ export const generateDueSopRunsHandler: ContinuityOperationsHandler = async (req
   }
   return accepted({
     sopRunsCreated: result.runsCreated.map(publicSopRun),
-    skippedExistingKeys: result.skippedExistingKeys
+    skippedExistingKeys: result.skippedExistingKeys,
+    processedCount: result.processedCount,
+    complete: result.complete,
+    nextCursor: result.nextCursor
   });
 };
 

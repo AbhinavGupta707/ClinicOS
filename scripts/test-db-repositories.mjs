@@ -73,7 +73,10 @@ try {
     patients: 0
   });
 
-  const repository = new PostgresClinicOperationsRepository(pool, { clock: fixedClock });
+  const repository = new PostgresClinicOperationsRepository(pool, {
+    clock: fixedClock,
+    dueGenerationCursorSecret: "repository-test-cursor-signing-secret-000000000001"
+  });
   const tenantAPatients = await repository.listPatients(tenantA);
   const tenantBPatients = await repository.listPatients(tenantBScope);
   assert.equal(
