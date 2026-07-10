@@ -500,6 +500,7 @@ locals {
       environment = {
         NODE_ENV                  = "production"
         CLINIC_OS_ENV             = var.environment
+        PORT                      = "4100"
         REPOSITORY_MODE           = "postgres"
         AUTH_MODE                 = "keycloak"
         PILOT_SYNTHETIC_DATA_ONLY = "true"

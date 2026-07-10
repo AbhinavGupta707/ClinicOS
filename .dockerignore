@@ -1,0 +1,16 @@
+.git
+.github
+.secrets
+.env
+.env.*
+**/.DS_Store
+**/.next
+**/.terraform
+**/coverage
+**/dist
+**/node_modules
+artifacts
+research
+scripts/research
+test-results
+

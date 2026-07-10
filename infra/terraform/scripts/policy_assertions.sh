@@ -74,6 +74,7 @@ require 'KC_HOSTNAME_ADMIN' "$platform" "Keycloak must bind a distinct admin hos
 require 'KC_HOSTNAME_BACKCHANNEL_DYNAMIC' "$platform" "Keycloak backchannel binding must be fail closed"
 require '57800.*7800|7800.*57800' "$platform" "Keycloak clustering ports must be self-only workload ports"
 require 'CLINIC_OS_ENV[[:space:]]*=[[:space:]]*var.environment' "$platform" "application tasks must receive the real production-like environment"
+require 'PORT[[:space:]]*=[[:space:]]*"4100"' "$platform" "API listener must match its ECS target and health-check port"
 require 'WORKER_HEALTH_PORT[[:space:]]*=[[:space:]]*"3001"' "$platform" "worker health listener must match its ECS health check port"
 require 'CLINIC_OS_ABUSE_BUDGET_KEY_SECRET' "$platform" "API and worker must receive the production abuse/cursor signing key"
 require 'CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET' "$platform" "API must receive a distinct token-revocation key"

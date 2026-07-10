@@ -104,3 +104,40 @@ jobs:
             clinicos-source.cdx.json
           if-no-files-found: error
           retention-days: 30
+
+  application-images:
+    name: ARM64 image ${{ matrix.service }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        service: [api, web, worker]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Build immutable candidate
+        run: >-
+          docker build
+          --platform linux/arm64
+          --build-arg SOURCE_REVISION=${{ github.sha }}
+          --file infra/images/${{ matrix.service }}/Dockerfile
+          --tag clinicos-${{ matrix.service }}:${{ github.sha }}
+          .
+
+      - name: Verify architecture and numeric non-root user
+        run: |
+          test "$(docker image inspect clinicos-${{ matrix.service }}:${{ github.sha }} --format '{{.Architecture}}')" = "arm64"
+          test "$(docker image inspect clinicos-${{ matrix.service }}:${{ github.sha }} --format '{{.Config.User}}')" = "10001:10001"
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: clinicos-${{ matrix.service }}:${{ github.sha }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table
+          version: v0.70.0
