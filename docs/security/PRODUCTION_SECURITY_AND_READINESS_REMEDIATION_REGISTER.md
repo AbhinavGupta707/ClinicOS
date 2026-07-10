@@ -139,7 +139,7 @@ A finding closes only when all of the following exist:
 
 ### PRR-016 — Production authentication/session lifecycle is not evidenced (P1)
 
-- **Evidence:** local fixture headers and local Keycloak foundations exist, but no deployed Keycloak HA, realm promotion, MFA policy, session revocation, key rotation, web BFF/session, or mobile PKCE/SecureStore evidence was demonstrated.
+- **Evidence:** CP14 now has a hardened, zero-high/critical local Keycloak 26.7.0 image and clean-database realm/readiness/OIDC/service-account smoke, plus BFF/session/PKCE/revocation contracts. No deployed Keycloak HA, live MFA/session revocation/key rotation, administrator boundary, or mobile SecureStore exercise exists.
 - **Risk:** account takeover, stale authorization, leaked refresh tokens, or unreviewed admin access.
 - **Remediation:** Keycloak production topology and backups; Authorization Code + PKCE; short-lived access tokens; rotation/revocation; MFA for privileged roles; HttpOnly Secure SameSite web sessions via BFF where cookies are used; mobile tokens only in OS secure storage; SCIM/manual joiner-mover-leaver workflow; admin/break-glass audit.
 - **Closure evidence:** E4 login/logout/revocation/role-change/MFA/key-rotation tests and lost-device/offboarding exercises.
@@ -324,7 +324,7 @@ Result candidate: `9116a8ea`; evidence: `docs/qa/checkpoint-13-evidence.md`; thr
 
 ### CP14 active-candidate status delta — 2026-07-10
 
-Candidate: `1b99a3fc`; evidence: `docs/qa/checkpoint-14-evidence.md`; threat delta:
+Candidate implementation: `3ddf01a2`; evidence: `docs/qa/checkpoint-14-evidence.md`; threat delta:
 `docs/security/checkpoint-14-threat-model-delta.md`.
 
 - PRR-018 now has passing CodeQL, repository/lockfile/secret/IaC scans, npm and Syft SBOMs, a
@@ -334,9 +334,10 @@ Candidate: `1b99a3fc`; evidence: `docs/qa/checkpoint-14-evidence.md`; threat del
 - PRR-006/007/009/013/015/016/019/020/024 have substantial implementation and deterministic local
   evidence, but none is production-closed without applied E4/E5 infrastructure and operational
   exercises.
-- Integration review found that the self-hosted Temporal runtime still lacks a frozen authenticated
-  production configuration/schema image, and production media lacks an approved scanner. These are
-  hard runtime gates, not documentation exceptions.
+- Integration review closed the local platform-image gap with hardened Keycloak/Temporal images,
+  exact realm and worker OAuth, versioned schema/config, mTLS/JWT, ECS task membership, pinned RDS CA
+  trust and repeatable runtime/scan CI gates. Production media still lacks an approved scanner.
+  Applied certificate/secret rotation and multi-task runtime evidence remain hard E4 gates.
 - The release remains NO-GO. No Terraform apply, signed ECR artifact, deployed identity/media,
   paging delivery, real restore/failover or pilot-production evidence exists.
 

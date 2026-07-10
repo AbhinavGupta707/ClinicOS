@@ -991,7 +991,36 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   database volume. No source, installed dependencies or ClinicOS volume was removed. Docker
   restarted successfully and host free space recovered to roughly 22 GB.
 - E4/E5 remains blocked by reviewed state-backend adoption/apply authority, domain/TLS/admin ingress
-  inputs, a paging destination, an approved malware scanner, complete authenticated Temporal and
-  bound Keycloak production images, signed dual-region ECR artifacts, applied staging/pilot,
-  alert/restore/failover evidence and exact-revision promotion. See
+  inputs, a paging destination, an approved malware scanner, signed exact-revision dual-region ECR
+  artifacts, applied staging/pilot, alert/restore/failover evidence and promotion. See
   `docs/qa/checkpoint-14-evidence.md`.
+
+### CP14 Platform Runtime Hardening - 2026-07-11
+
+- Implementation commit `3ddf01a2` replaces the prior incomplete platform-image gate. Hardened
+  ARM64 Keycloak 26.7.0 and Temporal 1.31.2 images now pass repeatable runtime smokes and report zero
+  high/critical Trivy vulnerability or embedded-secret findings.
+- Keycloak imports the exact secret-free four-client realm on clean PostgreSQL, reaches full
+  readiness, exposes the canonical issuer, and issues a Temporal service-account token with exact
+  client, audience and worker/write permissions. Bootstrap remains a separate one-shot command and
+  the long-lived image has no bootstrap credential.
+- Temporal now has exact versioned server/schema binaries, a fail-closed schema task, validated
+  dynamic/production config, SQL hostname verification, mTLS frontend/internode material, JWT/JWKS
+  authorization, a distinct internal frontend, routable ECS task membership, non-loopback cluster
+  metadata and bounded worker token refresh. OAuth/JWKS uses the auth hostname, not the private
+  operator-only admin plane.
+- Both platform images pin the official AWS RDS global CA bundle digest. Final image architecture is
+  ARM64 with numeric users `1000:0` and `1000:1000`; local image/runtime checks and all Terraform
+  roots/policy/IaC gates pass. Root `npm run ci` passes with 12 governed moderate advisories and no
+  high/critical audit finding.
+- Docker storage is no longer a blocker. Disposable smoke containers/databases were removed; no
+  shared ClinicOS volumes or user source were changed.
+- Domain discovery is now partially resolved: `alventis.co.uk` is clinic-owned and
+  `clinicos.alventis.co.uk` was confirmed free at Porkbun while apex/`www` remained untouched. The
+  Route53 zone does not yet exist, so no nameserver delegation, certificates or ClinicOS record was
+  created.
+- The earlier orchestration heartbeat was deleted after it became obsolete. One separate one-shot
+  04:35 worktree-hello automation exists and is unrelated to checkpoint evidence.
+- CP14 still cannot close or promote: there is no authorized backend migration/apply, dual-region
+  ECR signing/provenance, deployed RDS/ECS/Keycloak/Temporal/edge, DNS delegation/ACM, paging target,
+  approved malware scanner, or real E4/E5 load/alert/restore/failover evidence.

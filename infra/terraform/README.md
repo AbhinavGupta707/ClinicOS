@@ -10,23 +10,28 @@ This tree replaces the CP9 validation-only posture with a version-pinned, deploy
 
 ## Modules
 
-| Module | Responsibility |
-| --- | --- |
-| `kms` | Rotating customer-managed data/log/secrets/backup keys and aliases, protected from Terraform destroy. |
-| `network`, `vpc-endpoints` | Three subnet tiers across three AZs, phase-controlled NAT, exact S3/interface endpoint policies, workload-SG-only endpoint ingress, isolated data routes, and encrypted flow logs. |
-| `storage`, `s3-replication` | Private versioned media/audit buckets, Object Lock, lifecycle, ALB logs, and KMS cross-region replication. |
-| `database`, `cache` | Private encrypted Multi-AZ RDS PostgreSQL and a justified Redis OSS 7.1 cache for CP12 abuse budgets/short non-authoritative jobs. |
-| `ecr`, `compute` | Immutable encrypted ECR and ECS/Fargate task/service definitions that accept only image digests. |
-| `edge` | Optional domain-gated ACM/DNS, ALB, WAF managed rules/rate limiting, TLS-only routing, and redacted WAF logs. |
-| `secrets` | Recovery-protected Secrets Manager containers; no provider/application secret values are committed. |
-| `backup`, `observability` | Cross-region AWS Backup plans/vaults, opt-in Vault Lock, CloudWatch alarms/dashboard, SNS topic, failure events, and X-Ray sampling. |
-| `ci-oidc` | Exact GitHub subject trust, separate read/plan, immutable artifact-publish, and environment deploy roles. |
-| `state-backend` | Dedicated rotating CMK, private/versioned state bucket, encrypted PITR lock table, and exact state-key access policy. |
-| `account-baseline`, `regional-security` | Singleton multi-region CloudTrail plus regional Config, GuardDuty, Security Hub, and the mandatory CI permissions boundary. |
+| Module                                  | Responsibility                                                                                                                                                                     |
+| --------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `kms`                                   | Rotating customer-managed data/log/secrets/backup keys and aliases, protected from Terraform destroy.                                                                              |
+| `network`, `vpc-endpoints`              | Three subnet tiers across three AZs, phase-controlled NAT, exact S3/interface endpoint policies, workload-SG-only endpoint ingress, isolated data routes, and encrypted flow logs. |
+| `storage`, `s3-replication`             | Private versioned media/audit buckets, Object Lock, lifecycle, ALB logs, and KMS cross-region replication.                                                                         |
+| `database`, `cache`                     | Private encrypted Multi-AZ RDS PostgreSQL and a justified Redis OSS 7.1 cache for CP12 abuse budgets/short non-authoritative jobs.                                                 |
+| `ecr`, `compute`                        | Immutable encrypted ECR and ECS/Fargate task/service definitions that accept only image digests.                                                                                   |
+| `edge`                                  | Optional domain-gated ACM/DNS, ALB, WAF managed rules/rate limiting, TLS-only routing, and redacted WAF logs.                                                                      |
+| `secrets`                               | Recovery-protected Secrets Manager containers; no provider/application secret values are committed.                                                                                |
+| `backup`, `observability`               | Cross-region AWS Backup plans/vaults, opt-in Vault Lock, CloudWatch alarms/dashboard, SNS topic, failure events, and X-Ray sampling.                                               |
+| `ci-oidc`                               | Exact GitHub subject trust, separate read/plan, immutable artifact-publish, and environment deploy roles.                                                                          |
+| `state-backend`                         | Dedicated rotating CMK, private/versioned state bucket, encrypted PITR lock table, and exact state-key access policy.                                                              |
+| `account-baseline`, `regional-security` | Singleton multi-region CloudTrail plus regional Config, GuardDuty, Security Hub, and the mandatory CI permissions boundary.                                                        |
 
 ## Runtime and Temporal decision
 
-The current decision is self-hosted Temporal on ECS/Fargate because no managed Temporal residency/legal approval exists. Runtime activation requires a signed, scanned, digest-pinned ClinicOS Temporal image with versioned production configuration. It defines separate frontend, history, matching, and worker services plus a one-shot schema task for the `temporal` and `temporal_visibility` PostgreSQL schemas. `temporalio/auto-setup` is not used.
+The current decision is self-hosted Temporal on ECS/Fargate because no managed Temporal residency/legal approval exists. The ClinicOS image builds exact Temporal 1.31.2 source into pinned server/schema binaries, validates versioned production configuration, derives a routable task address from official ECS metadata, and requires PostgreSQL hostname verification, mTLS and exact JWT authorization. It defines separate frontend, internal-frontend, history, matching, and worker services plus a one-shot schema task for the `temporal` and `temporal_visibility` PostgreSQL schemas. `temporalio/auto-setup` is not used.
+
+Both Keycloak and Temporal images pin the official AWS RDS commercial-region CA bundle by digest.
+The long-lived Keycloak task receives no bootstrap credentials; the one-shot realm/bootstrap task is
+separate. Local image smokes and scans are E3 evidence only: CI must rebuild/sign the exact commit and
+live RDS/ECS/ACM/secrets tests remain mandatory.
 
 The cache is not workflow truth. Temporal and PostgreSQL remain authoritative; Redis OSS is limited to atomic abuse budgets and short non-authoritative work already required by CP12.
 

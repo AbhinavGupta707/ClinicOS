@@ -8,6 +8,9 @@ pilot-production do not exist.
 **Implementation candidate before evidence-only closeout:**
 `eae79c0d09c0170f28c3b27493705ad67abe499e`
 
+**Platform-runtime hardening candidate:**
+`3ddf01a2`
+
 ## Implemented and verified
 
 | Evidence                                       | Result                                                                                                                                        | Boundary                                          |
@@ -26,6 +29,10 @@ pilot-production do not exist.
 | GitHub security workflow                       | Pass in run `29125220024` at `eae79c0d`: CodeQL, repository Trivy, Terraform scan, Syft/npm SBOM, license gate and all three ARM64 image jobs | CI artifact evidence; not ECR promotion           |
 | API / web / worker images                      | Pass: ARM64, numeric UID/GID `10001`, digest-pinned Node base, zero Trivy high/critical findings or embedded secrets                          | Local/CI images only; not signed or pushed to ECR |
 | Web image runtime                              | Pass under read-only root filesystem with localhost HTTP smoke                                                                                | Local container only                              |
+| Keycloak production image                      | Pass: ARM64 UID `1000:0`; Keycloak 26.7.0; exact realm import/readiness/OIDC/client-credentials smoke; zero high/critical image findings      | Local E3 image; not signed, pushed or deployed    |
+| Temporal production image                      | Pass: ARM64 UID `1000:1000`; Temporal 1.31.2 server/schema tools; config/task-network startup smoke; zero high/critical image findings        | Local E3 image; not signed, pushed or deployed    |
+| Platform database trust                        | Pass: both images contain the digest-pinned official AWS RDS global CA bundle; Keycloak/Temporal require verified hostname TLS                | Static/runtime contract; no live RDS handshake    |
+| Keycloak realm/Temporal worker auth            | Pass: exact four-client realm; worker token has canonical issuer/client, `clinic-os-temporal` audience and worker/write permissions           | Clean local Keycloak/PostgreSQL only              |
 | AWS identity/region preflight                  | Approved IAM user resolves in account `222634407676`; Mumbai primary and Hyderabad enabled                                                    | Read-only inventory                               |
 
 ## Security corrections found during integration
@@ -41,6 +48,14 @@ pilot-production do not exist.
   final application image scans are clean at high/critical severity.
 - Corrected clean-runner CI ordering so branded cross-package type tests build their shared package
   outputs before execution.
+- Built hardened Keycloak and Temporal images from digest/source-pinned inputs. Keycloak imports the
+  exact secret-free realm and fails closed around one-shot bootstrap. Temporal uses a versioned
+  schema task, authenticated JWT audience/permission mapping, mTLS, a distinct internal frontend,
+  verified SQL TLS, routable ECS task identity and non-loopback cluster metadata.
+- Corrected Temporal OAuth/JWKS traffic to use the canonical authentication hostname rather than
+  granting workloads access to the operator-only Keycloak admin plane.
+- Added repeatable CI runtime gates for both platform images and pinned the official AWS RDS CA
+  bundle by SHA-256 in both builds.
 
 ## Exit gates still open
 
@@ -49,11 +64,13 @@ pilot-production do not exist.
    authorization.
 2. No staging or pilot-prod Terraform apply has occurred. There is no deployed VPC, ECR, RDS,
    cache, ECS, Keycloak, Temporal, ALB/WAF, telemetry backend, backup or recovery target.
-3. The Keycloak and Temporal production images remain incomplete. Temporal still requires a
-   versioned schema task, dynamic configuration and an authenticated/mTLS service boundary; the
-   current Terraform command/env shape alone is not runtime evidence.
-4. No clinic-owned domain, hosted zone, auth/admin hostnames, ACM certificate, private-zone ID or
-   reviewed private/VPN/JIT administrator CIDRs exist.
+3. The Keycloak and Temporal image contracts now pass local build, runtime and scan gates, but no
+   exact-commit images have been signed, attested, pushed to dual-region ECR or exercised against
+   live RDS, ECS, ACM and Keycloak/Temporal secrets.
+4. The clinic-owned `alventis.co.uk` domain exists and the isolated `clinicos.alventis.co.uk`
+   namespace was confirmed unused without changing the existing apex/`www` site. No Route53 public
+   hosted zone/nameservers, Porkbun NS delegation, ACM certificates, private admin zone, final
+   hostnames or reviewed private/VPN/JIT administrator CIDRs exist yet.
 5. No real paging destination exists, so alarm delivery/escalation cannot be verified.
 6. No approved production malware scanner transport exists. Media remains fail-closed and cannot
    receive E4 clean/quarantine evidence.
@@ -62,5 +79,5 @@ pilot-production do not exist.
 8. No real cloud load/fault, alert injection, backup restore, Hyderabad failover/failback, deployed
    browser/API/worker, or synthetic pilot evidence exists.
 
-CP14 remains **NO-GO** and must not be promoted to `main` or followed by CP15 until these hard gates
-are satisfied with exact-revision E4/E5 evidence.
+CP14 remains **NO-GO** and must not be promoted to `main` or followed by CP15 under the checkpoint
+exit contract until these hard gates are satisfied with exact-revision E4/E5 evidence.

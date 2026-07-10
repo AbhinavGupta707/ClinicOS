@@ -1,6 +1,6 @@
 # Checkpoint 14 — Cloud, Security Operations, Media and Recovery
 
-**Status:** Active implementation; E4/E5 apply remains gated on a reviewed costed plan and explicit authority
+**Status:** Active; local implementation candidate `3ddf01a2` passes, while E4/E5 apply remains gated on a reviewed costed plan and explicit authority
 **Evidence target:** E4 staging and E5 pilot-production synthetic
 **Workers:** three initial path-disjoint worktrees; observability/recovery is sequenced after interface freeze
 **Primary findings:** PRR-006, 007, 009, 013, 015-020, 024; remaining PRR-001/003/010

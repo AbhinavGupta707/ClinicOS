@@ -358,3 +358,17 @@ Update these during orchestration:
 - Self-hosted Temporal definitions are not deployable because ECS services and a schema task exist.
   Freeze and test the exact schema tool, dynamic configuration, authentication/mTLS, numeric UID and
   service startup contract before permitting the runtime phase.
+- Temporal's upstream production template defaults service binds and cluster metadata to loopback.
+  Multi-task ECS requires a validated routable task address from official ECS metadata, explicit
+  membership ports, non-loopback frontend metadata, and repeatable config/start evidence.
+- Temporal frontend TLS uses separate `TEMPORAL_TLS_FRONTEND_CERT_DATA`/key inputs from internode
+  server TLS. Supplying only the internode certificate leaves the external worker boundary empty.
+- Workload OAuth and JWKS traffic belongs on the canonical Keycloak authentication hostname. Never
+  grant application workloads access to the operator-only admin hostname just to fetch tokens or
+  signing keys.
+- `verify-full`/`verify-server` is incomplete without the RDS CA trust chain. Pin the official AWS
+  RDS bundle digest in platform images and assert the exact CA path in both migration and runtime
+  configuration; live RDS handshake evidence is still required.
+- Platform images need more than a version and vulnerability scan. CI should exercise fail-closed
+  bootstrap/schema commands, real config rendering/start paths, clean realm import/readiness and
+  exact service-account claims.
