@@ -188,6 +188,18 @@ test("CP13 continuity SQL and migration enforce bounded keyset pages and checkou
     /create unique index if not exists recalls_generated_invoice_unique_idx[\s\S]*source_invoice_id is not null/u
   );
   assert.match(
+    MIGRATION,
+    /group by tenant_id, clinic_id, recall_rule_id, source_invoice_id[\s\S]*having count\(\*\) > 1[\s\S]*reconcile the duplicate recall evidence/iu
+  );
+  assert.match(
+    MIGRATION,
+    /anchor <> 'procedure_completed'[\s\S]*procedure_category is not null[\s\S]*retrying migration 0016/iu
+  );
+  assert.match(
+    MIGRATION,
+    /recall_rules_checkout_anchor_filter_check[\s\S]*not valid;[\s\S]*validate constraint recall_rules_checkout_anchor_filter_check/iu
+  );
+  assert.match(
     POSTGRES_SOURCE,
     /returning \*, \(xmax = 0\) as was_inserted/u,
     "task retries must distinguish the inserted row from the conflict row"
