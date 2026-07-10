@@ -3,6 +3,7 @@ import test from "node:test";
 import type { MediaUploadReservationRecord, UUID } from "@clinic-os/domain";
 import {
   PrivateMediaLifecycleService,
+  RoutedMediaAuthorityFactory,
   S3ClinicalMediaProvider,
   ServiceMediaAuthorityFactory
 } from "../src/providers/media/index.ts";
@@ -25,7 +26,7 @@ test("CP14 API adapter maps the typed S3 gateway without exposing provider inter
   const provider = new S3ClinicalMediaProvider({
     gateway,
     region: "ap-south-1",
-    authorityFactory: new ServiceMediaAuthorityFactory(ids.actorId, () => "correlation-1")
+    authorityFactory: routedAuthorityFactory()
   });
   const key = provider.buildObjectKey({
     tenantId: ids.tenantId,
@@ -92,7 +93,32 @@ test("CP14 API adapter maps the typed S3 gateway without exposing provider inter
 
 test("CP14 API adapter fails closed on missing digest, cross-scope key, and proxied metadata tamper", async () => {
   const gateway = new TestGateway();
-  const provider = new S3ClinicalMediaProvider({ gateway, region: "ap-south-1" });
+  assert.throws(
+    () =>
+      new S3ClinicalMediaProvider({
+        gateway,
+        region: "ap-south-1",
+        authorityFactory: undefined as never
+      }),
+    /explicit request authority factory/u
+  );
+  assert.throws(
+    () =>
+      new S3ClinicalMediaProvider({
+        gateway,
+        region: "ap-south-1",
+        authorityFactory: new ServiceMediaAuthorityFactory(
+          ids.actorId,
+          () => "background-correlation"
+        ) as never
+      }),
+    /explicit request authority factory/u
+  );
+  const provider = new S3ClinicalMediaProvider({
+    gateway,
+    region: "ap-south-1",
+    authorityFactory: routedAuthorityFactory()
+  });
   const key = gateway.allocateInternalObjectKey({
     tenantId: ids.tenantId,
     clinicId: ids.clinicId,
@@ -139,6 +165,31 @@ test("CP14 API adapter fails closed on missing digest, cross-scope key, and prox
       metadata: { tenant_id: ids.tenantId, clinic_id: otherClinic, upload_id: ids.uploadId }
     }),
     /metadata/u
+  );
+});
+
+test("CP14 routed authority requires a real actor and correlation id", () => {
+  const scope: PrivateMediaGatewayScope = {
+    tenantId: ids.tenantId,
+    clinicId: ids.clinicId,
+    mediaId: ids.uploadId,
+    uploadId: ids.uploadId
+  };
+
+  assert.throws(
+    () =>
+      new RoutedMediaAuthorityFactory(() => ({ actorId: "", correlationId: "trace" })).forScope(
+        scope
+      ),
+    /actor and correlation attribution/u
+  );
+  assert.throws(
+    () =>
+      new RoutedMediaAuthorityFactory(() => ({
+        actorId: ids.actorId,
+        correlationId: ""
+      })).forScope(scope),
+    /actor and correlation attribution/u
   );
 });
 
@@ -311,4 +362,11 @@ function reservation(objectKey: string): MediaUploadReservationRecord {
     tags: [],
     provenance: {}
   };
+}
+
+function routedAuthorityFactory(): RoutedMediaAuthorityFactory {
+  return new RoutedMediaAuthorityFactory(() => ({
+    actorId: ids.actorId,
+    correlationId: "correlation-1"
+  }));
 }

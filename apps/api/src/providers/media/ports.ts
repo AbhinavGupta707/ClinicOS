@@ -105,7 +105,8 @@ export interface PrivateMediaLifecycleResult {
   readonly recoverableUntil: string | null;
 }
 
-export interface MediaRequestAuthorityFactory {
+export interface MediaAuthorityFactory {
+  readonly attribution: "request" | "service";
   forScope(
     scope: Readonly<{
       tenantId: UUID | string;
@@ -114,4 +115,12 @@ export interface MediaRequestAuthorityFactory {
       uploadId: UUID | string;
     }>
   ): PrivateMediaGatewayAuthority;
+}
+
+export interface MediaRequestAuthorityFactory extends MediaAuthorityFactory {
+  readonly attribution: "request";
+}
+
+export interface MediaServiceAuthorityFactory extends MediaAuthorityFactory {
+  readonly attribution: "service";
 }

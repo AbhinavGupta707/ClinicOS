@@ -5,14 +5,14 @@ import {
   ClinicalMediaMagicByteDetector,
   PrivateMediaError,
   S3PrivateMediaProvider,
-  type MalwareEvidenceStore,
   type MalwareScannerTransport,
+  type PrivateMediaAtomicOperation,
+  type PrivateMediaAtomicPersistence,
   type PrivateMediaAuditEvent,
-  type PrivateMediaAuditSink,
   type PrivateMediaAuthority,
   type PrivateMediaRecord,
+  type PrivateMediaReconciliationIntent,
   type PrivateMediaScope,
-  type PrivateMediaStateStore,
   type S3ObjectLocator,
   type S3ObjectSnapshot,
   type S3PresigningTransport,
@@ -32,6 +32,13 @@ test("CP14 reservation is short-lived, scope-bound, quarantined, and redacted", 
   assert.equal(reserved.upload.requiredHeaders["content-type"], "image/jpeg");
   assert.equal(reserved.upload.requiredHeaders["content-length"], String(jpeg.byteLength));
   assert.equal(reserved.upload.requiredHeaders["x-amz-tagging"], "clinicos_state=quarantine");
+  assert.deepEqual(Object.keys(reserved.upload.requiredHeaders).sort(), [
+    "content-length",
+    "content-type",
+    "x-amz-checksum-sha256",
+    "x-amz-meta-clinicos-binding",
+    "x-amz-tagging"
+  ]);
   assert.match(
     reserved.upload.requiredHeaders["x-amz-meta-clinicos-binding"] ?? "",
     /^[A-Za-z0-9_-]{40,}$/u
@@ -41,7 +48,7 @@ test("CP14 reservation is short-lived, scope-bound, quarantined, and redacted", 
     upload: { ...reserved.upload, url: "[signed-url-redacted]" }
   });
 
-  const record = await harness.state.get(scope(harness.authority));
+  const record = await harness.persistence.get(scope(harness.authority));
   assert.ok(record);
   assert.match(
     record.locator.key,
@@ -50,7 +57,15 @@ test("CP14 reservation is short-lived, scope-bound, quarantined, and redacted", 
   assert.doesNotMatch(record.locator.key, /patient|\.jpg|filename/iu);
   assert.equal(record.state, "reserved");
   assert.equal(harness.auditEvents[0]?.action, "media.upload_reserved");
+  assert.equal(harness.persistence.intents.length, 1);
+  assert.equal(
+    harness.persistence.operations.has(harness.persistence.intents[0]?.operationId ?? ""),
+    true
+  );
+  assert.match(harness.persistence.intents[0]?.operationId ?? "", /^pmop_[a-f0-9]{64}$/u);
+  assert.match(harness.persistence.intents[0]?.intentId ?? "", /^pmri_[a-f0-9]{64}$/u);
   assertNoPrivateFields(harness.auditEvents);
+  assertNoPrivateFields(harness.persistence.intents);
 });
 
 test("CP14 completion rejects expired, incomplete, size, type, digest, metadata, and magic-byte tamper", async (t) => {
@@ -98,7 +113,7 @@ test("CP14 completion rejects expired, incomplete, size, type, digest, metadata,
     await t.test(scenario.name, async () => {
       const harness = createHarness();
       await reserve(harness);
-      const record = mustRecord(await harness.state.get(scope(harness.authority)));
+      const record = mustRecord(await harness.persistence.get(scope(harness.authority)));
       const snapshot = harness.objects.upload(record, jpeg);
       harness.objects.snapshot = scenario.mutate(harness, snapshot);
       await assert.rejects(
@@ -116,7 +131,7 @@ test("CP14 completion rejects expired, incomplete, size, type, digest, metadata,
       expectedBytes: pdfBytes.byteLength,
       expectedSha256Hex: sha256(pdfBytes)
     });
-    const record = mustRecord(await harness.state.get(scope(harness.authority)));
+    const record = mustRecord(await harness.persistence.get(scope(harness.authority)));
     harness.objects.upload(record, pdfBytes);
     await assert.rejects(
       harness.provider.verifyUploadCompletion(harness.authority),
@@ -203,7 +218,7 @@ test("CP14 malicious, invalid-signature, and conflicting evidence never becomes 
       harness.provider.inspectQuarantinedMedia(harness.authority),
       hasMediaCode("scan_evidence_invalid")
     );
-    assert.equal((await harness.state.get(scope(harness.authority)))?.state, "scan_failed");
+    assert.equal((await harness.persistence.get(scope(harness.authority)))?.state, "scan_failed");
   });
 
   await t.test("conflicting evidence id", async () => {
@@ -213,7 +228,7 @@ test("CP14 malicious, invalid-signature, and conflicting evidence never becomes 
       harness.provider.inspectQuarantinedMedia(harness.authority),
       hasMediaCode("scan_evidence_conflict")
     );
-    assert.equal((await harness.state.get(scope(harness.authority)))?.state, "scan_failed");
+    assert.equal((await harness.persistence.get(scope(harness.authority)))?.state, "scan_failed");
   });
 });
 
@@ -224,12 +239,99 @@ test("CP14 scanner timeout stays unavailable and can retry without duplicate com
     harness.provider.inspectQuarantinedMedia(harness.authority),
     hasMediaCode("scan_failed")
   );
-  assert.equal((await harness.state.get(scope(harness.authority)))?.state, "scan_failed");
+  assert.equal((await harness.persistence.get(scope(harness.authority)))?.state, "scan_failed");
 
   const retried = await harness.provider.inspectQuarantinedMedia(harness.authority);
   assert.equal(retried.state, "available");
-  assert.equal((await harness.state.get(scope(harness.authority)))?.scanAttempts, 2);
+  assert.equal((await harness.persistence.get(scope(harness.authority)))?.scanAttempts, 2);
   assert.equal(harness.scanner.calls, 2);
+});
+
+test("CP14 atomic persistence rolls back reservation and scan-result units on failure", async (t) => {
+  for (const failure of ["audit", "persistence"] as const) {
+    await t.test(`reservation ${failure} failure`, async () => {
+      const harness = createHarness();
+      harness.persistence.failNext = failure;
+      await assert.rejects(reserve(harness), new RegExp(`atomic ${failure} failure`, "u"));
+      assert.equal(await harness.persistence.get(scope(harness.authority)), null);
+      assert.equal(harness.persistence.auditEvents.length, 0);
+      assert.equal(harness.persistence.intents.length, 0);
+      assert.equal(harness.persistence.operations.size, 0);
+    });
+  }
+
+  for (const failure of ["audit", "evidence", "persistence"] as const) {
+    await t.test(`scan completion ${failure} failure`, async () => {
+      const harness = createHarness({ scanCommitFailure: failure });
+      await completeUpload(harness);
+      await assert.rejects(
+        harness.provider.inspectQuarantinedMedia(harness.authority),
+        new RegExp(`atomic ${failure} failure`, "u")
+      );
+      const record = await harness.persistence.get(scope(harness.authority));
+      assert.equal(record?.state, "scan_failed");
+      assert.equal(harness.persistence.evidenceValues.size, 0);
+      assert.equal(
+        harness.persistence.auditEvents.some((event) => event.action === "media.scan_completed"),
+        false
+      );
+      assert.equal(
+        harness.persistence.auditEvents.some((event) => event.action === "media.scan_failed"),
+        true
+      );
+      assert.equal(harness.persistence.auditEvents.length, harness.persistence.intents.length);
+    });
+  }
+});
+
+test("CP14 concurrent scan success/failure races cannot overwrite the winning revision", async (t) => {
+  await t.test("newer clean result wins over stale scanner failure", async () => {
+    let controlled!: ControlledScanner;
+    const harness = createHarness({
+      scannerFactory: (clock) => (controlled = new ControlledScanner(clock))
+    });
+    await completeUpload(harness);
+
+    const first = outcome(harness.provider.inspectQuarantinedMedia(harness.authority));
+    await waitForScannerCalls(controlled, 1);
+    harness.clock.now = new Date("2026-07-10T10:03:00.000Z");
+    const second = outcome(harness.provider.inspectQuarantinedMedia(harness.authority));
+    await waitForScannerCalls(controlled, 2);
+
+    controlled.resolveCall(1, "clean");
+    assert.equal((await second).value?.state, "available");
+    controlled.rejectCall(0);
+    assert.equal((await first).errorCode, "scan_failed");
+
+    const record = await harness.persistence.get(scope(harness.authority));
+    assert.equal(record?.state, "available");
+    assert.equal(record?.lastEvidenceId, "evidence-race-2");
+    assert.equal(harness.persistence.evidenceValues.size, 1);
+  });
+
+  await t.test("newer scanner failure wins over stale clean result", async () => {
+    let controlled!: ControlledScanner;
+    const harness = createHarness({
+      scannerFactory: (clock) => (controlled = new ControlledScanner(clock))
+    });
+    await completeUpload(harness);
+
+    const first = outcome(harness.provider.inspectQuarantinedMedia(harness.authority));
+    await waitForScannerCalls(controlled, 1);
+    harness.clock.now = new Date("2026-07-10T10:03:00.000Z");
+    const second = outcome(harness.provider.inspectQuarantinedMedia(harness.authority));
+    await waitForScannerCalls(controlled, 2);
+
+    controlled.rejectCall(1);
+    assert.equal((await second).errorCode, "scan_failed");
+    controlled.resolveCall(0, "clean");
+    assert.equal((await first).errorCode, "concurrent_change");
+
+    const record = await harness.persistence.get(scope(harness.authority));
+    assert.equal(record?.state, "scan_failed");
+    assert.equal(record?.lastEvidenceId, null);
+    assert.equal(harness.persistence.evidenceValues.size, 0);
+  });
 });
 
 test("CP14 lifecycle uses delete markers, governed restore, rescan, legal hold, and permanent purge", async () => {
@@ -272,6 +374,21 @@ test("CP14 lifecycle uses delete markers, governed restore, rescan, legal hold, 
   const purged = await harness.provider.purgeExpiredDeletedMedia(harness.authority);
   assert.equal(purged.state, "purged");
   assert.equal(harness.objects.deletedVersions.includes("version-1"), true);
+  const legalHoldAudits = harness.auditEvents.filter(
+    (event) => event.action === "media.legal_hold_changed"
+  );
+  assert.deepEqual(
+    legalHoldAudits.map((event) => event.metadata.legalHold),
+    [true, false]
+  );
+  await assert.rejects(
+    harness.provider.setLegalHold(harness.authority, true),
+    hasMediaCode("not_found")
+  );
+  assert.equal(
+    harness.auditEvents.filter((event) => event.action === "media.legal_hold_changed").length,
+    2
+  );
   assertNoPrivateFields(harness.auditEvents);
 });
 
@@ -283,6 +400,40 @@ test("CP14 signer cannot return expired or broadened URL authority", async () =>
   await assert.rejects(reserve(wrongMethod), hasMediaCode("provider_error"));
 });
 
+test("CP14 signer headers are exact and reject metadata, tag, or authorization injection", async (t) => {
+  for (const [name, headers] of [
+    ["metadata", { "x-amz-meta-attacker": "injected" }],
+    ["extra tag", { "x-amz-tagging-extra": "unsafe=true" }],
+    ["tag value", { "x-amz-tagging": "clinicos_state=quarantine&attacker=true" }],
+    ["authorization", { authorization: "Bearer unsafe" }]
+  ] as const) {
+    await t.test(`PUT ${name} header`, async () => {
+      const harness = createHarness({ signerExtraPutHeaders: headers });
+      await assert.rejects(reserve(harness), hasMediaCode("provider_error"));
+    });
+  }
+
+  await t.test("GET authorization header", async () => {
+    const harness = createHarness({
+      signerExtraGetHeaders: { authorization: "Bearer unsafe" }
+    });
+    await completeUpload(harness);
+    await harness.provider.inspectQuarantinedMedia(harness.authority);
+    await assert.rejects(
+      harness.provider.createSignedReadAccess(harness.authority, "2026-07-10T10:04:00.000Z"),
+      hasMediaCode("provider_error")
+    );
+    assert.equal(
+      harness.auditEvents.some((event) => event.action === "media.access_signed"),
+      false
+    );
+    assert.equal(
+      harness.auditEvents.some((event) => event.action === "media.access_signing_requested"),
+      true
+    );
+  });
+});
+
 interface HarnessOptions {
   readonly scannerVerdict?: "clean" | "malicious" | "suspicious" | "error";
   readonly validEvidenceSignature?: boolean;
@@ -291,30 +442,42 @@ interface HarnessOptions {
   readonly restoreWindowSeconds?: number;
   readonly signerExpiry?: string;
   readonly signerMethod?: "PUT" | "GET";
+  readonly signerExtraPutHeaders?: Readonly<Record<string, string>>;
+  readonly signerExtraGetHeaders?: Readonly<Record<string, string>>;
+  readonly scanCommitFailure?: PersistenceFailurePoint;
+  readonly scannerFactory?: (clock: {
+    now: Date;
+  }) => MalwareScannerTransport & { readonly calls: number };
 }
 
 interface Harness {
   authority: PrivateMediaAuthority;
   readonly provider: S3PrivateMediaProvider;
-  readonly state: TestStateStore;
+  readonly persistence: TestAtomicPersistence;
   readonly objects: TestObjectTransport;
   readonly signer: TestSigner;
-  readonly scanner: TestScanner;
+  readonly scanner: MalwareScannerTransport & { readonly calls: number };
   readonly clock: { now: Date };
   readonly auditEvents: PrivateMediaAuditEvent[];
 }
 
 function createHarness(options: HarnessOptions = {}): Harness {
   const clock = { now: new Date("2026-07-10T10:00:00.000Z") };
-  const state = new TestStateStore();
+  const persistence = new TestAtomicPersistence(options.evidenceConflict ?? false);
   const objects = new TestObjectTransport();
-  const signer = new TestSigner(options.signerExpiry, options.signerMethod);
-  const auditEvents: PrivateMediaAuditEvent[] = [];
-  const scanner = new TestScanner(
-    clock,
-    options.scannerVerdict ?? "clean",
-    options.scannerFailures ?? 0
+  const signer = new TestSigner(
+    options.signerExpiry,
+    options.signerMethod,
+    options.signerExtraPutHeaders,
+    options.signerExtraGetHeaders
   );
+  const scanner =
+    options.scannerFactory?.(clock) ??
+    new TestScanner(clock, options.scannerVerdict ?? "clean", options.scannerFailures ?? 0, () => {
+      if (options.scanCommitFailure) {
+        persistence.failNext = options.scanCommitFailure;
+      }
+    });
   let id = 0;
   const provider = new S3PrivateMediaProvider(
     {
@@ -335,13 +498,7 @@ function createHarness(options: HarnessOptions = {}): Harness {
           return options.validEvidenceSignature ?? true;
         }
       },
-      state,
-      evidence: new TestEvidenceStore(options.evidenceConflict ?? false),
-      audit: {
-        async append(event) {
-          auditEvents.push(event);
-        }
-      } satisfies PrivateMediaAuditSink,
+      persistence,
       now: () => new Date(clock.now),
       randomId: () => `event-${++id}`,
       randomKeyBytes: () => Uint8Array.from(new Array<number>(32).fill(7))
@@ -357,12 +514,12 @@ function createHarness(options: HarnessOptions = {}): Harness {
       correlationId: "correlation-1"
     },
     provider,
-    state,
+    persistence,
     objects,
     signer,
     scanner,
     clock,
-    auditEvents
+    auditEvents: persistence.auditEvents
   };
 }
 
@@ -388,24 +545,37 @@ async function reserve(
 
 async function completeUpload(harness: Harness) {
   await reserve(harness);
-  const record = mustRecord(await harness.state.get(scope(harness.authority)));
+  const record = mustRecord(await harness.persistence.get(scope(harness.authority)));
   harness.objects.upload(record, jpeg);
   return harness.provider.verifyUploadCompletion(harness.authority);
 }
 
-class TestStateStore implements PrivateMediaStateStore {
-  readonly records = new Map<string, PrivateMediaRecord>();
+type PersistenceFailurePoint = "audit" | "evidence" | "persistence";
 
-  async create(record: PrivateMediaRecord) {
-    const key = stateKey(record.scope);
+class TestAtomicPersistence implements PrivateMediaAtomicPersistence {
+  readonly records = new Map<string, PrivateMediaRecord>();
+  readonly evidenceValues = new Map<string, string>();
+  readonly auditEvents: PrivateMediaAuditEvent[] = [];
+  readonly intents: PrivateMediaReconciliationIntent[] = [];
+  readonly operations = new Map<string, "applied" | "replayed" | "evidence_conflict">();
+  readonly forceEvidenceConflict: boolean;
+  failNext: PersistenceFailurePoint | null = null;
+  failAlways: PersistenceFailurePoint | null = null;
+
+  constructor(forceEvidenceConflict: boolean) {
+    this.forceEvidenceConflict = forceEvidenceConflict;
+  }
+
+  async reserve(input: { record: PrivateMediaRecord; operation: PrivateMediaAtomicOperation }) {
+    if (this.operations.has(input.operation.operationId)) return "replayed" as const;
+    const key = stateKey(input.record.scope);
     const existing = this.records.get(key);
-    if (!existing) {
-      this.records.set(key, structuredClone(record));
-      return "created" as const;
-    }
-    return JSON.stringify(existing) === JSON.stringify(record)
-      ? ("replayed" as const)
-      : ("conflict" as const);
+    if (existing) return "conflict" as const;
+    this.maybeFail("audit");
+    this.maybeFail("persistence");
+    this.records.set(key, structuredClone(input.record));
+    this.commitOperation(input.operation, "applied");
+    return "applied" as const;
   }
 
   async get(scopeValue: PrivateMediaScope) {
@@ -413,12 +583,14 @@ class TestStateStore implements PrivateMediaStateStore {
     return record ? structuredClone(record) : null;
   }
 
-  async compareAndSwap(input: {
+  async transition(input: {
     scope: PrivateMediaScope;
     expectedRevision: number;
     expectedStates: readonly PrivateMediaRecord["state"][];
     next: PrivateMediaRecord;
+    operation: PrivateMediaAtomicOperation;
   }) {
+    if (this.operations.has(input.operation.operationId)) return "replayed" as const;
     const key = stateKey(input.scope);
     const current = this.records.get(key);
     if (
@@ -426,10 +598,72 @@ class TestStateStore implements PrivateMediaStateStore {
       current.revision !== input.expectedRevision ||
       !input.expectedStates.includes(current.state)
     ) {
-      return false;
+      return "concurrent_change" as const;
     }
+    this.maybeFail("audit");
+    this.maybeFail("persistence");
     this.records.set(key, structuredClone(input.next));
-    return true;
+    this.commitOperation(input.operation, "applied");
+    return "applied" as const;
+  }
+
+  async commitScanResult(input: Parameters<PrivateMediaAtomicPersistence["commitScanResult"]>[0]) {
+    const prior = this.operations.get(input.success.operation.operationId);
+    if (prior === "evidence_conflict") return "evidence_conflict" as const;
+    if (prior) return "replayed" as const;
+    const key = stateKey(input.scope);
+    const current = this.records.get(key);
+    if (
+      !current ||
+      current.revision !== input.expectedRevision ||
+      !input.expectedStates.includes(current.state as "scan_in_progress")
+    ) {
+      return "concurrent_change" as const;
+    }
+
+    this.maybeFail("audit");
+    this.maybeFail("evidence");
+    this.maybeFail("persistence");
+    const existingEvidence = this.evidenceValues.get(input.evidence.evidenceId);
+    if (
+      this.forceEvidenceConflict ||
+      (existingEvidence !== undefined && existingEvidence !== input.evidence.evidenceDigestSha256)
+    ) {
+      this.records.set(key, structuredClone(input.evidenceConflict.next));
+      this.commitOperation(input.evidenceConflict.operation, "evidence_conflict");
+      this.operations.set(input.success.operation.operationId, "evidence_conflict");
+      return "evidence_conflict" as const;
+    }
+
+    this.evidenceValues.set(input.evidence.evidenceId, input.evidence.evidenceDigestSha256);
+    this.records.set(key, structuredClone(input.success.next));
+    this.commitOperation(input.success.operation, "applied");
+    return existingEvidence ? ("replayed" as const) : ("applied" as const);
+  }
+
+  async recordAuditAndIntent(operation: PrivateMediaAtomicOperation) {
+    if (this.operations.has(operation.operationId)) return "replayed" as const;
+    this.maybeFail("audit");
+    this.maybeFail("persistence");
+    this.commitOperation(operation, "applied");
+    return "applied" as const;
+  }
+
+  private commitOperation(
+    operation: PrivateMediaAtomicOperation,
+    outcome: "applied" | "evidence_conflict"
+  ): void {
+    assert.equal(operation.reconciliationIntent.operationId, operation.operationId);
+    this.auditEvents.push(structuredClone(operation.audit));
+    this.intents.push(structuredClone(operation.reconciliationIntent));
+    this.operations.set(operation.operationId, outcome);
+  }
+
+  private maybeFail(point: PersistenceFailurePoint): void {
+    if (this.failAlways === point || this.failNext === point) {
+      if (this.failNext === point) this.failNext = null;
+      throw new Error(`injected atomic ${point} failure`);
+    }
   }
 }
 
@@ -490,17 +724,17 @@ class TestObjectTransport implements S3PrivateObjectTransport {
     return this.snapshot;
   }
 
-  async createDeleteMarker() {
+  async ensureDeleteMarker() {
     this.deleteMarker = "delete-marker-1";
     return { deleteMarkerVersionId: this.deleteMarker, deletedAt: "2026-07-10T10:00:00.000Z" };
   }
 
-  async removeDeleteMarker(input: { deleteMarkerVersionId: string }) {
+  async removeDeleteMarker(input: Parameters<S3PrivateObjectTransport["removeDeleteMarker"]>[0]) {
     assert.equal(input.deleteMarkerVersionId, this.deleteMarker);
     this.deleteMarker = null;
   }
 
-  async deleteObjectVersion(input: { versionId: string }) {
+  async deleteObjectVersion(input: Parameters<S3PrivateObjectTransport["deleteObjectVersion"]>[0]) {
     this.deletedVersions.push(input.versionId);
     if (input.versionId === "version-1") this.snapshot = null;
     if (input.versionId === this.deleteMarker) this.deleteMarker = null;
@@ -511,10 +745,19 @@ class TestSigner implements S3PresigningTransport {
   lastGet: { versionId: string } | null = null;
   readonly forcedExpiry?: string;
   readonly forcedPutMethod?: "PUT" | "GET";
+  readonly extraPutHeaders: Readonly<Record<string, string>>;
+  readonly extraGetHeaders: Readonly<Record<string, string>>;
 
-  constructor(forcedExpiry?: string, forcedPutMethod?: "PUT" | "GET") {
+  constructor(
+    forcedExpiry?: string,
+    forcedPutMethod?: "PUT" | "GET",
+    extraPutHeaders: Readonly<Record<string, string>> = {},
+    extraGetHeaders: Readonly<Record<string, string>> = {}
+  ) {
     this.forcedExpiry = forcedExpiry;
     this.forcedPutMethod = forcedPutMethod;
+    this.extraPutHeaders = extraPutHeaders;
+    this.extraGetHeaders = extraGetHeaders;
   }
 
   async signPutObject(input: Parameters<S3PresigningTransport["signPutObject"]>[0]) {
@@ -527,7 +770,8 @@ class TestSigner implements S3PresigningTransport {
         "content-length": String(input.contentLength),
         "x-amz-checksum-sha256": input.checksumSha256Base64,
         "x-amz-meta-clinicos-binding": input.metadata["clinicos-binding"] ?? "",
-        "x-amz-tagging": "clinicos_state=quarantine"
+        "x-amz-tagging": "clinicos_state=quarantine",
+        ...this.extraPutHeaders
       }
     } as const;
   }
@@ -538,7 +782,7 @@ class TestSigner implements S3PresigningTransport {
       method: "GET" as const,
       url: "https://media-access.example.test/opaque-capability",
       expiresAt: input.expiresAt,
-      requiredHeaders: {}
+      requiredHeaders: { ...this.extraGetHeaders }
     };
   }
 }
@@ -548,15 +792,18 @@ class TestScanner implements MalwareScannerTransport {
   readonly clock: { now: Date };
   readonly verdict: "clean" | "malicious" | "suspicious" | "error";
   readonly failures: number;
+  readonly beforeReturn: () => void;
 
   constructor(
     clock: { now: Date },
     verdict: "clean" | "malicious" | "suspicious" | "error",
-    failures: number
+    failures: number,
+    beforeReturn: () => void = () => undefined
   ) {
     this.clock = clock;
     this.verdict = verdict;
     this.failures = failures;
+    this.beforeReturn = beforeReturn;
   }
 
   async scan(
@@ -564,50 +811,79 @@ class TestScanner implements MalwareScannerTransport {
   ): Promise<SignedMalwareEvidence> {
     this.calls += 1;
     if (this.calls <= this.failures) throw new Error("scanner timeout");
-    return {
-      payload: {
-        evidenceId: "evidence-1",
-        tenantId: input.authority.tenantId,
-        clinicId: input.authority.clinicId,
-        mediaId: input.authority.mediaId,
-        uploadId: input.authority.uploadId,
-        objectIdentitySha256: input.objectIdentitySha256,
-        objectVersionId: input.objectVersionId,
-        contentSha256Hex: input.contentSha256Hex,
-        contentLength: input.contentLength,
-        detectedMimeType: input.detectedMimeType,
-        verdict: this.verdict,
-        scanner: "scanner-1",
-        engineVersion: "engine-1",
-        definitionsVersion: "definitions-1",
-        scannedAt: this.clock.now.toISOString()
-      },
-      signature: {
-        keyId: "kms-signing-key-1",
-        algorithm: "RSASSA_PSS_SHA_256",
-        valueBase64: "c2lnbmF0dXJl"
-      }
-    };
+    this.beforeReturn();
+    return signedEvidence(input, this.clock.now, this.verdict, `evidence-${this.calls}`);
   }
 }
 
-class TestEvidenceStore implements MalwareEvidenceStore {
-  readonly values = new Map<string, string>();
-  readonly forceConflict: boolean;
+class ControlledScanner implements MalwareScannerTransport {
+  calls = 0;
+  readonly clock: { now: Date };
+  readonly pending: Array<{
+    input: Parameters<MalwareScannerTransport["scan"]>[0];
+    resolve: (evidence: SignedMalwareEvidence) => void;
+    reject: (error: Error) => void;
+  }> = [];
 
-  constructor(forceConflict: boolean) {
-    this.forceConflict = forceConflict;
+  constructor(clock: { now: Date }) {
+    this.clock = clock;
   }
 
-  async append(input: Parameters<MalwareEvidenceStore["append"]>[0]) {
-    if (this.forceConflict) return "conflict" as const;
-    const existing = this.values.get(input.evidenceId);
-    if (!existing) {
-      this.values.set(input.evidenceId, input.evidenceDigestSha256);
-      return "recorded" as const;
+  async scan(
+    input: Parameters<MalwareScannerTransport["scan"]>[0]
+  ): Promise<SignedMalwareEvidence> {
+    this.calls += 1;
+    return new Promise<SignedMalwareEvidence>((resolve, reject) => {
+      this.pending.push({ input, resolve, reject });
+    });
+  }
+
+  resolveCall(index: number, verdict: "clean" | "malicious" | "suspicious" | "error"): void {
+    const pending = this.pending[index];
+    assert.ok(pending);
+    pending.resolve(
+      signedEvidence(pending.input, this.clock.now, verdict, `evidence-race-${index + 1}`)
+    );
+  }
+
+  rejectCall(index: number): void {
+    const pending = this.pending[index];
+    assert.ok(pending);
+    pending.reject(new Error(`scanner failure ${index + 1}`));
+  }
+}
+
+function signedEvidence(
+  input: Parameters<MalwareScannerTransport["scan"]>[0],
+  scannedAt: Date,
+  verdict: "clean" | "malicious" | "suspicious" | "error",
+  evidenceId: string
+): SignedMalwareEvidence {
+  return {
+    payload: {
+      evidenceId,
+      tenantId: input.authority.tenantId,
+      clinicId: input.authority.clinicId,
+      mediaId: input.authority.mediaId,
+      uploadId: input.authority.uploadId,
+      scanOperationId: input.operationId,
+      objectIdentitySha256: input.objectIdentitySha256,
+      objectVersionId: input.objectVersionId,
+      contentSha256Hex: input.contentSha256Hex,
+      contentLength: input.contentLength,
+      detectedMimeType: input.detectedMimeType,
+      verdict,
+      scanner: "scanner-1",
+      engineVersion: "engine-1",
+      definitionsVersion: "definitions-1",
+      scannedAt: scannedAt.toISOString()
+    },
+    signature: {
+      keyId: "kms-signing-key-1",
+      algorithm: "RSASSA_PSS_SHA_256",
+      valueBase64: "c2lnbmF0dXJl"
     }
-    return existing === input.evidenceDigestSha256 ? ("replayed" as const) : ("conflict" as const);
-  }
+  };
 }
 
 function scope(authority: PrivateMediaAuthority): PrivateMediaScope {
@@ -630,6 +906,27 @@ function sha256(bytes: Uint8Array): string {
 function mustRecord(record: PrivateMediaRecord | null): PrivateMediaRecord {
   assert.ok(record);
   return record;
+}
+
+async function outcome<T>(
+  promise: Promise<T>
+): Promise<{ value: T | null; errorCode: string | null }> {
+  try {
+    return { value: await promise, errorCode: null };
+  } catch (error) {
+    return {
+      value: null,
+      errorCode: error instanceof PrivateMediaError ? error.code : "unexpected_error"
+    };
+  }
+}
+
+async function waitForScannerCalls(scanner: ControlledScanner, expected: number): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (scanner.calls >= expected) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  assert.fail(`scanner did not receive ${expected} calls`);
 }
 
 function hasMediaCode(code: string) {

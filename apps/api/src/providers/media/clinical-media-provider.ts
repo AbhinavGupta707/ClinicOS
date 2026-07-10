@@ -1,6 +1,5 @@
-import { randomUUID } from "node:crypto";
 import type { MediaType, UUID } from "@clinic-os/domain";
-import type { ClinicalMediaInspectionProvider } from "../../features/clinical-dental/index.ts";
+import type { ClinicalMediaInspectionProvider } from "../../features/clinical-dental/types.ts";
 import type {
   MediaSignedReadAccess,
   MediaStorageProvider,
@@ -9,6 +8,7 @@ import type {
 } from "../../media-storage.ts";
 import type {
   MediaRequestAuthorityFactory,
+  MediaServiceAuthorityFactory,
   PrivateMediaGateway,
   PrivateMediaGatewayAuthority,
   PrivateMediaGatewayScope,
@@ -18,7 +18,7 @@ import type {
 export interface S3ClinicalMediaProviderOptions {
   readonly gateway: PrivateMediaGateway;
   readonly region: string;
-  readonly authorityFactory?: MediaRequestAuthorityFactory;
+  readonly authorityFactory: MediaRequestAuthorityFactory;
 }
 
 /**
@@ -36,11 +36,14 @@ export class S3ClinicalMediaProvider
 
   constructor(options: S3ClinicalMediaProviderOptions) {
     if (!options.region.trim()) throw new Error("S3 clinical media region is required.");
+    if (!options.authorityFactory || options.authorityFactory.attribution !== "request") {
+      throw new Error(
+        "S3 clinical media routed composition requires an explicit request authority factory."
+      );
+    }
     this.region = options.region;
     this.#gateway = options.gateway;
-    this.#authorityFactory =
-      options.authorityFactory ??
-      new ServiceMediaAuthorityFactory("clinic-os-media-provider", () => randomUUID());
+    this.#authorityFactory = options.authorityFactory;
   }
 
   buildObjectKey(input: {
@@ -220,7 +223,40 @@ export class PrivateMediaLifecycleService {
   }
 }
 
-export class ServiceMediaAuthorityFactory implements MediaRequestAuthorityFactory {
+export class RoutedMediaAuthorityFactory implements MediaRequestAuthorityFactory {
+  readonly attribution = "request" as const;
+  readonly #resolve: () => Readonly<{ actorId: string; correlationId: string }>;
+
+  constructor(resolve: () => Readonly<{ actorId: string; correlationId: string }>) {
+    this.#resolve = resolve;
+  }
+
+  forScope(
+    scope: Readonly<{
+      tenantId: UUID | string;
+      clinicId: UUID | string;
+      mediaId: UUID | string;
+      uploadId: UUID | string;
+    }>
+  ): PrivateMediaGatewayAuthority {
+    const attribution = this.#resolve();
+    if (!attribution.actorId.trim() || !attribution.correlationId.trim()) {
+      throw new Error("Verified media request actor and correlation attribution are required.");
+    }
+    return {
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      mediaId: scope.mediaId,
+      uploadId: scope.uploadId,
+      actorId: attribution.actorId,
+      correlationId: attribution.correlationId
+    };
+  }
+}
+
+/** Explicit factory for narrowly scoped background/reconciliation jobs, never routed user calls. */
+export class ServiceMediaAuthorityFactory implements MediaServiceAuthorityFactory {
+  readonly attribution = "service" as const;
   readonly #actorId: string;
   readonly #correlationId: () => string;
 

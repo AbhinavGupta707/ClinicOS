@@ -5,16 +5,16 @@ import type {
   DetectedMediaFile,
   MagicByteDetector,
   MalwareEvidenceSignatureVerifier,
-  MalwareEvidenceStore,
   MalwareScannerTransport,
+  PrivateMediaAtomicOperation,
+  PrivateMediaAtomicPersistence,
   PrivateMediaAuditAction,
   PrivateMediaAuditEvent,
-  PrivateMediaAuditSink,
   PrivateMediaAuthority,
   PrivateMediaRecord,
+  PrivateMediaReconciliationIntentKind,
   PrivateMediaScope,
   PrivateMediaState,
-  PrivateMediaStateStore,
   PublicMediaInspection,
   PublicMediaLifecycleReceipt,
   PublicMediaReservation,
@@ -58,9 +58,7 @@ export interface S3PrivateMediaProviderDependencies {
   readonly detector: MagicByteDetector;
   readonly scanner: MalwareScannerTransport;
   readonly evidenceVerifier: MalwareEvidenceSignatureVerifier;
-  readonly state: PrivateMediaStateStore;
-  readonly evidence: MalwareEvidenceStore;
-  readonly audit: PrivateMediaAuditSink;
+  readonly persistence: PrivateMediaAtomicPersistence;
   readonly now?: () => Date;
   readonly randomId?: () => string;
   readonly randomKeyBytes?: (size: number) => Uint8Array;
@@ -97,9 +95,7 @@ export class S3PrivateMediaProvider {
   readonly #detector: MagicByteDetector;
   readonly #scanner: MalwareScannerTransport;
   readonly #evidenceVerifier: MalwareEvidenceSignatureVerifier;
-  readonly #state: PrivateMediaStateStore;
-  readonly #evidence: MalwareEvidenceStore;
-  readonly #audit: PrivateMediaAuditSink;
+  readonly #persistence: PrivateMediaAtomicPersistence;
   readonly #now: () => Date;
   readonly #randomId: () => string;
   readonly #randomKeyBytes: (size: number) => Uint8Array;
@@ -129,9 +125,7 @@ export class S3PrivateMediaProvider {
     this.#detector = dependencies.detector;
     this.#scanner = dependencies.scanner;
     this.#evidenceVerifier = dependencies.evidenceVerifier;
-    this.#state = dependencies.state;
-    this.#evidence = dependencies.evidence;
-    this.#audit = dependencies.audit;
+    this.#persistence = dependencies.persistence;
     this.#now = dependencies.now ?? (() => new Date());
     this.#randomId = dependencies.randomId ?? randomUUID;
     this.#randomKeyBytes = dependencies.randomKeyBytes ?? randomBytes;
@@ -222,6 +216,7 @@ export class S3PrivateMediaProvider {
       lastScannedAt: null,
       inspectionLeaseId: null,
       inspectionLeaseExpiresAt: null,
+      pendingOperationId: null,
       deleteMarkerVersionId: null,
       deletedAt: null,
       recoverableUntil: null,
@@ -230,10 +225,39 @@ export class S3PrivateMediaProvider {
       updatedAt: createdAt
     };
 
-    const createResult = await this.#state.create(record);
+    const reserveOperation = this.#atomicOperation({
+      authority: input.authority,
+      expectedRevision: null,
+      targetRevision: record.revision,
+      action: "media.upload_reserved",
+      outcome: "succeeded",
+      metadata: {
+        kind: input.kind,
+        mimeType,
+        expectedBytes: input.expectedBytes,
+        expiresAt
+      },
+      intentKind: "upload_reservation_created",
+      intentPayload: {
+        expectedBytes: input.expectedBytes,
+        expectedSha256Hex: sha256Hex,
+        expiresAt,
+        state: record.state
+      }
+    });
+    const createResult = await this.#persistence.reserve({
+      record,
+      operation: reserveOperation
+    });
     if (createResult === "conflict") {
-      await this.#appendAudit(input.authority, "media.upload_rejected", "denied", {
-        reason: "reservation_conflict"
+      await this.#recordAuditAndIntent({
+        authority: input.authority,
+        action: "media.upload_rejected",
+        outcome: "denied",
+        metadata: { reason: "reservation_conflict" },
+        intentKind: "security_audit_recorded",
+        intentPayload: { reason: "reservation_conflict" },
+        discriminator: "reservation_conflict"
       });
       throw new PrivateMediaError({
         code: "reservation_conflict",
@@ -265,12 +289,6 @@ export class S3PrivateMediaProvider {
         "x-amz-meta-clinicos-binding": binding,
         "x-amz-tagging": `${QUARANTINE_TAG}=${UPLOAD_TAG_VALUE}`
       }
-    });
-    await this.#appendAudit(input.authority, "media.upload_reserved", "succeeded", {
-      kind: input.kind,
-      mimeType,
-      expectedBytes: input.expectedBytes,
-      expiresAt
     });
     return Object.freeze({
       mediaId: input.authority.mediaId,
@@ -315,7 +333,15 @@ export class S3PrivateMediaProvider {
     const now = this.#now();
     let record = await this.#requireRecord(authority);
     if (record.state === "reserved") this.#assertReservationOpen(record, now);
-    if (["deleted", "purged"].includes(record.state)) {
+    if (
+      [
+        "delete_in_progress",
+        "deleted",
+        "restore_in_progress",
+        "purge_in_progress",
+        "purged"
+      ].includes(record.state)
+    ) {
       throw new PrivateMediaError({ code: "quarantined", message: "Media is unavailable." });
     }
     const snapshot = await this.#objects.headObject(record.locator);
@@ -354,19 +380,30 @@ export class S3PrivateMediaProvider {
           objectIdentitySha256,
           updatedAt: now.toISOString()
         };
-        await this.#transition(record, ["reserved"], next);
+        await this.#transition(record, ["reserved"], next, {
+          authority,
+          action: "media.upload_verified",
+          outcome: "succeeded",
+          metadata: {
+            kind: record.kind,
+            detectedMimeType: detected.mimeType,
+            contentLength: snapshot.contentLength,
+            checksumVerified: true,
+            kmsVerified: true,
+            multipartComplete: true
+          },
+          intentKind: "upload_object_verified",
+          intentPayload: {
+            objectIdentitySha256,
+            contentLength: snapshot.contentLength,
+            detectedMimeType: detected.mimeType,
+            state: next.state
+          }
+        });
         record = next;
       } else {
         assertStableObject(record, snapshot, detected, objectIdentitySha256);
       }
-      await this.#appendAudit(authority, "media.upload_verified", "succeeded", {
-        kind: record.kind,
-        detectedMimeType: detected.mimeType,
-        contentLength: snapshot.contentLength,
-        checksumVerified: true,
-        kmsVerified: true,
-        multipartComplete: true
-      });
       return Object.freeze({
         mediaId: record.scope.mediaId,
         uploadId: record.scope.uploadId,
@@ -381,10 +418,7 @@ export class S3PrivateMediaProvider {
         error instanceof PrivateMediaError &&
         !["object_missing", "object_incomplete"].includes(error.code)
       ) {
-        await this.#quarantineOnIntegrityFailure(record, now);
-        await this.#appendAudit(authority, "media.upload_rejected", "failed", {
-          reason: error.code
-        });
+        await this.#quarantineOnIntegrityFailure(record, now, authority, error.code);
       }
       throw error;
     }
@@ -435,27 +469,42 @@ export class S3PrivateMediaProvider {
     }
 
     const leaseId = this.#randomId();
+    const leaseExpiresAt = new Date(
+      now.getTime() + this.#config.inspectionLeaseSeconds * 1000
+    ).toISOString();
+    const scanOperation = this.#atomicOperation({
+      authority,
+      expectedRevision: record.revision,
+      targetRevision: record.revision + 1,
+      action: "media.scan_started",
+      outcome: "succeeded",
+      metadata: { attempt: record.scanAttempts + 1 },
+      intentKind: "scan_execution_requested",
+      intentPayload: {
+        attempt: record.scanAttempts + 1,
+        objectIdentitySha256,
+        leaseExpiresAt
+      }
+    });
     const claimed: PrivateMediaRecord = {
       ...record,
       revision: record.revision + 1,
       state: "scan_in_progress",
       scanAttempts: record.scanAttempts + 1,
       inspectionLeaseId: leaseId,
-      inspectionLeaseExpiresAt: new Date(
-        now.getTime() + this.#config.inspectionLeaseSeconds * 1000
-      ).toISOString(),
+      inspectionLeaseExpiresAt: leaseExpiresAt,
+      pendingOperationId: scanOperation.operationId,
       updatedAt: now.toISOString()
     };
-    await this.#transition(record, [record.state], claimed);
+    await this.#transitionWithOperation(record, [record.state], claimed, scanOperation);
     record = claimed;
-    await this.#appendAudit(authority, "media.scan_started", "succeeded", {
-      attempt: record.scanAttempts
-    });
 
     let evidence: SignedMalwareEvidence;
     try {
       evidence = await this.#scanner.scan({
         authority,
+        operationId: scanOperation.operationId,
+        intentId: scanOperation.reconciliationIntent.intentId,
         locator: record.locator,
         objectVersionId,
         objectIdentitySha256,
@@ -482,19 +531,6 @@ export class S3PrivateMediaProvider {
         });
       }
       const evidenceDigestSha256 = digestCanonicalEvidence(evidence);
-      const evidenceOutcome = await this.#evidence.append({
-        scope: record.scope,
-        evidenceId: evidence.payload.evidenceId,
-        evidenceDigestSha256,
-        evidence,
-        recordedAt: now.toISOString()
-      });
-      if (evidenceOutcome === "conflict") {
-        throw new PrivateMediaError({
-          code: "scan_evidence_conflict",
-          message: "Conflicting media inspection evidence was detected."
-        });
-      }
       const nextState: PrivateMediaState =
         evidence.payload.verdict === "clean"
           ? "available"
@@ -510,22 +546,84 @@ export class S3PrivateMediaProvider {
         lastScannedAt: evidence.payload.scannedAt,
         inspectionLeaseId: null,
         inspectionLeaseExpiresAt: null,
+        pendingOperationId: null,
         updatedAt: now.toISOString()
       };
-      await this.#transition(record, ["scan_in_progress"], completed);
-      await this.#appendAudit(
+      const successOperation = this.#atomicOperation({
         authority,
-        evidence.payload.verdict === "error" ? "media.scan_failed" : "media.scan_completed",
-        evidence.payload.verdict === "error" ? "failed" : "succeeded",
-        {
+        expectedRevision: record.revision,
+        targetRevision: completed.revision,
+        action: evidence.payload.verdict === "error" ? "media.scan_failed" : "media.scan_completed",
+        outcome: evidence.payload.verdict === "error" ? "failed" : "succeeded",
+        metadata: {
           verdict: evidence.payload.verdict,
           evidenceId: evidence.payload.evidenceId,
           evidenceDigestSha256,
           scanner: evidence.payload.scanner,
           definitionsVersion: evidence.payload.definitionsVersion,
           attempt: record.scanAttempts
+        },
+        intentKind:
+          evidence.payload.verdict === "error" ? "scan_failure_committed" : "scan_result_committed",
+        intentPayload: {
+          verdict: evidence.payload.verdict,
+          evidenceId: evidence.payload.evidenceId,
+          evidenceDigestSha256,
+          attempt: record.scanAttempts,
+          state: completed.state
         }
-      );
+      });
+      const evidenceConflictRecord: PrivateMediaRecord = {
+        ...record,
+        revision: record.revision + 1,
+        state: "scan_failed",
+        inspectionLeaseId: null,
+        inspectionLeaseExpiresAt: null,
+        pendingOperationId: null,
+        updatedAt: now.toISOString()
+      };
+      const conflictOperation = this.#atomicOperation({
+        authority,
+        expectedRevision: record.revision,
+        targetRevision: evidenceConflictRecord.revision,
+        action: "media.scan_failed",
+        outcome: "failed",
+        metadata: {
+          reason: "scan_evidence_conflict",
+          evidenceId: evidence.payload.evidenceId,
+          attempt: record.scanAttempts
+        },
+        intentKind: "scan_failure_committed",
+        intentPayload: {
+          reason: "scan_evidence_conflict",
+          evidenceId: evidence.payload.evidenceId,
+          attempt: record.scanAttempts,
+          state: evidenceConflictRecord.state
+        }
+      });
+      const persistenceResult = await this.#persistence.commitScanResult({
+        scope: record.scope,
+        expectedRevision: record.revision,
+        expectedStates: ["scan_in_progress"],
+        evidence: {
+          evidenceId: evidence.payload.evidenceId,
+          evidenceDigestSha256,
+          evidence,
+          recordedAt: now.toISOString()
+        },
+        success: { next: completed, operation: successOperation },
+        evidenceConflict: {
+          next: evidenceConflictRecord,
+          operation: conflictOperation
+        }
+      });
+      if (persistenceResult === "concurrent_change") throw concurrentChangeError();
+      if (persistenceResult === "evidence_conflict") {
+        throw new PrivateMediaError({
+          code: "scan_evidence_conflict",
+          message: "Conflicting media inspection evidence was detected."
+        });
+      }
       return Object.freeze({
         mediaId: record.scope.mediaId,
         uploadId: record.scope.uploadId,
@@ -561,8 +659,14 @@ export class S3PrivateMediaProvider {
     const now = this.#now();
     const record = await this.#requireRecord(authority);
     if (record.state !== "available" || !record.objectVersionId) {
-      await this.#appendAudit(authority, "media.access_signed", "denied", {
-        reason: "quarantined"
+      await this.#recordAuditAndIntent({
+        authority,
+        action: "media.access_signed",
+        outcome: "denied",
+        metadata: { reason: "quarantined" },
+        intentKind: "security_audit_recorded",
+        intentPayload: { reason: "quarantined", state: record.state },
+        discriminator: `access-denied:${authority.correlationId}`
       });
       throw new PrivateMediaError({
         code: "quarantined",
@@ -575,6 +679,19 @@ export class S3PrivateMediaProvider {
       this.#config.maxAccessTtlSeconds,
       "access"
     );
+    await this.#recordAuditAndIntent({
+      authority,
+      action: "media.access_signing_requested",
+      outcome: "succeeded",
+      metadata: { expiresAt: boundedExpiry, method: "GET" },
+      intentKind: "access_signing_requested",
+      intentPayload: {
+        expiresAt: boundedExpiry,
+        method: "GET",
+        objectIdentitySha256: record.objectIdentitySha256
+      },
+      discriminator: `access-request:${boundedExpiry}:${authority.correlationId}`
+    });
     const signed = await this.#signer.signGetObject({
       locator: record.locator,
       versionId: record.objectVersionId,
@@ -587,9 +704,18 @@ export class S3PrivateMediaProvider {
       now,
       requiredHeaders: {}
     });
-    await this.#appendAudit(authority, "media.access_signed", "succeeded", {
-      expiresAt: access.expiresAt,
-      method: "GET"
+    await this.#recordAuditAndIntent({
+      authority,
+      action: "media.access_signed",
+      outcome: "succeeded",
+      metadata: { expiresAt: access.expiresAt, method: "GET" },
+      intentKind: "access_capability_issued",
+      intentPayload: {
+        expiresAt: access.expiresAt,
+        method: "GET",
+        objectIdentitySha256: record.objectIdentitySha256
+      },
+      discriminator: `access-issued:${access.expiresAt}:${authority.correlationId}`
     });
     return access;
   }
@@ -614,15 +740,48 @@ export class S3PrivateMediaProvider {
     if (record.state === "deleted") {
       return lifecycleReceipt(record, "deleted", record.deletedAt ?? now.toISOString());
     }
+    if (["delete_in_progress", "restore_in_progress", "purge_in_progress"].includes(record.state)) {
+      throw reconciliationPendingError(record.state);
+    }
     requireReason(input.reason);
-    const deletion = await this.#objects.createDeleteMarker(record.locator);
+    const reason = input.reason.trim().slice(0, 200);
+    const requestOperation = this.#atomicOperation({
+      authority: input.authority,
+      expectedRevision: record.revision,
+      targetRevision: record.revision + 1,
+      action: "media.delete_requested",
+      outcome: "succeeded",
+      metadata: { reason },
+      intentKind: "s3_delete_marker_requested",
+      intentPayload: {
+        reason,
+        requestedAt: now.toISOString(),
+        state: "delete_in_progress"
+      }
+    });
+    const deleting: PrivateMediaRecord = {
+      ...record,
+      revision: record.revision + 1,
+      state: "delete_in_progress",
+      pendingOperationId: requestOperation.operationId,
+      inspectionLeaseId: null,
+      inspectionLeaseExpiresAt: null,
+      updatedAt: now.toISOString()
+    };
+    await this.#transitionWithOperation(record, [record.state], deleting, requestOperation);
+    const deletion = await this.#objects.ensureDeleteMarker({
+      locator: deleting.locator,
+      operationId: requestOperation.operationId,
+      requestedAt: now.toISOString()
+    });
     const recoverableUntil = new Date(
       now.getTime() + this.#config.restoreWindowSeconds * 1000
     ).toISOString();
     const deleted: PrivateMediaRecord = {
-      ...record,
-      revision: record.revision + 1,
+      ...deleting,
+      revision: deleting.revision + 1,
       state: "deleted",
+      pendingOperationId: null,
       deleteMarkerVersionId: requireOpaqueProviderValue(
         deletion.deleteMarkerVersionId,
         "delete marker"
@@ -633,10 +792,18 @@ export class S3PrivateMediaProvider {
       inspectionLeaseExpiresAt: null,
       updatedAt: now.toISOString()
     };
-    await this.#transition(record, [record.state], deleted);
-    await this.#appendAudit(input.authority, "media.deleted", "succeeded", {
-      reason: input.reason.trim().slice(0, 200),
-      recoverableUntil
+    await this.#transition(deleting, ["delete_in_progress"], deleted, {
+      authority: input.authority,
+      action: "media.deleted",
+      outcome: "succeeded",
+      metadata: { reason, recoverableUntil },
+      intentKind: "s3_delete_marker_confirmed",
+      intentPayload: {
+        requestOperationId: requestOperation.operationId,
+        deleteMarkerFingerprint: sha256Text(deletion.deleteMarkerVersionId),
+        recoverableUntil,
+        state: deleted.state
+      }
     });
     return lifecycleReceipt(deleted, "deleted", deletion.deletedAt);
   }
@@ -662,28 +829,55 @@ export class S3PrivateMediaProvider {
         message: "The governed media restore window has expired."
       });
     }
-    await this.#objects.removeDeleteMarker({
-      locator: record.locator,
-      deleteMarkerVersionId: record.deleteMarkerVersionId
+    const reason = input.reason.trim().slice(0, 200);
+    const requestOperation = this.#atomicOperation({
+      authority: input.authority,
+      expectedRevision: record.revision,
+      targetRevision: record.revision + 1,
+      action: "media.restore_requested",
+      outcome: "succeeded",
+      metadata: { reason },
+      intentKind: "s3_restore_requested",
+      intentPayload: {
+        reason,
+        deleteMarkerFingerprint: sha256Text(record.deleteMarkerVersionId),
+        requestedAt: now.toISOString(),
+        state: "restore_in_progress"
+      }
     });
-    const snapshot = await this.#objects.headObject(record.locator);
+    const restoring: PrivateMediaRecord = {
+      ...record,
+      revision: record.revision + 1,
+      state: "restore_in_progress",
+      pendingOperationId: requestOperation.operationId,
+      updatedAt: now.toISOString()
+    };
+    await this.#transitionWithOperation(record, ["deleted"], restoring, requestOperation);
+    await this.#objects.removeDeleteMarker({
+      locator: restoring.locator,
+      deleteMarkerVersionId: record.deleteMarkerVersionId,
+      operationId: requestOperation.operationId,
+      requestedAt: now.toISOString()
+    });
+    const snapshot = await this.#objects.headObject(restoring.locator);
     if (!snapshot) {
       throw new PrivateMediaError({
         code: "object_missing",
         message: "The restored media version could not be verified."
       });
     }
-    this.#validateSnapshot(record, snapshot);
+    this.#validateSnapshot(restoring, snapshot);
     if (
-      snapshot.versionId !== record.objectVersionId ||
-      objectIdentityDigest(record.locator, snapshot.versionId) !== record.objectIdentitySha256
+      snapshot.versionId !== restoring.objectVersionId ||
+      objectIdentityDigest(restoring.locator, snapshot.versionId) !== restoring.objectIdentitySha256
     ) {
       throw integrityError("The restored media version does not match immutable provenance.");
     }
     const restored: PrivateMediaRecord = {
-      ...record,
-      revision: record.revision + 1,
+      ...restoring,
+      revision: restoring.revision + 1,
       state: "upload_verified",
+      pendingOperationId: null,
       deleteMarkerVersionId: null,
       deletedAt: null,
       recoverableUntil: null,
@@ -694,10 +888,18 @@ export class S3PrivateMediaProvider {
       inspectionLeaseExpiresAt: null,
       updatedAt: now.toISOString()
     };
-    await this.#transition(record, ["deleted"], restored);
-    await this.#appendAudit(input.authority, "media.restored", "succeeded", {
-      reason: input.reason.trim().slice(0, 200),
-      rescanRequired: true
+    await this.#transition(restoring, ["restore_in_progress"], restored, {
+      authority: input.authority,
+      action: "media.restored",
+      outcome: "succeeded",
+      metadata: { reason, rescanRequired: true },
+      intentKind: "s3_restore_confirmed",
+      intentPayload: {
+        requestOperationId: requestOperation.operationId,
+        objectIdentitySha256: restored.objectIdentitySha256,
+        rescanRequired: true,
+        state: restored.state
+      }
     });
     return lifecycleReceipt(restored, "quarantined", now.toISOString());
   }
@@ -723,39 +925,96 @@ export class S3PrivateMediaProvider {
         message: "Media is not eligible for permanent lifecycle deletion."
       });
     }
+    const requestOperation = this.#atomicOperation({
+      authority,
+      expectedRevision: record.revision,
+      targetRevision: record.revision + 1,
+      action: "media.purge_requested",
+      outcome: "succeeded",
+      metadata: { retentionWindowExpired: true },
+      intentKind: "s3_purge_requested",
+      intentPayload: {
+        objectIdentitySha256: record.objectIdentitySha256,
+        requestedAt: now.toISOString(),
+        state: "purge_in_progress"
+      }
+    });
+    const purging: PrivateMediaRecord = {
+      ...record,
+      revision: record.revision + 1,
+      state: "purge_in_progress",
+      pendingOperationId: requestOperation.operationId,
+      updatedAt: now.toISOString()
+    };
+    await this.#transitionWithOperation(record, ["deleted"], purging, requestOperation);
     await this.#objects.deleteObjectVersion({
-      locator: record.locator,
-      versionId: record.objectVersionId
+      locator: purging.locator,
+      versionId: record.objectVersionId,
+      operationId: requestOperation.operationId,
+      requestedAt: now.toISOString()
     });
     if (record.deleteMarkerVersionId) {
       await this.#objects.deleteObjectVersion({
-        locator: record.locator,
-        versionId: record.deleteMarkerVersionId
+        locator: purging.locator,
+        versionId: record.deleteMarkerVersionId,
+        operationId: requestOperation.operationId,
+        requestedAt: now.toISOString()
       });
     }
     const purged: PrivateMediaRecord = {
-      ...record,
-      revision: record.revision + 1,
+      ...purging,
+      revision: purging.revision + 1,
       state: "purged",
+      pendingOperationId: null,
       deleteMarkerVersionId: null,
       updatedAt: now.toISOString()
     };
-    await this.#transition(record, ["deleted"], purged);
-    await this.#appendAudit(authority, "media.purged", "succeeded", {
-      retentionWindowExpired: true
+    await this.#transition(purging, ["purge_in_progress"], purged, {
+      authority,
+      action: "media.purged",
+      outcome: "succeeded",
+      metadata: { retentionWindowExpired: true },
+      intentKind: "s3_purge_confirmed",
+      intentPayload: {
+        requestOperationId: requestOperation.operationId,
+        retentionWindowExpired: true,
+        state: purged.state
+      }
     });
     return lifecycleReceipt(purged, "purged", now.toISOString());
   }
 
   async setLegalHold(authority: PrivateMediaAuthority, legalHold: boolean): Promise<void> {
     const record = await this.#requireRecord(authority);
-    const next = {
+    if (record.state === "purged") {
+      throw new PrivateMediaError({
+        code: "not_found",
+        message: "Legal hold cannot be changed after media is permanently purged."
+      });
+    }
+    if (record.legalHold === legalHold) return;
+    const next: PrivateMediaRecord = {
       ...record,
       revision: record.revision + 1,
       legalHold,
       updatedAt: this.#now().toISOString()
     };
-    await this.#transition(record, [record.state], next);
+    await this.#transition(record, [record.state], next, {
+      authority,
+      action: "media.legal_hold_changed",
+      outcome: "succeeded",
+      metadata: {
+        previousLegalHold: record.legalHold,
+        legalHold,
+        state: record.state
+      },
+      intentKind: "legal_hold_changed",
+      intentPayload: {
+        previousLegalHold: record.legalHold,
+        legalHold,
+        state: record.state
+      }
+    });
   }
 
   async internalSnapshot(authority: PrivateMediaAuthority): Promise<
@@ -821,7 +1080,7 @@ export class S3PrivateMediaProvider {
 
   async #requireRecord(authority: PrivateMediaAuthority): Promise<PrivateMediaRecord> {
     validateAuthority(authority);
-    const record = await this.#state.get(scopeOnly(authority));
+    const record = await this.#persistence.get(scopeOnly(authority));
     if (!record) {
       throw new PrivateMediaError({ code: "not_found", message: "Media was not found." });
     }
@@ -925,6 +1184,7 @@ export class S3PrivateMediaProvider {
       clinicId: record.scope.clinicId,
       mediaId: record.scope.mediaId,
       uploadId: record.scope.uploadId,
+      scanOperationId: record.pendingOperationId,
       objectIdentitySha256: record.objectIdentitySha256,
       objectVersionId: record.objectVersionId,
       contentSha256Hex: record.expectedSha256Hex,
@@ -966,8 +1226,30 @@ export class S3PrivateMediaProvider {
   async #transition(
     previous: PrivateMediaRecord,
     expectedStates: readonly PrivateMediaState[],
-    next: PrivateMediaRecord
-  ): Promise<void> {
+    next: PrivateMediaRecord,
+    operationInput: Readonly<{
+      authority: PrivateMediaAuthority;
+      action: PrivateMediaAuditAction;
+      outcome: PrivateMediaAuditEvent["outcome"];
+      metadata: PrivateMediaAuditEvent["metadata"];
+      intentKind: PrivateMediaReconciliationIntentKind;
+      intentPayload: PrivateMediaAuditEvent["metadata"];
+    }>
+  ): Promise<"applied" | "replayed"> {
+    const operation = this.#atomicOperation({
+      ...operationInput,
+      expectedRevision: previous.revision,
+      targetRevision: next.revision
+    });
+    return this.#transitionWithOperation(previous, expectedStates, next, operation);
+  }
+
+  async #transitionWithOperation(
+    previous: PrivateMediaRecord,
+    expectedStates: readonly PrivateMediaState[],
+    next: PrivateMediaRecord,
+    operation: PrivateMediaAtomicOperation
+  ): Promise<"applied" | "replayed"> {
     if (
       next.revision !== previous.revision + 1 ||
       !sameScope(next.scope, previous.scope) ||
@@ -979,23 +1261,58 @@ export class S3PrivateMediaProvider {
         message: "Invalid private media state transition."
       });
     }
-    const changed = await this.#state.compareAndSwap({
+    if (
+      operation.reconciliationIntent.expectedRevision !== previous.revision ||
+      operation.reconciliationIntent.targetRevision !== next.revision
+    ) {
+      throw new PrivateMediaError({
+        code: "provider_error",
+        message: "Private media reconciliation intent does not match its state transition."
+      });
+    }
+    if (
+      [
+        "scan_execution_requested",
+        "s3_delete_marker_requested",
+        "s3_restore_requested",
+        "s3_purge_requested"
+      ].includes(operation.reconciliationIntent.kind) &&
+      next.pendingOperationId !== operation.operationId
+    ) {
+      throw new PrivateMediaError({
+        code: "provider_error",
+        message: "External media work is not bound to its durable operation identity."
+      });
+    }
+    const result = await this.#persistence.transition({
       scope: previous.scope,
       expectedRevision: previous.revision,
       expectedStates,
-      next
+      next,
+      operation
     });
-    if (!changed) {
-      throw new PrivateMediaError({
-        code: "concurrent_change",
-        message: "Private media state changed concurrently; retry from authoritative state.",
-        retryable: true
-      });
-    }
+    if (result === "concurrent_change") throw concurrentChangeError();
+    return result;
   }
 
-  async #quarantineOnIntegrityFailure(record: PrivateMediaRecord, now: Date): Promise<void> {
-    if (["deleted", "purged", "quarantined"].includes(record.state)) return;
+  async #quarantineOnIntegrityFailure(
+    record: PrivateMediaRecord,
+    now: Date,
+    authority: PrivateMediaAuthority,
+    reason: string
+  ): Promise<void> {
+    if (
+      [
+        "delete_in_progress",
+        "deleted",
+        "restore_in_progress",
+        "purge_in_progress",
+        "purged",
+        "quarantined"
+      ].includes(record.state)
+    ) {
+      return;
+    }
     const quarantined: PrivateMediaRecord = {
       ...record,
       revision: record.revision + 1,
@@ -1005,7 +1322,14 @@ export class S3PrivateMediaProvider {
       updatedAt: now.toISOString()
     };
     try {
-      await this.#transition(record, [record.state], quarantined);
+      await this.#transition(record, [record.state], quarantined, {
+        authority,
+        action: "media.upload_rejected",
+        outcome: "failed",
+        metadata: { reason },
+        intentKind: "upload_object_rejected",
+        intentPayload: { reason, state: quarantined.state }
+      });
     } catch (error) {
       if (!(error instanceof PrivateMediaError) || error.code !== "concurrent_change") throw error;
     }
@@ -1023,41 +1347,100 @@ export class S3PrivateMediaProvider {
       state: "scan_failed",
       inspectionLeaseId: null,
       inspectionLeaseExpiresAt: null,
+      pendingOperationId: null,
       updatedAt: now.toISOString()
     };
     try {
-      await this.#transition(record, ["scan_in_progress"], failed);
+      await this.#transition(record, ["scan_in_progress"], failed, {
+        authority,
+        action: "media.scan_failed",
+        outcome: "failed",
+        metadata: { reason, attempt: record.scanAttempts },
+        intentKind: "scan_failure_committed",
+        intentPayload: { reason, attempt: record.scanAttempts, state: failed.state }
+      });
     } catch (error) {
       if (!(error instanceof PrivateMediaError) || error.code !== "concurrent_change") throw error;
     }
-    await this.#appendAudit(authority, "media.scan_failed", "failed", {
-      reason,
-      attempt: record.scanAttempts
+  }
+
+  #atomicOperation(
+    input: Readonly<{
+      authority: PrivateMediaAuthority;
+      expectedRevision: number | null;
+      targetRevision: number | null;
+      action: PrivateMediaAuditAction;
+      outcome: PrivateMediaAuditEvent["outcome"];
+      metadata: PrivateMediaAuditEvent["metadata"];
+      intentKind: PrivateMediaReconciliationIntentKind;
+      intentPayload: PrivateMediaAuditEvent["metadata"];
+      discriminator?: string;
+    }>
+  ): PrivateMediaAtomicOperation {
+    assertSafeAuditMetadata(input.metadata);
+    assertSafeIntentPayload(input.intentPayload);
+    const scope = scopeOnly(input.authority);
+    const operationId = `pmop_${sha256Text(
+      [
+        scope.tenantId,
+        scope.clinicId,
+        scope.mediaId,
+        scope.uploadId,
+        input.action,
+        String(input.expectedRevision),
+        String(input.targetRevision),
+        input.intentKind,
+        canonicalPrimitiveRecord(input.metadata),
+        canonicalPrimitiveRecord(input.intentPayload),
+        input.discriminator ?? ""
+      ].join("\u001f")
+    )}`;
+    const occurredAt = this.#now().toISOString();
+    return Object.freeze({
+      operationId,
+      audit: Object.freeze({
+        eventId: `pmae_${sha256Text(`${operationId}\u001faudit`)}`,
+        action: input.action,
+        occurredAt,
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        mediaId: scope.mediaId,
+        uploadId: scope.uploadId,
+        actorId: input.authority.actorId,
+        correlationId: input.authority.correlationId,
+        outcome: input.outcome,
+        metadata: Object.freeze({ ...input.metadata })
+      }),
+      reconciliationIntent: Object.freeze({
+        intentId: `pmri_${sha256Text(`${operationId}\u001fintent`)}`,
+        operationId,
+        kind: input.intentKind,
+        scope,
+        expectedRevision: input.expectedRevision,
+        targetRevision: input.targetRevision,
+        createdAt: occurredAt,
+        payload: Object.freeze({ ...input.intentPayload })
+      })
     });
   }
 
-  async #appendAudit(
-    authority: PrivateMediaAuthority,
-    action: PrivateMediaAuditAction,
-    outcome: PrivateMediaAuditEvent["outcome"],
-    metadata: PrivateMediaAuditEvent["metadata"]
+  async #recordAuditAndIntent(
+    input: Readonly<{
+      authority: PrivateMediaAuthority;
+      action: PrivateMediaAuditAction;
+      outcome: PrivateMediaAuditEvent["outcome"];
+      metadata: PrivateMediaAuditEvent["metadata"];
+      intentKind: PrivateMediaReconciliationIntentKind;
+      intentPayload: PrivateMediaAuditEvent["metadata"];
+      discriminator: string;
+    }>
   ): Promise<void> {
-    assertSafeAuditMetadata(metadata);
-    await this.#audit.append(
-      Object.freeze({
-        eventId: this.#randomId(),
-        action,
-        occurredAt: this.#now().toISOString(),
-        tenantId: authority.tenantId,
-        clinicId: authority.clinicId,
-        mediaId: authority.mediaId,
-        uploadId: authority.uploadId,
-        actorId: authority.actorId,
-        correlationId: authority.correlationId,
-        outcome,
-        metadata: Object.freeze({ ...metadata })
-      })
-    );
+    const operation = this.#atomicOperation({
+      ...input,
+      expectedRevision: null,
+      targetRevision: null
+    });
+    await this.#persistence.recordAuditAndIntent(operation);
   }
 }
 
@@ -1276,6 +1659,17 @@ function publicSignedRequest<TMethod extends "PUT" | "GET">(
       });
     }
   }
+  const expectedHeaderNames = Object.keys(expected.requiredHeaders).sort();
+  const actualHeaderNames = Object.keys(headers).sort();
+  if (
+    expectedHeaderNames.length !== actualHeaderNames.length ||
+    expectedHeaderNames.some((name, index) => actualHeaderNames[index] !== name)
+  ) {
+    throw new PrivateMediaError({
+      code: "provider_error",
+      message: "Media signer returned unapproved required headers."
+    });
+  }
   return Object.freeze({
     method: expected.method,
     url: parsed.toString(),
@@ -1344,6 +1738,7 @@ function orderedEvidencePayload(payload: SignedMalwareEvidencePayload) {
     clinicId: payload.clinicId,
     mediaId: payload.mediaId,
     uploadId: payload.uploadId,
+    scanOperationId: payload.scanOperationId,
     objectIdentitySha256: payload.objectIdentitySha256,
     objectVersionId: payload.objectVersionId,
     contentSha256Hex: payload.contentSha256Hex,
@@ -1373,6 +1768,35 @@ function lifecycleReceipt(
 
 function integrityError(message: string): PrivateMediaError {
   return new PrivateMediaError({ code: "integrity_mismatch", message });
+}
+
+function concurrentChangeError(): PrivateMediaError {
+  return new PrivateMediaError({
+    code: "concurrent_change",
+    message: "Private media state changed concurrently; retry from authoritative state.",
+    retryable: true
+  });
+}
+
+function reconciliationPendingError(state: PrivateMediaState): PrivateMediaError {
+  return new PrivateMediaError({
+    code: "concurrent_change",
+    message: "A private media lifecycle operation is awaiting durable reconciliation.",
+    retryable: true,
+    safeDetails: { state }
+  });
+}
+
+function sha256Text(value: string): string {
+  return createHash("sha256").update(value).digest("hex");
+}
+
+function canonicalPrimitiveRecord(
+  value: Readonly<Record<string, string | number | boolean | null>>
+): string {
+  return JSON.stringify(
+    Object.fromEntries(Object.entries(value).sort(([left], [right]) => left.localeCompare(right)))
+  );
 }
 
 function safeEqual(left: string, right: string): boolean {
@@ -1413,6 +1837,23 @@ function assertSafeAuditMetadata(
     throw new PrivateMediaError({
       code: "provider_error",
       message: "Private media audit metadata contains a forbidden provider authority field."
+    });
+  }
+}
+
+function assertSafeIntentPayload(
+  payload: Readonly<Record<string, string | number | boolean | null>>
+): void {
+  const serialized = JSON.stringify(payload);
+  if (
+    serialized.length > 8192 ||
+    /(?:bucket|object[_-]?key|version[_-]?id|signed[_-]?url|provider[_-]?token|authorization)/iu.test(
+      serialized
+    )
+  ) {
+    throw new PrivateMediaError({
+      code: "provider_error",
+      message: "Private media reconciliation intent contains a forbidden provider authority field."
     });
   }
 }

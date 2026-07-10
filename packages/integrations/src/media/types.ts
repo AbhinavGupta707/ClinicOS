@@ -8,7 +8,10 @@ export type PrivateMediaState =
   | "available"
   | "quarantined"
   | "scan_failed"
+  | "delete_in_progress"
   | "deleted"
+  | "restore_in_progress"
+  | "purge_in_progress"
   | "purged";
 
 export type MalwareVerdict = "clean" | "malicious" | "suspicious" | "error";
@@ -95,7 +98,13 @@ export interface S3PrivateObjectTransport {
       tags: Readonly<Record<string, string>>;
     }>
   ): Promise<S3ObjectSnapshot>;
-  createDeleteMarker(locator: S3ObjectLocator): Promise<
+  ensureDeleteMarker(
+    input: Readonly<{
+      locator: S3ObjectLocator;
+      operationId: string;
+      requestedAt: string;
+    }>
+  ): Promise<
     Readonly<{
       deleteMarkerVersionId: string;
       deletedAt: string;
@@ -105,12 +114,16 @@ export interface S3PrivateObjectTransport {
     input: Readonly<{
       locator: S3ObjectLocator;
       deleteMarkerVersionId: string;
+      operationId: string;
+      requestedAt: string;
     }>
   ): Promise<void>;
   deleteObjectVersion(
     input: Readonly<{
       locator: S3ObjectLocator;
       versionId: string;
+      operationId: string;
+      requestedAt: string;
     }>
   ): Promise<void>;
 }
@@ -130,6 +143,7 @@ export interface SignedMalwareEvidencePayload {
   readonly clinicId: string;
   readonly mediaId: string;
   readonly uploadId: string;
+  readonly scanOperationId: string;
   readonly objectIdentitySha256: string;
   readonly objectVersionId: string;
   readonly contentSha256Hex: string;
@@ -155,6 +169,8 @@ export interface MalwareScannerTransport {
   scan(
     input: Readonly<{
       authority: PrivateMediaAuthority;
+      operationId: string;
+      intentId: string;
       locator: S3ObjectLocator;
       objectVersionId: string;
       objectIdentitySha256: string;
@@ -191,37 +207,13 @@ export interface PrivateMediaRecord {
   readonly lastScannedAt: string | null;
   readonly inspectionLeaseId: string | null;
   readonly inspectionLeaseExpiresAt: string | null;
+  readonly pendingOperationId: string | null;
   readonly deleteMarkerVersionId: string | null;
   readonly deletedAt: string | null;
   readonly recoverableUntil: string | null;
   readonly legalHold: boolean;
   readonly createdAt: string;
   readonly updatedAt: string;
-}
-
-export interface PrivateMediaStateStore {
-  create(record: PrivateMediaRecord): Promise<"created" | "replayed" | "conflict">;
-  get(scope: PrivateMediaScope): Promise<PrivateMediaRecord | null>;
-  compareAndSwap(
-    input: Readonly<{
-      scope: PrivateMediaScope;
-      expectedRevision: number;
-      expectedStates: readonly PrivateMediaState[];
-      next: PrivateMediaRecord;
-    }>
-  ): Promise<boolean>;
-}
-
-export interface MalwareEvidenceStore {
-  append(
-    input: Readonly<{
-      scope: PrivateMediaScope;
-      evidenceId: string;
-      evidenceDigestSha256: string;
-      evidence: SignedMalwareEvidence;
-      recordedAt: string;
-    }>
-  ): Promise<"recorded" | "replayed" | "conflict">;
 }
 
 export type PrivateMediaAuditAction =
@@ -231,10 +223,15 @@ export type PrivateMediaAuditAction =
   | "media.scan_started"
   | "media.scan_completed"
   | "media.scan_failed"
+  | "media.access_signing_requested"
   | "media.access_signed"
+  | "media.delete_requested"
   | "media.deleted"
+  | "media.restore_requested"
   | "media.restored"
-  | "media.purged";
+  | "media.purge_requested"
+  | "media.purged"
+  | "media.legal_hold_changed";
 
 export interface PrivateMediaAuditEvent {
   readonly eventId: string;
@@ -250,9 +247,106 @@ export interface PrivateMediaAuditEvent {
   readonly metadata: Readonly<Record<string, string | number | boolean | null>>;
 }
 
-/** Append-only authoritative audit sink; diagnostic logs are not a valid implementation. */
-export interface PrivateMediaAuditSink {
-  append(event: PrivateMediaAuditEvent): Promise<void>;
+export type PrivateMediaReconciliationIntentKind =
+  | "upload_reservation_created"
+  | "upload_object_verified"
+  | "upload_object_rejected"
+  | "scan_execution_requested"
+  | "scan_result_committed"
+  | "scan_failure_committed"
+  | "access_signing_requested"
+  | "access_capability_issued"
+  | "s3_delete_marker_requested"
+  | "s3_delete_marker_confirmed"
+  | "s3_restore_requested"
+  | "s3_restore_confirmed"
+  | "s3_purge_requested"
+  | "s3_purge_confirmed"
+  | "legal_hold_changed"
+  | "security_audit_recorded";
+
+/**
+ * Durable outbox/reconciliation intent. IDs are deterministic for the exact operation so a
+ * process crash can replay safely without inventing a second state transition or external effect.
+ */
+export interface PrivateMediaReconciliationIntent {
+  readonly intentId: string;
+  readonly operationId: string;
+  readonly kind: PrivateMediaReconciliationIntentKind;
+  readonly scope: PrivateMediaScope;
+  readonly expectedRevision: number | null;
+  readonly targetRevision: number | null;
+  readonly createdAt: string;
+  readonly payload: Readonly<Record<string, string | number | boolean | null>>;
+}
+
+export interface PrivateMediaAtomicOperation {
+  readonly operationId: string;
+  readonly audit: PrivateMediaAuditEvent;
+  readonly reconciliationIntent: PrivateMediaReconciliationIntent;
+}
+
+export type PrivateMediaPersistenceWriteResult = "applied" | "replayed" | "concurrent_change";
+
+/**
+ * Transaction-bound persistence boundary. Implementations must commit every method in one
+ * database transaction: state, immutable evidence when present, audit, operation deduplication,
+ * and reconciliation/outbox intent all succeed or all roll back. Every write must validate that
+ * operation audit/intent scope and revisions match the state write. A deterministic operation ID
+ * may replay only when the previously committed operation fingerprint is identical; an ID reused
+ * with different content is a conflict, never a replay.
+ */
+export interface PrivateMediaAtomicPersistence {
+  get(scope: PrivateMediaScope): Promise<PrivateMediaRecord | null>;
+
+  /** Atomically creates the reservation and its immutable audit, dedup row, and outbox intent. */
+  reserve(
+    input: Readonly<{
+      record: PrivateMediaRecord;
+      operation: PrivateMediaAtomicOperation;
+    }>
+  ): Promise<"applied" | "replayed" | "conflict">;
+
+  /** Atomically performs the revision CAS and appends its audit, dedup row, and outbox intent. */
+  transition(
+    input: Readonly<{
+      scope: PrivateMediaScope;
+      expectedRevision: number;
+      expectedStates: readonly PrivateMediaState[];
+      next: PrivateMediaRecord;
+      operation: PrivateMediaAtomicOperation;
+    }>
+  ): Promise<PrivateMediaPersistenceWriteResult>;
+
+  /**
+   * Atomically checks evidence uniqueness, appends immutable evidence, performs the revision CAS,
+   * and appends audit/dedup/outbox. A reused evidence ID with a different digest must instead
+   * commit the supplied evidenceConflict state/audit/outbox branch without appending evidence.
+   */
+  commitScanResult(
+    input: Readonly<{
+      scope: PrivateMediaScope;
+      expectedRevision: number;
+      expectedStates: readonly ["scan_in_progress"];
+      evidence: Readonly<{
+        evidenceId: string;
+        evidenceDigestSha256: string;
+        evidence: SignedMalwareEvidence;
+        recordedAt: string;
+      }>;
+      success: Readonly<{
+        next: PrivateMediaRecord;
+        operation: PrivateMediaAtomicOperation;
+      }>;
+      evidenceConflict: Readonly<{
+        next: PrivateMediaRecord;
+        operation: PrivateMediaAtomicOperation;
+      }>;
+    }>
+  ): Promise<"applied" | "replayed" | "evidence_conflict" | "concurrent_change">;
+
+  /** Atomically appends a non-state audit event, dedup row, and durable outbox intent. */
+  recordAuditAndIntent(operation: PrivateMediaAtomicOperation): Promise<"applied" | "replayed">;
 }
 
 export interface PublicSignedMediaRequest<TMethod extends "PUT" | "GET" = "PUT" | "GET"> {
