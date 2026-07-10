@@ -2,9 +2,15 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import {
+  RoutedMediaAuthorityFactory,
+  S3ClinicalMediaProvider
+} from "../../../apps/api/src/providers/media/index.ts";
+import {
   ClinicalMediaMagicByteDetector,
   PrivateMediaError,
   S3PrivateMediaProvider,
+  privateMediaOperationSemanticFingerprint,
+  privateMediaPersistenceWriteFingerprint,
   type MalwareScannerTransport,
   type PrivateMediaAtomicOperation,
   type PrivateMediaAtomicPersistence,
@@ -64,6 +70,10 @@ test("CP14 reservation is short-lived, scope-bound, quarantined, and redacted", 
   );
   assert.match(harness.persistence.intents[0]?.operationId ?? "", /^pmop_[a-f0-9]{64}$/u);
   assert.match(harness.persistence.intents[0]?.intentId ?? "", /^pmri_[a-f0-9]{64}$/u);
+  assert.match(
+    harness.persistence.operations.values().next().value?.operation.semanticFingerprintSha256 ?? "",
+    /^[a-f0-9]{64}$/u
+  );
   assertNoPrivateFields(harness.auditEvents);
   assertNoPrivateFields(harness.persistence.intents);
 });
@@ -199,6 +209,49 @@ test("CP14 clean signed evidence is required before least-scope read access", as
   assertNoPrivateFields(harness.auditEvents);
 });
 
+test("CP14 API adapter snapshot stays pinned when a new object version appears after scan", async () => {
+  let objects!: TestObjectTransport;
+  let verifiedRecord!: PrivateMediaRecord;
+  const harness = createHarness({
+    scannerFactory: (clock) =>
+      new TestScanner(clock, "clean", 0, () => {
+        objects.overwriteLatest(verifiedRecord, jpeg);
+      })
+  });
+  harness.authority = {
+    ...harness.authority,
+    mediaId: "media-boundary",
+    uploadId: "media-boundary"
+  };
+  objects = harness.objects;
+  const verified = await completeUpload(harness);
+  verifiedRecord = mustRecord(await harness.persistence.get(scope(harness.authority)));
+  const adapter = new S3ClinicalMediaProvider({
+    gateway: harness.provider,
+    region: "ap-south-1",
+    authorityFactory: new RoutedMediaAuthorityFactory(() => ({
+      actorId: harness.authority.actorId,
+      correlationId: harness.authority.correlationId
+    }))
+  });
+
+  const result = await adapter.inspect({
+    reservation: {
+      id: harness.authority.mediaId,
+      tenantId: harness.authority.tenantId,
+      clinicId: harness.authority.clinicId,
+      objectKey: verifiedRecord.locator.key
+    } as never,
+    object: { objectKey: verifiedRecord.locator.key } as never,
+    now: harness.clock.now
+  });
+
+  assert.equal(objects.snapshot?.versionId, "version-2");
+  assert.equal(result.scanStatus, "clean");
+  assert.equal(result.objectVersion, "version-1");
+  assert.equal(verified.sha256Digest, jpegDigest);
+});
+
 test("CP14 malicious, invalid-signature, and conflicting evidence never becomes available", async (t) => {
   await t.test("malicious verdict", async () => {
     const harness = createHarness({ scannerVerdict: "malicious" });
@@ -230,6 +283,90 @@ test("CP14 malicious, invalid-signature, and conflicting evidence never becomes 
     );
     assert.equal((await harness.persistence.get(scope(harness.authority)))?.state, "scan_failed");
   });
+});
+
+test("CP14 malformed scanner evidence is rejected before persistence", async (t) => {
+  const mutations: ReadonlyArray<readonly [string, (evidence: SignedMalwareEvidence) => unknown]> =
+    [
+      [
+        "verdict",
+        (evidence) => ({ ...evidence, payload: { ...evidence.payload, verdict: "unknown" } })
+      ],
+      [
+        "scanner id",
+        (evidence) => ({ ...evidence, payload: { ...evidence.payload, scanner: "bad scanner" } })
+      ],
+      [
+        "engine id",
+        (evidence) => ({ ...evidence, payload: { ...evidence.payload, engineVersion: "" } })
+      ],
+      [
+        "definitions id",
+        (evidence) => ({
+          ...evidence,
+          payload: { ...evidence.payload, definitionsVersion: "bad\ndefinitions" }
+        })
+      ],
+      [
+        "signature key",
+        (evidence) => ({
+          ...evidence,
+          signature: { ...evidence.signature, keyId: "unapproved-signing-key" }
+        })
+      ],
+      [
+        "signature algorithm",
+        (evidence) => ({
+          ...evidence,
+          signature: { ...evidence.signature, algorithm: "HMAC_SHA_256" }
+        })
+      ],
+      [
+        "signature base64",
+        (evidence) => ({
+          ...evidence,
+          signature: { ...evidence.signature, valueBase64: "not-base64" }
+        })
+      ],
+      [
+        "signature size",
+        (evidence) => ({
+          ...evidence,
+          signature: {
+            ...evidence.signature,
+            valueBase64: Buffer.alloc(1_025).toString("base64")
+          }
+        })
+      ],
+      [
+        "extra payload field",
+        (evidence) => ({
+          ...evidence,
+          payload: { ...evidence.payload, unexpected: "field" }
+        })
+      ],
+      [
+        "missing payload field",
+        (evidence) => {
+          const payload = { ...evidence.payload } as Record<string, unknown>;
+          delete payload.engineVersion;
+          return { ...evidence, payload };
+        }
+      ]
+    ];
+
+  for (const [name, mutate] of mutations) {
+    await t.test(name, async () => {
+      const harness = createHarness({ evidenceMutator: mutate });
+      await completeUpload(harness);
+      await assert.rejects(
+        harness.provider.inspectQuarantinedMedia(harness.authority),
+        hasMediaCode("scan_evidence_invalid")
+      );
+      assert.equal((await harness.persistence.get(scope(harness.authority)))?.state, "scan_failed");
+      assert.equal(harness.persistence.evidenceValues.size, 0);
+    });
+  }
 });
 
 test("CP14 scanner timeout stays unavailable and can retry without duplicate completion", async () => {
@@ -282,6 +419,216 @@ test("CP14 atomic persistence rolls back reservation and scan-result units on fa
       assert.equal(harness.persistence.auditEvents.length, harness.persistence.intents.length);
     });
   }
+});
+
+test("CP14 semantic persistence fingerprints are stable across time and conflict on changed meaning", async (t) => {
+  const harness = createHarness();
+  await reserve(harness);
+  const record = mustRecord(await harness.persistence.get(scope(harness.authority)));
+  const reservationOperation = committedOperationByAction(
+    harness.persistence,
+    "media.upload_reserved"
+  );
+
+  const timeOnlyReplay: PrivateMediaAtomicOperation = {
+    ...reservationOperation,
+    audit: { ...reservationOperation.audit, occurredAt: "2026-07-10T10:00:09.000Z" },
+    reconciliationIntent: {
+      ...reservationOperation.reconciliationIntent,
+      createdAt: "2026-07-10T10:00:09.000Z"
+    }
+  };
+  assert.equal(
+    await harness.persistence.reserve({
+      record: {
+        ...record,
+        createdAt: "2026-07-10T10:00:09.000Z",
+        updatedAt: "2026-07-10T10:00:09.000Z"
+      },
+      operation: timeOnlyReplay
+    }),
+    "replayed"
+  );
+
+  const semanticMutations: ReadonlyArray<readonly [string, PrivateMediaAtomicOperation]> = [
+    [
+      "actor",
+      recomputeOperationFingerprint({
+        ...reservationOperation,
+        audit: { ...reservationOperation.audit, actorId: "actor-2" }
+      })
+    ],
+    [
+      "correlation",
+      recomputeOperationFingerprint({
+        ...reservationOperation,
+        audit: { ...reservationOperation.audit, correlationId: "correlation-2" }
+      })
+    ],
+    [
+      "audit",
+      recomputeOperationFingerprint({
+        ...reservationOperation,
+        audit: {
+          ...reservationOperation.audit,
+          metadata: { ...reservationOperation.audit.metadata, expectedBytes: 999 }
+        }
+      })
+    ],
+    [
+      "intent",
+      recomputeOperationFingerprint({
+        ...reservationOperation,
+        reconciliationIntent: {
+          ...reservationOperation.reconciliationIntent,
+          payload: { ...reservationOperation.reconciliationIntent.payload, expectedBytes: 999 }
+        }
+      })
+    ]
+  ];
+  for (const [name, operation] of semanticMutations) {
+    await t.test(name, async () => {
+      assert.equal(await harness.persistence.reserve({ record, operation }), "operation_conflict");
+    });
+  }
+
+  await t.test("state", async () => {
+    assert.equal(
+      await harness.persistence.reserve({
+        record: { ...record, expectedBytes: record.expectedBytes + 1 },
+        operation: reservationOperation
+      }),
+      "operation_conflict"
+    );
+  });
+  await t.test("scope", async () => {
+    const malformedScope = recomputeOperationFingerprint({
+      ...reservationOperation,
+      audit: { ...reservationOperation.audit, tenantId: "tenant-2" },
+      reconciliationIntent: {
+        ...reservationOperation.reconciliationIntent,
+        scope: { ...reservationOperation.reconciliationIntent.scope, tenantId: "tenant-2" }
+      }
+    });
+    assert.equal(
+      await harness.persistence.reserve({ record, operation: malformedScope }),
+      "operation_conflict"
+    );
+  });
+  await t.test("revisions", async () => {
+    const malformedRevision = recomputeOperationFingerprint({
+      ...reservationOperation,
+      reconciliationIntent: {
+        ...reservationOperation.reconciliationIntent,
+        expectedRevision: 0
+      }
+    });
+    assert.equal(
+      await harness.persistence.reserve({ record, operation: malformedRevision }),
+      "operation_conflict"
+    );
+  });
+  await t.test("malformed operation", async () => {
+    assert.equal(
+      await harness.persistence.reserve({
+        record,
+        operation: { ...reservationOperation, audit: undefined } as never
+      }),
+      "operation_conflict"
+    );
+  });
+});
+
+test("CP14 persistence returns operation conflicts distinctly for transition, scan, and audit", async () => {
+  const harness = createHarness();
+  await completeUpload(harness);
+  const verified = mustRecord(await harness.persistence.get(scope(harness.authority)));
+  const transitionOperation = committedOperationByAction(
+    harness.persistence,
+    "media.upload_verified"
+  );
+  assert.equal(
+    await harness.persistence.transition({
+      scope: scope(harness.authority),
+      expectedRevision: transitionOperation.reconciliationIntent.expectedRevision!,
+      expectedStates: ["reserved"],
+      next: verified,
+      operation: recomputeOperationFingerprint({
+        ...transitionOperation,
+        audit: { ...transitionOperation.audit, actorId: "actor-2" }
+      })
+    }),
+    "operation_conflict"
+  );
+  assert.equal(
+    await harness.persistence.transition({
+      scope: scope(harness.authority),
+      expectedRevision: transitionOperation.reconciliationIntent.expectedRevision!,
+      expectedStates: ["scan_failed"],
+      next: verified,
+      operation: transitionOperation
+    }),
+    "operation_conflict"
+  );
+  assert.equal(
+    await harness.persistence.transition({
+      scope: scope(harness.authority),
+      expectedRevision: transitionOperation.reconciliationIntent.expectedRevision!,
+      expectedStates: ["reserved"],
+      next: { ...verified, scope: { ...verified.scope, tenantId: "tenant-2" } },
+      operation: transitionOperation
+    }),
+    "operation_conflict"
+  );
+
+  await harness.provider.inspectQuarantinedMedia(harness.authority);
+  const available = mustRecord(await harness.persistence.get(scope(harness.authority)));
+  const scanOperation = committedOperationByAction(harness.persistence, "media.scan_completed");
+  const evidence = harness.persistence.evidenceRecords.get(available.lastEvidenceId ?? "");
+  assert.ok(evidence);
+  assert.equal(
+    await harness.persistence.commitScanResult({
+      scope: scope(harness.authority),
+      expectedRevision: scanOperation.reconciliationIntent.expectedRevision!,
+      expectedStates: ["scan_in_progress"],
+      evidence,
+      success: {
+        next: available,
+        operation: recomputeOperationFingerprint({
+          ...scanOperation,
+          reconciliationIntent: {
+            ...scanOperation.reconciliationIntent,
+            payload: { ...scanOperation.reconciliationIntent.payload, verdict: "malicious" }
+          }
+        })
+      },
+      evidenceConflict: { next: available, operation: scanOperation }
+    }),
+    "operation_conflict"
+  );
+
+  const auditHarness = createHarness();
+  await reserve(auditHarness);
+  await assert.rejects(
+    auditHarness.provider.createSignedReadAccess(
+      auditHarness.authority,
+      "2026-07-10T10:04:00.000Z"
+    ),
+    hasMediaCode("quarantined")
+  );
+  const auditOperation = committedOperationByAction(
+    auditHarness.persistence,
+    "media.access_signed"
+  );
+  assert.equal(
+    await auditHarness.persistence.recordAuditAndIntent(
+      recomputeOperationFingerprint({
+        ...auditOperation,
+        audit: { ...auditOperation.audit, correlationId: "correlation-2" }
+      })
+    ),
+    "operation_conflict"
+  );
 });
 
 test("CP14 concurrent scan success/failure races cannot overwrite the winning revision", async (t) => {
@@ -341,14 +688,17 @@ test("CP14 lifecycle uses delete markers, governed restore, rescan, legal hold, 
 
   await harness.provider.setLegalHold(harness.authority, true);
   await assert.rejects(
-    harness.provider.deleteMedia({ authority: harness.authority, reason: "patient request" }),
+    harness.provider.deleteMedia({
+      authority: harness.authority,
+      reasonCode: "patient_erasure_request"
+    }),
     hasMediaCode("legal_hold")
   );
   await harness.provider.setLegalHold(harness.authority, false);
 
   const deleted = await harness.provider.deleteMedia({
     authority: harness.authority,
-    reason: "governed retention disposition"
+    reasonCode: "retention_policy"
   });
   assert.equal(deleted.state, "deleted");
   assert.equal(deleted.recoverableUntil, "2026-07-10T10:01:00.000Z");
@@ -359,7 +709,7 @@ test("CP14 lifecycle uses delete markers, governed restore, rescan, legal hold, 
 
   const restored = await harness.provider.restoreMedia({
     authority: harness.authority,
-    reason: "approved clinical restoration"
+    reasonCode: "authorized_restore"
   });
   assert.equal(restored.state, "quarantined");
   await assert.rejects(
@@ -369,7 +719,10 @@ test("CP14 lifecycle uses delete markers, governed restore, rescan, legal hold, 
   const rescanned = await harness.provider.inspectQuarantinedMedia(harness.authority);
   assert.equal(rescanned.state, "available");
 
-  await harness.provider.deleteMedia({ authority: harness.authority, reason: "retention elapsed" });
+  await harness.provider.deleteMedia({
+    authority: harness.authority,
+    reasonCode: "retention_policy"
+  });
   harness.clock.now = new Date("2026-07-10T10:02:00.000Z");
   const purged = await harness.provider.purgeExpiredDeletedMedia(harness.authority);
   assert.equal(purged.state, "purged");
@@ -392,12 +745,165 @@ test("CP14 lifecycle uses delete markers, governed restore, rescan, legal hold, 
   assertNoPrivateFields(harness.auditEvents);
 });
 
+test("CP14 lifecycle accepts governed reason codes and rejects caller free text", async () => {
+  const harness = createHarness();
+  await completeUpload(harness);
+  await harness.provider.inspectQuarantinedMedia(harness.authority);
+
+  await assert.rejects(
+    harness.provider.deleteMedia({
+      authority: harness.authority,
+      reasonCode: "patient Jane Doe requested deletion" as never
+    }),
+    hasMediaCode("invalid_request")
+  );
+  assert.doesNotMatch(
+    JSON.stringify({ audits: harness.auditEvents, intents: harness.persistence.intents }),
+    /Jane Doe/u
+  );
+});
+
+test("CP14 legal hold cannot race claimed delete or purge effects", async (t) => {
+  await t.test("delete claim", async () => {
+    const harness = createHarness();
+    await completeUpload(harness);
+    await harness.provider.inspectQuarantinedMedia(harness.authority);
+    const gate = deferred<void>();
+    harness.objects.ensureDeleteMarkerGate = gate.promise;
+
+    const deleting = harness.provider.deleteMedia({
+      authority: harness.authority,
+      reasonCode: "retention_policy"
+    });
+    await waitForState(harness, "delete_in_progress");
+    await assert.rejects(
+      harness.provider.setLegalHold(harness.authority, true),
+      hasMediaCode("concurrent_change")
+    );
+    assert.equal((await harness.persistence.get(scope(harness.authority)))?.legalHold, false);
+    gate.resolve();
+    assert.equal((await deleting).state, "deleted");
+  });
+
+  await t.test("purge claim and distinct retry-safe child effects", async () => {
+    const harness = createHarness({ restoreWindowSeconds: 60 });
+    await completeUpload(harness);
+    await harness.provider.inspectQuarantinedMedia(harness.authority);
+    await harness.provider.deleteMedia({
+      authority: harness.authority,
+      reasonCode: "retention_policy"
+    });
+    harness.clock.now = new Date("2026-07-10T10:02:00.000Z");
+    const gate = deferred<void>();
+    harness.objects.deleteObjectVersionGate = gate.promise;
+
+    const purging = harness.provider.purgeExpiredDeletedMedia(harness.authority);
+    await waitForState(harness, "purge_in_progress");
+    await assert.rejects(
+      harness.provider.setLegalHold(harness.authority, true),
+      hasMediaCode("concurrent_change")
+    );
+    gate.resolve();
+    assert.equal((await purging).state, "purged");
+
+    const requests = harness.objects.deletedVersionRequests;
+    assert.equal(requests.length, 2);
+    assert.notEqual(requests[0]?.operationId, requests[1]?.operationId);
+    assert.match(requests[0]?.operationId ?? "", /^pmef_[a-f0-9]{64}$/u);
+    assert.match(requests[1]?.operationId ?? "", /^pmef_[a-f0-9]{64}$/u);
+    for (const request of requests) await harness.objects.deleteObjectVersion(request);
+    assert.equal(harness.objects.deletedVersions.length, 2);
+    await assert.rejects(
+      harness.objects.deleteObjectVersion({
+        ...requests[0]!,
+        versionId: requests[1]!.versionId
+      }),
+      /effect target conflict/u
+    );
+  });
+});
+
 test("CP14 signer cannot return expired or broadened URL authority", async () => {
   const harness = createHarness({ signerExpiry: "2026-07-10T09:59:59.000Z" });
   await assert.rejects(reserve(harness), hasMediaCode("provider_error"));
 
   const wrongMethod = createHarness({ signerMethod: "GET" });
   await assert.rejects(reserve(wrongMethod), hasMediaCode("provider_error"));
+});
+
+test("CP14 signed capability endpoints reject malicious HTTPS destinations for PUT and GET", async (t) => {
+  assert.throws(
+    () => createHarness({ presignedEndpointAllowlist: ["https://attacker.example"] }),
+    hasMediaCode("invalid_request")
+  );
+  assert.throws(
+    () =>
+      createHarness({
+        presignedEndpointAllowlist: ["https://private-media-bucket.s3-accelerate.amazonaws.com"]
+      }),
+    hasMediaCode("invalid_request")
+  );
+  for (const [name, url] of [
+    ["unapproved host", "https://attacker.example/collect"],
+    ["userinfo", "https://attacker@private-media-bucket.s3.ap-south-1.amazonaws.com/collect"],
+    ["fragment", "https://private-media-bucket.s3.ap-south-1.amazonaws.com/collect#leak"],
+    ["port", "https://private-media-bucket.s3.ap-south-1.amazonaws.com:8443/collect"],
+    [
+      "wrong object path",
+      "https://private-media-bucket.s3.ap-south-1.amazonaws.com/other-object?X-Amz-Signature=redacted"
+    ]
+  ] as const) {
+    await t.test(`PUT ${name}`, async () => {
+      const harness = createHarness({ signerPutUrl: url });
+      await assert.rejects(reserve(harness), hasMediaCode("provider_error"));
+      assert.equal(harness.auditEvents.at(-1)?.action, "media.upload_signing_failed");
+      assert.equal(harness.auditEvents.at(-1)?.metadata.failureClass, "invalid_signer_response");
+    });
+  }
+
+  await t.test("GET unapproved host", async () => {
+    const harness = createHarness({ signerGetUrl: "https://attacker.example/collect" });
+    await completeUpload(harness);
+    await harness.provider.inspectQuarantinedMedia(harness.authority);
+    await assert.rejects(
+      harness.provider.createSignedReadAccess(harness.authority, "2026-07-10T10:04:00.000Z"),
+      hasMediaCode("provider_error")
+    );
+    assert.equal(harness.auditEvents.at(-1)?.action, "media.access_signing_failed");
+    assert.equal(harness.auditEvents.at(-1)?.metadata.failureClass, "invalid_signer_response");
+  });
+});
+
+test("CP14 signer transport failures append classified redacted audit/outbox evidence", async () => {
+  const uploadHarness = createHarness({ signerFailPut: true });
+  await assert.rejects(reserve(uploadHarness), /put signer unavailable/u);
+  const uploadFailure = uploadHarness.auditEvents.at(-1);
+  assert.equal(uploadFailure?.action, "media.upload_signing_failed");
+  assert.deepEqual(uploadFailure?.metadata, {
+    failureClass: "signer_transport_failure",
+    method: "PUT"
+  });
+  assertNoPrivateFields(uploadHarness.auditEvents);
+  assertNoPrivateFields(uploadHarness.persistence.intents);
+
+  const accessHarness = createHarness({ signerFailGet: true });
+  await completeUpload(accessHarness);
+  await accessHarness.provider.inspectQuarantinedMedia(accessHarness.authority);
+  await assert.rejects(
+    accessHarness.provider.createSignedReadAccess(
+      accessHarness.authority,
+      "2026-07-10T10:04:00.000Z"
+    ),
+    /get signer unavailable/u
+  );
+  const accessFailure = accessHarness.auditEvents.at(-1);
+  assert.equal(accessFailure?.action, "media.access_signing_failed");
+  assert.deepEqual(accessFailure?.metadata, {
+    failureClass: "signer_transport_failure",
+    method: "GET"
+  });
+  assertNoPrivateFields(accessHarness.auditEvents);
+  assertNoPrivateFields(accessHarness.persistence.intents);
 });
 
 test("CP14 signer headers are exact and reject metadata, tag, or authorization injection", async (t) => {
@@ -444,6 +950,12 @@ interface HarnessOptions {
   readonly signerMethod?: "PUT" | "GET";
   readonly signerExtraPutHeaders?: Readonly<Record<string, string>>;
   readonly signerExtraGetHeaders?: Readonly<Record<string, string>>;
+  readonly signerPutUrl?: string;
+  readonly signerGetUrl?: string;
+  readonly signerFailPut?: boolean;
+  readonly signerFailGet?: boolean;
+  readonly presignedEndpointAllowlist?: readonly string[];
+  readonly evidenceMutator?: (evidence: SignedMalwareEvidence) => unknown;
   readonly scanCommitFailure?: PersistenceFailurePoint;
   readonly scannerFactory?: (clock: {
     now: Date;
@@ -465,19 +977,29 @@ function createHarness(options: HarnessOptions = {}): Harness {
   const clock = { now: new Date("2026-07-10T10:00:00.000Z") };
   const persistence = new TestAtomicPersistence(options.evidenceConflict ?? false);
   const objects = new TestObjectTransport();
-  const signer = new TestSigner(
-    options.signerExpiry,
-    options.signerMethod,
-    options.signerExtraPutHeaders,
-    options.signerExtraGetHeaders
-  );
+  const signer = new TestSigner({
+    forcedExpiry: options.signerExpiry,
+    forcedPutMethod: options.signerMethod,
+    extraPutHeaders: options.signerExtraPutHeaders,
+    extraGetHeaders: options.signerExtraGetHeaders,
+    putUrl: options.signerPutUrl,
+    getUrl: options.signerGetUrl,
+    failPut: options.signerFailPut,
+    failGet: options.signerFailGet
+  });
   const scanner =
     options.scannerFactory?.(clock) ??
-    new TestScanner(clock, options.scannerVerdict ?? "clean", options.scannerFailures ?? 0, () => {
-      if (options.scanCommitFailure) {
-        persistence.failNext = options.scanCommitFailure;
-      }
-    });
+    new TestScanner(
+      clock,
+      options.scannerVerdict ?? "clean",
+      options.scannerFailures ?? 0,
+      () => {
+        if (options.scanCommitFailure) {
+          persistence.failNext = options.scanCommitFailure;
+        }
+      },
+      options.evidenceMutator
+    );
   let id = 0;
   const provider = new S3PrivateMediaProvider(
     {
@@ -486,6 +1008,10 @@ function createHarness(options: HarnessOptions = {}): Harness {
       region: "ap-south-1",
       kmsKeyId: "kms-media-key-1",
       bindingSecret: "0123456789abcdef0123456789abcdef",
+      presignedEndpointAllowlist: options.presignedEndpointAllowlist ?? [
+        "https://private-media-bucket.s3.ap-south-1.amazonaws.com"
+      ],
+      scannerSigningKeyIds: ["kms-signing-key-1"],
       restoreWindowSeconds: options.restoreWindowSeconds ?? 2_592_000
     },
     {
@@ -552,12 +1078,22 @@ async function completeUpload(harness: Harness) {
 
 type PersistenceFailurePoint = "audit" | "evidence" | "persistence";
 
+interface CommittedTestOperation {
+  readonly operation: PrivateMediaAtomicOperation;
+  readonly writeFingerprintSha256: string;
+  readonly outcome: "applied" | "evidence_conflict";
+}
+
 class TestAtomicPersistence implements PrivateMediaAtomicPersistence {
   readonly records = new Map<string, PrivateMediaRecord>();
   readonly evidenceValues = new Map<string, string>();
+  readonly evidenceRecords = new Map<
+    string,
+    Parameters<PrivateMediaAtomicPersistence["commitScanResult"]>[0]["evidence"]
+  >();
   readonly auditEvents: PrivateMediaAuditEvent[] = [];
   readonly intents: PrivateMediaReconciliationIntent[] = [];
-  readonly operations = new Map<string, "applied" | "replayed" | "evidence_conflict">();
+  readonly operations = new Map<string, CommittedTestOperation>();
   readonly forceEvidenceConflict: boolean;
   failNext: PersistenceFailurePoint | null = null;
   failAlways: PersistenceFailurePoint | null = null;
@@ -567,14 +1103,30 @@ class TestAtomicPersistence implements PrivateMediaAtomicPersistence {
   }
 
   async reserve(input: { record: PrivateMediaRecord; operation: PrivateMediaAtomicOperation }) {
-    if (this.operations.has(input.operation.operationId)) return "replayed" as const;
+    const fingerprint = privateMediaPersistenceWriteFingerprint({
+      kind: "reserve",
+      operation: input.operation,
+      scope: input.record.scope,
+      expectedRevision: null,
+      expectedStates: [],
+      next: input.record
+    });
+    const replay = this.replayResult(
+      input.operation,
+      fingerprint,
+      input.record.scope,
+      null,
+      input.record.revision
+    );
+    if (replay === "operation_conflict") return replay;
+    if (replay) return "replayed" as const;
     const key = stateKey(input.record.scope);
     const existing = this.records.get(key);
     if (existing) return "conflict" as const;
     this.maybeFail("audit");
     this.maybeFail("persistence");
     this.records.set(key, structuredClone(input.record));
-    this.commitOperation(input.operation, "applied");
+    this.commitOperation(input.operation, fingerprint, "applied");
     return "applied" as const;
   }
 
@@ -590,7 +1142,24 @@ class TestAtomicPersistence implements PrivateMediaAtomicPersistence {
     next: PrivateMediaRecord;
     operation: PrivateMediaAtomicOperation;
   }) {
-    if (this.operations.has(input.operation.operationId)) return "replayed" as const;
+    if (!sameTestScope(input.next.scope, input.scope)) return "operation_conflict" as const;
+    const fingerprint = privateMediaPersistenceWriteFingerprint({
+      kind: "transition",
+      operation: input.operation,
+      scope: input.scope,
+      expectedRevision: input.expectedRevision,
+      expectedStates: input.expectedStates,
+      next: input.next
+    });
+    const replay = this.replayResult(
+      input.operation,
+      fingerprint,
+      input.scope,
+      input.expectedRevision,
+      input.next.revision
+    );
+    if (replay === "operation_conflict") return replay;
+    if (replay) return "replayed" as const;
     const key = stateKey(input.scope);
     const current = this.records.get(key);
     if (
@@ -603,14 +1172,55 @@ class TestAtomicPersistence implements PrivateMediaAtomicPersistence {
     this.maybeFail("audit");
     this.maybeFail("persistence");
     this.records.set(key, structuredClone(input.next));
-    this.commitOperation(input.operation, "applied");
+    this.commitOperation(input.operation, fingerprint, "applied");
     return "applied" as const;
   }
 
   async commitScanResult(input: Parameters<PrivateMediaAtomicPersistence["commitScanResult"]>[0]) {
-    const prior = this.operations.get(input.success.operation.operationId);
-    if (prior === "evidence_conflict") return "evidence_conflict" as const;
-    if (prior) return "replayed" as const;
+    if (
+      !sameTestScope(input.success.next.scope, input.scope) ||
+      !sameTestScope(input.evidenceConflict.next.scope, input.scope)
+    ) {
+      return "operation_conflict" as const;
+    }
+    const successFingerprint = privateMediaPersistenceWriteFingerprint({
+      kind: "scan_success",
+      operation: input.success.operation,
+      scope: input.scope,
+      expectedRevision: input.expectedRevision,
+      expectedStates: input.expectedStates,
+      next: input.success.next,
+      evidence: input.evidence
+    });
+    const successReplay = this.replayResult(
+      input.success.operation,
+      successFingerprint,
+      input.scope,
+      input.expectedRevision,
+      input.success.next.revision
+    );
+    if (successReplay === "operation_conflict") return successReplay;
+    if (successReplay === "evidence_conflict") return "evidence_conflict" as const;
+    if (successReplay) return "replayed" as const;
+    const conflictFingerprint = privateMediaPersistenceWriteFingerprint({
+      kind: "scan_conflict",
+      operation: input.evidenceConflict.operation,
+      scope: input.scope,
+      expectedRevision: input.expectedRevision,
+      expectedStates: input.expectedStates,
+      next: input.evidenceConflict.next,
+      evidence: input.evidence
+    });
+    if (
+      !this.validOperation(
+        input.evidenceConflict.operation,
+        input.scope,
+        input.expectedRevision,
+        input.evidenceConflict.next.revision
+      )
+    ) {
+      return "operation_conflict" as const;
+    }
     const key = stateKey(input.scope);
     const current = this.records.get(key);
     if (
@@ -630,33 +1240,107 @@ class TestAtomicPersistence implements PrivateMediaAtomicPersistence {
       (existingEvidence !== undefined && existingEvidence !== input.evidence.evidenceDigestSha256)
     ) {
       this.records.set(key, structuredClone(input.evidenceConflict.next));
-      this.commitOperation(input.evidenceConflict.operation, "evidence_conflict");
-      this.operations.set(input.success.operation.operationId, "evidence_conflict");
+      this.commitOperation(
+        input.evidenceConflict.operation,
+        conflictFingerprint,
+        "evidence_conflict"
+      );
+      this.operations.set(input.success.operation.operationId, {
+        operation: structuredClone(input.success.operation),
+        writeFingerprintSha256: successFingerprint,
+        outcome: "evidence_conflict"
+      });
       return "evidence_conflict" as const;
     }
 
     this.evidenceValues.set(input.evidence.evidenceId, input.evidence.evidenceDigestSha256);
+    this.evidenceRecords.set(input.evidence.evidenceId, structuredClone(input.evidence));
     this.records.set(key, structuredClone(input.success.next));
-    this.commitOperation(input.success.operation, "applied");
+    this.commitOperation(input.success.operation, successFingerprint, "applied");
     return existingEvidence ? ("replayed" as const) : ("applied" as const);
   }
 
   async recordAuditAndIntent(operation: PrivateMediaAtomicOperation) {
-    if (this.operations.has(operation.operationId)) return "replayed" as const;
+    const fingerprint = privateMediaPersistenceWriteFingerprint({
+      kind: "audit",
+      operation,
+      scope: operation.reconciliationIntent.scope,
+      expectedRevision: null,
+      expectedStates: []
+    });
+    const replay = this.replayResult(
+      operation,
+      fingerprint,
+      operation.reconciliationIntent.scope,
+      null,
+      null
+    );
+    if (replay === "operation_conflict") return replay;
+    if (replay) return "replayed" as const;
     this.maybeFail("audit");
     this.maybeFail("persistence");
-    this.commitOperation(operation, "applied");
+    this.commitOperation(operation, fingerprint, "applied");
     return "applied" as const;
   }
 
   private commitOperation(
     operation: PrivateMediaAtomicOperation,
+    writeFingerprintSha256: string,
     outcome: "applied" | "evidence_conflict"
   ): void {
-    assert.equal(operation.reconciliationIntent.operationId, operation.operationId);
     this.auditEvents.push(structuredClone(operation.audit));
     this.intents.push(structuredClone(operation.reconciliationIntent));
-    this.operations.set(operation.operationId, outcome);
+    this.operations.set(operation.operationId, {
+      operation: structuredClone(operation),
+      writeFingerprintSha256,
+      outcome
+    });
+  }
+
+  private replayResult(
+    operation: PrivateMediaAtomicOperation,
+    writeFingerprintSha256: string,
+    scopeValue: PrivateMediaScope,
+    expectedRevision: number | null,
+    targetRevision: number | null
+  ): "applied" | "evidence_conflict" | "operation_conflict" | null {
+    if (!this.validOperation(operation, scopeValue, expectedRevision, targetRevision)) {
+      return "operation_conflict";
+    }
+    const prior = this.operations.get(operation.operationId);
+    if (!prior) return null;
+    return prior.operation.semanticFingerprintSha256 === operation.semanticFingerprintSha256 &&
+      prior.writeFingerprintSha256 === writeFingerprintSha256
+      ? prior.outcome
+      : "operation_conflict";
+  }
+
+  private validOperation(
+    operation: PrivateMediaAtomicOperation,
+    scopeValue: PrivateMediaScope,
+    expectedRevision: number | null,
+    targetRevision: number | null
+  ): boolean {
+    try {
+      const { semanticFingerprintSha256: _fingerprint, ...semanticOperation } = operation;
+      return (
+        operation.semanticFingerprintSha256 ===
+          privateMediaOperationSemanticFingerprint(semanticOperation) &&
+        operation.reconciliationIntent.operationId === operation.operationId &&
+        operation.reconciliationIntent.intentId ===
+          `pmri_${sha256(`${operation.operationId}\u001fintent`)}` &&
+        operation.audit.eventId === `pmae_${sha256(`${operation.operationId}\u001faudit`)}` &&
+        sameTestScope(operation.reconciliationIntent.scope, scopeValue) &&
+        operation.audit.tenantId === scopeValue.tenantId &&
+        operation.audit.clinicId === scopeValue.clinicId &&
+        operation.audit.mediaId === scopeValue.mediaId &&
+        operation.audit.uploadId === scopeValue.uploadId &&
+        operation.reconciliationIntent.expectedRevision === expectedRevision &&
+        operation.reconciliationIntent.targetRevision === targetRevision
+      );
+    } catch {
+      return false;
+    }
   }
 
   private maybeFail(point: PersistenceFailurePoint): void {
@@ -672,6 +1356,14 @@ class TestObjectTransport implements S3PrivateObjectTransport {
   body = new Uint8Array();
   deleteMarker: string | null = null;
   readonly deletedVersions: string[] = [];
+  readonly deletedVersionRequests: Array<
+    Parameters<S3PrivateObjectTransport["deleteObjectVersion"]>[0]
+  > = [];
+  readonly effectTargets = new Map<string, string>();
+  readonly versions = new Map<string, S3ObjectSnapshot>();
+  readonly versionBodies = new Map<string, Uint8Array>();
+  ensureDeleteMarkerGate: Promise<void> | null = null;
+  deleteObjectVersionGate: Promise<void> | null = null;
 
   upload(record: PrivateMediaRecord, bytes: Uint8Array): S3ObjectSnapshot {
     this.body = Uint8Array.from(bytes);
@@ -688,6 +1380,28 @@ class TestObjectTransport implements S3PrivateObjectTransport {
       tags: { clinicos_state: "quarantine" },
       multipartStatus: "none"
     };
+    this.versions.set(this.snapshot.versionId, structuredClone(this.snapshot));
+    this.versionBodies.set(this.snapshot.versionId, Uint8Array.from(bytes));
+    return this.snapshot;
+  }
+
+  overwriteLatest(record: PrivateMediaRecord, bytes: Uint8Array): S3ObjectSnapshot {
+    this.body = Uint8Array.from(bytes);
+    this.snapshot = {
+      contentLength: bytes.byteLength,
+      contentType: record.declaredMimeType,
+      checksumSha256Hex: sha256(bytes),
+      versionId: "version-2",
+      etag: "etag-2",
+      lastModifiedAt: "2026-07-10T10:00:02.000Z",
+      serverSideEncryption: "aws:kms",
+      kmsKeyId: "kms-media-key-1",
+      metadata: { "clinicos-binding": record.binding },
+      tags: { clinicos_state: "quarantine" },
+      multipartStatus: "none"
+    };
+    this.versions.set(this.snapshot.versionId, structuredClone(this.snapshot));
+    this.versionBodies.set(this.snapshot.versionId, Uint8Array.from(bytes));
     return this.snapshot;
   }
 
@@ -695,8 +1409,13 @@ class TestObjectTransport implements S3PrivateObjectTransport {
     return this.deleteMarker ? null : this.snapshot;
   }
 
-  async readObjectRange(input: { start: number; endInclusive: number }) {
-    return this.body.slice(input.start, input.endInclusive + 1);
+  async headObjectVersion(input: Parameters<S3PrivateObjectTransport["headObjectVersion"]>[0]) {
+    return structuredClone(this.versions.get(input.versionId) ?? null);
+  }
+
+  async readObjectRange(input: Parameters<S3PrivateObjectTransport["readObjectRange"]>[0]) {
+    const versionBody = this.versionBodies.get(input.versionId) ?? this.body;
+    return versionBody.slice(input.start, input.endInclusive + 1);
   }
 
   async putObject(input: {
@@ -721,23 +1440,50 @@ class TestObjectTransport implements S3PrivateObjectTransport {
       tags: input.tags,
       multipartStatus: "none"
     };
+    this.versions.set(this.snapshot.versionId, structuredClone(this.snapshot));
+    this.versionBodies.set(this.snapshot.versionId, Uint8Array.from(input.body));
     return this.snapshot;
   }
 
-  async ensureDeleteMarker() {
+  async ensureDeleteMarker(input: Parameters<S3PrivateObjectTransport["ensureDeleteMarker"]>[0]) {
+    if (this.ensureDeleteMarkerGate) await this.ensureDeleteMarkerGate;
+    this.recordEffect(input.operationId, `delete-marker:${input.locator.key}`);
     this.deleteMarker = "delete-marker-1";
     return { deleteMarkerVersionId: this.deleteMarker, deletedAt: "2026-07-10T10:00:00.000Z" };
   }
 
   async removeDeleteMarker(input: Parameters<S3PrivateObjectTransport["removeDeleteMarker"]>[0]) {
+    this.recordEffect(
+      input.operationId,
+      `restore-marker:${input.locator.key}:${input.deleteMarkerVersionId}`
+    );
     assert.equal(input.deleteMarkerVersionId, this.deleteMarker);
     this.deleteMarker = null;
   }
 
   async deleteObjectVersion(input: Parameters<S3PrivateObjectTransport["deleteObjectVersion"]>[0]) {
+    if (this.deleteObjectVersionGate) await this.deleteObjectVersionGate;
+    const firstApplication = this.recordEffect(
+      input.operationId,
+      `purge-version:${input.locator.key}:${input.versionId}`
+    );
+    if (!firstApplication) return;
+    this.deletedVersionRequests.push(structuredClone(input));
     this.deletedVersions.push(input.versionId);
-    if (input.versionId === "version-1") this.snapshot = null;
+    this.versions.delete(input.versionId);
+    this.versionBodies.delete(input.versionId);
+    if (input.versionId === this.snapshot?.versionId) this.snapshot = null;
     if (input.versionId === this.deleteMarker) this.deleteMarker = null;
+  }
+
+  private recordEffect(operationId: string, immutableTarget: string): boolean {
+    const priorTarget = this.effectTargets.get(operationId);
+    if (priorTarget && priorTarget !== immutableTarget) {
+      throw new Error("operation effect target conflict");
+    }
+    if (priorTarget) return false;
+    this.effectTargets.set(operationId, immutableTarget);
+    return true;
   }
 }
 
@@ -747,23 +1493,38 @@ class TestSigner implements S3PresigningTransport {
   readonly forcedPutMethod?: "PUT" | "GET";
   readonly extraPutHeaders: Readonly<Record<string, string>>;
   readonly extraGetHeaders: Readonly<Record<string, string>>;
+  readonly putUrl?: string;
+  readonly getUrl?: string;
+  readonly failPut: boolean;
+  readonly failGet: boolean;
 
   constructor(
-    forcedExpiry?: string,
-    forcedPutMethod?: "PUT" | "GET",
-    extraPutHeaders: Readonly<Record<string, string>> = {},
-    extraGetHeaders: Readonly<Record<string, string>> = {}
+    options: Readonly<{
+      forcedExpiry?: string;
+      forcedPutMethod?: "PUT" | "GET";
+      extraPutHeaders?: Readonly<Record<string, string>>;
+      extraGetHeaders?: Readonly<Record<string, string>>;
+      putUrl?: string;
+      getUrl?: string;
+      failPut?: boolean;
+      failGet?: boolean;
+    }> = {}
   ) {
-    this.forcedExpiry = forcedExpiry;
-    this.forcedPutMethod = forcedPutMethod;
-    this.extraPutHeaders = extraPutHeaders;
-    this.extraGetHeaders = extraGetHeaders;
+    this.forcedExpiry = options.forcedExpiry;
+    this.forcedPutMethod = options.forcedPutMethod;
+    this.extraPutHeaders = options.extraPutHeaders ?? {};
+    this.extraGetHeaders = options.extraGetHeaders ?? {};
+    this.putUrl = options.putUrl;
+    this.getUrl = options.getUrl;
+    this.failPut = options.failPut ?? false;
+    this.failGet = options.failGet ?? false;
   }
 
   async signPutObject(input: Parameters<S3PresigningTransport["signPutObject"]>[0]) {
+    if (this.failPut) throw new Error("put signer unavailable");
     return {
       method: this.forcedPutMethod ?? "PUT",
-      url: "https://media-upload.example.test/opaque-capability",
+      url: this.putUrl ?? testSignedObjectUrl(input.locator),
       expiresAt: this.forcedExpiry ?? input.expiresAt,
       requiredHeaders: {
         "content-type": input.contentType,
@@ -777,10 +1538,11 @@ class TestSigner implements S3PresigningTransport {
   }
 
   async signGetObject(input: Parameters<S3PresigningTransport["signGetObject"]>[0]) {
+    if (this.failGet) throw new Error("get signer unavailable");
     this.lastGet = { versionId: input.versionId };
     return {
       method: "GET" as const,
-      url: "https://media-access.example.test/opaque-capability",
+      url: this.getUrl ?? testSignedObjectUrl(input.locator, input.versionId),
       expiresAt: input.expiresAt,
       requiredHeaders: { ...this.extraGetHeaders }
     };
@@ -793,17 +1555,20 @@ class TestScanner implements MalwareScannerTransport {
   readonly verdict: "clean" | "malicious" | "suspicious" | "error";
   readonly failures: number;
   readonly beforeReturn: () => void;
+  readonly evidenceMutator: (evidence: SignedMalwareEvidence) => unknown;
 
   constructor(
     clock: { now: Date },
     verdict: "clean" | "malicious" | "suspicious" | "error",
     failures: number,
-    beforeReturn: () => void = () => undefined
+    beforeReturn: () => void = () => undefined,
+    evidenceMutator: (evidence: SignedMalwareEvidence) => unknown = (evidence) => evidence
   ) {
     this.clock = clock;
     this.verdict = verdict;
     this.failures = failures;
     this.beforeReturn = beforeReturn;
+    this.evidenceMutator = evidenceMutator;
   }
 
   async scan(
@@ -812,7 +1577,9 @@ class TestScanner implements MalwareScannerTransport {
     this.calls += 1;
     if (this.calls <= this.failures) throw new Error("scanner timeout");
     this.beforeReturn();
-    return signedEvidence(input, this.clock.now, this.verdict, `evidence-${this.calls}`);
+    return this.evidenceMutator(
+      signedEvidence(input, this.clock.now, this.verdict, `evidence-${this.calls}`)
+    ) as SignedMalwareEvidence;
   }
 }
 
@@ -881,7 +1648,7 @@ function signedEvidence(
     signature: {
       keyId: "kms-signing-key-1",
       algorithm: "RSASSA_PSS_SHA_256",
-      valueBase64: "c2lnbmF0dXJl"
+      valueBase64: Buffer.alloc(64, 7).toString("base64")
     }
   };
 }
@@ -899,13 +1666,69 @@ function stateKey(value: PrivateMediaScope): string {
   return [value.tenantId, value.clinicId, value.mediaId, value.uploadId].join("|");
 }
 
-function sha256(bytes: Uint8Array): string {
-  return createHash("sha256").update(bytes).digest("hex");
+function testSignedObjectUrl(locator: S3ObjectLocator, versionId?: string): string {
+  const path = locator.key
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/");
+  const version = versionId ? `&versionId=${encodeURIComponent(versionId)}` : "";
+  return `https://${locator.bucket}.s3.${locator.region}.amazonaws.com/${path}?X-Amz-Signature=redacted${version}`;
+}
+
+function sameTestScope(left: PrivateMediaScope, right: PrivateMediaScope): boolean {
+  return stateKey(left) === stateKey(right);
+}
+
+function sha256(value: Uint8Array | string): string {
+  return createHash("sha256").update(value).digest("hex");
 }
 
 function mustRecord(record: PrivateMediaRecord | null): PrivateMediaRecord {
   assert.ok(record);
   return record;
+}
+
+function committedOperationByAction(
+  persistence: TestAtomicPersistence,
+  action: PrivateMediaAuditEvent["action"]
+): PrivateMediaAtomicOperation {
+  const committed = [...persistence.operations.values()].find(
+    (entry) => entry.operation.audit.action === action
+  );
+  assert.ok(committed, `missing committed operation for ${action}`);
+  return structuredClone(committed.operation);
+}
+
+function recomputeOperationFingerprint(
+  operation: PrivateMediaAtomicOperation
+): PrivateMediaAtomicOperation {
+  const { semanticFingerprintSha256: _fingerprint, ...semanticOperation } = operation;
+  return {
+    ...semanticOperation,
+    semanticFingerprintSha256: privateMediaOperationSemanticFingerprint(semanticOperation)
+  };
+}
+
+function deferred<T>() {
+  let resolve!: (value: T | PromiseLike<T>) => void;
+  let reject!: (error: unknown) => void;
+  const promise = new Promise<T>((promiseResolve, promiseReject) => {
+    resolve = promiseResolve;
+    reject = promiseReject;
+  });
+  return { promise, resolve, reject };
+}
+
+async function waitForState(
+  harness: Harness,
+  expected: PrivateMediaRecord["state"]
+): Promise<void> {
+  for (let attempt = 0; attempt < 30; attempt += 1) {
+    const record = await harness.persistence.get(scope(harness.authority));
+    if (record?.state === expected) return;
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+  }
+  assert.fail(`media did not reach ${expected}`);
 }
 
 async function outcome<T>(

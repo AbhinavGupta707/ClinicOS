@@ -9,8 +9,10 @@ export type {
   MediaAuthorityFactory,
   MediaRequestAuthorityFactory,
   MediaServiceAuthorityFactory,
+  PrivateMediaDeleteReasonCode,
   PrivateMediaGateway,
   PrivateMediaGatewayAuthority,
   PrivateMediaGatewayScope,
-  PrivateMediaLifecycleResult
+  PrivateMediaLifecycleResult,
+  PrivateMediaRestoreReasonCode
 } from "./ports.ts";

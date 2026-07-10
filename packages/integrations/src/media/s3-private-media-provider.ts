@@ -1,5 +1,9 @@
 import { createHash, createHmac, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { PrivateMediaError } from "./errors.js";
+import {
+  privateMediaChildEffectId,
+  privateMediaOperationSemanticFingerprint
+} from "./operation-fingerprint.js";
 import type {
   ClinicalMediaKind,
   DetectedMediaFile,
@@ -11,8 +15,10 @@ import type {
   PrivateMediaAuditAction,
   PrivateMediaAuditEvent,
   PrivateMediaAuthority,
+  PrivateMediaDeleteReasonCode,
   PrivateMediaRecord,
   PrivateMediaReconciliationIntentKind,
+  PrivateMediaRestoreReasonCode,
   PrivateMediaScope,
   PrivateMediaState,
   PublicMediaInspection,
@@ -31,6 +37,7 @@ import type {
 
 const HEX_SHA256 = /^[a-f0-9]{64}$/u;
 const SAFE_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/u;
+const SAFE_PROVIDER_KEY_ID = /^[A-Za-z0-9][A-Za-z0-9:/_.-]{0,511}$/u;
 const SAFE_ENVIRONMENT = /^[a-z0-9][a-z0-9-]{0,39}$/u;
 const PRIVATE_METADATA_BINDING = "clinicos-binding";
 const QUARANTINE_TAG = "clinicos_state";
@@ -42,6 +49,8 @@ export interface S3PrivateMediaProviderConfig {
   readonly region: string;
   readonly kmsKeyId: string;
   readonly bindingSecret: string | Uint8Array;
+  readonly presignedEndpointAllowlist: readonly string[];
+  readonly scannerSigningKeyIds: readonly string[];
   readonly maxUploadTtlSeconds?: number;
   readonly maxAccessTtlSeconds?: number;
   readonly maxBytes?: number;
@@ -88,7 +97,15 @@ export class S3PrivateMediaProvider {
       | "maxScannerClockSkewSeconds"
     >
   > &
-    Pick<S3PrivateMediaProviderConfig, "environment" | "bucket" | "region" | "kmsKeyId">;
+    Pick<
+      S3PrivateMediaProviderConfig,
+      | "environment"
+      | "bucket"
+      | "region"
+      | "kmsKeyId"
+      | "presignedEndpointAllowlist"
+      | "scannerSigningKeyIds"
+    >;
   readonly #bindingSecret: Buffer;
   readonly #objects: S3PrivateObjectTransport;
   readonly #signer: S3PresigningTransport;
@@ -110,6 +127,10 @@ export class S3PrivateMediaProvider {
       bucket: config.bucket,
       region: config.region,
       kmsKeyId: config.kmsKeyId,
+      presignedEndpointAllowlist: Object.freeze(
+        config.presignedEndpointAllowlist.map((endpoint) => new URL(endpoint).origin)
+      ),
+      scannerSigningKeyIds: Object.freeze([...config.scannerSigningKeyIds]),
       maxUploadTtlSeconds: config.maxUploadTtlSeconds ?? 600,
       maxAccessTtlSeconds: config.maxAccessTtlSeconds ?? 300,
       maxBytes: config.maxBytes ?? 100 * 1024 * 1024,
@@ -249,6 +270,7 @@ export class S3PrivateMediaProvider {
       record,
       operation: reserveOperation
     });
+    if (createResult === "operation_conflict") throw operationConflictError();
     if (createResult === "conflict") {
       await this.#recordAuditAndIntent({
         authority: input.authority,
@@ -257,7 +279,7 @@ export class S3PrivateMediaProvider {
         metadata: { reason: "reservation_conflict" },
         intentKind: "security_audit_recorded",
         intentPayload: { reason: "reservation_conflict" },
-        discriminator: "reservation_conflict"
+        discriminator: `reservation_conflict:${input.authority.correlationId}`
       });
       throw new PrivateMediaError({
         code: "reservation_conflict",
@@ -269,27 +291,45 @@ export class S3PrivateMediaProvider {
       assertSameReservation(existing, record);
     }
 
-    const transportRequest = await this.#signer.signPutObject({
-      locator,
-      expiresAt,
-      contentLength: input.expectedBytes,
-      contentType: mimeType,
-      checksumSha256Base64: Buffer.from(sha256Hex, "hex").toString("base64"),
-      metadata: { [PRIVATE_METADATA_BINDING]: binding },
-      tags: { [QUARANTINE_TAG]: UPLOAD_TAG_VALUE }
-    });
-    const upload = publicSignedRequest(transportRequest, {
-      method: "PUT",
-      requestedExpiresAt: expiresAt,
-      now,
-      requiredHeaders: {
-        "content-type": mimeType,
-        "content-length": String(input.expectedBytes),
-        "x-amz-checksum-sha256": Buffer.from(sha256Hex, "hex").toString("base64"),
-        "x-amz-meta-clinicos-binding": binding,
-        "x-amz-tagging": `${QUARANTINE_TAG}=${UPLOAD_TAG_VALUE}`
-      }
-    });
+    let upload: PublicSignedMediaRequest<"PUT">;
+    try {
+      const transportRequest = await this.#signer.signPutObject({
+        locator,
+        expiresAt,
+        contentLength: input.expectedBytes,
+        contentType: mimeType,
+        checksumSha256Base64: Buffer.from(sha256Hex, "hex").toString("base64"),
+        metadata: { [PRIVATE_METADATA_BINDING]: binding },
+        tags: { [QUARANTINE_TAG]: UPLOAD_TAG_VALUE }
+      });
+      upload = publicSignedRequest(transportRequest, {
+        method: "PUT",
+        requestedExpiresAt: expiresAt,
+        now,
+        allowedOrigins: this.#config.presignedEndpointAllowlist,
+        locator,
+        objectVersionId: null,
+        requiredHeaders: {
+          "content-type": mimeType,
+          "content-length": String(input.expectedBytes),
+          "x-amz-checksum-sha256": Buffer.from(sha256Hex, "hex").toString("base64"),
+          "x-amz-meta-clinicos-binding": binding,
+          "x-amz-tagging": `${QUARANTINE_TAG}=${UPLOAD_TAG_VALUE}`
+        }
+      });
+    } catch (error) {
+      const failureClass = signerFailureClass(error);
+      await this.#recordAuditAndIntent({
+        authority: input.authority,
+        action: "media.upload_signing_failed",
+        outcome: "failed",
+        metadata: { failureClass, method: "PUT" },
+        intentKind: "upload_signing_failed",
+        intentPayload: { failureClass, method: "PUT", state: record.state },
+        discriminator: `upload-signing-failed:${reserveOperation.operationId}:${failureClass}`
+      });
+      throw error;
+    }
     return Object.freeze({
       mediaId: input.authority.mediaId,
       uploadId: input.authority.uploadId,
@@ -523,7 +563,7 @@ export class S3PrivateMediaProvider {
     }
 
     try {
-      this.#validateEvidencePayload(record, evidence.payload, now);
+      this.#validateEvidence(record, evidence, now);
       if (!(await this.#evidenceVerifier.verify(evidence))) {
         throw new PrivateMediaError({
           code: "scan_evidence_invalid",
@@ -617,6 +657,7 @@ export class S3PrivateMediaProvider {
           operation: conflictOperation
         }
       });
+      if (persistenceResult === "operation_conflict") throw operationConflictError();
       if (persistenceResult === "concurrent_change") throw concurrentChangeError();
       if (persistenceResult === "evidence_conflict") {
         throw new PrivateMediaError({
@@ -692,18 +733,41 @@ export class S3PrivateMediaProvider {
       },
       discriminator: `access-request:${boundedExpiry}:${authority.correlationId}`
     });
-    const signed = await this.#signer.signGetObject({
-      locator: record.locator,
-      versionId: record.objectVersionId,
-      expiresAt: boundedExpiry,
-      responseContentType: record.detectedMimeType ?? record.declaredMimeType
-    });
-    const access = publicSignedRequest(signed, {
-      method: "GET",
-      requestedExpiresAt: boundedExpiry,
-      now,
-      requiredHeaders: {}
-    });
+    let access: PublicSignedMediaRequest<"GET">;
+    try {
+      const signed = await this.#signer.signGetObject({
+        locator: record.locator,
+        versionId: record.objectVersionId,
+        expiresAt: boundedExpiry,
+        responseContentType: record.detectedMimeType ?? record.declaredMimeType
+      });
+      access = publicSignedRequest(signed, {
+        method: "GET",
+        requestedExpiresAt: boundedExpiry,
+        now,
+        allowedOrigins: this.#config.presignedEndpointAllowlist,
+        locator: record.locator,
+        objectVersionId: record.objectVersionId,
+        requiredHeaders: {}
+      });
+    } catch (error) {
+      const failureClass = signerFailureClass(error);
+      await this.#recordAuditAndIntent({
+        authority,
+        action: "media.access_signing_failed",
+        outcome: "failed",
+        metadata: { failureClass, method: "GET" },
+        intentKind: "access_signing_failed",
+        intentPayload: {
+          failureClass,
+          method: "GET",
+          objectIdentitySha256: record.objectIdentitySha256,
+          state: record.state
+        },
+        discriminator: `access-signing-failed:${boundedExpiry}:${authority.correlationId}:${failureClass}`
+      });
+      throw error;
+    }
     await this.#recordAuditAndIntent({
       authority,
       action: "media.access_signed",
@@ -723,7 +787,7 @@ export class S3PrivateMediaProvider {
   async deleteMedia(
     input: Readonly<{
       authority: PrivateMediaAuthority;
-      reason: string;
+      reasonCode: PrivateMediaDeleteReasonCode;
     }>
   ): Promise<PublicMediaLifecycleReceipt> {
     const now = this.#now();
@@ -743,18 +807,17 @@ export class S3PrivateMediaProvider {
     if (["delete_in_progress", "restore_in_progress", "purge_in_progress"].includes(record.state)) {
       throw reconciliationPendingError(record.state);
     }
-    requireReason(input.reason);
-    const reason = input.reason.trim().slice(0, 200);
+    const reasonCode = requireDeleteReasonCode(input.reasonCode);
     const requestOperation = this.#atomicOperation({
       authority: input.authority,
       expectedRevision: record.revision,
       targetRevision: record.revision + 1,
       action: "media.delete_requested",
       outcome: "succeeded",
-      metadata: { reason },
+      metadata: { reasonCode },
       intentKind: "s3_delete_marker_requested",
       intentPayload: {
-        reason,
+        reasonCode,
         requestedAt: now.toISOString(),
         state: "delete_in_progress"
       }
@@ -796,7 +859,7 @@ export class S3PrivateMediaProvider {
       authority: input.authority,
       action: "media.deleted",
       outcome: "succeeded",
-      metadata: { reason, recoverableUntil },
+      metadata: { reasonCode, recoverableUntil },
       intentKind: "s3_delete_marker_confirmed",
       intentPayload: {
         requestOperationId: requestOperation.operationId,
@@ -811,13 +874,13 @@ export class S3PrivateMediaProvider {
   async restoreMedia(
     input: Readonly<{
       authority: PrivateMediaAuthority;
-      reason: string;
+      reasonCode: PrivateMediaRestoreReasonCode;
     }>
   ): Promise<PublicMediaLifecycleReceipt> {
     const now = this.#now();
     const record = await this.#requireRecord(input.authority);
-    requireReason(input.reason);
-    if (record.state !== "deleted" || !record.deleteMarkerVersionId) {
+    const reasonCode = requireRestoreReasonCode(input.reasonCode);
+    if (record.state !== "deleted" || !record.deleteMarkerVersionId || !record.objectVersionId) {
       throw new PrivateMediaError({
         code: "invalid_request",
         message: "Only recoverably deleted media can be restored."
@@ -829,17 +892,16 @@ export class S3PrivateMediaProvider {
         message: "The governed media restore window has expired."
       });
     }
-    const reason = input.reason.trim().slice(0, 200);
     const requestOperation = this.#atomicOperation({
       authority: input.authority,
       expectedRevision: record.revision,
       targetRevision: record.revision + 1,
       action: "media.restore_requested",
       outcome: "succeeded",
-      metadata: { reason },
+      metadata: { reasonCode },
       intentKind: "s3_restore_requested",
       intentPayload: {
-        reason,
+        reasonCode,
         deleteMarkerFingerprint: sha256Text(record.deleteMarkerVersionId),
         requestedAt: now.toISOString(),
         state: "restore_in_progress"
@@ -859,7 +921,10 @@ export class S3PrivateMediaProvider {
       operationId: requestOperation.operationId,
       requestedAt: now.toISOString()
     });
-    const snapshot = await this.#objects.headObject(restoring.locator);
+    const snapshot = await this.#objects.headObjectVersion({
+      locator: restoring.locator,
+      versionId: record.objectVersionId
+    });
     if (!snapshot) {
       throw new PrivateMediaError({
         code: "object_missing",
@@ -892,7 +957,7 @@ export class S3PrivateMediaProvider {
       authority: input.authority,
       action: "media.restored",
       outcome: "succeeded",
-      metadata: { reason, rescanRequired: true },
+      metadata: { reasonCode, rescanRequired: true },
       intentKind: "s3_restore_confirmed",
       intentPayload: {
         requestOperationId: requestOperation.operationId,
@@ -947,17 +1012,27 @@ export class S3PrivateMediaProvider {
       updatedAt: now.toISOString()
     };
     await this.#transitionWithOperation(record, ["deleted"], purging, requestOperation);
+    const objectVersionEffectId = privateMediaChildEffectId(
+      requestOperation.operationId,
+      "purge_object_version",
+      sha256Text(record.objectVersionId)
+    );
     await this.#objects.deleteObjectVersion({
       locator: purging.locator,
       versionId: record.objectVersionId,
-      operationId: requestOperation.operationId,
+      operationId: objectVersionEffectId,
       requestedAt: now.toISOString()
     });
     if (record.deleteMarkerVersionId) {
+      const deleteMarkerEffectId = privateMediaChildEffectId(
+        requestOperation.operationId,
+        "purge_delete_marker",
+        sha256Text(record.deleteMarkerVersionId)
+      );
       await this.#objects.deleteObjectVersion({
         locator: purging.locator,
         versionId: record.deleteMarkerVersionId,
-        operationId: requestOperation.operationId,
+        operationId: deleteMarkerEffectId,
         requestedAt: now.toISOString()
       });
     }
@@ -992,6 +1067,9 @@ export class S3PrivateMediaProvider {
         message: "Legal hold cannot be changed after media is permanently purged."
       });
     }
+    if (["delete_in_progress", "restore_in_progress", "purge_in_progress"].includes(record.state)) {
+      throw reconciliationPendingError(record.state);
+    }
     if (record.legalHold === legalHold) return;
     const next: PrivateMediaRecord = {
       ...record,
@@ -1023,14 +1101,46 @@ export class S3PrivateMediaProvider {
       contentLength: number;
       mimeType: string;
       sha256Digest: string;
-      objectVersionId: string | null;
+      objectVersionId: string;
       storedAt: string;
     }>
   > {
     const record = await this.#requireRecord(authority);
-    const snapshot = await this.#objects.headObject(record.locator);
+    if (
+      !record.objectVersionId ||
+      !record.objectIdentitySha256 ||
+      !record.detectedMimeType ||
+      [
+        "reserved",
+        "delete_in_progress",
+        "deleted",
+        "restore_in_progress",
+        "purge_in_progress",
+        "purged"
+      ].includes(record.state)
+    ) {
+      throw new PrivateMediaError({
+        code: "quarantined",
+        message: "No verified private media version is available for an internal snapshot."
+      });
+    }
+    const snapshot = await this.#objects.headObjectVersion({
+      locator: record.locator,
+      versionId: record.objectVersionId
+    });
     if (!snapshot) {
-      throw new PrivateMediaError({ code: "object_missing", message: "Media object is missing." });
+      throw new PrivateMediaError({
+        code: "object_missing",
+        message: "The verified media object version is missing."
+      });
+    }
+    this.#validateSnapshot(record, snapshot);
+    const identity = objectIdentityDigest(record.locator, snapshot.versionId);
+    if (
+      snapshot.versionId !== record.objectVersionId ||
+      !safeEqual(identity, record.objectIdentitySha256)
+    ) {
+      throw integrityError("Internal media snapshot did not match pinned object provenance.");
     }
     return Object.freeze({
       objectKey: record.locator.key,
@@ -1174,11 +1284,76 @@ export class S3PrivateMediaProvider {
     }
   }
 
-  #validateEvidencePayload(
+  #validateEvidence(
     record: PrivateMediaRecord,
-    payload: SignedMalwareEvidencePayload,
+    untrustedEvidence: unknown,
     now: Date
-  ): void {
+  ): asserts untrustedEvidence is SignedMalwareEvidence {
+    if (
+      !isPlainRecord(untrustedEvidence) ||
+      !hasExactKeys(untrustedEvidence, ["payload", "signature"])
+    ) {
+      throw invalidEvidence("Media inspection evidence envelope is malformed.");
+    }
+    const payloadValue = untrustedEvidence.payload;
+    const signatureValue = untrustedEvidence.signature;
+    const payloadKeys = [
+      "evidenceId",
+      "tenantId",
+      "clinicId",
+      "mediaId",
+      "uploadId",
+      "scanOperationId",
+      "objectIdentitySha256",
+      "objectVersionId",
+      "contentSha256Hex",
+      "contentLength",
+      "detectedMimeType",
+      "verdict",
+      "scanner",
+      "engineVersion",
+      "definitionsVersion",
+      "scannedAt"
+    ] as const;
+    if (!isPlainRecord(payloadValue) || !hasExactKeys(payloadValue, payloadKeys)) {
+      throw invalidEvidence("Media inspection evidence payload fields are malformed.");
+    }
+    const stringPayloadKeys = payloadKeys.filter((key) => key !== "contentLength");
+    if (
+      stringPayloadKeys.some((key) => typeof payloadValue[key] !== "string") ||
+      !Number.isSafeInteger(payloadValue.contentLength) ||
+      (payloadValue.contentLength as number) <= 0
+    ) {
+      throw invalidEvidence("Media inspection evidence payload types are invalid.");
+    }
+    if (
+      !isPlainRecord(signatureValue) ||
+      !hasExactKeys(signatureValue, ["keyId", "algorithm", "valueBase64"]) ||
+      typeof signatureValue.keyId !== "string" ||
+      typeof signatureValue.algorithm !== "string" ||
+      typeof signatureValue.valueBase64 !== "string"
+    ) {
+      throw invalidEvidence("Media inspection evidence signature fields are malformed.");
+    }
+    const payload = payloadValue as unknown as SignedMalwareEvidencePayload;
+    const signature = signatureValue as unknown as SignedMalwareEvidence["signature"];
+    if (
+      !["clean", "malicious", "suspicious", "error"].includes(payload.verdict) ||
+      !SAFE_ID.test(payload.evidenceId) ||
+      !SAFE_ID.test(payload.scanner) ||
+      !SAFE_ID.test(payload.engineVersion) ||
+      !SAFE_ID.test(payload.definitionsVersion)
+    ) {
+      throw invalidEvidence("Media inspection evidence identifiers or verdict are invalid.");
+    }
+    if (
+      !SAFE_PROVIDER_KEY_ID.test(signature.keyId) ||
+      !this.#config.scannerSigningKeyIds.includes(signature.keyId) ||
+      !["RSASSA_PSS_SHA_256", "ECDSA_SHA_256"].includes(signature.algorithm) ||
+      !isStrictBoundedBase64Signature(signature.valueBase64)
+    ) {
+      throw invalidEvidence("Media inspection evidence signature is invalid.");
+    }
     const expected = {
       tenantId: record.scope.tenantId,
       clinicId: record.scope.clinicId,
@@ -1199,27 +1374,15 @@ export class S3PrivateMediaProvider {
         });
       }
     }
-    if (!SAFE_ID.test(payload.evidenceId) || !SAFE_ID.test(payload.scanner)) {
-      throw new PrivateMediaError({
-        code: "scan_evidence_invalid",
-        message: "Media inspection evidence identifiers are invalid."
-      });
-    }
     if (!HEX_SHA256.test(payload.contentSha256Hex)) {
-      throw new PrivateMediaError({
-        code: "scan_evidence_invalid",
-        message: "Media inspection evidence digest is invalid."
-      });
+      throw invalidEvidence("Media inspection evidence digest is invalid.");
     }
     const scannedAt = Date.parse(payload.scannedAt);
     if (
       !Number.isFinite(scannedAt) ||
       Math.abs(scannedAt - now.getTime()) > this.#config.maxScannerClockSkewSeconds * 1000
     ) {
-      throw new PrivateMediaError({
-        code: "scan_evidence_invalid",
-        message: "Media inspection evidence is outside the accepted time window."
-      });
+      throw invalidEvidence("Media inspection evidence is outside the accepted time window.");
     }
   }
 
@@ -1291,6 +1454,7 @@ export class S3PrivateMediaProvider {
       next,
       operation
     });
+    if (result === "operation_conflict") throw operationConflictError();
     if (result === "concurrent_change") throw concurrentChangeError();
     return result;
   }
@@ -1396,31 +1560,39 @@ export class S3PrivateMediaProvider {
       ].join("\u001f")
     )}`;
     const occurredAt = this.#now().toISOString();
+    const audit = Object.freeze({
+      eventId: `pmae_${sha256Text(`${operationId}\u001faudit`)}`,
+      action: input.action,
+      occurredAt,
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      mediaId: scope.mediaId,
+      uploadId: scope.uploadId,
+      actorId: input.authority.actorId,
+      correlationId: input.authority.correlationId,
+      outcome: input.outcome,
+      metadata: Object.freeze({ ...input.metadata })
+    });
+    const reconciliationIntent = Object.freeze({
+      intentId: `pmri_${sha256Text(`${operationId}\u001fintent`)}`,
+      operationId,
+      kind: input.intentKind,
+      scope,
+      expectedRevision: input.expectedRevision,
+      targetRevision: input.targetRevision,
+      createdAt: occurredAt,
+      payload: Object.freeze({ ...input.intentPayload })
+    });
+    const semanticFingerprintSha256 = privateMediaOperationSemanticFingerprint({
+      operationId,
+      audit,
+      reconciliationIntent
+    });
     return Object.freeze({
       operationId,
-      audit: Object.freeze({
-        eventId: `pmae_${sha256Text(`${operationId}\u001faudit`)}`,
-        action: input.action,
-        occurredAt,
-        tenantId: scope.tenantId,
-        clinicId: scope.clinicId,
-        mediaId: scope.mediaId,
-        uploadId: scope.uploadId,
-        actorId: input.authority.actorId,
-        correlationId: input.authority.correlationId,
-        outcome: input.outcome,
-        metadata: Object.freeze({ ...input.metadata })
-      }),
-      reconciliationIntent: Object.freeze({
-        intentId: `pmri_${sha256Text(`${operationId}\u001fintent`)}`,
-        operationId,
-        kind: input.intentKind,
-        scope,
-        expectedRevision: input.expectedRevision,
-        targetRevision: input.targetRevision,
-        createdAt: occurredAt,
-        payload: Object.freeze({ ...input.intentPayload })
-      })
+      semanticFingerprintSha256,
+      audit,
+      reconciliationIntent
     });
   }
 
@@ -1440,7 +1612,8 @@ export class S3PrivateMediaProvider {
       expectedRevision: null,
       targetRevision: null
     });
-    await this.#persistence.recordAuditAndIntent(operation);
+    const result = await this.#persistence.recordAuditAndIntent(operation);
+    if (result === "operation_conflict") throw operationConflictError();
   }
 }
 
@@ -1450,6 +1623,18 @@ function validateProviderConfig(config: S3PrivateMediaProviderConfig): void {
   if (!config.region || config.region.length > 64) invalidConfig("region");
   if (!config.kmsKeyId || config.kmsKeyId.length > 512) invalidConfig("KMS key");
   if (Buffer.from(config.bindingSecret).byteLength < 32) invalidConfig("binding secret");
+  if (
+    !Array.isArray(config.scannerSigningKeyIds) ||
+    config.scannerSigningKeyIds.length === 0 ||
+    config.scannerSigningKeyIds.length > 16 ||
+    config.scannerSigningKeyIds.some(
+      (keyId) => typeof keyId !== "string" || !SAFE_PROVIDER_KEY_ID.test(keyId)
+    ) ||
+    new Set(config.scannerSigningKeyIds).size !== config.scannerSigningKeyIds.length
+  ) {
+    invalidConfig("scanner signing key allowlist");
+  }
+  validatePresignedEndpointAllowlist(config);
   for (const [name, value] of Object.entries({
     maxUploadTtlSeconds: config.maxUploadTtlSeconds ?? 600,
     maxAccessTtlSeconds: config.maxAccessTtlSeconds ?? 300,
@@ -1472,6 +1657,50 @@ function validateProviderConfig(config: S3PrivateMediaProviderConfig): void {
   if ((config.maxScanAttempts ?? 5) > 10) invalidConfig("maxScanAttempts");
   if ((config.maxScannerClockSkewSeconds ?? 300) > 900) {
     invalidConfig("maxScannerClockSkewSeconds");
+  }
+}
+
+function validatePresignedEndpointAllowlist(config: S3PrivateMediaProviderConfig): void {
+  if (
+    !Array.isArray(config.presignedEndpointAllowlist) ||
+    config.presignedEndpointAllowlist.length === 0 ||
+    config.presignedEndpointAllowlist.length > 8
+  ) {
+    invalidConfig("presigned endpoint allowlist");
+  }
+  const supportedHosts = new Set([
+    `${config.bucket}.s3.${config.region}.amazonaws.com`,
+    `${config.bucket}.s3.dualstack.${config.region}.amazonaws.com`,
+    `s3.${config.region}.amazonaws.com`,
+    `s3.dualstack.${config.region}.amazonaws.com`
+  ]);
+  const origins = new Set<string>();
+  for (const configuredEndpoint of config.presignedEndpointAllowlist) {
+    if (typeof configuredEndpoint !== "string") {
+      invalidConfig("presigned endpoint allowlist");
+    }
+    let endpoint: URL;
+    try {
+      endpoint = new URL(configuredEndpoint);
+    } catch {
+      invalidConfig("presigned endpoint allowlist");
+    }
+    if (
+      endpoint.protocol !== "https:" ||
+      endpoint.username ||
+      endpoint.password ||
+      endpoint.port ||
+      endpoint.pathname !== "/" ||
+      endpoint.search ||
+      endpoint.hash ||
+      !supportedHosts.has(endpoint.hostname)
+    ) {
+      invalidConfig("presigned endpoint allowlist");
+    }
+    origins.add(endpoint.origin);
+  }
+  if (origins.size !== config.presignedEndpointAllowlist.length) {
+    invalidConfig("presigned endpoint allowlist");
   }
 }
 
@@ -1594,6 +1823,9 @@ function publicSignedRequest<TMethod extends "PUT" | "GET">(
     method: TMethod;
     requestedExpiresAt: string;
     now: Date;
+    allowedOrigins: readonly string[];
+    locator: S3ObjectLocator;
+    objectVersionId: string | null;
     requiredHeaders: Readonly<Record<string, string>>;
   }>
 ): PublicSignedMediaRequest<TMethod> {
@@ -1616,11 +1848,34 @@ function publicSignedRequest<TMethod extends "PUT" | "GET">(
     parsed.protocol !== "https:" ||
     parsed.username ||
     parsed.password ||
+    parsed.hash ||
+    parsed.port ||
+    !expected.allowedOrigins.includes(parsed.origin) ||
     value.url.length > 8192
   ) {
     throw new PrivateMediaError({
       code: "provider_error",
-      message: "Media signer returned an insecure URL."
+      message: "Media signer returned an unapproved endpoint URL."
+    });
+  }
+  const encodedKeyPath = `/${expected.locator.key
+    .split("/")
+    .map((segment) => encodeURIComponent(segment))
+    .join("/")}`;
+  const virtualHosted = parsed.hostname.startsWith(`${expected.locator.bucket}.s3.`);
+  const expectedPath = virtualHosted
+    ? encodedKeyPath
+    : `/${encodeURIComponent(expected.locator.bucket)}${encodedKeyPath}`;
+  const versionValues = parsed.searchParams.getAll("versionId");
+  if (
+    parsed.pathname !== expectedPath ||
+    (expected.objectVersionId === null
+      ? versionValues.length !== 0
+      : versionValues.length !== 1 || versionValues[0] !== expected.objectVersionId)
+  ) {
+    throw new PrivateMediaError({
+      code: "provider_error",
+      message: "Media signer returned a capability for an unapproved object scope."
     });
   }
   const signedExpiry = Date.parse(value.expiresAt);
@@ -1778,6 +2033,13 @@ function concurrentChangeError(): PrivateMediaError {
   });
 }
 
+function operationConflictError(): PrivateMediaError {
+  return new PrivateMediaError({
+    code: "operation_conflict",
+    message: "A deterministic private media operation ID was reused with different semantics."
+  });
+}
+
 function reconciliationPendingError(state: PrivateMediaState): PrivateMediaError {
   return new PrivateMediaError({
     code: "concurrent_change",
@@ -1805,13 +2067,86 @@ function safeEqual(left: string, right: string): boolean {
   return leftBytes.length === rightBytes.length && timingSafeEqual(leftBytes, rightBytes);
 }
 
-function requireReason(value: string): void {
-  if (!value.trim() || value.length > 500) {
+function requireDeleteReasonCode(value: unknown): PrivateMediaDeleteReasonCode {
+  if (
+    typeof value !== "string" ||
+    ![
+      "retention_policy",
+      "patient_erasure_request",
+      "clinical_correction",
+      "security_response",
+      "legal_disposition"
+    ].includes(value)
+  ) {
     throw new PrivateMediaError({
       code: "invalid_request",
-      message: "A bounded lifecycle reason is required."
+      message: "A governed media deletion reason code is required."
     });
   }
+  return value as PrivateMediaDeleteReasonCode;
+}
+
+function requireRestoreReasonCode(value: unknown): PrivateMediaRestoreReasonCode {
+  if (
+    typeof value !== "string" ||
+    ![
+      "authorized_restore",
+      "clinical_correction",
+      "security_response",
+      "legal_disposition"
+    ].includes(value)
+  ) {
+    throw new PrivateMediaError({
+      code: "invalid_request",
+      message: "A governed media restoration reason code is required."
+    });
+  }
+  return value as PrivateMediaRestoreReasonCode;
+}
+
+function signerFailureClass(
+  error: unknown
+): "invalid_signer_response" | "signer_transport_failure" {
+  return error instanceof PrivateMediaError && error.code === "provider_error"
+    ? "invalid_signer_response"
+    : "signer_transport_failure";
+}
+
+function invalidEvidence(message: string): PrivateMediaError {
+  return new PrivateMediaError({ code: "scan_evidence_invalid", message });
+}
+
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return (
+    value !== null &&
+    typeof value === "object" &&
+    !Array.isArray(value) &&
+    (Object.getPrototypeOf(value) === Object.prototype || Object.getPrototypeOf(value) === null)
+  );
+}
+
+function hasExactKeys(
+  value: Readonly<Record<string, unknown>>,
+  expected: readonly string[]
+): boolean {
+  const actual = Object.keys(value).sort();
+  const required = [...expected].sort();
+  return actual.length === required.length && actual.every((key, index) => key === required[index]);
+}
+
+function isStrictBoundedBase64Signature(value: string): boolean {
+  if (
+    value.length < 44 ||
+    value.length > 1_368 ||
+    value.length % 4 !== 0 ||
+    !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/u.test(value)
+  ) {
+    return false;
+  }
+  const decoded = Buffer.from(value, "base64");
+  return (
+    decoded.byteLength >= 32 && decoded.byteLength <= 1_024 && decoded.toString("base64") === value
+  );
 }
 
 function requireOpaqueProviderValue(value: string, label: string): string {

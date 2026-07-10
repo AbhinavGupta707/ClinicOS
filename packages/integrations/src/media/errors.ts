@@ -16,6 +16,7 @@ export type PrivateMediaErrorCode =
   | "retry_exhausted"
   | "legal_hold"
   | "restore_window_expired"
+  | "operation_conflict"
   | "concurrent_change"
   | "not_found"
   | "provider_error";

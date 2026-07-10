@@ -12,6 +12,16 @@ export interface PrivateMediaGatewayAuthority extends PrivateMediaGatewayScope {
   readonly correlationId: string;
 }
 
+export type PrivateMediaDeleteReasonCode =
+  | "retention_policy"
+  | "patient_erasure_request"
+  | "clinical_correction"
+  | "security_response"
+  | "legal_disposition";
+
+export type PrivateMediaRestoreReasonCode =
+  "authorized_restore" | "clinical_correction" | "security_response" | "legal_disposition";
+
 export interface PrivateMediaGateway {
   allocateInternalObjectKey(scope: PrivateMediaGatewayScope): string;
   scopeFromInternalObjectKey(key: string): PrivateMediaGatewayScope;
@@ -75,20 +85,20 @@ export interface PrivateMediaGateway {
       contentLength: number;
       mimeType: string;
       sha256Digest: string;
-      objectVersionId: string | null;
+      objectVersionId: string;
       storedAt: string;
     }>
   >;
   deleteMedia(
     input: Readonly<{
       authority: PrivateMediaGatewayAuthority;
-      reason: string;
+      reasonCode: PrivateMediaDeleteReasonCode;
     }>
   ): Promise<PrivateMediaLifecycleResult>;
   restoreMedia(
     input: Readonly<{
       authority: PrivateMediaGatewayAuthority;
-      reason: string;
+      reasonCode: PrivateMediaRestoreReasonCode;
     }>
   ): Promise<PrivateMediaLifecycleResult>;
   purgeExpiredDeletedMedia(

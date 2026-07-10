@@ -205,8 +205,8 @@ test("CP14 API lifecycle service preserves opaque deletion and restore receipts"
     correlationId: "correlation-lifecycle"
   };
 
-  const deleted = await service.delete({ authority, reason: "retention disposition" });
-  const restored = await service.restore({ authority, reason: "approved restore" });
+  const deleted = await service.delete({ authority, reasonCode: "retention_policy" });
+  const restored = await service.restore({ authority, reasonCode: "authorized_restore" });
   await service.setLegalHold(authority, true);
   const purged = await service.purgeExpired(authority);
 

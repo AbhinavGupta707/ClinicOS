@@ -9,10 +9,12 @@ import type {
 import type {
   MediaRequestAuthorityFactory,
   MediaServiceAuthorityFactory,
+  PrivateMediaDeleteReasonCode,
   PrivateMediaGateway,
   PrivateMediaGatewayAuthority,
   PrivateMediaGatewayScope,
-  PrivateMediaLifecycleResult
+  PrivateMediaLifecycleResult,
+  PrivateMediaRestoreReasonCode
 } from "./ports.ts";
 
 export interface S3ClinicalMediaProviderOptions {
@@ -199,7 +201,7 @@ export class PrivateMediaLifecycleService {
   delete(
     input: Readonly<{
       authority: PrivateMediaGatewayAuthority;
-      reason: string;
+      reasonCode: PrivateMediaDeleteReasonCode;
     }>
   ): Promise<PrivateMediaLifecycleResult> {
     return this.#gateway.deleteMedia(input);
@@ -208,7 +210,7 @@ export class PrivateMediaLifecycleService {
   restore(
     input: Readonly<{
       authority: PrivateMediaGatewayAuthority;
-      reason: string;
+      reasonCode: PrivateMediaRestoreReasonCode;
     }>
   ): Promise<PrivateMediaLifecycleResult> {
     return this.#gateway.restoreMedia(input);

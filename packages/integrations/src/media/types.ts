@@ -16,6 +16,16 @@ export type PrivateMediaState =
 
 export type MalwareVerdict = "clean" | "malicious" | "suspicious" | "error";
 
+export type PrivateMediaDeleteReasonCode =
+  | "retention_policy"
+  | "patient_erasure_request"
+  | "clinical_correction"
+  | "security_response"
+  | "legal_disposition";
+
+export type PrivateMediaRestoreReasonCode =
+  "authorized_restore" | "clinical_correction" | "security_response" | "legal_disposition";
+
 export interface PrivateMediaScope {
   readonly tenantId: string;
   readonly clinicId: string;
@@ -80,6 +90,12 @@ export interface S3ObjectSnapshot {
 
 export interface S3PrivateObjectTransport {
   headObject(locator: S3ObjectLocator): Promise<S3ObjectSnapshot | null>;
+  headObjectVersion(
+    input: Readonly<{
+      locator: S3ObjectLocator;
+      versionId: string;
+    }>
+  ): Promise<S3ObjectSnapshot | null>;
   readObjectRange(
     input: Readonly<{
       locator: S3ObjectLocator;
@@ -220,10 +236,12 @@ export type PrivateMediaAuditAction =
   | "media.upload_reserved"
   | "media.upload_verified"
   | "media.upload_rejected"
+  | "media.upload_signing_failed"
   | "media.scan_started"
   | "media.scan_completed"
   | "media.scan_failed"
   | "media.access_signing_requested"
+  | "media.access_signing_failed"
   | "media.access_signed"
   | "media.delete_requested"
   | "media.deleted"
@@ -251,10 +269,12 @@ export type PrivateMediaReconciliationIntentKind =
   | "upload_reservation_created"
   | "upload_object_verified"
   | "upload_object_rejected"
+  | "upload_signing_failed"
   | "scan_execution_requested"
   | "scan_result_committed"
   | "scan_failure_committed"
   | "access_signing_requested"
+  | "access_signing_failed"
   | "access_capability_issued"
   | "s3_delete_marker_requested"
   | "s3_delete_marker_confirmed"
@@ -282,19 +302,24 @@ export interface PrivateMediaReconciliationIntent {
 
 export interface PrivateMediaAtomicOperation {
   readonly operationId: string;
+  /** Canonical v1 digest of semantic audit/intent data; excludes generated record/event times. */
+  readonly semanticFingerprintSha256: string;
   readonly audit: PrivateMediaAuditEvent;
   readonly reconciliationIntent: PrivateMediaReconciliationIntent;
 }
 
-export type PrivateMediaPersistenceWriteResult = "applied" | "replayed" | "concurrent_change";
+export type PrivateMediaPersistenceWriteResult =
+  "applied" | "replayed" | "operation_conflict" | "concurrent_change";
 
 /**
  * Transaction-bound persistence boundary. Implementations must commit every method in one
  * database transaction: state, immutable evidence when present, audit, operation deduplication,
  * and reconciliation/outbox intent all succeed or all roll back. Every write must validate that
  * operation audit/intent scope and revisions match the state write. A deterministic operation ID
- * may replay only when the previously committed operation fingerprint is identical; an ID reused
- * with different content is a conflict, never a replay.
+ * may replay only when both the canonical semantic operation fingerprint and the canonical write
+ * fingerprint exported by this package match. Generated audit/intent/record timestamps are not
+ * semantic; actor, correlation, scope, revisions, audit/intent data, state, and evidence are. An
+ * ID reused with different semantics returns `operation_conflict`, never `replayed`.
  */
 export interface PrivateMediaAtomicPersistence {
   get(scope: PrivateMediaScope): Promise<PrivateMediaRecord | null>;
@@ -305,7 +330,7 @@ export interface PrivateMediaAtomicPersistence {
       record: PrivateMediaRecord;
       operation: PrivateMediaAtomicOperation;
     }>
-  ): Promise<"applied" | "replayed" | "conflict">;
+  ): Promise<"applied" | "replayed" | "conflict" | "operation_conflict">;
 
   /** Atomically performs the revision CAS and appends its audit, dedup row, and outbox intent. */
   transition(
@@ -343,10 +368,14 @@ export interface PrivateMediaAtomicPersistence {
         operation: PrivateMediaAtomicOperation;
       }>;
     }>
-  ): Promise<"applied" | "replayed" | "evidence_conflict" | "concurrent_change">;
+  ): Promise<
+    "applied" | "replayed" | "operation_conflict" | "evidence_conflict" | "concurrent_change"
+  >;
 
   /** Atomically appends a non-state audit event, dedup row, and durable outbox intent. */
-  recordAuditAndIntent(operation: PrivateMediaAtomicOperation): Promise<"applied" | "replayed">;
+  recordAuditAndIntent(
+    operation: PrivateMediaAtomicOperation
+  ): Promise<"applied" | "replayed" | "operation_conflict">;
 }
 
 export interface PublicSignedMediaRequest<TMethod extends "PUT" | "GET" = "PUT" | "GET"> {
