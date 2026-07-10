@@ -52,8 +52,11 @@ export const CP13_CLINICAL_DENTAL_OPERATION_IDS = Object.freeze([
   "createSignedMediaAccess"
 ] as const);
 
-export const CP13_TREATMENT_BILLING_OPERATION_IDS = Object.freeze([
-  "receiveRazorpayPaymentWebhook",
+export const CP13_TREATMENT_BILLING_PROVIDER_OPERATION_IDS = Object.freeze([
+  "receiveRazorpayPaymentWebhook"
+] as const);
+
+export const CP13_TREATMENT_BILLING_CLINIC_OPERATION_IDS = Object.freeze([
   "listPricebookProcedures",
   "createPatientTreatmentPlan",
   "updateTreatmentPlan",
@@ -65,6 +68,11 @@ export const CP13_TREATMENT_BILLING_OPERATION_IDS = Object.freeze([
   "createPatientInstruction",
   "createInvoicePaymentRequest",
   "recordInvoiceManualPayment"
+] as const);
+
+export const CP13_TREATMENT_BILLING_OPERATION_IDS = Object.freeze([
+  ...CP13_TREATMENT_BILLING_PROVIDER_OPERATION_IDS,
+  ...CP13_TREATMENT_BILLING_CLINIC_OPERATION_IDS
 ] as const);
 
 export const CP13_CONTINUITY_OPERATIONS_OPERATION_IDS = Object.freeze([
@@ -115,6 +123,11 @@ type Cp13OperationTuple =
   (typeof CP13_CLINIC_DAY_OPERATION_OWNERS)[keyof typeof CP13_CLINIC_DAY_OPERATION_OWNERS];
 
 export type Cp13ClinicDayOperationId = Cp13OperationTuple[number];
+
+export type Cp13ClinicFeatureOperationId = Exclude<
+  Cp13ClinicDayOperationId,
+  (typeof CP13_TREATMENT_BILLING_PROVIDER_OPERATION_IDS)[number]
+>;
 
 export const ALL_CP13_CLINIC_DAY_OPERATION_IDS = Object.freeze(
   Object.values(CP13_CLINIC_DAY_OPERATION_OWNERS).flat()

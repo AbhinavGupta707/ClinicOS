@@ -2,7 +2,7 @@ import type { ParsedOperationRequest } from "@clinic-os/api-contracts";
 import type { ClinicModuleTransactionContext } from "@clinic-os/db";
 import type { Clock, UUID } from "@clinic-os/domain";
 import type { ApiResponse, VerifiedClinicRequestContext } from "../framework/contracts.ts";
-import type { Cp13ClinicDayOperationId } from "./cp13-operation-ownership.ts";
+import type { Cp13ClinicFeatureOperationId } from "./cp13-operation-ownership.ts";
 
 export interface ClinicFeatureRequestMetadata {
   readonly requestId: string;
@@ -12,7 +12,7 @@ export interface ClinicFeatureRequestMetadata {
 }
 
 export interface ClinicFeatureOperationRequest<
-  TOperationId extends Cp13ClinicDayOperationId = Cp13ClinicDayOperationId
+  TOperationId extends Cp13ClinicFeatureOperationId = Cp13ClinicFeatureOperationId
 > {
   readonly operationId: TOperationId;
   readonly access: VerifiedClinicRequestContext;
@@ -25,14 +25,14 @@ export interface ClinicFeatureExecutionContext extends ClinicModuleTransactionCo
 }
 
 export type ClinicFeatureOperationHandler<
-  TOperationId extends Cp13ClinicDayOperationId = Cp13ClinicDayOperationId
+  TOperationId extends Cp13ClinicFeatureOperationId = Cp13ClinicFeatureOperationId
 > = (
   request: ClinicFeatureOperationRequest<TOperationId>,
   context: ClinicFeatureExecutionContext
 ) => Promise<ApiResponse>;
 
 export type ClinicFeatureHandlerMap<
-  TOperationId extends Cp13ClinicDayOperationId = Cp13ClinicDayOperationId
+  TOperationId extends Cp13ClinicFeatureOperationId = Cp13ClinicFeatureOperationId
 > = Readonly<Partial<Record<TOperationId, ClinicFeatureOperationHandler<TOperationId>>>>;
 
 export interface ClinicFeatureScope {

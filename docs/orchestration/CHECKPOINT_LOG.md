@@ -741,10 +741,12 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   scope, namespaced repositories, request guards and audit/outbox evidence inside the already-open
   Postgres mutation transaction. No nested transaction or caller-supplied authority is allowed.
 - Master-frozen API contracts assign all 94 CP2-CP6 clinic-day operations exactly once: front
-  office/intake 26, clinical/dental 22, treatment/billing 12 and continuity/operations 34. The lane
-  handler contract accepts only the parsed CP12 request, verified clinic context, bounded request
-  metadata, injected clock and transaction-bound module context. Workers do not parse raw authority
-  or bypass CP12 policy/idempotency/concurrency/response enforcement.
+  office/intake 26, clinical/dental 22, treatment/billing 12 and continuity/operations 34. The 93
+  authenticated clinic operations accept only the parsed CP12 request, verified clinic context,
+  bounded request metadata, injected clock and transaction-bound module context. The Razorpay
+  webhook remains a separate raw-signature/provider-event contract owned by the treatment lane and
+  composed by the master. Workers do not parse raw authority or bypass CP12
+  policy/idempotency/concurrency/response enforcement.
 - Initial adaptive launch decision: four lanes are justified because each writes only a new
   namespaced feature tree plus lane-specific tests/proposals, consumes the frozen master contract,
   and can commit useful independently testable work without touching shared composition files.
