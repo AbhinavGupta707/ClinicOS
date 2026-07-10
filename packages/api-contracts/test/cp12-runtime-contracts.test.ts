@@ -4,15 +4,21 @@ import {
   ACTIVE_NATIVE_HTTP_OPERATIONS,
   API_ERROR_CODES,
   DEFERRED_OR_UNREGISTERED_HTTP_WORKFLOWS,
+  IF_MATCH_SCHEMA,
   UNSAFE_JSON_PROPERTY_NAMES,
+  VERSIONED_PUBLIC_RESOURCE_SCHEMA,
+  VERSIONED_RESOURCE_RESPONSE_CONTRACTS,
   getNativeHttpOperation,
   parseNativeOperationRequest,
   parseNativeOperationResponse,
+  parseNativeOperationResponseHeaders,
   parseRuntimeSchema,
   renderGeneratedClient,
   renderNativeOpenApi,
   renderNativeRouteInventory,
-  schema
+  resolveNativeResponseSchemaPath,
+  schema,
+  type RuntimeSchema
 } from "../src/index.ts";
 
 const patientId = "10000000-0000-4000-8000-000000000001";
@@ -24,6 +30,17 @@ const bearerHeaders = {
   "idempotency-key": "idem-contract-0001",
   "content-type": "application/json"
 };
+
+function collectVersionedResponsePaths(definition: RuntimeSchema, path = ""): string[] {
+  if (definition["x-clinicos-json-kind"] === "versioned-public") return [path];
+  if (definition.type === "array") {
+    return collectVersionedResponsePaths(definition.items ?? {}, `${path}[]`);
+  }
+  if (definition.type !== "object") return [];
+  return Object.entries(definition.properties ?? {}).flatMap(([name, property]) =>
+    collectVersionedResponsePaths(property, path ? `${path}.${name}` : name)
+  );
+}
 
 test("active native registry covers identity/health and every CP2-CP10 checkpoint", () => {
   assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 128);
@@ -93,7 +110,10 @@ test("current identity response preserves bounded Keycloak provenance", () => {
 test("every writable JSON body and query is strict and every authenticated mutation is idempotent", () => {
   for (const operation of ACTIVE_NATIVE_HTTP_OPERATIONS) {
     assert.equal(operation.request.query.additionalProperties, false, operation.operationId);
-    if (operation.request.body?.contentType === "application/json") {
+    if (
+      operation.request.body?.contentType === "application/json" &&
+      operation.request.body.schema.format !== "binary"
+    ) {
       assert.equal(
         operation.request.body.schema.additionalProperties,
         false,
@@ -109,6 +129,339 @@ test("every writable JSON body and query is strict and every authenticated mutat
       );
     }
   }
+});
+
+test("versioned public resources require a UUID and positive safe rowVersion with public filtering", () => {
+  const valid = parseRuntimeSchema(VERSIONED_PUBLIC_RESOURCE_SCHEMA, {
+    id: patientId,
+    rowVersion: 1,
+    displayName: "Synthetic resource",
+    nested: { safe: true }
+  });
+  assert.equal(valid.success, true);
+
+  for (const candidate of [
+    { id: patientId },
+    { id: patientId, rowVersion: 0 },
+    { id: patientId, rowVersion: -1 },
+    { id: patientId, rowVersion: 1.5 },
+    { id: patientId, rowVersion: Number.MAX_SAFE_INTEGER + 1 },
+    { id: patientId, rowVersion: 1, nested: { objectKey: "private/object" } }
+  ]) {
+    assert.equal(parseRuntimeSchema(VERSIONED_PUBLIC_RESOURCE_SCHEMA, candidate).success, false);
+  }
+});
+
+test("all 12 conditional-update families expose versions on canonical records, not projections", () => {
+  assert.equal(VERSIONED_RESOURCE_RESPONSE_CONTRACTS.length, 12);
+  const conditionalOperationIds = ACTIVE_NATIVE_HTTP_OPERATIONS.filter(
+    (operation) => operation.concurrency.mode === "if-match"
+  )
+    .map((operation) => operation.operationId)
+    .sort();
+  assert.deepEqual(
+    VERSIONED_RESOURCE_RESPONSE_CONTRACTS.map((contract) => contract.updateOperationId).sort(),
+    conditionalOperationIds
+  );
+
+  for (const contract of VERSIONED_RESOURCE_RESPONSE_CONTRACTS) {
+    assert.ok(
+      contract.sources.some((source) => source.role === "update"),
+      contract.family
+    );
+    assert.ok(
+      contract.sources.some((source) =>
+        ["aggregate", "create", "list", "read"].includes(source.role)
+      ),
+      contract.family
+    );
+    for (const source of contract.sources) {
+      const definition = resolveNativeResponseSchemaPath(
+        source.operationId,
+        source.status,
+        source.responsePath
+      );
+      assert.equal(
+        definition["x-clinicos-json-kind"],
+        "versioned-public",
+        `${contract.family}:${source.operationId}:${source.responsePath}`
+      );
+      assert.deepEqual(definition.required, ["id", "rowVersion"]);
+    }
+  }
+
+  const mappedSources = VERSIONED_RESOURCE_RESPONSE_CONTRACTS.flatMap((contract) =>
+    contract.sources.map(
+      (source) => `${source.operationId}:${source.status}:${source.responsePath}`
+    )
+  ).sort();
+  const discoveredSources = ACTIVE_NATIVE_HTTP_OPERATIONS.flatMap((operation) =>
+    Object.entries(operation.responses).flatMap(([status, response]) =>
+      Number(status) >= 200 && Number(status) < 300
+        ? collectVersionedResponsePaths(response.schema).map(
+            (responsePath) => `${operation.operationId}:${status}:${responsePath}`
+          )
+        : []
+    )
+  ).sort();
+  assert.deepEqual(discoveredSources, mappedSources);
+
+  const duplicatePatientProjection = resolveNativeResponseSchemaPath(
+    "createPatient",
+    201,
+    "duplicateSuggestions[].patient"
+  );
+  assert.notEqual(duplicatePatientProjection["x-clinicos-json-kind"], "versioned-public");
+  assert.equal(duplicatePatientProjection.properties?.rowVersion, undefined);
+  for (const responsePath of ["prepSummary.patient", "prepSummary.appointment"]) {
+    const projection = resolveNativeResponseSchemaPath("getPatientPrepSummary", 200, responsePath);
+    assert.notEqual(projection["x-clinicos-json-kind"], "versioned-public", responsePath);
+    assert.equal(projection.properties?.rowVersion, undefined, responsePath);
+  }
+  const validCreateResponse = parseNativeOperationResponse("createPatient", 201, {
+    patient: { id: patientId, rowVersion: 1 },
+    duplicateSuggestions: [
+      {
+        patient: {
+          id: procedureId,
+          fullName: "Projection Only",
+          phone: "+919876543210",
+          email: null,
+          createdAt: "2026-07-10T12:00:00Z"
+        },
+        score: 80,
+        reasons: ["phone_exact"]
+      }
+    ],
+    matchedLead: null
+  });
+  assert.equal(validCreateResponse.success, true);
+
+  const labCaseDetail = {
+    labCase: { id: patientId, rowVersion: 3 },
+    vendor: { id: procedureId },
+    items: [],
+    statusHistory: []
+  };
+  assert.equal(
+    parseNativeOperationResponse("createLabCase", 201, { labCase: labCaseDetail }).success,
+    true
+  );
+  assert.equal(
+    parseNativeOperationResponse("createLabCase", 201, {
+      labCase: { ...labCaseDetail, labCase: { id: patientId } }
+    }).success,
+    false
+  );
+  assert.equal(
+    getNativeHttpOperation("createLabCase").responses[201]?.headers.ETag?.sourceProperty,
+    "labCase.labCase"
+  );
+
+  const checkRunDetail = {
+    run: { id: patientId, rowVersion: 4 },
+    template: { id: procedureId },
+    lines: [],
+    procurementSuggestions: []
+  };
+  assert.equal(
+    parseNativeOperationResponse("updateInventoryCheckRun", 200, {
+      checkRun: checkRunDetail
+    }).success,
+    true
+  );
+  assert.equal(
+    parseNativeOperationResponse("updateInventoryCheckRun", 200, {
+      checkRun: { ...checkRunDetail, run: { id: patientId } }
+    }).success,
+    false
+  );
+  assert.equal(
+    getNativeHttpOperation("updateInventoryCheckRun").responses[200]?.headers.ETag?.sourceProperty,
+    "checkRun.run"
+  );
+});
+
+test("response-header contracts require correlation, replay truth, singleton ETags and retry delay", () => {
+  for (const operation of ACTIVE_NATIVE_HTTP_OPERATIONS) {
+    for (const [statusText, response] of Object.entries(operation.responses)) {
+      const status = Number(statusText);
+      assert.equal(response.headers["x-request-id"]?.required, true, operation.operationId);
+      if (status === 429) {
+        assert.equal(response.headers["Retry-After"]?.required, true, operation.operationId);
+        assert.equal(response.headers["Retry-After"]?.schema.type, "string");
+        assert.equal(response.headers["Retry-After"]?.schema.format, "retry-after-seconds");
+      }
+      if (status >= 200 && status < 300 && operation.idempotency.mode === "header") {
+        const replay = response.headers["idempotency-replayed"];
+        assert.equal(replay?.required, true, operation.operationId);
+        assert.equal(replay?.schema.type, "string");
+        assert.deepEqual(replay?.schema.enum, ["false", "true"]);
+      }
+    }
+  }
+
+  assert.equal(getNativeHttpOperation("getPatient").responses[200]?.headers.ETag?.required, true);
+  assert.equal(getNativeHttpOperation("getEncounter").responses[200]?.headers.ETag?.required, true);
+  assert.equal(getNativeHttpOperation("listPatients").responses[200]?.headers.ETag, undefined);
+  assert.equal(getNativeHttpOperation("listLeads").responses[200]?.headers.ETag, undefined);
+
+  for (const replayed of ["false", "true"]) {
+    const parsed = parseNativeOperationResponseHeaders("updatePatient", 200, {
+      "x-request-id": "request-versioned-response",
+      etag: '"rv-2"',
+      "idempotency-replayed": replayed
+    });
+    assert.equal(parsed.success, true, replayed);
+  }
+  assert.equal(
+    parseNativeOperationResponseHeaders("updatePatient", 200, {
+      "x-request-id": "request-versioned-response",
+      etag: '"rv-2"'
+    }).success,
+    false
+  );
+  assert.equal(
+    parseNativeOperationResponseHeaders("updatePatient", 200, {
+      "x-request-id": "request-versioned-response",
+      etag: '"rv-2"',
+      "idempotency-replayed": "False"
+    }).success,
+    false
+  );
+  assert.equal(
+    parseNativeOperationResponseHeaders("getPatient", 200, {
+      "x-request-id": "request-singleton-get",
+      etag: '"rv-7"'
+    }).success,
+    true
+  );
+  assert.equal(
+    parseNativeOperationResponseHeaders("getPatient", 200, {
+      "x-request-id": "request-singleton-get"
+    }).success,
+    false
+  );
+  assert.equal(
+    parseNativeOperationResponseHeaders("listPatients", 200, {
+      "x-request-id": "request-list"
+    }).success,
+    true
+  );
+  for (const retryAfter of ["1", "120", "86400"]) {
+    assert.equal(
+      parseNativeOperationResponseHeaders("getPatient", 429, {
+        "x-request-id": "request-rate-limit",
+        "retry-after": retryAfter
+      }).success,
+      true,
+      retryAfter
+    );
+  }
+  for (const retryAfter of ["0", "01", "86401", "1.5", "tomorrow"]) {
+    assert.equal(
+      parseNativeOperationResponseHeaders("getPatient", 429, {
+        "x-request-id": "request-rate-limit",
+        "retry-after": retryAfter
+      }).success,
+      false,
+      retryAfter
+    );
+  }
+
+  const openapi = JSON.parse(renderNativeOpenApi()) as {
+    paths: Record<
+      string,
+      Record<
+        string,
+        {
+          responses: Record<
+            string,
+            {
+              headers: Record<
+                string,
+                { schema: { type?: string; enum?: string[] }; "x-clinicos-required": boolean }
+              >;
+            }
+          >;
+        }
+      >
+    >;
+  };
+  const updateHeaders = openapi.paths["/v1/patients/{patientId}"]?.patch?.responses["200"]?.headers;
+  assert.equal(updateHeaders?.ETag?.schema.type, "string");
+  assert.equal(updateHeaders?.ETag?.["x-clinicos-required"], true);
+  assert.deepEqual(updateHeaders?.["idempotency-replayed"]?.schema.enum, ["false", "true"]);
+  assert.equal(updateHeaders?.["idempotency-replayed"]?.schema.type, "string");
+  assert.equal(openapi.paths["/v1/patients"]?.get?.responses["200"]?.headers.ETag, undefined);
+  const rateHeaders = openapi.paths["/v1/patients/{patientId}"]?.get?.responses["429"]?.headers;
+  assert.equal(rateHeaders?.["Retry-After"]?.schema.type, "string");
+  assert.equal(rateHeaders?.["Retry-After"]?.["x-clinicos-required"], true);
+});
+
+test("If-Match accepts only canonical strong safe row-version ETags", () => {
+  for (const value of ['"rv-1"', '"rv-7"', '"rv-9007199254740991"']) {
+    assert.equal(parseRuntimeSchema(IF_MATCH_SCHEMA, value).success, true, value);
+  }
+  for (const value of [
+    'W/"rv-1"',
+    "rv-1",
+    '"rv-0"',
+    '"rv--1"',
+    '"rv-+1"',
+    '"rv-01"',
+    '"rv-9007199254740992"',
+    '"rv-9999999999999999"',
+    '"1"',
+    "*"
+  ]) {
+    assert.equal(parseRuntimeSchema(IF_MATCH_SCHEMA, value).success, false, value);
+  }
+});
+
+test("Razorpay uses JSON transport while preserving bounded raw bytes before parsing", () => {
+  const webhook = getNativeHttpOperation("receiveRazorpayPaymentWebhook");
+  assert.equal(webhook.request.body?.contentType, "application/json");
+  assert.equal(webhook.request.body?.schema.format, "binary");
+  const rawBody = new TextEncoder().encode('{"event":"payment.captured"}');
+  const valid = parseNativeOperationRequest("receiveRazorpayPaymentWebhook", {
+    headers: {
+      "x-razorpay-signature": "synthetic-signature-value",
+      "content-type": "application/json"
+    },
+    body: rawBody
+  });
+  assert.equal(valid.success, true);
+
+  for (const contentType of ["application/octet-stream", "text/plain"]) {
+    const invalid = parseNativeOperationRequest("receiveRazorpayPaymentWebhook", {
+      headers: {
+        "x-razorpay-signature": "synthetic-signature-value",
+        "content-type": contentType
+      },
+      body: rawBody
+    });
+    assert.equal(invalid.success, false, contentType);
+  }
+  assert.equal(
+    parseNativeOperationRequest("receiveRazorpayPaymentWebhook", {
+      headers: {
+        "x-razorpay-signature": "synthetic-signature-value",
+        "content-type": "application/json"
+      },
+      body: { event: "payment.captured" }
+    }).success,
+    false
+  );
+  const openapi = JSON.parse(renderNativeOpenApi()) as {
+    paths: Record<
+      string,
+      Record<string, { requestBody?: { content: Record<string, { schema: { format?: string } }> } }>
+    >;
+  };
+  const content = openapi.paths["/v1/payment-webhooks/razorpay"]?.post?.requestBody?.content;
+  assert.equal(content?.["application/json"]?.schema.format, "binary");
+  assert.equal(content?.["application/octet-stream"], undefined);
 });
 
 test("patient create rejects unknown, tenant, actor and nested authority fields", () => {

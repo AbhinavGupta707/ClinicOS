@@ -11,6 +11,11 @@ npm --workspace @clinic-os/api-contracts run generate
 Generation writes the namespaced native OpenAPI document, native route inventory, and generated
 client. It is deterministic and offline.
 
+Existing generated client methods continue returning response bodies. Every operation also has an
+additive `<operation>WithMetadata` method returning `{ body, metadata }`; errors expose the same
+metadata through `ClinicOsApiError.responseMetadata`. Header metadata is parsed from HTTP wire
+strings, including replay `false|true` and bounded `Retry-After` delta-seconds.
+
 ## Verify drift and route coverage
 
 ```sh
@@ -29,6 +34,8 @@ manual generated-client edits, route additions and stale contracts fail the comm
 
 1. Change the runtime schema/operation registry, not the JSON or generated client.
 2. Add success and negative schema tests, including unknown-field and authority-field cases.
+   Versioned response work must also update and verify the exact mapping in
+   `VERSIONED_RESOURCE_RESPONSE_CONTRACTS`; do not mark reduced projections as mutable resources.
 3. Regenerate.
 4. Review OpenAPI, client and route-inventory diffs together.
 5. Run package typecheck/test/build plus both drift/inventory gates.

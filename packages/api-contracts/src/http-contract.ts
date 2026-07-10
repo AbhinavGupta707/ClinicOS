@@ -24,6 +24,8 @@ export interface OptimisticConcurrencyContract {
   readonly header?: "if-match";
   readonly required: boolean;
   readonly semantics: string;
+  readonly strongEtagFormat?: '"rv-<rowVersion>"';
+  readonly versionProperty?: "rowVersion";
 }
 
 export interface PaginationContract {
@@ -42,7 +44,17 @@ export interface HttpBodyContract {
 export interface HttpResponseContract {
   readonly description: string;
   readonly schema: RuntimeSchema;
+  readonly headers: Readonly<Record<string, HttpResponseHeaderContract>>;
 }
+
+export interface HttpResponseHeaderContract {
+  readonly description: string;
+  readonly required: boolean;
+  readonly schema: RuntimeSchema;
+  readonly sourceProperty?: string;
+}
+
+export type HttpResponseDefinition = Omit<HttpResponseContract, "headers">;
 
 export interface HttpOperationContract {
   readonly operationId: string;
@@ -101,10 +113,31 @@ export const IDEMPOTENCY_KEY_SCHEMA = schema.string({
   maxLength: 128,
   pattern: "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$"
 });
-export const IF_MATCH_SCHEMA = schema.string({
+export const ROW_VERSION_SCHEMA = schema.integer({
+  minimum: 1,
+  maximum: Number.MAX_SAFE_INTEGER,
+  description: "Positive safe integer incremented by each successful conditional write."
+});
+export const STRONG_ROW_VERSION_ETAG_SCHEMA = schema.string({
+  minLength: 6,
+  maxLength: 21,
+  format: "strong-row-version-etag",
+  pattern: '^"rv-[1-9][0-9]{0,15}"$',
+  description:
+    'Canonical strong ETag derived from rowVersion: rowVersion 7 is represented as "rv-7".'
+});
+export const IF_MATCH_SCHEMA = STRONG_ROW_VERSION_ETAG_SCHEMA;
+export const IDEMPOTENCY_REPLAYED_HEADER_SCHEMA = schema.enum(["false", "true"], {
+  type: "string",
+  description:
+    "Required wire boolean: false on first execution and true when a persisted response is replayed."
+});
+export const RETRY_AFTER_SECONDS_HEADER_SCHEMA = schema.string({
   minLength: 1,
-  maxLength: 128,
-  pattern: '^(W/)?\\"?[A-Za-z0-9._:-]+\\"?$'
+  maxLength: 5,
+  format: "retry-after-seconds",
+  pattern: "^[1-9][0-9]{0,4}$",
+  description: "Bounded delta-seconds before the client should retry a rate-limited request."
 });
 export const LIMIT_SCHEMA = schema.integer({ minimum: 1, maximum: 100 });
 
@@ -143,6 +176,23 @@ export const PUBLIC_RECORD_SCHEMA = schema.publicJsonObject({
     "A bounded public HTTP record. Runtime validation recursively rejects private storage, raw provider payload, and secret field names."
 });
 export const PUBLIC_RECORD_ARRAY_SCHEMA = schema.array(PUBLIC_RECORD_SCHEMA, { maxItems: 100 });
+export const VERSIONED_PUBLIC_RESOURCE_SCHEMA: RuntimeSchema = {
+  ...schema.publicJsonObject({
+    description:
+      "A bounded public resource with a discoverable optimistic-concurrency version. Additional fields retain recursive public-field filtering.",
+    properties: {
+      id: UUID_PATH_SCHEMA,
+      rowVersion: ROW_VERSION_SCHEMA
+    },
+    required: ["id", "rowVersion"],
+    minProperties: 2
+  }),
+  "x-clinicos-json-kind": "versioned-public"
+};
+export const VERSIONED_PUBLIC_RESOURCE_ARRAY_SCHEMA = schema.array(
+  VERSIONED_PUBLIC_RESOURCE_SCHEMA,
+  { maxItems: 100 }
+);
 export const WRITABLE_JSON_SCHEMA = schema.writableJsonObject({
   description:
     "A bounded writable JSON object. Tenant, actor, signature, price-authority, storage, and provider-secret fields are rejected recursively."
@@ -218,8 +268,9 @@ export function headersSchema(input: {
 export function defineOperation(
   input: Omit<
     HttpOperationContract,
-    "idempotency" | "concurrency" | "pagination" | "integration"
+    "idempotency" | "concurrency" | "pagination" | "integration" | "responses"
   > & {
+    readonly responses: Readonly<Record<number, HttpResponseDefinition>>;
     readonly mutation?: boolean;
     readonly optimisticConcurrency?: boolean;
     readonly paginated?: boolean;
@@ -230,6 +281,54 @@ export function defineOperation(
   const mutation = input.mutation ?? false;
   const optimisticConcurrency = input.optimisticConcurrency ?? false;
   const paginated = input.paginated ?? false;
+  const idempotency: IdempotencyContract = input.providerEventIdempotency
+    ? {
+        mode: "provider_event",
+        required: true,
+        replaySemantics:
+          "The verified provider event identifier is the replay key; duplicate effects are forbidden."
+      }
+    : mutation && input.auth === "bearer"
+      ? {
+          mode: "header",
+          header: "idempotency-key",
+          required: true,
+          replaySemantics:
+            "The same actor, clinic, operation, key, and canonical request digest must replay the original result."
+        }
+      : {
+          mode: "none",
+          required: false,
+          replaySemantics: "This operation has no client mutation effect."
+        };
+  const concurrency: OptimisticConcurrencyContract = optimisticConcurrency
+    ? {
+        mode: "if-match",
+        header: "if-match",
+        required: true,
+        strongEtagFormat: '"rv-<rowVersion>"',
+        versionProperty: "rowVersion",
+        semantics:
+          'If-Match must contain the current canonical strong ETag "rv-<rowVersion>" and the repository must compare/increment rowVersion atomically.'
+      }
+    : {
+        mode: "none",
+        required: false,
+        semantics: "This operation does not replace mutable resource state."
+      };
+  const responses = Object.fromEntries(
+    Object.entries(input.responses).map(([status, response]) => [
+      Number(status),
+      {
+        ...response,
+        headers: responseHeaders({
+          status: Number(status),
+          idempotency,
+          schema: response.schema
+        })
+      }
+    ])
+  );
   return {
     operationId: input.operationId,
     checkpoint: input.checkpoint,
@@ -242,39 +341,9 @@ export function defineOperation(
     phi: input.phi,
     cache: input.cache,
     request: input.request,
-    responses: input.responses,
-    idempotency: input.providerEventIdempotency
-      ? {
-          mode: "provider_event",
-          required: true,
-          replaySemantics:
-            "The verified provider event identifier is the replay key; duplicate effects are forbidden."
-        }
-      : mutation && input.auth === "bearer"
-        ? {
-            mode: "header",
-            header: "idempotency-key",
-            required: true,
-            replaySemantics:
-              "The same actor, clinic, operation, key, and canonical request digest must replay the original result."
-          }
-        : {
-            mode: "none",
-            required: false,
-            replaySemantics: "This operation has no client mutation effect."
-          },
-    concurrency: optimisticConcurrency
-      ? {
-          mode: "if-match",
-          header: "if-match",
-          required: true,
-          semantics: "The version/ETag must match the current resource version before mutation."
-        }
-      : {
-          mode: "none",
-          required: false,
-          semantics: "This operation does not replace mutable resource state."
-        },
+    responses,
+    idempotency,
+    concurrency,
     pagination: paginated
       ? { mode: "bounded", defaultLimit: 50, maximumLimit: 100, cursor: false }
       : { mode: "none", cursor: false },
@@ -293,6 +362,63 @@ export function defineOperation(
       ]
     }
   };
+}
+
+function responseHeaders(input: {
+  readonly status: number;
+  readonly idempotency: IdempotencyContract;
+  readonly schema: RuntimeSchema;
+}): Readonly<Record<string, HttpResponseHeaderContract>> {
+  const headers: Record<string, HttpResponseHeaderContract> = {
+    "x-request-id": {
+      description: "Stable request correlation identifier.",
+      required: true,
+      schema: REQUEST_ID_SCHEMA
+    }
+  };
+  const successful = input.status >= 200 && input.status < 300;
+  if (successful && input.idempotency.mode === "header") {
+    headers["idempotency-replayed"] = {
+      description:
+        "Literal wire value false on first execution and true when the response was replayed from the persisted idempotency record.",
+      required: true,
+      schema: IDEMPOTENCY_REPLAYED_HEADER_SCHEMA
+    };
+  }
+  const versionedProperty = successful
+    ? unambiguousSingletonVersionedResourcePath(input.schema)
+    : undefined;
+  if (versionedProperty) {
+    headers.ETag = {
+      description: `Canonical strong ETag derived from ${versionedProperty}.rowVersion.`,
+      required: true,
+      schema: STRONG_ROW_VERSION_ETAG_SCHEMA,
+      sourceProperty: versionedProperty
+    };
+  }
+  if (input.status === 429) {
+    headers["Retry-After"] = {
+      description: "Bounded delta-seconds before the request should be retried.",
+      required: true,
+      schema: RETRY_AFTER_SECONDS_HEADER_SCHEMA
+    };
+  }
+  return headers;
+}
+
+function unambiguousSingletonVersionedResourcePath(definition: RuntimeSchema): string | undefined {
+  const paths = collectSingletonVersionedResourcePaths(definition, "");
+  return paths.length === 1 ? paths[0] : undefined;
+}
+
+function collectSingletonVersionedResourcePaths(definition: RuntimeSchema, path: string): string[] {
+  if (definition["x-clinicos-json-kind"] === "versioned-public") return [path];
+  if (definition.type !== "object") return [];
+  return Object.entries(definition.properties ?? {}).flatMap(([name, property]) => {
+    if (property.type === "array") return [];
+    const nestedPath = path ? `${path}.${name}` : name;
+    return collectSingletonVersionedResourcePaths(property, nestedPath);
+  });
 }
 
 export function parseOperationRequest(
@@ -361,7 +487,56 @@ export function parseOperationResponse(
   };
 }
 
+export function parseOperationResponseHeaders(
+  operation: HttpOperationContract,
+  status: number,
+  input: unknown
+): RuntimeSchemaResult {
+  const response = operation.responses[status];
+  if (!response) {
+    return {
+      success: false,
+      issues: [
+        {
+          path: "$",
+          code: "unsupported_value",
+          message: `Status ${status} is not declared for ${operation.operationId}.`
+        }
+      ]
+    };
+  }
+  const available = normalizeHeaders(input);
+  const properties = Object.fromEntries(
+    Object.entries(response.headers).map(([name, contract]) => [
+      name.toLowerCase(),
+      contract.schema
+    ])
+  );
+  const required = Object.entries(response.headers)
+    .filter(([, contract]) => contract.required)
+    .map(([name]) => name.toLowerCase());
+  const selected = Object.fromEntries(
+    Object.keys(properties)
+      .filter((name) => available[name] !== undefined)
+      .map((name) => [name, available[name]])
+  );
+  return parseRuntimeSchema(schema.object(properties, required), selected);
+}
+
 function normalizeHeaders(input: unknown): Record<string, unknown> {
+  if (
+    input &&
+    typeof input === "object" &&
+    "entries" in input &&
+    typeof (input as { entries?: unknown }).entries === "function"
+  ) {
+    return Object.fromEntries(
+      Array.from(
+        (input as { entries(): IterableIterator<[string, string]> }).entries(),
+        ([key, value]) => [key.toLowerCase(), value]
+      )
+    );
+  }
   if (!input || typeof input !== "object" || Array.isArray(input)) return {};
   return Object.fromEntries(
     Object.entries(input as Record<string, unknown>).map(([key, value]) => [

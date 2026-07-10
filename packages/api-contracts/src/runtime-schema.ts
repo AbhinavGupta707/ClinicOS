@@ -4,7 +4,15 @@ export type JsonValue = JsonPrimitive | JsonValue[] | { [key: string]: JsonValue
 export interface RuntimeSchema {
   readonly type?: "array" | "boolean" | "integer" | "number" | "object" | "string";
   readonly description?: string;
-  readonly format?: "binary" | "date" | "date-time" | "email" | "sha256" | "uuid";
+  readonly format?:
+    | "binary"
+    | "date"
+    | "date-time"
+    | "email"
+    | "retry-after-seconds"
+    | "sha256"
+    | "strong-row-version-etag"
+    | "uuid";
   readonly pattern?: string;
   readonly enum?: readonly JsonPrimitive[];
   readonly properties?: Readonly<Record<string, RuntimeSchema>>;
@@ -25,7 +33,7 @@ export interface RuntimeSchema {
   readonly deprecated?: boolean;
   readonly readOnly?: boolean;
   readonly writeOnly?: boolean;
-  readonly "x-clinicos-json-kind"?: "public" | "writable";
+  readonly "x-clinicos-json-kind"?: "public" | "versioned-public" | "writable";
   readonly "x-clinicos-forbidden-property-names"?: readonly string[];
 }
 
@@ -63,6 +71,8 @@ const DATE_PATTERN = /^(\d{4})-(\d{2})-(\d{2})$/;
 const DATE_TIME_PATTERN =
   /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:\d{2})$/;
 const SHA256_PATTERN = /^[0-9a-f]{64}$/i;
+const RETRY_AFTER_SECONDS_PATTERN = /^[1-9][0-9]{0,4}$/;
+const STRONG_ROW_VERSION_ETAG_PATTERN = /^"rv-([1-9][0-9]{0,15})"$/;
 export const UNSAFE_JSON_PROPERTY_NAMES = ["__proto__", "constructor", "prototype"] as const;
 const NORMALIZED_UNSAFE_JSON_PROPERTY_NAMES = new Set(
   UNSAFE_JSON_PROPERTY_NAMES.map(normalizePropertyName)
@@ -340,6 +350,12 @@ function validateString(
   if (definition.format === "sha256" && !SHA256_PATTERN.test(input)) {
     issue(issues, path, "format", "Expected a SHA-256 hexadecimal digest.");
   }
+  if (definition.format === "retry-after-seconds" && !isRetryAfterSeconds(input)) {
+    issue(issues, path, "format", "Expected Retry-After delta-seconds from 1 through 86400.");
+  }
+  if (definition.format === "strong-row-version-etag" && !isStrongRowVersionEtag(input)) {
+    issue(issues, path, "format", 'Expected a strong row-version ETag such as "rv-1".');
+  }
 }
 
 function validateNumber(
@@ -568,6 +584,19 @@ function isCalendarDateParts(year: number, month: number, day: number): boolean 
 
 function isLeapYear(year: number): boolean {
   return year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+}
+
+function isStrongRowVersionEtag(value: string): boolean {
+  const match = STRONG_ROW_VERSION_ETAG_PATTERN.exec(value);
+  if (!match) return false;
+  const rowVersion = Number(match[1]);
+  return Number.isSafeInteger(rowVersion) && rowVersion > 0;
+}
+
+function isRetryAfterSeconds(value: string): boolean {
+  if (!RETRY_AFTER_SECONDS_PATTERN.test(value)) return false;
+  const seconds = Number(value);
+  return Number.isSafeInteger(seconds) && seconds >= 1 && seconds <= 86_400;
 }
 
 function hasPlainJsonPrototype(value: object): boolean {

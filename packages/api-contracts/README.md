@@ -38,6 +38,12 @@ native enforcement and the exact master wiring obligations. Generated contracts 
 NestJS migration, official provider registration, or runtime idempotency/ETag persistence is
 already complete.
 
+The registry also owns twelve canonical row-versioned resource mappings and response-header truth.
+Versioned public records require `id` plus positive safe `rowVersion`; strong ETags use quoted
+`"rv-<rowVersion>"`. OpenAPI declares request correlation, replay truth, singleton ETags and retry
+delay headers, while list items carry versions without a collection ETag. Razorpay retains raw
+signature bytes under its real `application/json` provider media type.
+
 ## Checkpoint 2 contracts
 
 This package owns the shared lead, patient, appointment, queue, dashboard, and CP2 event contracts for the lead-to-appointment workflow. It exports TypeScript request/response types plus runtime parsers that reject unknown fields and enforce tenant/clinic context, actor context, idempotency keys on mutations, and source/provenance attribution.

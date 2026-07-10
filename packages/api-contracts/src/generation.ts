@@ -1,11 +1,13 @@
 import {
   ACTIVE_NATIVE_HTTP_OPERATIONS,
-  DEFERRED_OR_UNREGISTERED_HTTP_WORKFLOWS
+  DEFERRED_OR_UNREGISTERED_HTTP_WORKFLOWS,
+  VERSIONED_RESOURCE_RESPONSE_CONTRACTS
 } from "./native-http-contracts.ts";
 import {
   API_ERROR_CODES,
   API_ERROR_SCHEMA,
   PUBLIC_RECORD_SCHEMA,
+  VERSIONED_PUBLIC_RESOURCE_SCHEMA,
   WRITABLE_JSON_SCHEMA,
   type HttpOperationContract
 } from "./http-contract.ts";
@@ -20,6 +22,7 @@ export interface NativeOpenApiDocument {
   readonly tags: readonly { readonly name: string }[];
   readonly "x-clinicos-contract-source": string;
   readonly "x-clinicos-deferred-workflows": typeof DEFERRED_OR_UNREGISTERED_HTTP_WORKFLOWS;
+  readonly "x-clinicos-versioned-resource-responses": typeof VERSIONED_RESOURCE_RESPONSE_CONTRACTS;
 }
 
 export function generateNativeOpenApiDocument(): NativeOpenApiDocument {
@@ -45,6 +48,7 @@ export function generateNativeOpenApiDocument(): NativeOpenApiDocument {
       schemas: {
         ApiError: toOpenApiSchema(API_ERROR_SCHEMA, false),
         PublicJsonObject: toOpenApiSchema(PUBLIC_RECORD_SCHEMA, false),
+        VersionedPublicResource: toOpenApiSchema(VERSIONED_PUBLIC_RESOURCE_SCHEMA, false),
         WritableJsonObject: toOpenApiSchema(WRITABLE_JSON_SCHEMA, false)
       },
       securitySchemes: {
@@ -59,7 +63,8 @@ export function generateNativeOpenApiDocument(): NativeOpenApiDocument {
     },
     tags,
     "x-clinicos-contract-source": "packages/api-contracts/src/native-http-contracts.ts",
-    "x-clinicos-deferred-workflows": DEFERRED_OR_UNREGISTERED_HTTP_WORKFLOWS
+    "x-clinicos-deferred-workflows": DEFERRED_OR_UNREGISTERED_HTTP_WORKFLOWS,
+    "x-clinicos-versioned-resource-responses": VERSIONED_RESOURCE_RESPONSE_CONTRACTS
   };
 }
 
@@ -84,6 +89,7 @@ export function renderNativeRouteInventory(): string {
       pagination: operation.pagination,
       nativeRuntimeEnforcement: operation.integration.nativeRuntimeEnforcement
     })),
+    versionedResourceResponseContracts: VERSIONED_RESOURCE_RESPONSE_CONTRACTS,
     deferred: DEFERRED_OR_UNREGISTERED_HTTP_WORKFLOWS
   };
   return `${JSON.stringify(sortJson(inventory), null, 2)}\n`;
@@ -131,12 +137,19 @@ function openApiOperation(operation: HttpOperationContract): Record<string, unkn
         status,
         {
           description: response.description,
-          headers: {
-            "x-request-id": {
-              description: "Stable request correlation identifier.",
-              schema: { type: "string", maxLength: 128 }
-            }
-          },
+          headers: Object.fromEntries(
+            Object.entries(response.headers).map(([name, header]) => [
+              name,
+              {
+                description: header.description,
+                schema: toOpenApiSchema(header.schema),
+                "x-clinicos-required": header.required,
+                ...(header.sourceProperty
+                  ? { "x-clinicos-source-property": header.sourceProperty }
+                  : {})
+              }
+            ])
+          ),
           content: { "application/json": { schema: toOpenApiSchema(response.schema) } }
         }
       ])
@@ -200,6 +213,9 @@ function toOpenApiSchema(
 ): Record<string, unknown> {
   if (useSharedReferences) {
     if (definition === API_ERROR_SCHEMA) return { $ref: "#/components/schemas/ApiError" };
+    if (definition["x-clinicos-json-kind"] === "versioned-public") {
+      return { $ref: "#/components/schemas/VersionedPublicResource" };
+    }
     if (definition["x-clinicos-json-kind"] === "public") {
       return { $ref: "#/components/schemas/PublicJsonObject" };
     }
@@ -290,7 +306,9 @@ function schemaType(definition: RuntimeSchema): string {
   } else if (definition.type === "array") {
     result = `readonly (${schemaType(definition.items ?? {})})[]`;
   } else if (definition.type === "object") {
-    if (definition["x-clinicos-json-kind"] === "public") result = "PublicJsonObject";
+    if (definition["x-clinicos-json-kind"] === "versioned-public")
+      result = "VersionedPublicResource";
+    else if (definition["x-clinicos-json-kind"] === "public") result = "PublicJsonObject";
     else if (definition["x-clinicos-json-kind"] === "writable") result = "WritableJsonObject";
     else {
       const required = new Set(definition.required ?? []);
@@ -314,6 +332,7 @@ function renderClientMethod(operation: HttpOperationContract): string {
     .map(Number)
     .filter((status) => status < 400 || (operation.path.startsWith("/health/") && status === 503));
   const contentType = operation.request.body?.contentType ?? null;
+  const bodyEncoding = operation.request.body?.schema.format === "binary" ? "raw" : "json";
   return `
   async ${operation.operationId}(input${requestRequired ? "" : "?"}: ${typeName}Request): Promise<${typeName}Response> {
     return this.execute<${typeName}Response>({
@@ -321,6 +340,19 @@ function renderClientMethod(operation: HttpOperationContract): string {
       pathTemplate: ${JSON.stringify(operation.path)},
       auth: ${JSON.stringify(operation.auth)},
       contentType: ${JSON.stringify(contentType)},
+      bodyEncoding: ${JSON.stringify(bodyEncoding)},
+      successStatuses: ${JSON.stringify(successStatuses)},
+      input: input ?? {}
+    });
+  }
+
+  async ${operation.operationId}WithMetadata(input${requestRequired ? "" : "?"}: ${typeName}Request): Promise<ClinicOsApiResponse<${typeName}Response>> {
+    return this.executeWithMetadata<${typeName}Response>({
+      method: ${JSON.stringify(operation.method)},
+      pathTemplate: ${JSON.stringify(operation.path)},
+      auth: ${JSON.stringify(operation.auth)},
+      contentType: ${JSON.stringify(contentType)},
+      bodyEncoding: ${JSON.stringify(bodyEncoding)},
       successStatuses: ${JSON.stringify(successStatuses)},
       input: input ?? {}
     });
@@ -362,8 +394,22 @@ const GENERATED_CLIENT_PREAMBLE = `/* eslint-disable */
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 export type PublicJsonObject = Readonly<Record<string, JsonValue>>;
+export type VersionedPublicResource = PublicJsonObject & { readonly id: string; readonly rowVersion: number };
 export type WritableJsonObject = Readonly<Record<string, JsonValue>>;
 export type ClinicOsApiErrorCode = ${API_ERROR_CODES.map((code) => JSON.stringify(code)).join(" | ")};
+
+export interface ClinicOsApiResponseMetadata {
+  readonly status: number;
+  readonly requestId: string | null;
+  readonly etag: string | null;
+  readonly idempotencyReplayed: boolean;
+  readonly retryAfterSeconds: number | null;
+}
+
+export interface ClinicOsApiResponse<T> {
+  readonly body: T;
+  readonly metadata: ClinicOsApiResponseMetadata;
+}
 
 export interface ClinicOsApiClientOptions {
   readonly baseUrl: string;
@@ -387,14 +433,22 @@ export class ClinicOsApiError extends Error {
   readonly code: ClinicOsApiErrorCode;
   readonly details: PublicJsonObject;
   readonly requestId: string;
+  readonly responseMetadata: ClinicOsApiResponseMetadata;
 
-  constructor(status: number, body: ClinicOsApiErrorBody) {
+  constructor(status: number, body: ClinicOsApiErrorBody, metadata?: ClinicOsApiResponseMetadata) {
     super(body.error.message);
     this.name = "ClinicOsApiError";
     this.status = status;
     this.code = body.error.code;
     this.details = body.error.details;
     this.requestId = body.error.request_id;
+    this.responseMetadata = metadata ?? {
+      status,
+      requestId: body.error.request_id,
+      etag: null,
+      idempotencyReplayed: false,
+      retryAfterSeconds: null
+    };
   }
 }
 
@@ -410,6 +464,7 @@ interface ExecuteInput {
   readonly pathTemplate: string;
   readonly auth: "bearer" | "none" | "razorpay_signature";
   readonly contentType: "application/json" | "application/octet-stream" | null;
+  readonly bodyEncoding: "json" | "raw";
   readonly successStatuses: readonly number[];
   readonly input: GeneratedRequestInput;
 }
@@ -434,6 +489,46 @@ function appendQuery(url: string, values?: Readonly<Record<string, unknown>>): s
   }
   const serialized = query.toString();
   return serialized ? url + "?" + serialized : url;
+}
+
+function parseIdempotencyReplayed(value: string | null): boolean {
+  if (value === null || value === "false") return false;
+  if (value === "true") return true;
+  throw new TypeError("Invalid idempotency-replayed response header.");
+}
+
+function parseRetryAfterSeconds(value: string | null): number | null {
+  if (value === null) return null;
+  if (!/^[1-9][0-9]{0,4}$/.test(value)) {
+    throw new TypeError("Invalid Retry-After response header.");
+  }
+  const seconds = Number(value);
+  if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 86400) {
+    throw new TypeError("Retry-After response header is outside the supported delta-seconds range.");
+  }
+  return seconds;
+}
+
+function parseStrongRowVersionEtag(value: string | null): string | null {
+  if (value === null) return null;
+  const match = /^"rv-([1-9][0-9]{0,15})"$/.exec(value);
+  const rowVersion = Number(match?.[1]);
+  if (!match || !Number.isSafeInteger(rowVersion) || rowVersion < 1) {
+    throw new TypeError("Invalid strong row-version ETag response header.");
+  }
+  return value;
+}
+
+function extractResponseMetadata(response: Response): ClinicOsApiResponseMetadata {
+  return {
+    status: response.status,
+    requestId: response.headers.get("x-request-id"),
+    etag: parseStrongRowVersionEtag(response.headers.get("etag")),
+    idempotencyReplayed: parseIdempotencyReplayed(
+      response.headers.get("idempotency-replayed")
+    ),
+    retryAfterSeconds: parseRetryAfterSeconds(response.headers.get("retry-after"))
+  };
 }`;
 
 const GENERATED_CLIENT_CLASS_CORE = `  readonly #options: ClinicOsApiClientOptions;
@@ -445,6 +540,10 @@ const GENERATED_CLIENT_CLASS_CORE = `  readonly #options: ClinicOsApiClientOptio
   }
 
   async execute<T>(operation: ExecuteInput): Promise<T> {
+    return (await this.executeWithMetadata<T>(operation)).body;
+  }
+
+  async executeWithMetadata<T>(operation: ExecuteInput): Promise<ClinicOsApiResponse<T>> {
     const headers: Record<string, string> = { ...(operation.input.headers ?? {}) };
     if (operation.auth === "bearer") {
       const token = await this.#options.getAccessToken?.();
@@ -455,22 +554,24 @@ const GENERATED_CLIENT_CLASS_CORE = `  readonly #options: ClinicOsApiClientOptio
     const requestId = this.#options.getRequestId?.();
     if (requestId) headers["x-request-id"] = requestId;
     let body: string | Uint8Array | undefined;
-    if (operation.contentType === "application/json") {
-      headers["content-type"] = "application/json";
-      body = JSON.stringify(operation.input.body ?? {});
-    } else if (operation.contentType === "application/octet-stream") {
-      headers["content-type"] = "application/octet-stream";
+    if (operation.bodyEncoding === "raw") {
+      if (!operation.contentType) throw new TypeError("Raw ClinicOS operations require a content type.");
+      headers["content-type"] = operation.contentType;
       if (!(operation.input.body instanceof Uint8Array)) {
         throw new TypeError("Binary ClinicOS operations require a Uint8Array body.");
       }
       body = operation.input.body;
+    } else if (operation.contentType === "application/json") {
+      headers["content-type"] = "application/json";
+      body = JSON.stringify(operation.input.body ?? {});
     }
     const path = interpolatePath(operation.pathTemplate, operation.input.path ?? {});
     const url = appendQuery(\`\${this.#options.baseUrl.replace(/\\/$/, "")}\${path}\`, operation.input.query);
     const response = await this.#fetch(url, { method: operation.method, headers, ...(body === undefined ? {} : { body }) });
+    const metadata = extractResponseMetadata(response);
     const payload = (await response.json()) as T | ClinicOsApiErrorBody;
     if (!operation.successStatuses.includes(response.status)) {
-      throw new ClinicOsApiError(response.status, payload as ClinicOsApiErrorBody);
+      throw new ClinicOsApiError(response.status, payload as ClinicOsApiErrorBody, metadata);
     }
-    return payload as T;
+    return { body: payload as T, metadata };
   }`;
