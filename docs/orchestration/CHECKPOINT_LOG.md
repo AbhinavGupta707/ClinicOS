@@ -703,10 +703,12 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 - Browser evidence passes: assistant Playwright 3/3; targeted owner Playwright 3/3; in-app browser
   inspection for both roles; 390px no horizontal overflow, reachable primary controls, truthful
   fixture/provider/cloud unavailable states and no browser warnings/errors.
-- Promotion is blocked only by an external-authority requirement. `npm run security:audit` transmits
-  the dependency inventory to the configured npm registry, and the attempted command was correctly
-  rejected because the user had not explicitly authorized that disclosure. `main` stays at
-  `1166baa`; CP13 has not started.
+- Promotion is blocked only by an external-execution requirement. `npm run security:audit` transmits
+  the dependency inventory to the configured npm registry. The user explicitly authorized the
+  disclosure after being informed of the contents and destination, but the managed execution policy
+  still rejected it and prohibited retry, indirect execution or workaround. An authorized operator
+  or approved CI environment must run the exact command and provide its complete output and exit
+  status. `main` stays at `1166baa`; CP13 has not started.
 - Candidate evidence: `docs/qa/checkpoint-12-evidence.md`; integrated threat/control truth:
   `docs/security/checkpoint-12-route-control-inventory.md` and
   `docs/security/checkpoint-12-security-foundation-delta.md`; candidate report:

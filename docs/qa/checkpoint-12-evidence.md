@@ -172,11 +172,13 @@ behavior is separately covered by the live helper/runtime smoke above.
 ## Remaining promotion gate
 
 `npm run security:audit` is the only incomplete CP12 exit gate. Running it transmits the repository's
-dependency inventory to the configured npm registry. The attempted command was rejected because the
-user had not explicitly authorized that external disclosure. No alternative command or cached result
-is substituted for the required audit.
+dependency inventory to the configured npm registry. The user explicitly authorized that disclosure
+after being informed of its contents and destination. The managed execution policy still rejected
+the command as unacceptable external disclosure and prohibited retries, indirect execution and
+workarounds. No alternative command or cached result is substituted for the required audit.
 
-After explicit authorization, the master must run the audit, append its exact result, run the final
+An authorized operator or approved CI environment must run the exact command and provide its complete
+output and exit status. The master must review and append that evidence, run the final
 format/diff/repository checks over the evidence edits, commit the evidence, promote CP12 to `main`,
 run post-promotion verification and only then start CP13.
 

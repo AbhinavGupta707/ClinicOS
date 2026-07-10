@@ -111,7 +111,7 @@ A finding closes only when all of the following exist:
 
 ### PRR-012 — API routing and operations are highly concentrated and contracts are handwritten (P2)
 
-- **Evidence:** the CP12 integration candidate now places all 128 active operations behind one NestJS contract/security pipeline, generates deterministic OpenAPI and a typed client from runtime truth, and exposes transaction-leased namespaced repository seams. The large operation dispatcher remains only as a time-bounded domain strangler after the uniform boundary. Deterministic, durable-local, restart and browser evidence passes; the externally authorized dependency audit and promotion remain pending (`docs/qa/checkpoint-12-evidence.md`).
+- **Evidence:** the CP12 integration candidate now places all 128 active operations behind one NestJS contract/security pipeline, generates deterministic OpenAPI and a typed client from runtime truth, and exposes transaction-leased namespaced repository seams. The large operation dispatcher remains only as a time-bounded domain strangler after the uniform boundary. Deterministic, durable-local, restart and browser evidence passes; approved-environment dependency-audit output and promotion remain pending (`docs/qa/checkpoint-12-evidence.md`).
 - **Risk:** authorization, validation, transaction, idempotency, and route changes are difficult to review; documentation and clients can drift.
 - **Remediation:** CP12 performs an incremental modular-monolith strangler into NestJS domain modules, typed controllers/services/repositories, runtime request/response schemas, generated OpenAPI and clients, central exception/security middleware, and architecture dependency tests. No big-bang rewrite.
 - **Closure evidence:** route parity suite, generated-spec diff gate, runtime invalid-input tests, dependency-boundary tests, and performance comparison.
@@ -223,7 +223,7 @@ A finding closes only when all of the following exist:
 
 ### PRR-028 — Runtime validation and mass-assignment defenses are inconsistent (P2)
 
-- **Evidence:** the CP12 candidate has authoritative strict path/query/header/body and response schemas for all 128 operations, generated contract coverage, unknown/prototype-key rejection, bounded request complexity and a stable central error taxonomy. Deterministic, socket and browser evidence passes; the externally authorized dependency audit and promotion remain pending (`docs/qa/checkpoint-12-evidence.md`).
+- **Evidence:** the CP12 candidate has authoritative strict path/query/header/body and response schemas for all 128 operations, generated contract coverage, unknown/prototype-key rejection, bounded request complexity and a stable central error taxonomy. Deterministic, socket and browser evidence passes; approved-environment dependency-audit output and promotion remain pending (`docs/qa/checkpoint-12-evidence.md`).
 - **Risk:** invalid or attacker-controlled fields can cross authorization/domain boundaries or cause denial of service.
 - **Remediation:** deny-by-default runtime schemas generated into OpenAPI; strip/reject unknown keys; explicit command DTOs; stable error taxonomy; pagination/query budgets; validation before domain use; output schemas/redaction.
 - **Closure evidence:** generated negative corpus/fuzz tests for every public operation and contract coverage gate.
@@ -257,7 +257,7 @@ A finding closes only when all of the following exist:
 | PRR-009 production media                     | P1       | CP14          | Open                                                                      | Hard for media workflow    |
 | PRR-010 truthful readiness                   | P1       | CP11          | Partial: local dependencies closed; deployed admission open               | Hard                       |
 | PRR-011 real TypeScript checking             | P2       | CP11          | Closed at E3                                                              | Hard                       |
-| PRR-012 modular API/generated contracts      | P2       | CP12          | Candidate implemented; external audit and promotion pending               | Hard                       |
+| PRR-012 modular API/generated contracts      | P2       | CP12          | Candidate implemented; approved-environment audit and promotion pending   | Hard                       |
 | PRR-013 web/edge security policy             | P2       | CP14          | Open                                                                      | Hard                       |
 | PRR-014 durable clinic day                   | P1       | CP13          | Open                                                                      | Hard                       |
 | PRR-015 live backup/restore/failover         | P1       | CP14          | Open                                                                      | Hard                       |
@@ -273,7 +273,7 @@ A finding closes only when all of the following exist:
 | PRR-025 accurate readiness governance        | P1       | Docs/CP11     | Partial: CP10 corrected; production approvals open                        | Hard                       |
 | PRR-026 capability activation registry       | P2       | CP11/CP15     | Partial: repository/auth modes truthful; provider registry open           | Hard for enabled providers |
 | PRR-027 outbox/Temporal durability           | P1       | CP11/CP13     | Partial: Postgres outbox/worker closed; Temporal reconciliation open      | Hard                       |
-| PRR-028 runtime validation/mass assignment   | P2       | CP12          | Candidate implemented; external audit and promotion pending               | Hard                       |
+| PRR-028 runtime validation/mass assignment   | P2       | CP12          | Candidate implemented; approved-environment audit and promotion pending   | Hard                       |
 | PRR-029 release-check scope hygiene          | P3       | CP11          | Closed at E3                                                              | Check reproducibility      |
 | PRR-030 real-clinic governance               | P1       | CP17          | Open                                                                      | Hard                       |
 

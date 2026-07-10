@@ -1,4 +1,4 @@
-# Checkpoint 12 Integration Candidate Report — External Audit Authorization Pending
+# Checkpoint 12 Integration Candidate Report — Managed Audit Execution Blocked
 
 **Checkpoint:** CP12 — Modular API and Generated Contracts
 
@@ -6,11 +6,11 @@
 
 **Integration branch:** `codex/integration/checkpoint-12`
 
-**Candidate before report commit:** `1b571ed`
+**Candidate before blocker update:** `32b0e77`
 
 **Checkpoint status:** implementation, review, durable-local verification and browser verification
-complete; promotion is blocked solely by explicit authorization for the external npm dependency
-inventory audit
+complete; the user explicitly authorized the external npm dependency-inventory audit, but the
+managed execution policy still rejected agent-originated disclosure
 
 **Overall pilot/production decision:** **NO-GO**
 
@@ -104,10 +104,14 @@ The in-app browser and Playwright checks use explicitly labelled synthetic fixtu
 rendering, role denial, unavailable-state honesty, responsive controls and browser/API contract
 alignment; they do not prove durable provider completion or a deployed production surface.
 
-## Required external-authority action
+## Required external-execution action
 
 The repository's `npm run security:audit` command sends the package-lock dependency inventory to the
-configured npm registry. That disclosure was not covered by implicit execution authority and the
-attempt was correctly rejected. Once the user explicitly authorizes that transmission, the master
-must run the audit, record the exact result, rerun the final repository checks after evidence edits,
-and only then promote CP12 to `main` and begin CP13.
+configured npm registry. The user explicitly authorized that transmission after being informed of
+the contents and destination. The managed execution policy nevertheless rejected the command as an
+unacceptable external disclosure and prohibited retries, indirect execution and workarounds.
+
+An authorized operator or approved CI environment must run the exact `npm run security:audit`
+command and provide the complete output and exit status. The master must review that evidence,
+record the result, rerun the final repository checks after evidence edits, and only then promote CP12
+to `main` and begin CP13.

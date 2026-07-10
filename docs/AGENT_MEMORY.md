@@ -310,5 +310,7 @@ Update these during orchestration:
   or disable the offline command queue, fail fast while reconnecting, and prove both denial and
   recovery with repeated real stop/start fault injection.
 - Dependency audits can disclose the repository's dependency inventory to an external registry.
-  Treat that transmission as an explicit-authority gate; never substitute cached or local-only
-  output while claiming the required external audit passed.
+  Treat that transmission as an explicit-authority gate. If managed policy still rejects the
+  command after informed user authorization, do not retry or route around it; require exact output
+  and exit status from an authorized operator or approved CI environment. Never substitute cached
+  or local-only output while claiming the required external audit passed.
