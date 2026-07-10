@@ -8,16 +8,17 @@ checkpoint: CP12
 launch_revision: 1166baa7a816b614d896cf267066f31f40eac142
 candidate_branch: codex/integration/checkpoint-12
 candidate_revision_before_evidence_commit: a2d3bca
+promotion_revision: 2f6b4cd67a64e4c9b19bb4ee34a9c8f7e5c2bbc8
 tier: E1-deterministic-plus-E3-clean-durable-local
 environment: local-codex-synthetic-only
 data: deterministic-synthetic-no-real-phi
 operator: ClinicOS master orchestrator
 overall_release_decision: NO-GO
-checkpoint_promotion: PASS_PENDING_PROMOTION
+checkpoint_promotion: PASS_PROMOTED
 ```
 
-The evidence commit cannot self-reference. The master must record the evidence and promotion commits
-in the checkpoint log after promotion.
+The evidence commit cannot self-reference. The promotion merge and post-promotion result are
+recorded in the checkpoint log and final report.
 
 ## Integrated result
 
@@ -202,6 +203,6 @@ to `main`, run post-promotion verification and only then start CP13.
 
 ## Decision
 
-The CP12 integration candidate passes every exit gate and is authorized for promotion. `main`
-remains at the verified CP11 launch base until the controlled merge and post-promotion verification
-complete. CP13 must not start before those steps are green.
+CP12 passes every exit gate and was promoted to `main` by controlled no-fast-forward merge
+`2f6b4cd`. Post-promotion repository checks, candidate/main tree equivalence, clean diff and durable
+database verification pass. CP13 may now begin.

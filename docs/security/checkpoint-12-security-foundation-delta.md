@@ -2,9 +2,11 @@
 
 **Launch base:** `1166baa7a816b614d896cf267066f31f40eac142`
 
-**Candidate:** `codex/integration/checkpoint-12`
+**Candidate branch:** `codex/integration/checkpoint-12`
 
-**Evidence:** E1 deterministic plus E3 clean-durable-local candidate evidence; high-severity dependency-audit gate passed
+**Promoted revision:** `2f6b4cd67a64e4c9b19bb4ee34a9c8f7e5c2bbc8`
+
+**Evidence:** E1 deterministic plus E3 clean-durable-local evidence; high-severity dependency-audit and post-promotion gates passed
 
 **Overall release decision:** unchanged **NO-GO**
 
@@ -60,13 +62,13 @@ Master review found and corrected issues before accepting the candidate:
 
 ## Honest limitations
 
-CP12 does not close the overall production-readiness decision. The current candidate has complete
+CP12 does not close the overall production-readiness decision. The promoted checkpoint has complete
 deterministic, clean-durable-local, fault-injection, restart, browser and high-severity dependency
 audit evidence. The audit retains 21 moderate transitive findings under PRR-018 for CP14/CP17; it has
 zero high or critical findings and passes the configured CP12 threshold.
 
-PRR-012 and PRR-028 are implemented in the candidate but must remain unclosed until promotion.
-PRR-017's CP12 application-layer controls are implemented, while deployed WAF, noisy-neighbor load,
-alert validation and broader concurrency/provider budgets remain owned by CP14. Production identity,
-CSRF/CORS/host policy, official provider activation, cloud, restore, alert and physical-device
-evidence remain in their checkpoint owners.
+PRR-012 and PRR-028 are closed at E3 by the promoted revision. PRR-017's CP12 application-layer
+controls are closed, while deployed WAF, noisy-neighbor load, alert validation and broader
+concurrency/provider budgets remain owned by CP14. Production identity, CSRF/CORS/host policy,
+official provider activation, cloud, restore, alert and physical-device evidence remain in their
+checkpoint owners.

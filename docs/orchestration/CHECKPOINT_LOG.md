@@ -708,7 +708,7 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   disclosure after being informed of the contents and destination, but the managed execution policy
   still rejected it and prohibited retry, indirect execution or workaround. An authorized operator
   or approved CI environment must run the exact command and provide its complete output and exit
-  status. `main` stays at `1166baa`; CP13 has not started.
+  status. At that point `main` remained at `1166baa` and CP13 had not started.
 - The authorized operator supplied the complete `npm run security:audit` transcript. The configured
   `--audit-level=high` gate passes with zero high/critical advisories. Twenty-one moderate advisories
   remain in the Next/PostCSS, Temporal/protobufjs and Expo/xcode/uuid transitive paths. No automatic
@@ -716,6 +716,12 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 - With the audit evidence accepted, every CP12 exit gate passes. Promotion is authorized after the
   final repository rerun; CP13 remains stopped until the controlled merge and post-promotion checks
   are green.
+- CP12 was promoted to `main` by controlled no-fast-forward merge
+  `2f6b4cd67a64e4c9b19bb4ee34a9c8f7e5c2bbc8`. Post-promotion `npm run check`, exact
+  integration/main tree equivalence, `git diff --check` and durable `npm run db:verify` all pass.
+  The database reports 15 migrations, 97/97 forced-RLS tenant tables, the three least-privilege
+  roles, two synthetic tenants, zero no-context runtime rows, denied worker product access and
+  cross-tenant isolation pass. CP12 is complete; CP13 is authorized to begin.
 - Candidate evidence: `docs/qa/checkpoint-12-evidence.md`; integrated threat/control truth:
   `docs/security/checkpoint-12-route-control-inventory.md` and
   `docs/security/checkpoint-12-security-foundation-delta.md`; candidate report:

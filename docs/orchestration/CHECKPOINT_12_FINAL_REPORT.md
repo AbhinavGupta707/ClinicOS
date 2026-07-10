@@ -1,4 +1,4 @@
-# Checkpoint 12 Final Integration Report — Promotion Gate Passed
+# Checkpoint 12 Final Report — Promoted
 
 **Checkpoint:** CP12 — Modular API and Generated Contracts
 
@@ -8,8 +8,10 @@
 
 **Candidate before audit closeout:** `a2d3bca`
 
-**Checkpoint status:** complete integration candidate; all CP12 exit gates pass and promotion to
-`main` is authorized after the final repository rerun
+**Promotion merge:** `2f6b4cd67a64e4c9b19bb4ee34a9c8f7e5c2bbc8`
+
+**Checkpoint status:** complete and promoted to `main`; post-promotion repository, tree-equivalence
+and durable database verification pass
 
 **Overall pilot/production decision:** **NO-GO**
 
@@ -63,8 +65,9 @@ dependency order. Workers did not merge, push, alter release truth or use master
 | Secret scan                                                      | Pass                                                                                                  |
 | Dependency audit                                                 | Pass at the high threshold: zero high/critical; 21 moderate advisories retained for later remediation |
 | Evidence/threat delta/report                                     | Pass; final audit outcome recorded                                                                    |
-| Promotion to `main`                                              | Authorized after the final repository rerun                                                           |
-| CP13 launch                                                      | Not allowed until CP12 promotion and post-promotion verification                                      |
+| Promotion to `main`                                              | Pass: controlled no-fast-forward merge `2f6b4cd`                                                      |
+| Post-promotion verification                                      | Pass: repository check, candidate/main tree equivalence, clean diff and durable DB verify             |
+| CP13 launch                                                      | Authorized                                                                                            |
 
 ## Review findings resolved before candidate acceptance
 

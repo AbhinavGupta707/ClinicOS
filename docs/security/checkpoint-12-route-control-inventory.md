@@ -4,9 +4,11 @@
 
 **Candidate branch:** `codex/integration/checkpoint-12`
 
+**Promoted revision:** `2f6b4cd67a64e4c9b19bb4ee34a9c8f7e5c2bbc8`
+
 **Evidence tier:** E1 deterministic plus E3 clean-durable-local evidence; every CP12 exit gate passes
 
-**Release effect:** none until the complete CP12 exit gate passes and the candidate is promoted to `main`
+**Release effect:** active on `main` at the promoted revision; not an overall production-readiness claim
 
 ## Runtime source of truth
 
@@ -111,12 +113,14 @@ the parity harness:
 `401`, `403`, `404` and domain/idempotency `409` meanings remain stable. Successful responses must
 pass their runtime body and header schemas before commit/replay completion.
 
-## Remaining promotion evidence
+## Promotion evidence
 
-The integrated candidate is not a release or production-readiness claim. The zero-skip
-socket-enabled suite, focused real Postgres/Redis request-guard/readiness matrix, repeated runtime
-and worker restarts, repeatable Playwright and in-app browser smoke have passed. The sole remaining
-An authorized operator supplied the exact dependency-audit transcript. The configured high-severity
-gate passes with zero high or critical advisories; 21 moderate transitive advisories remain recorded
-under PRR-018 for CP14/CP17. All CP12 promotion evidence now passes. Edge/WAF noisy-neighbor load
+The zero-skip socket-enabled suite, focused real Postgres/Redis request-guard/readiness matrix,
+repeated runtime and worker restarts, repeatable Playwright and in-app browser smoke passed. An
+authorized operator supplied the exact dependency-audit transcript; the configured high-severity
+gate passes with zero high or critical advisories. Twenty-one moderate transitive advisories remain
+recorded under PRR-018 for CP14/CP17.
+
+The controlled merge to `main` and post-promotion repository, tree-equivalence and durable database
+checks pass. This closes CP12, not overall production readiness. Edge/WAF noisy-neighbor load
 evidence remains a CP14 closure requirement for the broader PRR-017 finding.
