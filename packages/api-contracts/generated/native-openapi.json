@@ -22879,6 +22879,57 @@
               }
             }
           },
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 3,
+                  "properties": {
+                    "invoice": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    },
+                    "paymentIntent": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    },
+                    "provider": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    }
+                  },
+                  "required": [
+                    "invoice",
+                    "paymentIntent",
+                    "provider"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "idempotency-replayed": {
+                "description": "Literal wire value false on first execution and true when the response was replayed from the persisted idempotency record.",
+                "schema": {
+                  "description": "Required wire boolean: false on first execution and true when a persisted response is replayed.",
+                  "enum": [
+                    "false",
+                    "true"
+                  ],
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
           "400": {
             "content": {
               "application/json": {

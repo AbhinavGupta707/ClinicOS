@@ -13,7 +13,7 @@
     "check:clock": "node scripts/check-clock-usage.mjs",
     "check:env": "npm --workspace @clinic-os/config run build && node scripts/validate-env-template.mjs",
     "ci": "npm run check && npm run typecheck && npm run lint && npm run test && npm run build && npm run security:audit && npm run security:secrets",
-    "build:shared": "npm run build --workspace @clinic-os/config --if-present && npm run build --workspace @clinic-os/observability --if-present && npm run build --workspace @clinic-os/integrations --if-present && npm run build --workspace @clinic-os/workflow --if-present",
+    "build:shared": "npm run build --workspace @clinic-os/domain --if-present && npm run build --workspace @clinic-os/db --if-present && npm run build --workspace @clinic-os/config --if-present && npm run build --workspace @clinic-os/observability --if-present && npm run build --workspace @clinic-os/integrations --if-present && npm run build --workspace @clinic-os/workflow --if-present",
     "typecheck": "npm run build:shared && npm run typecheck --workspaces --if-present",
     "lint": "npm run build:shared && npm run lint --workspaces --if-present",
     "test": "npm run build:shared && npm run test --workspaces --if-present",

@@ -265,7 +265,7 @@ export type CreateInvoiceReceiptResponse = { readonly receipt: PublicJsonObject;
 export type CreatePatientInstructionRequest = { readonly path: { readonly patientId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly channel?: "print" | "whatsapp"; readonly templateId: string; readonly title?: string | null; readonly body?: string | null } };
 export type CreatePatientInstructionResponse = { readonly instruction: PublicJsonObject };
 export type CreateInvoicePaymentRequestRequest = { readonly path: { readonly invoiceId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly requestType?: "payment_link" | "invoice_qr"; readonly amountMinor?: number; readonly expiresAt?: string | null; readonly description?: string | null; readonly customer?: { readonly name?: string | null; readonly email?: string | null; readonly contact?: string | null }; readonly metadata?: WritableJsonObject } };
-export type CreateInvoicePaymentRequestResponse = { readonly invoice: PublicJsonObject; readonly paymentRequest: PublicJsonObject; readonly provider: PublicJsonObject };
+export type CreateInvoicePaymentRequestResponse = { readonly invoice: PublicJsonObject; readonly paymentRequest: PublicJsonObject; readonly provider: PublicJsonObject } | { readonly invoice: PublicJsonObject; readonly paymentIntent: PublicJsonObject; readonly provider: PublicJsonObject };
 export type RecordInvoiceManualPaymentRequest = { readonly path: { readonly invoiceId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly amountMinor: number; readonly currency?: "INR"; readonly method: "cash" | "upi" | "card" | "bank_transfer" | "cheque" | "other"; readonly reason: string; readonly reference: string; readonly receivedAt?: string | null; readonly evidence: WritableJsonObject } };
 export type RecordInvoiceManualPaymentResponse = { readonly invoice: PublicJsonObject; readonly transaction: PublicJsonObject; readonly reconciliationItem: PublicJsonObject | null; readonly replayed: boolean };
 export type GetOwnerDashboardRequest = { readonly query?: { readonly from?: string; readonly to?: string } };
@@ -2071,7 +2071,7 @@ export class ClinicOsApiClient {
       auth: "bearer",
       contentType: "application/json",
       bodyEncoding: "json",
-      successStatuses: [201],
+      successStatuses: [201,202],
       input: input ?? {}
     });
   }
@@ -2083,7 +2083,7 @@ export class ClinicOsApiClient {
       auth: "bearer",
       contentType: "application/json",
       bodyEncoding: "json",
-      successStatuses: [201],
+      successStatuses: [201,202],
       input: input ?? {}
     });
   }

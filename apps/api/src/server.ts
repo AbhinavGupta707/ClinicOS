@@ -194,7 +194,9 @@ import {
 import { RedisAtomicBudgetStore } from "./framework/redis-budget-store.ts";
 import { PostgresAtomicMutationCoordinator } from "./framework/postgres-mutation-coordinator.ts";
 import type { ClinicFeatureHandlerMap } from "./features/contracts.ts";
+import { createCp13ClinicFeatureHandlerMap } from "./features/cp13-composition.ts";
 import type { Cp13ClinicFeatureOperationId } from "./features/cp13-operation-ownership.ts";
+import { createClinicalDentalRelationshipAuthority } from "./features/clinical-dental/index.ts";
 import { runClinicFeatureOperation } from "./features/runtime.ts";
 
 interface AuditSink {
@@ -582,14 +584,16 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
     : createPostgresRepositorySet(parsed.data, runtimeBudgetKeySecret ?? undefined);
   if ("pool" in repositorySet) pool = repositorySet.pool;
   const port = parsePort(env.PORT ?? env.API_PORT);
+  const mediaStorage = createRuntimeMediaStorage(parsed.data, env);
+  const paymentProvider = createRuntimePaymentProvider(parsed.data);
 
   const serverOptions: ClinicOsApiServerOptions = {
     config: parsed.data,
     identityRepository: repositorySet.identityRepository,
     operationsRepository: repositorySet.operationsRepository,
     auditSink: repositorySet.auditSink,
-    mediaStorage: createRuntimeMediaStorage(parsed.data, env),
-    paymentProvider: createRuntimePaymentProvider(parsed.data),
+    mediaStorage,
+    paymentProvider,
     useLocalAuthFixture,
     repositoryMode: useFixtureRepository ? "fixture" : "postgres",
     dependencyProbes: pool
@@ -600,6 +604,13 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
         })
       : undefined
   };
+  serverOptions.featureHandlers = createCp13ClinicFeatureHandlerMap({
+    paymentProvider,
+    clinicalDental: {
+      relationshipAuthority: createClinicalDentalRelationshipAuthority(),
+      ...(mediaStorage ? { mediaStorage } : {})
+    }
+  });
   if (!useFixtureRepository) {
     redisBudgetStore = new RedisAtomicBudgetStore({ redisUrl: parsed.data.services.redisUrl });
     serverOptions.budgetStore = redisBudgetStore;

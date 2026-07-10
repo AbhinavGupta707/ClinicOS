@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
 import { permissionsForScope } from "@clinic-os/auth";
+import {
+  buildPaymentRequestIntentDigest,
+  type CanonicalPaymentProviderRequest,
+  type PaymentRequestIntentRecord
+} from "@clinic-os/db";
 import type { DomainEventType, PermissionKey, UUID } from "@clinic-os/domain";
 import type {
   CreateInvoiceInput,
-  CreatePaymentRequestInput,
   CreateProcedurePerformedInput,
   CreateReceiptInput,
   CreateTreatmentPlanInput,
@@ -16,19 +20,13 @@ import type {
   TreatmentPlanDetail,
   UpdateTreatmentPlanInput
 } from "@clinic-os/domain";
-import {
-  PaymentProviderError,
-  type PaymentProvider,
-  type PaymentProviderRequestResult,
-  type ProviderHealth
-} from "@clinic-os/integrations";
+import type { PaymentProvider } from "@clinic-os/integrations";
 import { createAuditEvent, type KnownAuditAction } from "@clinic-os/security";
 import {
   assertCp13ManualPaymentEvidence,
   assertInstructionRemainsRequestEvidence,
-  assertInvoiceCreationReferencesCompletedEvidence,
-  normalizeCp13PaymentRequestType
-} from "../../../../../packages/domain/src/cp13/treatment-billing/invariants.ts";
+  assertInvoiceCreationReferencesCompletedEvidence
+} from "@clinic-os/domain";
 import { ApiError } from "../../errors.ts";
 import type {
   ClinicFeatureExecutionContext,
@@ -376,7 +374,8 @@ async function handleCreateInvoicePaymentRequest(
     });
   }
   const body = requestBody(request);
-  const requestType = body.requestType === "invoice_qr" ? "invoice_qr" : "payment_link";
+  const requestType: CanonicalPaymentProviderRequest["requestType"] =
+    body.requestType === "invoice_qr" ? "invoice_qr" : "payment_link";
   const amountMinor = optionalPositiveInteger(body.amountMinor) ?? invoice.balanceMinor;
   if (amountMinor > invoice.balanceMinor) {
     throw conflict("Payment request amount cannot exceed the immutable invoice balance.", {
@@ -385,91 +384,104 @@ async function handleCreateInvoicePaymentRequest(
       requested_amount_minor: amountMinor
     });
   }
-  const health = await provider.healthCheck();
   const capability = requestType === "invoice_qr" ? "CREATE_PAYMENT_QR" : "CREATE_PAYMENT_LINKS";
-  if (!health.capabilities.includes(capability)) {
-    throw dependencyUnavailable("Payment provider is unavailable for this request type.", {
-      provider_key: provider.providerKey,
-      provider_status: health.status,
+  const providerKey = billingProviderKey(provider.providerKey);
+  const durableIntegrity = context.repositories.durableIntegrity;
+  if (!durableIntegrity) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Durable payment request recovery is not configured."
+    );
+  }
+  const accountResult = await durableIntegrity.findActivePaymentProviderAccount({
+    providerKey,
+    requiredCapability: capability
+  });
+  if (accountResult.outcome !== "resolved") {
+    throw dependencyUnavailable("Payment provider account is unavailable for this clinic.", {
+      provider_key: providerKey,
+      provider_account_state: accountResult.outcome,
       required_capability: capability
     });
   }
-  const providerInput = {
-    tenantId: request.access.context.tenant.id,
-    clinicId: request.access.clinicId,
-    patientId: invoice.patientId,
-    invoiceId,
-    amountPaise: amountMinor,
+  const canonicalRequest: CanonicalPaymentProviderRequest = {
+    requestType,
+    amountMinor,
     currency: invoice.currency,
     description: nullableString(body.description),
     expiresAt: nullableString(body.expiresAt),
-    idempotencyKey: scopedOperationIdempotencyKey(request, invoiceId),
     customer: nullableRecord(body.customer),
     metadata: recordValue(body.metadata)
   };
-  let providerResult: PaymentProviderRequestResult;
-  try {
-    providerResult =
-      requestType === "invoice_qr"
-        ? await provider.createInvoiceQr(providerInput)
-        : await provider.createPaymentLink(providerInput);
-  } catch (error) {
-    if (error instanceof PaymentProviderError) {
-      throw dependencyUnavailable("Payment provider request could not be completed.", {
-        provider_key: error.providerKey,
-        provider_status: error.status
-      });
-    }
-    throw error;
-  }
-  assertProviderRequestResult(providerResult, {
-    amountMinor,
-    currency: invoice.currency,
-    requestType
-  });
-  const repositoryInput: CreatePaymentRequestInput = {
+  const operationKey = scopedOperationIdempotencyKey(request, invoiceId);
+  const digestInput = {
+    externalAccountId: accountResult.account.externalAccountId,
+    providerKey,
+    requiredCapability: capability,
     invoiceId,
-    provider: billingProviderKey(providerResult.providerKey),
-    requestType: normalizeCp13PaymentRequestType(requestType),
-    amountMinor,
-    currency: invoice.currency,
-    providerReferenceId: providerResult.providerRequestId,
-    providerUrl: providerResult.paymentUrl ?? null,
-    providerQrPayload: providerResult.qrString ?? providerResult.qrImageUrl ?? null,
-    expiresAt: providerResult.expiresAt ?? null,
-    metadata: {
-      providerStatus: providerResult.status,
-      providerMetadata: providerResult.metadata,
-      providerHealth: publicProviderHealth(providerResult.providerHealth)
-    }
-  };
-  const paymentRequest = await domainMutation(
-    () => context.repositories.billing.createPaymentRequest(repositoryInput),
-    "Payment request could not be persisted for the current invoice state."
-  );
-  if (!paymentRequest) {
-    throw conflict("Payment request could not be persisted for the current invoice state.", {
+    idempotencyKey: operationKey,
+    canonicalRequest
+  } as const;
+  const requestDigest = buildPaymentRequestIntentDigest(digestInput);
+  const requestedAt = validNow(context).toISOString();
+  const claimed = await durableIntegrity.claimPaymentRequestIntent({
+    ...digestInput,
+    requestDigest,
+    leaseOwner: `api:${request.metadata.requestId}`,
+    leaseExpiresAt: requestedAt,
+    requestedAt
+  });
+  if (claimed.outcome === "request_mismatch") {
+    throw conflict("Payment request idempotency key conflicts with different provider intent.", {
+      invoice_id: invoiceId,
+      reconciliation_required: true
+    });
+  }
+  if (claimed.outcome === "account_unavailable") {
+    throw dependencyUnavailable("Payment provider account became unavailable.", {
+      provider_key: providerKey,
+      required_capability: capability
+    });
+  }
+  if (claimed.outcome === "invoice_not_found") {
+    throw notFound("Invoice was not found.", { invoice_id: invoiceId });
+  }
+  if (claimed.outcome === "invoice_not_collectible" || !claimed.intent) {
+    throw conflict("Invoice is no longer collectible for this payment request.", {
       invoice_id: invoiceId
     });
   }
-  const updatedInvoice = await context.repositories.billing.findInvoiceById(invoiceId);
-  if (!updatedInvoice) throw new Error("Invoice disappeared after payment request creation.");
-  await appendMutationEvidence(request, context, {
-    action: "payment.requested",
-    resourceType: "payment_request",
-    resourceId: paymentRequest.id,
-    patientId: invoice.patientId,
-    metadata: paymentRequestEvidence(paymentRequest),
-    eventType: "payment.requested",
-    aggregateType: "payment_request",
-    aggregateId: paymentRequest.id,
-    idempotencyResourceId: invoiceId,
-    payload: paymentRequestEvidence(paymentRequest)
-  });
-  return created({
-    invoice: publicInvoice(updatedInvoice),
-    paymentRequest: publicPaymentRequest(paymentRequest),
-    provider: publicProviderHealth(health)
+  const intent = claimed.intent;
+  if (claimed.outcome === "claimed") {
+    await appendMutationEvidence(request, context, {
+      action: "payment.request_intent_created",
+      resourceType: "payment_request_intent",
+      resourceId: intent.id,
+      patientId: intent.patientId,
+      metadata: paymentIntentEvidence(intent),
+      eventType: "workflow.cp13.payment_request_recovery.requested",
+      aggregateType: "payment_request_intent",
+      aggregateId: intent.id,
+      idempotencyResourceId: invoiceId,
+      payload: {
+        patientId: intent.patientId,
+        invoiceId: intent.invoiceId,
+        durableIntentId: intent.id,
+        intentDigest: intent.requestDigest,
+        intentStatus: "pending_provider_request",
+        requestType: intent.canonicalRequest.requestType
+      }
+    });
+  }
+  return accepted({
+    invoice: publicInvoice(invoiceDetail),
+    paymentIntent: publicPaymentIntent(intent, claimed.outcome),
+    provider: {
+      key: providerKey,
+      status: "queued",
+      capabilities: [capability]
+    }
   });
 }
 
@@ -828,61 +840,11 @@ function isExpectedWorkflowInvariant(message: string): boolean {
   ].some((pattern) => pattern.test(message));
 }
 
-function assertProviderRequestResult(
-  result: PaymentProviderRequestResult,
-  expected: {
-    readonly amountMinor: number;
-    readonly currency: string;
-    readonly requestType: "payment_link" | "invoice_qr";
-  }
-): void {
-  const expectedKind = expected.requestType;
-  const hasUsableArtifact =
-    expectedKind === "payment_link"
-      ? isUsableHttpsUrl(result.paymentUrl)
-      : isNonEmptyString(result.qrString) || isUsableHttpsUrl(result.qrImageUrl);
-  if (
-    result.status !== "created" ||
-    result.amountPaise !== expected.amountMinor ||
-    result.currency !== expected.currency ||
-    result.requestKind !== expectedKind ||
-    result.providerRequestId.trim().length === 0 ||
-    !hasUsableArtifact
-  ) {
-    throw dependencyUnavailable("Payment provider returned an inconsistent request result.", {
-      provider_key: result.providerKey,
-      reason: "provider_result_mismatch"
-    });
-  }
-}
-
-function isNonEmptyString(value: string | null | undefined): value is string {
-  return typeof value === "string" && value.trim().length > 0;
-}
-
-function isUsableHttpsUrl(value: string | null | undefined): value is string {
-  if (!isNonEmptyString(value)) return false;
-  try {
-    return new URL(value).protocol === "https:";
-  } catch {
-    return false;
-  }
-}
-
 function billingProviderKey(value: string): "razorpay" | "simulator" {
   if (value === "razorpay" || value === "simulator") return value;
   throw dependencyUnavailable("Unsupported payment provider result.", {
     provider_key: value
   });
-}
-
-function publicProviderHealth(health: ProviderHealth) {
-  return {
-    key: health.providerKey,
-    status: health.status,
-    checkedAt: health.checkedAt,
-    capabilities: [...health.capabilities]
-  };
 }
 
 function publicPricebookProcedure(procedure: PricebookProcedureRecord) {
@@ -940,6 +902,39 @@ function publicPaymentRequest(request: PaymentRequestRecord) {
     expiresAt: request.expiresAt,
     createdAt: request.createdAt,
     updatedAt: request.updatedAt
+  };
+}
+
+function paymentIntentEvidence(intent: PaymentRequestIntentRecord) {
+  return {
+    paymentRequestIntentId: intent.id,
+    invoiceId: intent.invoiceId,
+    patientId: intent.patientId,
+    providerKey: intent.providerKey,
+    requestType: intent.canonicalRequest.requestType,
+    amountMinor: intent.canonicalRequest.amountMinor,
+    currency: intent.canonicalRequest.currency,
+    status: intent.status,
+    requestDigest: intent.requestDigest
+  };
+}
+
+function publicPaymentIntent(
+  intent: PaymentRequestIntentRecord,
+  outcome: "claimed" | "recovered" | "in_progress" | "replayed"
+) {
+  return {
+    id: intent.id,
+    invoiceId: intent.invoiceId,
+    patientId: intent.patientId,
+    provider: intent.providerKey,
+    requestType: intent.canonicalRequest.requestType,
+    amountMinor: intent.canonicalRequest.amountMinor,
+    currency: intent.canonicalRequest.currency,
+    status: intent.status === "claimed" ? "pending_provider_request" : intent.status,
+    replayed: outcome !== "claimed",
+    requestedAt: intent.requestedAt,
+    processedAt: intent.processedAt
   };
 }
 

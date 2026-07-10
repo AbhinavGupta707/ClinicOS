@@ -30,7 +30,7 @@ import {
   assertCorrectiveActionTransition,
   assertNoProviderOrProcurementCompletionClaim,
   assertNonEmptyEvidence
-} from "../../../../../packages/domain/src/cp13/continuity-operations/index.ts";
+} from "@clinic-os/domain";
 import {
   appendEvidence,
   applyLimit,

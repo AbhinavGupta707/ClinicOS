@@ -23,7 +23,7 @@ import {
 import {
   assertNoProviderOrProcurementCompletionClaim,
   assertNonEmptyEvidence
-} from "../../../../../packages/domain/src/cp13/continuity-operations/index.ts";
+} from "@clinic-os/domain";
 import type { ClinicFeatureOperationRequest } from "../contracts.ts";
 import {
   accepted,
@@ -165,9 +165,10 @@ export const generateDueContinuityTasksHandler: ContinuityOperationsHandler = as
   const body = requestBody(request);
   const now = context.clock.now();
   const asOf = optionalStringValue(body.asOf) ?? now.toISOString();
+  const batchSize = optionalNumberValue(body.batchSize) ?? 25;
   const result = await context.repositories.continuity.generateDueContinuityTasks({
     asOf,
-    batchSize: optionalNumberValue(body.batchSize) ?? undefined,
+    batchSize,
     cursor: optionalStringValue(body.cursor)
   });
   let ordinal = 0;
@@ -190,6 +191,21 @@ export const generateDueContinuityTasksHandler: ContinuityOperationsHandler = as
       aggregateId: task.id,
       patientId: task.patientId,
       payload: taskEvidencePayload(task),
+      ordinal: ordinal++
+    });
+  }
+  if (!result.complete && result.nextCursor) {
+    await appendEvidence(request, context, {
+      action: "workflow.cp13.due_generation_requested",
+      eventType: "workflow.cp13.continuity_due_generation.requested",
+      aggregateType: "clinic",
+      aggregateId: request.access.clinicId,
+      payload: {
+        generationKind: "continuity",
+        asOf,
+        batchSize,
+        cursor: result.nextCursor
+      },
       ordinal: ordinal++
     });
   }
@@ -383,9 +399,10 @@ export const generateDueSopRunsHandler: ContinuityOperationsHandler = async (req
   const body = requestBody(request);
   const now = context.clock.now();
   const asOf = optionalStringValue(body.asOf) ?? now.toISOString();
+  const batchSize = optionalNumberValue(body.batchSize) ?? 25;
   const result = await context.repositories.continuity.generateDueSopRuns({
     asOf,
-    batchSize: optionalNumberValue(body.batchSize) ?? undefined,
+    batchSize,
     cursor: optionalStringValue(body.cursor)
   });
   let ordinal = 0;
@@ -396,6 +413,21 @@ export const generateDueSopRunsHandler: ContinuityOperationsHandler = async (req
       aggregateType: "sop_run",
       aggregateId: detail.run.id,
       payload: sopEvidencePayload(detail),
+      ordinal: ordinal++
+    });
+  }
+  if (!result.complete && result.nextCursor) {
+    await appendEvidence(request, context, {
+      action: "workflow.cp13.due_generation_requested",
+      eventType: "workflow.cp13.sop_due_generation.requested",
+      aggregateType: "clinic",
+      aggregateId: request.access.clinicId,
+      payload: {
+        generationKind: "sop",
+        asOf,
+        batchSize,
+        cursor: result.nextCursor
+      },
       ordinal: ordinal++
     });
   }

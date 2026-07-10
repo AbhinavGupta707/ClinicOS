@@ -1,8 +1,5 @@
 import { buildOwnerDashboardProjection } from "@clinic-os/domain";
-import {
-  assertOwnerAnalyticsRange,
-  ownerAnalyticsFreshness
-} from "../../../../../packages/domain/src/cp13/continuity-operations/index.ts";
+import { assertOwnerAnalyticsRange, ownerAnalyticsFreshness } from "@clinic-os/domain";
 import {
   appendAudit,
   domainValidation,

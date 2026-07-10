@@ -6,7 +6,6 @@ import type {
   ClinicRoleSlug,
   InvoiceDetail,
   PatientInstructionRecord,
-  PaymentRequestRecord,
   PaymentTransactionRecord,
   ProcedurePerformedRecord,
   RecordPaymentTransactionInput,
@@ -40,6 +39,7 @@ const INVOICE_ID = "10000000-0000-4000-8000-000000007001" as UUID;
 const OTHER_INVOICE_ID = "10000000-0000-4000-8000-000000007099" as UUID;
 const PAYMENT_ID = "10000000-0000-4000-8000-000000008001" as UUID;
 const PAYMENT_REQUEST_ID = "10000000-0000-4000-8000-000000008002" as UUID;
+const EXTERNAL_ACCOUNT_ID = "10000000-0000-4000-8000-000000008004" as UUID;
 const RECEIPT_ID = "10000000-0000-4000-8000-000000008003" as UUID;
 const INSTRUCTION_ID = "10000000-0000-4000-8000-000000009001" as UUID;
 const FIXED_NOW = "2026-07-10T12:00:00.000Z";
@@ -431,20 +431,30 @@ test("CP13 manual payment namespaces keys and rejects replay intent drift", asyn
   );
 });
 
-test("CP13 payment request uses the captured provider dependency and persists no invented amount", async () => {
+test("CP13 payment request atomically queues a durable intent without calling the provider", async () => {
   const invoice = invoiceDetail({ paidMinor: 2_500, balanceMinor: 7_500 });
-  const paymentRequest = paymentRequestRecord(7_500);
   let storedInput: Record<string, unknown> | null = null;
-  const context = executionContext({
-    billing: {
-      findInvoiceById: async () => invoice,
-      createPaymentRequest: async (input: Record<string, unknown>) => {
-        storedInput = input;
-        return paymentRequest;
+  const provider = availableProvider();
+  provider.createInvoiceQr = async () => {
+    throw new Error("provider must not be called inside the API transaction");
+  };
+  const evidence = evidenceRecorder();
+  const context = executionContext(
+    {
+      billing: {
+        findInvoiceById: async () => invoice
+      },
+      durableIntegrity: {
+        findActivePaymentProviderAccount: async () => activePaymentAccount(),
+        claimPaymentRequestIntent: async (input: Record<string, unknown>) => {
+          storedInput = input;
+          return { outcome: "claimed", intent: paymentIntentRecord(input) };
+        }
       }
-    }
-  });
-  const handlers = createTreatmentBillingHandlerMap({ paymentProvider: availableProvider() });
+    },
+    evidence
+  );
+  const handlers = createTreatmentBillingHandlerMap({ paymentProvider: provider });
   const response = await handlers.createInvoicePaymentRequest(
     operationRequest("createInvoicePaymentRequest", "accountant", {
       path: { invoiceId: INVOICE_ID },
@@ -453,22 +463,36 @@ test("CP13 payment request uses the captured provider dependency and persists no
     }),
     context
   );
-  assert.equal(response.status, 201);
-  assert.equal(storedInput?.amountMinor, 7_500);
-  assert.equal(storedInput?.requestType, "dynamic_qr");
-  assert.equal(storedInput?.providerReferenceId, "rzp_synthetic_request_001");
+  assert.equal(response.status, 202);
+  const canonical = storedInput?.canonicalRequest as Record<string, unknown>;
+  assert.equal(canonical.amountMinor, 7_500);
+  assert.equal(canonical.requestType, "invoice_qr");
+  assert.match(String(storedInput?.requestDigest), /^[a-f0-9]{64}$/u);
+  assert.equal(storedInput?.leaseExpiresAt, FIXED_NOW);
+  assert.equal(evidence.outbox[0]?.eventType, "workflow.cp13.payment_request_recovery.requested");
+  assert.deepEqual(evidence.outbox[0]?.payload, {
+    patientId: PATIENT_ID,
+    invoiceId: INVOICE_ID,
+    durableIntentId: PAYMENT_REQUEST_ID,
+    intentDigest: storedInput?.requestDigest,
+    intentStatus: "pending_provider_request",
+    requestType: "invoice_qr"
+  });
 
-  const unavailableHandlers = createTreatmentBillingHandlerMap({
-    paymentProvider: unavailableProvider()
+  const unavailableContext = executionContext({
+    billing: { findInvoiceById: async () => invoice },
+    durableIntegrity: {
+      findActivePaymentProviderAccount: async () => ({ outcome: "not_configured", account: null })
+    }
   });
   await assert.rejects(
-    unavailableHandlers.createInvoicePaymentRequest(
+    handlers.createInvoicePaymentRequest(
       operationRequest("createInvoicePaymentRequest", "accountant", {
         path: { invoiceId: INVOICE_ID },
         headers: idempotencyHeaders("payment-request-002"),
         body: { requestType: "payment_link", amountMinor: 1_000 }
       }),
-      context
+      unavailableContext
     ),
     (error) =>
       error instanceof ApiError && error.status === 503 && error.code === "DEPENDENCY_UNAVAILABLE"
@@ -476,16 +500,8 @@ test("CP13 payment request uses the captured provider dependency and persists no
 });
 
 test("CP13 provider and outbox keys are scoped by actor and invoice", async () => {
-  const baseProvider = availableProvider();
-  const providerKeys: string[] = [];
-  const provider: PaymentProvider = {
-    ...baseProvider,
-    createInvoiceQr: async (input) => {
-      providerKeys.push(input.idempotencyKey ?? "");
-      return baseProvider.createInvoiceQr(input);
-    }
-  };
-  const handlers = createTreatmentBillingHandlerMap({ paymentProvider: provider });
+  const intentKeys: string[] = [];
+  const handlers = createTreatmentBillingHandlerMap({ paymentProvider: availableProvider() });
   const outboxKeys: string[] = [];
   const execute = async (invoiceId: UUID, userId: UUID) => {
     const detail = invoiceDetail({ paidMinor: 0, invoiceId });
@@ -493,9 +509,14 @@ test("CP13 provider and outbox keys are scoped by actor and invoice", async () =
     const context = executionContext(
       {
         billing: {
-          findInvoiceById: async () => detail,
-          createPaymentRequest: async (input: Record<string, unknown>) =>
-            paymentRequestRecord(Number(input.amountMinor), invoiceId)
+          findInvoiceById: async () => detail
+        },
+        durableIntegrity: {
+          findActivePaymentProviderAccount: async () => activePaymentAccount(),
+          claimPaymentRequestIntent: async (input: Record<string, unknown>) => {
+            intentKeys.push(String(input.idempotencyKey));
+            return { outcome: "claimed", intent: paymentIntentRecord(input) };
+          }
         }
       },
       evidence
@@ -520,61 +541,39 @@ test("CP13 provider and outbox keys are scoped by actor and invoice", async () =
   await execute(INVOICE_ID, OTHER_USER_ID);
   await execute(OTHER_INVOICE_ID, USER_ID);
 
-  assert.equal(new Set(providerKeys).size, 3);
-  assert.deepEqual(outboxKeys, providerKeys);
-  assert.match(providerKeys[0] ?? "", new RegExp(`${USER_ID}.*${INVOICE_ID}`, "u"));
-  assert.match(providerKeys[1] ?? "", new RegExp(`${OTHER_USER_ID}.*${INVOICE_ID}`, "u"));
-  assert.match(providerKeys[2] ?? "", new RegExp(`${USER_ID}.*${OTHER_INVOICE_ID}`, "u"));
+  assert.equal(new Set(intentKeys).size, 3);
+  assert.deepEqual(outboxKeys, intentKeys);
+  assert.match(intentKeys[0] ?? "", new RegExp(`${USER_ID}.*${INVOICE_ID}`, "u"));
+  assert.match(intentKeys[1] ?? "", new RegExp(`${OTHER_USER_ID}.*${INVOICE_ID}`, "u"));
+  assert.match(intentKeys[2] ?? "", new RegExp(`${USER_ID}.*${OTHER_INVOICE_ID}`, "u"));
 });
 
-test("CP13 payment requests reject missing or unusable provider artifacts", async () => {
+test("CP13 payment requests fail closed on durable intent mismatch", async () => {
   const detail = invoiceDetail({ paidMinor: 0 });
-  let persistenceCalls = 0;
   const context = executionContext({
     billing: {
-      findInvoiceById: async () => detail,
-      createPaymentRequest: async () => {
-        persistenceCalls += 1;
-        return paymentRequestRecord(1_000);
-      }
+      findInvoiceById: async () => detail
+    },
+    durableIntegrity: {
+      findActivePaymentProviderAccount: async () => activePaymentAccount(),
+      claimPaymentRequestIntent: async () => ({
+        outcome: "request_mismatch",
+        intent: null
+      })
     }
   });
-  const baseProvider = availableProvider();
-  const missingQrProvider: PaymentProvider = {
-    ...baseProvider,
-    createInvoiceQr: async (input) => ({
-      ...(await baseProvider.createInvoiceQr(input)),
-      qrString: null,
-      qrImageUrl: null
-    })
-  };
-  const invalidLinkProvider: PaymentProvider = {
-    ...baseProvider,
-    createPaymentLink: async (input) => ({
-      ...(await baseProvider.createPaymentLink(input)),
-      paymentUrl: "ftp://payments.synthetic.invalid/not-usable"
-    })
-  };
-
-  for (const [requestType, provider] of [
-    ["invoice_qr", missingQrProvider],
-    ["payment_link", invalidLinkProvider]
-  ] as const) {
-    const handlers = createTreatmentBillingHandlerMap({ paymentProvider: provider });
-    await assert.rejects(
-      handlers.createInvoicePaymentRequest(
-        operationRequest("createInvoicePaymentRequest", "accountant", {
-          path: { invoiceId: INVOICE_ID },
-          headers: idempotencyHeaders(`missing-artifact-${requestType}`),
-          body: { requestType, amountMinor: 1_000 }
-        }),
-        context
-      ),
-      (error) =>
-        error instanceof ApiError && error.status === 503 && error.code === "DEPENDENCY_UNAVAILABLE"
-    );
-  }
-  assert.equal(persistenceCalls, 0);
+  const handlers = createTreatmentBillingHandlerMap({ paymentProvider: availableProvider() });
+  await assert.rejects(
+    handlers.createInvoicePaymentRequest(
+      operationRequest("createInvoicePaymentRequest", "accountant", {
+        path: { invoiceId: INVOICE_ID },
+        headers: idempotencyHeaders("mismatched-intent"),
+        body: { requestType: "invoice_qr", amountMinor: 1_000 }
+      }),
+      context
+    ),
+    (error) => error instanceof ApiError && error.status === 409 && error.code === "CONFLICT"
+  );
 });
 
 test("CP13 instruction output remains print/send-request evidence only", async () => {
@@ -622,6 +621,7 @@ function executionContext(
     readonly dentalTreatment?: Record<string, unknown>;
     readonly billing?: Record<string, unknown>;
     readonly clinicalCare?: Record<string, unknown>;
+    readonly durableIntegrity?: Record<string, unknown>;
   },
   evidence = evidenceRecorder()
 ): ClinicFeatureExecutionContext {
@@ -629,7 +629,8 @@ function executionContext(
     repositories: {
       dentalTreatment: ports.dentalTreatment ?? {},
       billing: ports.billing ?? {},
-      clinicalCare: ports.clinicalCare ?? {}
+      clinicalCare: ports.clinicalCare ?? {},
+      durableIntegrity: ports.durableIntegrity
     },
     evidence,
     requestGuards: {},
@@ -920,29 +921,42 @@ function manualPayment(input: {
   };
 }
 
-function paymentRequestRecord(
-  amountMinor: number,
-  invoiceId: UUID = INVOICE_ID
-): PaymentRequestRecord {
+function activePaymentAccount() {
+  return {
+    outcome: "resolved" as const,
+    account: {
+      externalAccountId: EXTERNAL_ACCOUNT_ID,
+      providerKey: "razorpay" as const,
+      status: "available" as const,
+      capabilityKeys: ["CREATE_PAYMENT_QR", "CREATE_PAYMENT_LINKS"]
+    }
+  };
+}
+
+function paymentIntentRecord(input: Record<string, unknown>) {
   return {
     id: PAYMENT_REQUEST_ID,
     tenantId: TENANT_ID,
     clinicId: CLINIC_ID,
-    invoiceId,
+    externalAccountId: input.externalAccountId,
+    providerKey: input.providerKey,
+    requiredCapability: input.requiredCapability,
+    invoiceId: input.invoiceId,
     patientId: PATIENT_ID,
-    provider: "razorpay",
-    requestType: "dynamic_qr",
-    status: "provider_created",
-    amountMinor,
-    currency: "INR",
-    providerReferenceId: "rzp_synthetic_request_001",
-    providerUrl: null,
-    providerQrPayload: "synthetic-qr-payload",
-    expiresAt: null,
-    metadata: {},
-    createdByUserId: USER_ID,
-    createdAt: FIXED_NOW,
-    updatedAt: FIXED_NOW
+    idempotencyKey: input.idempotencyKey,
+    requestDigest: input.requestDigest,
+    canonicalRequest: input.canonicalRequest,
+    status: "claimed",
+    leaseOwner: input.leaseOwner,
+    leaseExpiresAt: input.leaseExpiresAt,
+    attemptCount: 1,
+    paymentRequestId: null,
+    providerArtifactFingerprint: null,
+    resultDigest: null,
+    resultProjection: null,
+    mismatchReason: null,
+    requestedAt: input.requestedAt,
+    processedAt: null
   };
 }
 
@@ -1033,18 +1047,5 @@ function availableProvider(): PaymentProvider {
     parseWebhook: async () => {
       throw new Error("Webhook parsing is tested through the provider service.");
     }
-  };
-}
-
-function unavailableProvider(): PaymentProvider {
-  return {
-    ...availableProvider(),
-    capabilities: () => [],
-    healthCheck: async () => ({
-      providerKey: "razorpay",
-      status: "not_configured",
-      checkedAt: FIXED_NOW,
-      capabilities: []
-    })
   };
 }

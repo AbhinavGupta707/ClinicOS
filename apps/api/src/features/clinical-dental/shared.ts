@@ -8,10 +8,7 @@ import {
   type UUID
 } from "@clinic-os/domain";
 import { createAuditEvent, type KnownAuditAction } from "@clinic-os/security";
-import {
-  evaluateClinicalConsent,
-  type ClinicalConsentWorkflow
-} from "../../../../../packages/domain/src/cp13/clinical-dental/index.ts";
+import { evaluateClinicalConsent, type ClinicalConsentWorkflow } from "@clinic-os/domain";
 import { ApiError } from "../../errors.ts";
 import type { ClinicFeatureExecutionContext, ClinicFeatureOperationRequest } from "../contracts.ts";
 import type { ClinicalDentalOperationId, ClinicalDentalHandlerDependencies } from "./types.ts";

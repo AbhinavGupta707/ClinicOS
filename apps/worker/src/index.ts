@@ -1,6 +1,7 @@
 export * from "./health/health-server.js";
 export * from "./health/worker-health.js";
 export * from "./cp13/create-cp13-worker-composition.js";
+export * from "./cp13/postgres-cp13-activity-ports.js";
 export * from "./outbox/errors.js";
 export * from "./outbox/handler-registry.js";
 export * from "./outbox/handlers/approval-workflow-requested.js";

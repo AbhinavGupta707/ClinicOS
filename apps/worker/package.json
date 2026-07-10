@@ -20,6 +20,8 @@
     "build": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@clinic-os/db": "0.0.0",
+    "@clinic-os/domain": "0.0.0",
     "@clinic-os/integrations": "0.0.0",
     "@clinic-os/observability": "0.0.0",
     "@clinic-os/workflow": "0.0.0",

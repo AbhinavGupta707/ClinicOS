@@ -224,6 +224,8 @@ import type {
   AtomicAppointmentCheckInResult,
   ClaimPaymentRequestIntentInput,
   ClaimPaymentRequestIntentResult,
+  ClaimStoredPaymentRequestIntentInput,
+  ClaimStoredPaymentRequestIntentResult,
   ClaimVerifiedPaymentProviderEventInput,
   ClaimVerifiedPaymentProviderEventResult,
   ClinicalMediaReceiptRecord,
@@ -7913,6 +7915,91 @@ export class PostgresClinicOperationsRepository
         ]
       );
       return { outcome: "recovered", intent: mapPaymentRequestIntentRow(recovered.rows[0]) };
+    });
+  }
+
+  async claimStoredPaymentRequestIntent(
+    scope: RepositoryScope,
+    input: ClaimStoredPaymentRequestIntentInput
+  ): Promise<ClaimStoredPaymentRequestIntentResult> {
+    return this.#withRls(scope, async (client) => {
+      const requestDigest = requireSha256(input.requestDigest, "Payment request intent digest");
+      const leaseOwner = requireNonEmpty(input.leaseOwner, "Payment request intent lease owner");
+      const currentResult = await client.query<PaymentRequestIntentRow>(
+        `
+          select *
+          from payment_provider_request_intents
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          for update
+        `,
+        [scope.tenantId, scope.clinicId, input.intentId]
+      );
+      const currentRow = currentResult.rows[0];
+      if (!currentRow) return { outcome: "not_found", intent: null };
+      const current = mapPaymentRequestIntentRow(currentRow);
+      if (current.requestDigest !== requestDigest) {
+        const mismatch = await this.#markPaymentRequestIntentMismatch(
+          client,
+          scope,
+          current.id,
+          "request_digest_mismatch",
+          input.requestedAt
+        );
+        return { outcome: "request_mismatch", intent: mismatch };
+      }
+      if (
+        !(await this.#paymentAccountIsAvailable(
+          client,
+          scope,
+          current.externalAccountId,
+          current.providerKey,
+          current.requiredCapability
+        ))
+      ) {
+        return { outcome: "account_unavailable", intent: current };
+      }
+      if (current.status !== "claimed") return { outcome: "replayed", intent: current };
+      if (new Date(current.leaseExpiresAt ?? 0).getTime() > new Date(input.requestedAt).getTime()) {
+        return { outcome: "in_progress", intent: current };
+      }
+      const recovered = await client.query<PaymentRequestIntentRow>(
+        `
+          update payment_provider_request_intents
+          set
+            lease_owner = $4,
+            lease_expires_at = $5::timestamptz,
+            attempt_count = attempt_count + 1,
+            updated_at = $6::timestamptz
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          current.id,
+          leaseOwner,
+          input.leaseExpiresAt,
+          input.requestedAt
+        ]
+      );
+      return { outcome: "recovered", intent: mapPaymentRequestIntentRow(recovered.rows[0]) };
+    });
+  }
+
+  async findPaymentRequestIntentById(
+    scope: RepositoryScope,
+    intentId: UUID
+  ): Promise<PaymentRequestIntentRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<PaymentRequestIntentRow>(
+        `
+          select *
+          from payment_provider_request_intents
+          where tenant_id = $1 and clinic_id = $2 and id = $3
+        `,
+        [scope.tenantId, scope.clinicId, intentId]
+      );
+      return result.rows[0] ? mapPaymentRequestIntentRow(result.rows[0]) : null;
     });
   }
 

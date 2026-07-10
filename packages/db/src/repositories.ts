@@ -1072,6 +1072,24 @@ export type ClaimPaymentRequestIntentResult =
       intent: PaymentRequestIntentRecord | null;
     };
 
+export interface ClaimStoredPaymentRequestIntentInput {
+  intentId: UUID;
+  requestDigest: string;
+  leaseOwner: string;
+  leaseExpiresAt: string;
+  requestedAt: string;
+}
+
+export type ClaimStoredPaymentRequestIntentResult =
+  | {
+      outcome: "claimed" | "recovered" | "in_progress" | "replayed";
+      intent: PaymentRequestIntentRecord;
+    }
+  | {
+      outcome: "request_mismatch" | "account_unavailable" | "not_found";
+      intent: PaymentRequestIntentRecord | null;
+    };
+
 export interface FinalizePaymentRequestIntentInput {
   intentId: UUID;
   leaseOwner: string;
@@ -1219,6 +1237,14 @@ export interface DurableIntegrityRepository {
     scope: RepositoryScope,
     input: ClaimPaymentRequestIntentInput
   ): Promise<ClaimPaymentRequestIntentResult>;
+  claimStoredPaymentRequestIntent(
+    scope: RepositoryScope,
+    input: ClaimStoredPaymentRequestIntentInput
+  ): Promise<ClaimStoredPaymentRequestIntentResult>;
+  findPaymentRequestIntentById(
+    scope: RepositoryScope,
+    intentId: UUID
+  ): Promise<PaymentRequestIntentRecord | null>;
   finalizePaymentRequestIntent(
     scope: RepositoryScope,
     input: FinalizePaymentRequestIntentInput

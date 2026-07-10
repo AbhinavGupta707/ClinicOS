@@ -1840,7 +1840,8 @@ function cp5Operations(): HttpOperationContract[] {
         }
       ),
       success: {
-        201: responseSchema({ invoice: entity, paymentRequest: entity, provider: entity })
+        201: responseSchema({ invoice: entity, paymentRequest: entity, provider: entity }),
+        202: responseSchema({ invoice: entity, paymentIntent: entity, provider: entity })
       }
     }),
     operation({

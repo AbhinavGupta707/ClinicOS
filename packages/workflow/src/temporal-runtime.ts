@@ -15,7 +15,7 @@ export interface TemporalWorkerRuntimeOptions {
   readonly address: string;
   readonly namespace?: string;
   readonly taskQueue?: string;
-  readonly activities: ApprovalActivities & Cp13WorkflowActivities;
+  readonly activities: Partial<ApprovalActivities> & Cp13WorkflowActivities;
   readonly shutdownGraceTimeMs?: number;
 }
 

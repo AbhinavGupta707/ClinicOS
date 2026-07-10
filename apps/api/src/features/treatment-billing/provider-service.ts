@@ -9,7 +9,7 @@ import type { PaymentProviderWebhookEvent } from "@clinic-os/integrations";
 import {
   decideVerifiedCp13ProviderPayment,
   type Cp13PaymentReconciliationReason
-} from "../../../../../packages/domain/src/cp13/treatment-billing/invariants.ts";
+} from "@clinic-os/domain";
 import { ApiError } from "../../errors.ts";
 import type { ApiResponse } from "../../framework/contracts.ts";
 import type { ClinicFeatureRequestMetadata } from "../contracts.ts";

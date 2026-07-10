@@ -4,10 +4,16 @@
   "private": true,
   "description": "Database schema, migrations, seeds, and query helpers.",
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
-    ".": "./src/index.ts"
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
   },
   "scripts": {
+    "build": "tsc -p tsconfig.build.json",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "node --check src/index.ts && node --check src/postgres.ts && node --check src/repositories.ts && node --check src/rls.ts && node --check src/seed.ts && node --check test/*.test.ts",
     "test": "node --test test/*.test.ts"

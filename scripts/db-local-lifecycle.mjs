@@ -268,6 +268,22 @@ async function seedLocal() {
       patientName: "Ira Isolation Synthetic",
       patientPhone: "+919000000002"
     });
+    await seedPaymentSimulatorAccount(client, {
+      tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+      clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+      systemId: CHECKPOINT1_SEED_IDS.integrations.paymentSimulatorSystem,
+      accountId: CHECKPOINT1_SEED_IDS.integrations.paymentSimulatorAccount,
+      qrCapabilityId: CHECKPOINT1_SEED_IDS.integrations.paymentSimulatorQrCapability,
+      linkCapabilityId: CHECKPOINT1_SEED_IDS.integrations.paymentSimulatorLinkCapability
+    });
+    await seedPaymentSimulatorAccount(client, {
+      tenantId: TENANT_B.tenantId,
+      clinicId: TENANT_B.clinicId,
+      systemId: "20000000-0000-4000-8000-000000006001",
+      accountId: "20000000-0000-4000-8000-000000006002",
+      qrCapabilityId: "20000000-0000-4000-8000-000000006003",
+      linkCapabilityId: "20000000-0000-4000-8000-000000006004"
+    });
     await client.query("commit");
   } catch (error) {
     await client.query("rollback");
@@ -420,6 +436,46 @@ async function seedClinicData(client, input) {
      on conflict (id) do update set provider_user_id = excluded.provider_user_id, active = true`,
     [scheduleId, input.tenantId, input.clinicId, input.doctorUserId]
   );
+}
+
+async function seedPaymentSimulatorAccount(client, input) {
+  await setSeedContext(client, input.tenantId, input.clinicId);
+  await client.query(
+    `insert into external_systems
+       (id, tenant_id, provider_key, display_name, status)
+     values ($1, $2, 'simulator', 'ClinicOS local payment simulator', 'available')
+     on conflict (tenant_id, provider_key) do update
+       set display_name = excluded.display_name, status = 'available'`,
+    [input.systemId, input.tenantId]
+  );
+  await client.query(
+    `insert into external_accounts
+       (id, tenant_id, clinic_id, external_system_id, account_type, status, capability_keys, configuration)
+     values ($1, $2, $3, $4, 'payment', 'available', $5::text[], '{"synthetic":true}'::jsonb)
+     on conflict (id) do update
+       set status = 'available', capability_keys = excluded.capability_keys,
+           configuration = excluded.configuration`,
+    [
+      input.accountId,
+      input.tenantId,
+      input.clinicId,
+      input.systemId,
+      ["CREATE_PAYMENT_QR", "CREATE_PAYMENT_LINKS", "VERIFY_WEBHOOKS"]
+    ]
+  );
+  for (const [capabilityId, capabilityKey] of [
+    [input.qrCapabilityId, "CREATE_PAYMENT_QR"],
+    [input.linkCapabilityId, "CREATE_PAYMENT_LINKS"]
+  ]) {
+    await client.query(
+      `insert into external_provider_capabilities
+         (id, tenant_id, clinic_id, external_account_id, capability_key, status, evidence, checked_at)
+       values ($1, $2, $3, $4, $5, 'available', '{"source":"local_synthetic_seed"}'::jsonb, now())
+       on conflict (tenant_id, external_account_id, capability_key) do update
+         set status = 'available', evidence = excluded.evidence, checked_at = excluded.checked_at`,
+      [capabilityId, input.tenantId, input.clinicId, input.accountId, capabilityKey]
+    );
+  }
 }
 
 async function setSeedContext(client, tenantId, clinicId) {

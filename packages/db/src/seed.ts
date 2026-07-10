@@ -23,6 +23,12 @@ export const CHECKPOINT1_SEED_IDS = {
   },
   providerSchedules: {
     doctorWeekday: "10000000-0000-4000-8000-000000005001" as UUID
+  },
+  integrations: {
+    paymentSimulatorSystem: "10000000-0000-4000-8000-000000006001" as UUID,
+    paymentSimulatorAccount: "10000000-0000-4000-8000-000000006002" as UUID,
+    paymentSimulatorQrCapability: "10000000-0000-4000-8000-000000006003" as UUID,
+    paymentSimulatorLinkCapability: "10000000-0000-4000-8000-000000006004" as UUID
   }
 } as const;
 

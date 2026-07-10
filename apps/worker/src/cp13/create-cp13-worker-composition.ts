@@ -16,14 +16,14 @@ import type { OutboxEventHandler } from "../outbox/types.js";
 
 export interface Cp13WorkerCompositionOptions {
   readonly temporalClient: Client;
-  readonly approvalActivities: ApprovalActivities;
+  readonly approvalActivities?: ApprovalActivities;
   readonly cp13ActivityPorts: Cp13ActivityPorts;
   readonly taskQueue?: string;
 }
 
 export interface Cp13WorkerComposition {
   readonly handlers: readonly OutboxEventHandler[];
-  readonly activities: ApprovalActivities & Cp13WorkflowActivities;
+  readonly activities: Partial<ApprovalActivities> & Cp13WorkflowActivities;
 }
 
 /**
@@ -38,16 +38,18 @@ export function createCp13WorkerComposition(
     temporalClient: options.temporalClient,
     ...(options.taskQueue ? { taskQueue: options.taskQueue } : {})
   };
+  const cp13Handlers = [
+    new Cp13ContinuityDueGenerationRequestedHandler(temporalOptions),
+    new Cp13SopDueGenerationRequestedHandler(temporalOptions),
+    new Cp13PatientInstructionSendRequestedHandler(temporalOptions),
+    new Cp13PaymentRequestRecoveryRequestedHandler(temporalOptions)
+  ];
   return {
-    handlers: [
-      new ApprovalWorkflowRequestedHandler(temporalOptions),
-      new Cp13ContinuityDueGenerationRequestedHandler(temporalOptions),
-      new Cp13SopDueGenerationRequestedHandler(temporalOptions),
-      new Cp13PatientInstructionSendRequestedHandler(temporalOptions),
-      new Cp13PaymentRequestRecoveryRequestedHandler(temporalOptions)
-    ],
+    handlers: options.approvalActivities
+      ? [new ApprovalWorkflowRequestedHandler(temporalOptions), ...cp13Handlers]
+      : cp13Handlers,
     activities: {
-      ...options.approvalActivities,
+      ...(options.approvalActivities ?? {}),
       ...createCp13WorkflowActivities(options.cp13ActivityPorts)
     }
   };

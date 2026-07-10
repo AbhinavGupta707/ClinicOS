@@ -12,6 +12,8 @@ export const DURABLE_INTEGRITY_OPERATIONS = [
   "findActivePaymentProviderAccount",
   "appendPaymentProviderIntegrationOutboxEvent",
   "claimPaymentRequestIntent",
+  "claimStoredPaymentRequestIntent",
+  "findPaymentRequestIntentById",
   "finalizePaymentRequestIntent",
   "claimVerifiedPaymentProviderEvent",
   "createPaymentReconciliation",

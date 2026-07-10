@@ -17,7 +17,7 @@ import {
   CLINICAL_MEDIA_ACCESS_MAX_SECONDS,
   CLINICAL_MEDIA_ACCESS_MIN_SECONDS,
   CLINICAL_MEDIA_UPLOAD_TTL_MS
-} from "../../../../../packages/domain/src/cp13/clinical-dental/index.ts";
+} from "@clinic-os/domain";
 import type {
   MediaSignedReadAccess,
   MediaUploadTarget,
@@ -229,6 +229,33 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
           }
         });
         validateStoredObject(reservation, object, {});
+      }
+      const durableIntegrity = context.repositories.durableIntegrity;
+      if (typeof durableIntegrity?.recordClinicalMediaReceipt === "function") {
+        const receipt = await durableIntegrity.recordClinicalMediaReceipt({
+          uploadId,
+          providerKey: storage.providerKey,
+          providerArtifactReference: reservation.objectKey,
+          contentLength: object.contentLength,
+          mimeType: object.mimeType,
+          sha256Digest: object.sha256Digest,
+          storedAt: object.storedAt,
+          receivedAt: context.clock.now().toISOString()
+        });
+        if (receipt.outcome === "mismatch") {
+          throw conflict(
+            "Stored media receipt conflicts with previously verified provider evidence.",
+            {
+              upload_id: uploadId,
+              reconciliation_required: true
+            }
+          );
+        }
+        if (receipt.outcome === "not_found" || receipt.outcome === "not_receivable") {
+          throw conflict("Media upload reservation is no longer receivable.", {
+            upload_id: uploadId
+          });
+        }
       }
       return ok({
         upload: publicMediaUploadReservation(reservation),

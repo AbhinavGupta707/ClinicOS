@@ -1,11 +1,14 @@
-import { createTemporalClient } from "@clinic-os/workflow";
+import { Pool } from "pg";
+import { createPaymentProvider } from "@clinic-os/integrations";
+import { createClinicTemporalWorker, createTemporalClient } from "@clinic-os/workflow";
 import {
   createConsoleMetricRecorder,
   createJsonLogger,
   redactForLogs
 } from "@clinic-os/observability";
 import { startWorkerHealthServer } from "./health/health-server.js";
-import { ApprovalWorkflowRequestedHandler } from "./outbox/handlers/approval-workflow-requested.js";
+import { createCp13WorkerComposition } from "./cp13/create-cp13-worker-composition.js";
+import { createPostgresCp13ActivityPorts } from "./cp13/postgres-cp13-activity-ports.js";
 import type { OutboxEventHandler } from "./outbox/types.js";
 import { PostgresOutboxRepository } from "./postgres/postgres-outbox-repository.js";
 import { parseWorkerEnvironment } from "./runtime/config.js";
@@ -27,14 +30,37 @@ async function main(): Promise<void> {
       })
     : undefined;
   const handlers: OutboxEventHandler[] = [];
+  const activityPool = env.temporalAddress
+    ? new Pool({ connectionString: env.activityDatabaseUrl })
+    : undefined;
+  let temporalWorker: Awaited<ReturnType<typeof createClinicTemporalWorker>> | undefined;
 
-  if (temporalClient) {
-    handlers.push(
-      new ApprovalWorkflowRequestedHandler({
-        temporalClient,
-        taskQueue: env.temporalTaskQueue
-      })
-    );
+  if (temporalClient && activityPool && env.temporalAddress) {
+    const paymentProvider = createPaymentProvider({
+      provider: env.paymentProvider,
+      qrMode: env.paymentQrMode,
+      razorpayKeyId: env.razorpayKeyId,
+      razorpayKeySecret: env.razorpayKeySecret,
+      razorpayWebhookSecret: env.razorpayWebhookSecret,
+      razorpayWebhookUrl: env.razorpayWebhookUrl
+    });
+    const composition = createCp13WorkerComposition({
+      temporalClient,
+      cp13ActivityPorts: createPostgresCp13ActivityPorts({
+        pool: activityPool,
+        paymentProvider,
+        workerId: env.workerId,
+        dueGenerationCursorSecret: env.dueGenerationCursorSecret
+      }),
+      ...(env.temporalTaskQueue ? { taskQueue: env.temporalTaskQueue } : {})
+    });
+    handlers.push(...composition.handlers);
+    temporalWorker = await createClinicTemporalWorker({
+      address: env.temporalAddress,
+      namespace: env.temporalNamespace,
+      taskQueue: env.temporalTaskQueue,
+      activities: composition.activities
+    });
   }
 
   const runtime = createWorkerRuntime({
@@ -59,12 +85,14 @@ async function main(): Promise<void> {
   const stop = () => {
     stopPromise ??= (async () => {
       abortController.abort(new Error("worker shutdown requested"));
+      temporalWorker?.shutdown();
       if (server.listening) {
         await new Promise<void>((resolve, reject) => {
           server.close((error) => (error ? reject(error) : resolve()));
         });
       }
       await repository.close();
+      await activityPool?.end();
     })();
     return stopPromise;
   };
@@ -79,7 +107,10 @@ async function main(): Promise<void> {
   });
 
   try {
-    await runtime.start(abortController.signal);
+    await Promise.all([
+      runtime.start(abortController.signal),
+      ...(temporalWorker ? [temporalWorker.run()] : [])
+    ]);
   } catch (error) {
     if (!abortController.signal.aborted) throw error;
   } finally {

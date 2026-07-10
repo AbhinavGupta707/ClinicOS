@@ -7,7 +7,7 @@ import type {
   DentalSurface,
   UUID
 } from "@clinic-os/domain";
-import { applyDentalFindingWritePolicy } from "../../../../../packages/domain/src/cp13/clinical-dental/index.ts";
+import { applyDentalFindingWritePolicy } from "@clinic-os/domain";
 import type { ClinicFeatureExecutionContext } from "../contracts.ts";
 import {
   actorIsDoctor,

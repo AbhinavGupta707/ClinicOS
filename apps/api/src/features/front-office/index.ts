@@ -30,7 +30,7 @@ import {
   providerScheduleCoversAppointment,
   resolveAppointmentWindow,
   resolveClinicDay
-} from "../../../../../packages/domain/src/cp13/front-office/index.ts";
+} from "@clinic-os/domain";
 import { ApiError } from "../../errors.ts";
 import type {
   ClinicFeatureExecutionContext,
@@ -936,6 +936,57 @@ async function checkInAppointmentIdempotently(
       appointment_date: appointmentDay,
       active_queue_date: activeQueueDay
     });
+  }
+  const durableIntegrity = context.repositories.durableIntegrity;
+  if (durableIntegrity) {
+    const result = await durableIntegrity.checkInAppointmentWithQueue(appointmentId, "arrived");
+    if (result.outcome === "not_found" || !result.appointment) {
+      throw notFound("Appointment not found.", { appointment_id: appointmentId });
+    }
+    if (result.outcome === "invalid_state" || !result.queueEntry) {
+      throw conflict("Appointment cannot be checked in from its current durable state.", {
+        appointment_id: appointmentId,
+        appointment_status: result.appointment.status
+      });
+    }
+    if (result.appointmentStatusChanged) {
+      await appendAudit(request, context, "patient.checked_in", {
+        patientId: result.appointment.patientId,
+        resourceType: "appointment",
+        resourceId: result.appointment.id,
+        metadata: { toStatus: "checked_in", atomicQueuePreserved: true }
+      });
+      await appendOutbox(request, context, {
+        eventType: "patient.checked_in",
+        aggregateType: "appointment",
+        aggregateId: result.appointment.id,
+        patientId: result.appointment.patientId,
+        payload: {
+          appointmentId: result.appointment.id,
+          patientId: result.appointment.patientId,
+          toStatus: "checked_in"
+        }
+      });
+    }
+    if (result.queueEntryCreated) {
+      await appendAudit(request, context, "queue.entry_created", {
+        patientId: result.appointment.patientId,
+        resourceType: "queue_entry",
+        resourceId: result.queueEntry.id,
+        metadata: { appointmentId: result.appointment.id }
+      });
+      await appendOutbox(request, context, {
+        eventType: "queue.entry_created",
+        aggregateType: "queue_entry",
+        aggregateId: result.queueEntry.id,
+        patientId: result.appointment.patientId,
+        payload: {
+          queueEntryId: result.queueEntry.id,
+          appointmentId: result.appointment.id
+        }
+      });
+    }
+    return { appointment: result.appointment, queueEntry: result.queueEntry };
   }
   if (existing.status === "checked_in") {
     const queue = await context.repositories.scheduling.listQueueEntries(activeQueueDay);
