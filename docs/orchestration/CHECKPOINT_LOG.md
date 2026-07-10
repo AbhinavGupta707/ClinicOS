@@ -1019,6 +1019,11 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   `clinicos.alventis.co.uk` was confirmed free at Porkbun while apex/`www` remained untouched. The
   Route53 zone does not yet exist, so no nameserver delegation, certificates or ClinicOS record was
   created.
+- Read-only AWS recheck at account `222634407676` found no ClinicOS Route53 zone, ACM certificate,
+  KMS alias or ECR repository. The existing SSE-S3 state bucket is versioned/public-blocked but has
+  no objects, historical versions or delete markers; the lock table has PITR disabled. There is no
+  state payload to migrate, but backend creation/legacy-resource disposition remains an authorized
+  AWS mutation.
 - The earlier orchestration heartbeat was deleted after it became obsolete. One separate one-shot
   04:35 worktree-hello automation exists and is unrelated to checkpoint evidence.
 - CP14 still cannot close or promote: there is no authorized backend migration/apply, dual-region

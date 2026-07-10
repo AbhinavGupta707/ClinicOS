@@ -59,9 +59,11 @@ pilot-production do not exist.
 
 ## Exit gates still open
 
-1. The existing SSE-S3 Terraform state bucket and lock table are not yet adopted into the dedicated
-   CMK bootstrap state. Import/migration changes state and requires a reviewed saved plan and exact
-   authorization.
+1. Read-only inventory confirms the existing Terraform bucket is SSE-S3, versioned and public-
+   blocked but contains no current objects, historical versions or delete markers; its lock table
+   has PITR disabled. There is no state payload to migrate, but creating the dedicated CMK/PITR
+   backend and retiring or retaining the empty legacy resources still requires a reviewed plan and
+   exact authorization.
 2. No staging or pilot-prod Terraform apply has occurred. There is no deployed VPC, ECR, RDS,
    cache, ECS, Keycloak, Temporal, ALB/WAF, telemetry backend, backup or recovery target.
 3. The Keycloak and Temporal image contracts now pass local build, runtime and scan gates, but no
