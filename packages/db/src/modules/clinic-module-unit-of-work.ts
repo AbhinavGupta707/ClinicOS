@@ -9,6 +9,11 @@ import type {
   ClinicOperationsRepository,
   RepositoryScope
 } from "../repositories.ts";
+import {
+  bindApiRequestGuardsPort,
+  type ApiRequestGuardsPort,
+  type ScopedApiRequestGuardsPort
+} from "../api-request-guards.ts";
 import { bindAiScribeRepository, type AiScribeRepositoryPort } from "./ai-scribe/index.ts";
 import { bindBillingRepository, type BillingRepositoryPort } from "./billing/index.ts";
 import {
@@ -61,6 +66,7 @@ export interface ClinicRepositoryModules {
 export interface ClinicModuleTransactionContext {
   readonly repositories: ClinicRepositoryModules;
   readonly evidence: TransactionEvidencePort;
+  readonly requestGuards: ApiRequestGuardsPort;
 }
 
 export interface ClinicRepositoryUnitOfWorkPort {
@@ -68,6 +74,7 @@ export interface ClinicRepositoryUnitOfWorkPort {
     callback: (context: {
       repository: ClinicOperationsRepository;
       auditSink: AuditEventSink<PersistableAuditEvent>;
+      requestGuards: ScopedApiRequestGuardsPort;
     }) => Promise<TResult>
   ): Promise<TResult>;
 }
@@ -99,7 +106,7 @@ export class ClinicModuleUnitOfWork<TAuthorizedContext> {
   ): Promise<TResult> {
     const scope = normalizeResolvedScope(this.#resolveScope(authorizedContext));
 
-    return this.#unitOfWork.run(async ({ repository, auditSink }) => {
+    return this.#unitOfWork.run(async ({ repository, auditSink, requestGuards }) => {
       const lease = createRepositoryPortTransactionLease();
 
       try {
@@ -117,7 +124,8 @@ export class ClinicModuleUnitOfWork<TAuthorizedContext> {
             aiScribe: bindAiScribeRepository(repository, scope, lease),
             clinicalMedia: bindClinicalMediaRepository(repository, scope, lease)
           }),
-          evidence: bindTransactionEvidence(repository, auditSink, scope, lease)
+          evidence: bindTransactionEvidence(repository, auditSink, scope, lease),
+          requestGuards: bindApiRequestGuardsPort(requestGuards, scope, lease)
         });
         await lease.close();
         return result;
