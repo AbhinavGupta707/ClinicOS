@@ -1,0 +1,14 @@
+# Checkpoint 14 Threat-Model Delta — Active Candidate
+
+| Threat                              | Implemented control                                                                                         | Current evidence                                    | Remaining hard gate                                                           |
+| ----------------------------------- | ----------------------------------------------------------------------------------------------------------- | --------------------------------------------------- | ----------------------------------------------------------------------------- |
+| T19 supply-chain compromise         | Immutable action/base pins, lockfile, CodeQL, Trivy, SBOM/license gates, numeric non-root ARM64 images      | GitHub security workflow and local image scans pass | Sign/attest exact ECR digests and verify deployment provenance                |
+| T18 dependency outage               | Sticky startup/readiness, exporter checks, outbox backpressure and critical-family admission                | Deterministic local fault suites pass               | Deployed load/fault/alert evidence                                            |
+| T04/T05 identity/session compromise | Production Keycloak contracts, BFF/session/PKCE/revocation edges, separate admin hostname topology          | Unit/contract tests pass                            | Deployed realm, MFA, revocation, rotation and administrator-boundary evidence |
+| T09 malicious media                 | Version-bound private S3/KMS adapters, quarantine, validation, evidence verification and lifecycle controls | 101 integration tests pass                          | Approved scanner plus deployed S3/KMS tenant/quarantine tests                 |
+| T14/T15 infrastructure compromise   | Private data subnets, least IAM, KMS, secret containers, WAF/TLS definitions and policy assertions          | Terraform tests and Trivy IaC pass                  | Reviewed plan, apply, live reachability and drift evidence                    |
+| T16 recovery failure                | Versioned backup/failover procedures and deterministic synthetic harnesses                                  | Local simulations pass                              | Timed restore and failover/failback from real environment backups             |
+| T12 audit/trace repudiation         | Transaction-bound trace correlation, PHI-safe telemetry and immutable resource identity                     | Local API/worker/DB tests pass                      | Deployed trace continuity, immutable export and privileged-query review       |
+
+No threat is production-closed by this delta. It records the controls present in the active candidate
+and preserves the E4/E5 boundary.

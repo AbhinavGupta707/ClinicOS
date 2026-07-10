@@ -341,3 +341,20 @@ Update these during orchestration:
 - Post-smoke RLS verification should assert that every visible row belongs to the scoped tenant and
   canonical seed rows remain present. It must not assume the row count remains equal to the initial
   seed count.
+
+## CP14 Integration Memory
+
+- Mock Terraform runtime shape is not startup evidence. Reconcile every ECS port, production-like
+  environment flag, required URL and secret JSON key against the actual API/worker parsers before a
+  runtime plan.
+- Scan the final pruned runtime image, not only the lockfile or build stage. A pinned Node base can
+  still contain vulnerable OS libraries and npm-bundled tooling even when the application production
+  dependency tree is clean. Pin patched OS packages and remove unused package managers.
+- Workspace-filtered production installs materially reduce image size and attack surface. Do not
+  copy the monorepo-wide `node_modules` or nested workspace development dependencies into API or
+  worker images.
+- A clean CI runner lacks generated shared-package outputs that may exist locally. Build shared
+  outputs before acceptance fixtures that import workspace package exports.
+- Self-hosted Temporal definitions are not deployable because ECS services and a schema task exist.
+  Freeze and test the exact schema tool, dynamic configuration, authentication/mTLS, numeric UID and
+  service startup contract before permitting the runtime phase.

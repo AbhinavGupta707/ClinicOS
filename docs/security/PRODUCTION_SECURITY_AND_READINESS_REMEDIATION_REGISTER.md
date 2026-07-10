@@ -244,38 +244,38 @@ A finding closes only when all of the following exist:
 
 ## 4. Finding-to-Checkpoint Traceability
 
-| Finding                                      | Priority | Default owner | Current status                                                          | Production gate            |
-| -------------------------------------------- | -------- | ------------- | ----------------------------------------------------------------------- | -------------------------- |
-| PRR-001 migrations/database                  | P1       | CP11          | Partial: E3 local closed; E4/E5 open                                    | Hard                       |
-| PRR-002 deterministic time/tests             | P1       | CP11          | Closed at E3                                                            | Hard                       |
-| PRR-003 live smoke runtime IDs               | P1       | CP11          | Partial: E3 closed; E4 open                                             | Hard                       |
-| PRR-004 native capture                       | P1       | CP16          | Open                                                                    | Hard if mobile enabled     |
-| PRR-005 encrypted durable mobile cache       | P1       | CP16          | Open                                                                    | Hard if mobile enabled     |
-| PRR-006 deployable cloud                     | P1       | CP14          | Open                                                                    | Hard                       |
-| PRR-007 telemetry/alerts                     | P1       | CP14          | Open                                                                    | Hard                       |
-| PRR-008 official provider activation         | P1       | CP15          | Open                                                                    | Hard for enabled provider  |
-| PRR-009 production media                     | P1       | CP14          | Open                                                                    | Hard for media workflow    |
-| PRR-010 truthful readiness                   | P1       | CP11          | Partial: local dependencies closed; deployed admission open             | Hard                       |
-| PRR-011 real TypeScript checking             | P2       | CP11          | Closed at E3                                                            | Hard                       |
-| PRR-012 modular API/generated contracts      | P2       | CP12          | Closed at E3                                                            | Hard                       |
-| PRR-013 web/edge security policy             | P2       | CP14          | Open                                                                    | Hard                       |
-| PRR-014 durable clinic day                   | P1       | CP13          | Closed at E3; deployed/staging evidence remains part of later release gates | Hard                    |
-| PRR-015 live backup/restore/failover         | P1       | CP14          | Open                                                                    | Hard                       |
-| PRR-016 production identity/session          | P1       | CP14          | Open                                                                    | Hard                       |
-| PRR-017 rate/resource/abuse control          | P2       | CP12/CP14     | Partial: CP12 application controls closed; CP14 edge/load evidence open | Hard                       |
-| PRR-018 vulnerability management             | P1       | CP14/CP17     | Open                                                                    | Hard                       |
-| PRR-019 immutable audit/privileged access    | P1       | CP14          | Open                                                                    | Hard                       |
-| PRR-020 lifecycle/cryptographic operations   | P1       | CP14          | Open                                                                    | Hard                       |
-| PRR-021 approved AI/STT path                 | P1       | CP16          | Open                                                                    | Hard if AI enabled         |
-| PRR-022 live FHIR/ABDM scope                 | P1       | CP16          | Open                                                                    | Hard if enabled            |
-| PRR-023 mobile release/device controls       | P1       | CP16          | Open                                                                    | Hard if mobile enabled     |
-| PRR-024 SLO/capacity/resilience/incident ops | P1       | CP14/CP17     | Open                                                                    | Hard                       |
-| PRR-025 accurate readiness governance        | P1       | Docs/CP11     | Partial: CP10 corrected; production approvals open                      | Hard                       |
-| PRR-026 capability activation registry       | P2       | CP11/CP15     | Partial: repository/auth modes truthful; provider registry open         | Hard for enabled providers |
-| PRR-027 outbox/Temporal durability           | P1       | CP11/CP13     | Closed at E3; deployed failover/queue SLO evidence remains CP14/CP17    | Hard                       |
-| PRR-028 runtime validation/mass assignment   | P2       | CP12          | Closed at E3                                                            | Hard                       |
-| PRR-029 release-check scope hygiene          | P3       | CP11          | Closed at E3                                                            | Check reproducibility      |
-| PRR-030 real-clinic governance               | P1       | CP17          | Open                                                                    | Hard                       |
+| Finding                                      | Priority | Default owner | Current status                                                              | Production gate            |
+| -------------------------------------------- | -------- | ------------- | --------------------------------------------------------------------------- | -------------------------- |
+| PRR-001 migrations/database                  | P1       | CP11          | Partial: E3 local closed; E4/E5 open                                        | Hard                       |
+| PRR-002 deterministic time/tests             | P1       | CP11          | Closed at E3                                                                | Hard                       |
+| PRR-003 live smoke runtime IDs               | P1       | CP11          | Partial: E3 closed; E4 open                                                 | Hard                       |
+| PRR-004 native capture                       | P1       | CP16          | Open                                                                        | Hard if mobile enabled     |
+| PRR-005 encrypted durable mobile cache       | P1       | CP16          | Open                                                                        | Hard if mobile enabled     |
+| PRR-006 deployable cloud                     | P1       | CP14          | Open                                                                        | Hard                       |
+| PRR-007 telemetry/alerts                     | P1       | CP14          | Open                                                                        | Hard                       |
+| PRR-008 official provider activation         | P1       | CP15          | Open                                                                        | Hard for enabled provider  |
+| PRR-009 production media                     | P1       | CP14          | Open                                                                        | Hard for media workflow    |
+| PRR-010 truthful readiness                   | P1       | CP11          | Partial: local dependencies closed; deployed admission open                 | Hard                       |
+| PRR-011 real TypeScript checking             | P2       | CP11          | Closed at E3                                                                | Hard                       |
+| PRR-012 modular API/generated contracts      | P2       | CP12          | Closed at E3                                                                | Hard                       |
+| PRR-013 web/edge security policy             | P2       | CP14          | Open                                                                        | Hard                       |
+| PRR-014 durable clinic day                   | P1       | CP13          | Closed at E3; deployed/staging evidence remains part of later release gates | Hard                       |
+| PRR-015 live backup/restore/failover         | P1       | CP14          | Open                                                                        | Hard                       |
+| PRR-016 production identity/session          | P1       | CP14          | Open                                                                        | Hard                       |
+| PRR-017 rate/resource/abuse control          | P2       | CP12/CP14     | Partial: CP12 application controls closed; CP14 edge/load evidence open     | Hard                       |
+| PRR-018 vulnerability management             | P1       | CP14/CP17     | Open                                                                        | Hard                       |
+| PRR-019 immutable audit/privileged access    | P1       | CP14          | Open                                                                        | Hard                       |
+| PRR-020 lifecycle/cryptographic operations   | P1       | CP14          | Open                                                                        | Hard                       |
+| PRR-021 approved AI/STT path                 | P1       | CP16          | Open                                                                        | Hard if AI enabled         |
+| PRR-022 live FHIR/ABDM scope                 | P1       | CP16          | Open                                                                        | Hard if enabled            |
+| PRR-023 mobile release/device controls       | P1       | CP16          | Open                                                                        | Hard if mobile enabled     |
+| PRR-024 SLO/capacity/resilience/incident ops | P1       | CP14/CP17     | Open                                                                        | Hard                       |
+| PRR-025 accurate readiness governance        | P1       | Docs/CP11     | Partial: CP10 corrected; production approvals open                          | Hard                       |
+| PRR-026 capability activation registry       | P2       | CP11/CP15     | Partial: repository/auth modes truthful; provider registry open             | Hard for enabled providers |
+| PRR-027 outbox/Temporal durability           | P1       | CP11/CP13     | Closed at E3; deployed failover/queue SLO evidence remains CP14/CP17        | Hard                       |
+| PRR-028 runtime validation/mass assignment   | P2       | CP12          | Closed at E3                                                                | Hard                       |
+| PRR-029 release-check scope hygiene          | P3       | CP11          | Closed at E3                                                                | Check reproducibility      |
+| PRR-030 real-clinic governance               | P1       | CP17          | Open                                                                        | Hard                       |
 
 “Hard if enabled” means the workflow may be removed whole from the selected release. It does not permit an accessible partial route, hidden control, simulator, or manual state masquerading as provider-confirmed behavior.
 
@@ -321,6 +321,24 @@ Result candidate: `9116a8ea`; evidence: `docs/qa/checkpoint-13-evidence.md`; thr
   never claims a clean scan. Official provider activation remains PRR-008/026 and CP15.
 - The release remains NO-GO. No cloud apply, staging identity, official provider, live restore,
   physical-device, alert-delivery or real-clinic evidence was created by CP13.
+
+### CP14 active-candidate status delta — 2026-07-10
+
+Candidate: `1b99a3fc`; evidence: `docs/qa/checkpoint-14-evidence.md`; threat delta:
+`docs/security/checkpoint-14-threat-model-delta.md`.
+
+- PRR-018 now has passing CodeQL, repository/lockfile/secret/IaC scans, npm and Syft SBOMs, a
+  governed license gate and clean high/critical scans for the API, web and worker ARM64 images.
+  Signing/provenance of exact dual-region ECR digests and the pre-pilot independent assessment remain
+  open, so PRR-018 is partial rather than closed.
+- PRR-006/007/009/013/015/016/019/020/024 have substantial implementation and deterministic local
+  evidence, but none is production-closed without applied E4/E5 infrastructure and operational
+  exercises.
+- Integration review found that the self-hosted Temporal runtime still lacks a frozen authenticated
+  production configuration/schema image, and production media lacks an approved scanner. These are
+  hard runtime gates, not documentation exceptions.
+- The release remains NO-GO. No Terraform apply, signed ECR artifact, deployed identity/media,
+  paging delivery, real restore/failover or pilot-production evidence exists.
 
 ## 5. Remediation Dependency Order
 

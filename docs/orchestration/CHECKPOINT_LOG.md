@@ -938,12 +938,12 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 
 ### CP14 Initial Conflict And Dependency Matrix
 
-| Lane | Model / effort | Exclusive writable ownership | Launch decision |
-| --- | --- | --- | --- |
-| AWS Terraform Platform | `gpt-5.6-sol` / `xhigh` | `infra/terraform/**` only | Launch: independent static/provider definitions; no secrets or apply |
-| Identity, Session and Edge Security | `gpt-5.6-sol` / `xhigh` | `packages/auth/**`, `packages/security/**`, `infra/docker/keycloak/**`, new CP14 identity/session namespaces in API/web and focused tests | Launch: path-disjoint; deterministic tests while Docker is unavailable |
-| Private Media and Data Protection | `gpt-5.6-sol` / `xhigh` | new integrations/API media-provider namespaces, focused tests and private-media runbooks | Launch: path-disjoint; master owns existing media composition and manifests |
-| Observability, Resilience and Recovery | `gpt-5.6-sol` / `xhigh` when launched | deferred until identity/media instrumentation hooks and Terraform outputs are frozen | Sequence: avoids shared runtime files and one applied environment |
+| Lane                                   | Model / effort                        | Exclusive writable ownership                                                                                                              | Launch decision                                                             |
+| -------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| AWS Terraform Platform                 | `gpt-5.6-sol` / `xhigh`               | `infra/terraform/**` only                                                                                                                 | Launch: independent static/provider definitions; no secrets or apply        |
+| Identity, Session and Edge Security    | `gpt-5.6-sol` / `xhigh`               | `packages/auth/**`, `packages/security/**`, `infra/docker/keycloak/**`, new CP14 identity/session namespaces in API/web and focused tests | Launch: path-disjoint; deterministic tests while Docker is unavailable      |
+| Private Media and Data Protection      | `gpt-5.6-sol` / `xhigh`               | new integrations/API media-provider namespaces, focused tests and private-media runbooks                                                  | Launch: path-disjoint; master owns existing media composition and manifests |
+| Observability, Resilience and Recovery | `gpt-5.6-sol` / `xhigh` when launched | deferred until identity/media instrumentation hooks and Terraform outputs are frozen                                                      | Sequence: avoids shared runtime files and one applied environment           |
 
 - Initial worker records, all active from clean detached launch base `a27a6df`:
   - AWS Terraform Platform: pending
@@ -963,3 +963,34 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   composition, all secrets/authenticated sessions, live AWS/DNS/provider operations, aggregate
   evidence and release/remediation/memory/checkpoint truth. Workers must commit clean handoffs and
   cannot merge, push, apply infrastructure or claim CP14 completion.
+
+## CP14 Active Integration Candidate - 2026-07-10
+
+- CP14 remains active on `codex/integration/checkpoint-14`; `main` remains the verified CP13 base.
+  The implementation candidate before evidence-only closeout is `1b99a3fc`. No Terraform apply,
+  staging/pilot environment, ECR publish, signing, DNS, provider activation, alert delivery or
+  recovery mutation has occurred.
+- Integrated Terraform, identity/session/edge, private-media, observability/recovery and master
+  runtime wiring pass focused suites plus the root check/typecheck/lint/test/build gates. Canonical
+  migration 0019 and local database, API socket, worker, workflow, telemetry, fault and synthetic
+  recovery evidence pass without skips.
+- Master security integration added immutable action pins, CodeQL, Trivy repository/IaC/image
+  gates, npm/Syft SBOMs, a governed license gate and Dependabot. GitHub security run
+  `29124735794` passed CodeQL, SCA/IaC/secrets/SBOM/license and all three ARM64 application images.
+- API, web and worker images use a digest-pinned Node 22.22.2 Alpine base, patched OpenSSL, no
+  runtime npm/corepack/yarn, UID/GID 10001 and immutable source-revision labels. Final local scans
+  report zero high/critical findings and zero embedded secrets; the web image also passes a
+  read-only-root localhost smoke.
+- Integration corrected missing ECS environment truth, API listener and worker health ports,
+  API/worker database URLs, cursor/abuse and revocation signing keys, and a clean-runner CI ordering
+  defect.
+- During image export, host free space fell below 3 GiB and Docker surfaced its prior ext4 write
+  failure. Only disposable/user-retired material was removed: the 15 GB npm download cache, unused
+  Docker build cache, retired Interview Gym/OpenClaw containers/images and the retired Interview Gym
+  database volume. No source, installed dependencies or ClinicOS volume was removed. Docker
+  restarted successfully and host free space recovered to roughly 22 GB.
+- E4/E5 remains blocked by reviewed state-backend adoption/apply authority, domain/TLS/admin ingress
+  inputs, a paging destination, an approved malware scanner, complete authenticated Temporal and
+  bound Keycloak production images, signed dual-region ECR artifacts, applied staging/pilot,
+  alert/restore/failover evidence and exact-revision promotion. See
+  `docs/qa/checkpoint-14-evidence.md`.
