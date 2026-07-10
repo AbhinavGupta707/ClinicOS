@@ -1,68 +1,72 @@
-# CP12 Security Pipeline Foundation — Threat And Control Delta
+# CP12 Integrated Security Pipeline — Threat And Control Delta
 
-**Lane:** Security Pipeline and Legacy Parity Foundation
+**Launch base:** `1166baa7a816b614d896cf267066f31f40eac142`
 
-**Base:** `1166baa7a816b614d896cf267066f31f40eac142`
+**Candidate:** `codex/integration/checkpoint-12`
 
-**Evidence:** E0/E1 only
+**Evidence:** E1 deterministic plus E3 clean-durable-local candidate evidence; external dependency audit pending
 
-**Release decision:** unchanged NO-GO
+**Overall release decision:** unchanged **NO-GO**
 
-## Controls established
+## Integrated controls
 
-| Threat/control                    | Foundation added                                                                                                                                                            | Evidence                                       | Remaining integration                                                                   |
-| --------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------- | --------------------------------------------------------------------------------------- |
-| T01 cross-tenant/IDOR             | verified identity scope derives actor/tenant/clinic; foreign snapshot rows filtered; inactive state fails closed                                                            | auth unit and CP12 role/tenant/clinic matrices | modular/native adapter must call it on every authenticated route; RLS remains mandatory |
-| T02 role escalation               | role assignments are restricted to the verified user, tenant and active clinic assignment; doctor signing remains a separate route permission/role requirement in inventory | auth negative matrix                           | live revocation/session evidence remains CP14                                           |
-| T06 injection/mass assignment/DoS | strict-object and runtime-validator contracts; unknown/prototype keys rejected; body/query/pagination budgets                                                               | security unit and CP12 acceptance corpus       | Lane A schemas and framework wiring must cover every operation                          |
-| T21 denial/cost exhaustion        | HMAC bucket keys, atomic store interface, rate and expensive-operation policies, stable `429`/`Retry-After`                                                                 | deterministic E1 budget tests                  | distributed store, WAF and load/noisy-neighbor evidence remain integration/CP14         |
-| T24 false readiness/bypass        | exact 128-route control inventory; every current route honestly non-compliant; route-policy coverage fails on missing/stale entries                                         | route inventory test                           | CP12 cannot exit until every active route consumes a policy                             |
-| API error disclosure              | generic unknown errors, bounded/redacted metadata, secret/PHI key and free-text redaction, `no-store`                                                                       | error/redaction tests                          | framework exception filter must use the serializer                                      |
-| Correlation provenance            | bounded request IDs, ambiguous/invalid header replacement, explicit provenance, safe audit metadata                                                                         | request-ID tests                               | ingress trust/trace propagation policy remains integration/CP14                         |
+| Threat/control                    | CP12 candidate control                                                                                                                                                                                                     | Evidence posture                                                                          | Remaining scope                                        |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| T01 cross-tenant/IDOR             | Verified identity derives actor/tenant/clinic; active membership and clinic assignment required; all domain effects remain transaction-scoped under forced RLS                                                             | Exact 128-route registry, auth negative matrix, repeated clean 97/97 forced-RLS bootstrap | Deployed E4 evidence remains later work                |
+| T02 role escalation               | Central all-permission enforcement plus distinct required clinic-role checks for doctor signing; client authority fields ignored                                                                                           | Registry assertions and API/auth negative tests                                           | Production revocation/session evidence is CP14         |
+| T06 injection/mass assignment/DoS | Strict runtime path/query/header/body schemas, unknown/prototype-key rejection, byte/cardinality/pagination bounds, `413`/`422` taxonomy                                                                                   | Contract/security/API/acceptance tests                                                    | Deployed edge and DAST evidence remain later work      |
+| T21 denial/cost exhaustion        | HMAC-derived opaque buckets, Redis Lua atomic consumption, pre-auth IP plus tenant/actor rate and expensive-operation policies, stable `429`/`Retry-After`; health probes use a bounded dependency-independent local store | Deterministic plus repeated real Redis stop/start denial/recovery tests                   | Noisy-neighbor/load/alert and WAF evidence remain CP14 |
+| T24 false readiness/bypass        | Exact 128-operation contract/policy coverage; Nest controllers and the legacy adapter both enter one pipeline; non-fixture runtime fails closed without durable mutation coordination                                      | Drift/inventory/startup tests; real Postgres/Redis/Keycloak fault matrix                  | Deployed admission evidence remains later work         |
+| Mutation replay/concurrency       | 80 idempotent mutations use transaction-bound Postgres replay; 12 resources use conditional row-version advancement and strong ETags                                                                                       | Migration/DB/API/domain tests, request guards 10/10 and row projection 5/5                | Deployed multi-instance evidence remains later work    |
+| API error disclosure              | Runtime response schemas, bounded allowlisted response headers, CR/LF rejection, generic unknown errors, PHI/secret redaction and `no-store`                                                                               | Security/API response and error tests                                                     | Deployed headers/observability are later checkpoints   |
+| Correlation provenance            | Bounded request IDs, ambiguous-header rejection, safe provenance and no raw URL/query/body/header diagnostic capture                                                                                                       | Request-context and API adversarial tests                                                 | Ingress trace trust remains CP14                       |
 
-## Security invariants encoded
+## Security invariants now wired
 
-- Client tenant, clinic, actor, role, permission, signer, price and payment-state fields never create
-  authority.
-- A clinic selector is accepted only when it resolves inside the verified active identity snapshot.
-- Missing route policy is a startup/configuration failure; it never falls back to public or
-  identity-only access.
-- Provider webhooks are explicit narrow exceptions that require raw-body signature verification and
-  replay protection.
-- Unknown writable fields, prototype-pollution keys and raw validator values are rejected or omitted
-  from client diagnostics.
-- Rate and cost decisions require an atomic store. No process-local production limiter is presented
-  as multi-instance protection.
-- Diagnostic error metadata is bounded and redacted; unexpected exceptions do not expose their
-  messages.
+- No client tenant, clinic, actor, role, permission, signer, price, payment-state or row-version field
+  creates authority.
+- Missing route policy, request schema, response schema, application permission or production
+  persistence dependency is a startup/configuration failure.
+- Provider webhooks are narrow raw-body exceptions with signature-before-parse and durable replay
+  protection.
+- All authenticated clinic operations enforce current membership, verified clinic scope, every
+  required permission and any required clinic role before legacy operation dispatch.
+- Unknown writable fields, prototype-mutation keys, ambiguous security headers and unbounded
+  request complexity fail closed.
+- A mutation success is replayable only after domain, audit, outbox, response validation and replay
+  completion commit atomically.
+- Redis performs atomic rate/cost decisions but cannot substitute for transaction-bound Postgres
+  mutation coordination.
+- Unexpected exceptions and unsafe effect headers cannot expose messages, secrets, PHI, stack or SQL
+  details.
 
-## Honest limitations and open risks
+## Review corrections made during integration
 
-This lane did not modify `apps/api/**`, so the native API does not yet consume these contracts. The
-route inventory proves that all 128 current registrations remain outside a registered CP12 policy.
-PRR-012, PRR-017 and PRR-028 therefore remain open.
+Master review found and corrected issues before accepting the candidate:
 
-- No distributed rate store, edge WAF, concurrency controller or load evidence exists in this lane.
-- Runtime request/response schemas and generated contracts belong to the separate contract lane and
-  are not duplicated here.
-- No API success/error parity execution was claimed; this lane supplies the exact inventory and
-  expected transition table for the later consumer.
-- Current `/v1/me`, request-ID, query, error and unknown-field gaps remain reachable until API
-  integration.
-- Production identity/session lifecycle, CSRF/CORS/host controls, official provider activation and
-  deployed edge evidence remain in their owning checkpoints.
-- CP11 RLS, clocks, readiness, role separation and atomic unit of work were not modified and must be
-  rerun after integration.
+- recursive writable JSON and date/date-time validation were tightened in the contract producer;
+- three new wall-clock call sites were replaced by caller-injected instants, preserving the CP11
+  37-site clock inventory;
+- `/v1/me` retained its bounded `keycloak` provenance object under strict response validation;
+- durable idempotency and conditional row-version persistence were added rather than inferring
+  compliance from OpenAPI headers;
+- the indirect task update in `recordRecallAction` now advances `tasks.row_version` exactly once and
+  rejects safe-integer overflow transactionally;
+- response error/header validation, nested ETag derivation, health probe budgets and exact-once
+  teardown were strengthened during API handoff review;
+- unparsed chunked bodies are rejected before dispatch, closing a route-byte-budget gap for
+  unsupported content types;
+- the route scanner now inventories real Nest decorators plus the strangler boundary.
 
-## Required integration assertions
+## Honest limitations
 
-The master or API-framework lane must:
+CP12 does not close the overall production-readiness decision. The current candidate has complete
+deterministic, clean-durable-local, fault-injection, restart and browser verification. Promotion
+remains blocked only because the dependency audit requires explicit authorization to transmit the
+repository dependency inventory to the configured npm registry.
 
-1. map authenticated scope failures to stable redacted `403` responses;
-2. register one `RouteSecurityPolicy` per inventory key and run exact coverage at startup/test time;
-3. use Lane A's strict runtime schemas through `validateRuntimeValue` and reject unknown fields;
-4. apply streaming body budgets before parsing and emit `413`;
-5. apply query/pagination budgets and a real atomic rate/cost store;
-6. use validated request IDs and the boundary error serializer;
-7. allowlist webhook headers and preserve signature-before-parse behavior;
-8. run the route-by-route legacy parity plan plus CP11 E3 regression gates.
+PRR-012 and PRR-028 are implemented in the candidate but must remain unclosed until promotion.
+PRR-017's CP12 application-layer controls are implemented, while deployed WAF, noisy-neighbor load,
+alert validation and broader concurrency/provider budgets remain owned by CP14. Production identity,
+CSRF/CORS/host policy, official provider activation, cloud, restore, alert and physical-device
+evidence remain in their checkpoint owners.

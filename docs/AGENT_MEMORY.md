@@ -286,3 +286,29 @@ Update these during orchestration:
 - `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md` when merge process changes.
 - This `docs/AGENT_MEMORY.md` when durable operating lessons change.
 - `AGENTS.md` only for durable repo-wide rules that every future agent should obey.
+
+## CP12 Integration Memory
+
+- HTTP idempotency metadata is not compliance. A replayable mutation must claim and complete its
+  key inside the same Postgres transaction as domain, audit and outbox effects. Redis remains an
+  abuse-budget store and cannot substitute for that atomicity.
+- `If-Match` metadata needs a durable positive safe-integer version source, a conditional
+  `UPDATE ... WHERE row_version = expected RETURNING`, and an ETag derived from the actual response
+  row version. Audit indirect linked-row updates as well as direct PATCH handlers.
+- A strangler adapter is acceptable only after every request enters the same registered policy,
+  strict request contract, budgets, mutation coordinator, response contract and central error
+  serializer. A catch-all controller by itself is not a modular/security boundary.
+- Route inventory must inspect real framework registrations. For the CP12 Nest boundary, scan the
+  explicit controller decorators and the catch-all adapter, then compare them with the authoritative
+  runtime operation registry and generated inventory.
+- Clean-database evidence must recreate the canonical synthetic database. A stale local volume with
+  test-created rows is diagnostic state, not evidence, even if RLS itself is functioning.
+- Never reuse a listener from a deleted or historical worktree for browser evidence. Verify the
+  process belongs to the exact integrated revision and role/fixture configuration, or mark browser
+  evidence unavailable.
+- A Redis client that is merely open is not necessarily ready. Production budget stores must bound
+  or disable the offline command queue, fail fast while reconnecting, and prove both denial and
+  recovery with repeated real stop/start fault injection.
+- Dependency audits can disclose the repository's dependency inventory to an external registry.
+  Treat that transmission as an explicit-authority gate; never substitute cached or local-only
+  output while claiming the required external audit passed.

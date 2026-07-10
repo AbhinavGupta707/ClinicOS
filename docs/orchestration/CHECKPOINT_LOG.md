@@ -597,12 +597,12 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 
 ### CP12 Initial Conflict And Dependency Matrix
 
-| Lane | Model / effort | Writable ownership | Stable inputs and independent verification | Parallel-safety decision |
-| --- | --- | --- | --- | --- |
-| Runtime Contracts / OpenAPI / Client Generation | `gpt-5.6-sol` / `xhigh` | `packages/api-contracts/**`, new namespaced generated-client package if needed, `scripts/cp12-openapi*`, `docs/api/**` | Existing native route inventory and CP11 public behavior; package contract tests, deterministic generation, client compile and inventory coverage | Launch: no overlap with database/auth/security/app paths |
-| Repository Module Seams | `gpt-5.6-sol` / `xhigh` | new `packages/db/src/modules/**`, CP12-namespaced DB tests/docs only | Existing `postgres.ts`/repository behavior and CP11 RLS/unit-of-work invariants; repository parity, tenant/context, rollback/idempotency and dependency tests | Launch: additive namespaced paths; canonical migrations, `postgres.ts`, shared barrels and manifests remain forbidden |
-| Security Pipeline / Parity Foundation | `gpt-5.6-sol` / `xhigh` | `packages/auth/**`, `packages/security/**`, `tests/acceptance/cp12/**`, `docs/qa/checkpoint-12*`, `docs/security/checkpoint-12*` | Current route/security inventory and CP11 auth/tenant behavior; auth/tenant matrix, mass-assignment/body/pagination/rate-budget corpus and parity plan | Launch: disjoint from contracts, DB modules and API app implementation |
-| API Framework / Modularization | `gpt-5.6-sol` / `xhigh` when justified | `apps/api/**` only in a later wave | Requires frozen outputs from all three producer lanes | Sequenced: not parallel-safe at initial launch |
+| Lane                                            | Model / effort                         | Writable ownership                                                                                                               | Stable inputs and independent verification                                                                                                                    | Parallel-safety decision                                                                                              |
+| ----------------------------------------------- | -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------- |
+| Runtime Contracts / OpenAPI / Client Generation | `gpt-5.6-sol` / `xhigh`                | `packages/api-contracts/**`, new namespaced generated-client package if needed, `scripts/cp12-openapi*`, `docs/api/**`           | Existing native route inventory and CP11 public behavior; package contract tests, deterministic generation, client compile and inventory coverage             | Launch: no overlap with database/auth/security/app paths                                                              |
+| Repository Module Seams                         | `gpt-5.6-sol` / `xhigh`                | new `packages/db/src/modules/**`, CP12-namespaced DB tests/docs only                                                             | Existing `postgres.ts`/repository behavior and CP11 RLS/unit-of-work invariants; repository parity, tenant/context, rollback/idempotency and dependency tests | Launch: additive namespaced paths; canonical migrations, `postgres.ts`, shared barrels and manifests remain forbidden |
+| Security Pipeline / Parity Foundation           | `gpt-5.6-sol` / `xhigh`                | `packages/auth/**`, `packages/security/**`, `tests/acceptance/cp12/**`, `docs/qa/checkpoint-12*`, `docs/security/checkpoint-12*` | Current route/security inventory and CP11 auth/tenant behavior; auth/tenant matrix, mass-assignment/body/pagination/rate-budget corpus and parity plan        | Launch: disjoint from contracts, DB modules and API app implementation                                                |
+| API Framework / Modularization                  | `gpt-5.6-sol` / `xhigh` when justified | `apps/api/**` only in a later wave                                                                                               | Requires frozen outputs from all three producer lanes                                                                                                         | Sequenced: not parallel-safe at initial launch                                                                        |
 
 - Master-only surfaces for this launch: root manifests/lockfile, `AGENTS.md`, `.github/**`, shared env/CI/Docker files, canonical migrations, `packages/db/src/postgres.ts`, shared export barrels, aggregate OpenAPI/client output, API bootstrap/route composition, memory/checkpoint/remediation/release truth, and all user research.
 - Initial worker thread IDs, pending worktree IDs, resolved paths, commits and handoffs are recorded below as they become available.
@@ -655,3 +655,59 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   - model/effort: `gpt-5.6-sol` / `xhigh`;
   - ownership: focused `packages/db` request-guard/Postgres unit-of-work adapter and tests only; migration 0015 is frozen and apps/manifests/docs remain forbidden;
   - adaptive-lane decision: launch is justified because the work is substantial, path-disjoint from the active `apps/api` worker, independently testable against a frozen schema, and must be transaction-coupled to the CP11 unit of work rather than implemented in Redis or an API-local parallel transaction.
+
+### CP12 Dependent-Wave Integration Candidate - 2026-07-10
+
+- Request-guard adapter `bfc74e8` merged as `182a5e1`. It supplies a transaction-bound scoped
+  Postgres idempotency/concurrency port inside `PostgresClinicUnitOfWork`; fixture-only typed doubles
+  remain isolated from non-fixture durability claims.
+- Contract follow-ups `448f1c7`, `66c3691` and `352ed5c` preserved the bounded `/v1/me` Keycloak
+  provenance object, aligned the boundary error taxonomy, added canonical `rowVersion` response
+  sources and strong `"rv-N"` response metadata. Version-contract work merged as `35ad667`.
+- Master configuration commit `a7688af` requires a minimum 32-byte abuse-budget secret in
+  production-like environments while retaining a local-only synthetic fallback.
+- Domain/DB projection commits `19faf7a` and `18a7b7b` add strict positive safe-integer row versions
+  to the 12 resource families and exact-once overflow-safe linked-task advancement for
+  `recordRecallAction`; merged as `fd62e50`.
+- Master route scanner `df80764` inventories real Nest decorators plus the strangler registration.
+- API worker `fd65630` handed off a NestJS boundary, exact 128-operation policy/contract pipeline,
+  Redis atomic budgets, durable Postgres mutation coordinator, strict request/response/error
+  handling, raw Razorpay verification, health-safe local probe budgets and exact-once teardown.
+  Master reproduced 72/72 API tests with zero skips and merged it as `d01b0a3`.
+- Master integration commits `d9bfcfd`, `f3f3e1a` and `4b33165` expanded API lint to every Nest
+  source/test file, formatted integration-owned checks and reconciled the acceptance inventory with
+  the actual runtime/policy/Nest state. CP12 acceptance is 10/10; OpenAPI/client/inventory drift is
+  exact for 128 operations.
+- Final master transport review found that a chunked body using an unsupported content type could
+  avoid a populated raw buffer. The pipeline now treats `transfer-encoding` as a security header and
+  rejects an unparsed chunked body before route dispatch. Commit `8e05f7f` adds both in-process and
+  real-socket regressions; the complete API package now passes 74/74 with zero skips.
+- Readiness reconciliation `023226d` requires the Postgres coordinator and Redis abuse-budget store,
+  and exercises real Redis stop/start denial, bounded liveness and recovery. Repetition exposed an
+  offline-queue recovery defect; `6169bbd` disables the unbounded queue, caps commands, fails fast
+  while reconnecting and admits traffic only after the client is ready.
+- Durable smoke reconciliation `1b571ed` updates the CP11 runtime-ID harness to supply CP12's strict
+  idempotency, semantic validation and ETag preconditions without weakening the public contracts.
+- Complete candidate checks pass: `npm run check`, `npm run typecheck`, `npm run lint`,
+  socket-enabled `npm run test` with zero skips, `npm run build`, CP12 acceptance, generated
+  drift/inventory, secret scan and `git diff --check`.
+- A stale local volume made the first `db:verify` fail its exact canonical-patient count. The master
+  discarded that state as evidence. Repeated clean bootstrap/restore points passed with 15
+  migrations, 97/97 forced-RLS tenant tables, three least-privilege roles, runtime no-context rows
+  zero, worker product access denied and cross-tenant isolation pass. Migration concurrency,
+  checksum drift, rollback, repositories, request guards 10/10, row projection 5/5, worker
+  persistence 5/5 and real Postgres/Redis/Keycloak loss/recovery all pass.
+- Durable runtime smoke passed twice consecutively and once after API restart. Two clean worker
+  restart cycles passed against the canonical database. A 25-iteration local API comparison recorded
+  `health_ready` p95 5.35 ms, `runtime_identity` p95 17.28 ms and `patient_list` p95 17.81 ms.
+- Browser evidence passes: assistant Playwright 3/3; targeted owner Playwright 3/3; in-app browser
+  inspection for both roles; 390px no horizontal overflow, reachable primary controls, truthful
+  fixture/provider/cloud unavailable states and no browser warnings/errors.
+- Promotion is blocked only by an external-authority requirement. `npm run security:audit` transmits
+  the dependency inventory to the configured npm registry, and the attempted command was correctly
+  rejected because the user had not explicitly authorized that disclosure. `main` stays at
+  `1166baa`; CP13 has not started.
+- Candidate evidence: `docs/qa/checkpoint-12-evidence.md`; integrated threat/control truth:
+  `docs/security/checkpoint-12-route-control-inventory.md` and
+  `docs/security/checkpoint-12-security-foundation-delta.md`; candidate report:
+  `docs/orchestration/CHECKPOINT_12_FINAL_REPORT.md`.

@@ -1,4 +1,10 @@
-# CP12 Security Pipeline And Legacy Parity Foundation Evidence
+# CP12 Security Pipeline And Legacy Parity Foundation Evidence (Historical Lane Record)
+
+This file preserves the producer lane's E1 result at handoff. It is superseded for current route and
+release truth by `docs/qa/checkpoint-12-evidence.md`,
+`docs/security/checkpoint-12-route-control-inventory.md` and the integrated checkpoint report. The
+statements below that all routes were non-compliant were accurate at the lane commit and must not be
+read as the state of the integrated candidate.
 
 ## Evidence metadata
 
@@ -20,7 +26,7 @@ clinic_local_time: 2026-07-10T05:48:36+0530
 node: 22.22.2
 npm: 10.9.7
 operator: CP12 Security Pipeline worker
-reviewer: master integration review pending
+reviewer: master integration review completed
 release_decision: unchanged-NO-GO
 skips: 0
 valid_until: invalidated-by-auth-security-route-registration-or-native-router-change
@@ -36,6 +42,12 @@ before commit/handoff.
 The lane established and tested framework-neutral security contracts and a complete current-route
 inventory. It did not wire them into `apps/api/**` and therefore does not claim CP12 completion,
 durable API parity, distributed rate limiting or production readiness.
+
+Master reviewed the lane at `52ee744f971f7e584d4648bc9552a6096bf40165` and merged it as
+`779f830`. Review caught three new direct clock reads; the lane replaced them with valid
+caller-injected instants before acceptance. Subsequent integration connected these contracts to the
+Nest boundary, Redis budget store and Postgres mutation coordinator. Those later results belong to
+the integrated evidence, not this foundation record.
 
 | Evidence               | Command                                             | Result                        | Skips / limitations                                                               |
 | ---------------------- | --------------------------------------------------- | ----------------------------- | --------------------------------------------------------------------------------- |
@@ -76,7 +88,7 @@ durable API parity, distributed rate limiting or production readiness.
 - `docs/security/checkpoint-12-route-control-inventory.md`
 - `docs/security/checkpoint-12-security-foundation-delta.md`
 
-## Open evidence and integration gates
+## Open gates at historical handoff
 
 - The API framework/native strangler consumer must register and enforce one route policy per
   inventory key. Until then, all 128 routes remain outside the new pipeline.
