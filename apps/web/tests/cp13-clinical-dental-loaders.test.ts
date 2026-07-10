@@ -3,6 +3,7 @@ import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import {
   classifyClinicalCapabilityFailure,
+  createLatestClinicalDentalWorkspaceLoader,
   loadClinicalDentalWorkspace,
   requestClinicalMediaAccess,
   uploadClinicalMedia,
@@ -41,7 +42,7 @@ describe("CP13 clinical/dental generated-client loaders", () => {
       patientId: PATIENT_ID,
       encounterId: ENCOUNTER_ID,
       mediaType: "intraoral_photo",
-      originalFilename: "synthetic.jpg",
+      originalFilename: "synthetic-patient-name.jpg",
       mimeType: "image/jpeg",
       bytes,
       idempotencyKey: "cp13-web-media"
@@ -50,7 +51,10 @@ describe("CP13 clinical/dental generated-client loaders", () => {
     expect(client.requestMediaUploadUrl).toHaveBeenCalledWith(
       expect.objectContaining({
         headers: { "idempotency-key": "cp13-web-media:reserve" },
-        body: expect.objectContaining({ sha256Digest: expectedDigest })
+        body: expect.objectContaining({
+          sha256Digest: expectedDigest,
+          originalFilename: "clinical-upload.jpg"
+        })
       })
     );
     expect(client.receiveMediaUploadContent).toHaveBeenCalledWith({
@@ -65,6 +69,50 @@ describe("CP13 clinical/dental generated-client loaders", () => {
         body: expect.objectContaining({ sha256Digest: expectedDigest })
       })
     );
+  });
+
+  it("discards a deferred stale patient load when a newer patient load completes first", async () => {
+    const patientA = "10000000-0000-4000-8000-000000002011";
+    const patientB = "10000000-0000-4000-8000-000000002012";
+    const encounterA = "10000000-0000-4000-8000-000000003011";
+    const encounterB = "10000000-0000-4000-8000-000000003012";
+    const consentA = deferred<{
+      consents: readonly Record<string, string>[];
+      enforcementState: Record<string, boolean>;
+    }>();
+    const consentB = deferred<{
+      consents: readonly Record<string, string>[];
+      enforcementState: Record<string, boolean>;
+    }>();
+    const base = clientDouble();
+    const client: ClinicalDentalGeneratedClient = {
+      ...base,
+      listPatientConsents: vi.fn(({ path }) =>
+        path.patientId === patientA ? consentA.promise : consentB.promise
+      ),
+      getEncounter: vi.fn(async ({ path }) => ({
+        encounter: { id: path.encounterId, rowVersion: 1, status: "drafting" },
+        noteVersions: []
+      }))
+    };
+    const loader = createLatestClinicalDentalWorkspaceLoader(client);
+
+    const loadA = loader.load({ patientId: patientA, encounterId: encounterA });
+    const loadB = loader.load({ patientId: patientB, encounterId: encounterB });
+    consentB.resolve({
+      consents: [{ id: "consent-b", status: "active" }],
+      enforcementState: { treatmentAllowed: true }
+    });
+    await expect(loadB).resolves.toMatchObject({
+      status: "applied",
+      data: { patientId: patientB, encounter: { encounter: { id: encounterB } } }
+    });
+
+    consentA.resolve({
+      consents: [{ id: "consent-a", status: "active" }],
+      enforcementState: { treatmentAllowed: true }
+    });
+    await expect(loadA).resolves.toEqual({ status: "stale" });
   });
 
   it("requests mediated access without exposing storage keys and classifies provider absence honestly", async () => {
@@ -136,4 +184,12 @@ function clientDouble(): ClinicalDentalGeneratedClient {
       }
     }))
   } satisfies ClinicalDentalGeneratedClient;
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  const promise = new Promise<T>((resolvePromise) => {
+    resolve = resolvePromise;
+  });
+  return { promise, resolve };
 }

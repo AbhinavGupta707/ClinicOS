@@ -101,6 +101,17 @@ export interface ClinicalDentalWorkspaceData {
   readonly media: ListPatientMediaAssetsResponse;
 }
 
+export type LatestClinicalDentalWorkspaceLoad =
+  | { readonly status: "applied"; readonly data: ClinicalDentalWorkspaceData }
+  | { readonly status: "stale" };
+
+export interface LatestClinicalDentalWorkspaceLoader {
+  load(
+    input: Readonly<{ patientId: string; encounterId?: string | null; mediaLimit?: number }>
+  ): Promise<LatestClinicalDentalWorkspaceLoad>;
+  invalidate(): void;
+}
+
 export interface ClinicalMediaUploadCommand {
   readonly patientId: string;
   readonly encounterId?: string | null;
@@ -150,6 +161,31 @@ export async function loadClinicalDentalWorkspace(
   };
 }
 
+export function createLatestClinicalDentalWorkspaceLoader(
+  client: ClinicalDentalGeneratedClient
+): LatestClinicalDentalWorkspaceLoader {
+  let generation = 0;
+  return Object.freeze({
+    async load(
+      input: Readonly<{ patientId: string; encounterId?: string | null; mediaLimit?: number }>
+    ) {
+      const loadGeneration = ++generation;
+      try {
+        const data = await loadClinicalDentalWorkspace(client, input);
+        return loadGeneration === generation
+          ? { status: "applied" as const, data }
+          : { status: "stale" as const };
+      } catch (error) {
+        if (loadGeneration !== generation) return { status: "stale" as const };
+        throw error;
+      }
+    },
+    invalidate() {
+      generation += 1;
+    }
+  });
+}
+
 export async function uploadClinicalMedia(
   client: ClinicalDentalGeneratedClient,
   command: ClinicalMediaUploadCommand
@@ -166,7 +202,7 @@ export async function uploadClinicalMedia(
       dentalFindingId: command.dentalFindingId,
       toothNumber: command.toothNumber,
       mediaType: command.mediaType,
-      originalFilename: command.originalFilename,
+      originalFilename: privateUploadSubmissionFilename(command.originalFilename, command.mimeType),
       mimeType: command.mimeType,
       fileSizeBytes: command.bytes.byteLength,
       sha256Digest: digest,
@@ -256,6 +292,49 @@ export function requiredPublicString(record: PublicJsonObject, name: string): st
 async function sha256Hex(bytes: Uint8Array): Promise<string> {
   const digest = await crypto.subtle.digest("SHA-256", bytes as Uint8Array<ArrayBuffer>);
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function privateUploadSubmissionFilename(filename: string, mimeType: string): string {
+  const extension = filename
+    .trim()
+    .toLowerCase()
+    .match(/\.([a-z0-9]{1,12})$/u)?.[1];
+  const allowed = clientExtensionsForMimeType(mimeType);
+  if (!extension || !allowed.includes(extension)) {
+    throw new TypeError("Clinical media filename extension does not match its MIME type.");
+  }
+  return `clinical-upload.${extension}`;
+}
+
+function clientExtensionsForMimeType(mimeType: string): readonly string[] {
+  switch (mimeType.split(";", 1)[0]?.trim().toLowerCase()) {
+    case "image/jpeg":
+      return ["jpg", "jpeg"];
+    case "image/png":
+      return ["png"];
+    case "image/webp":
+      return ["webp"];
+    case "image/heic":
+      return ["heic"];
+    case "image/heif":
+      return ["heif"];
+    case "image/tiff":
+      return ["tif", "tiff"];
+    case "application/pdf":
+      return ["pdf"];
+    case "application/dicom":
+      return ["dcm", "dicom"];
+    case "audio/wav":
+      return ["wav"];
+    case "audio/webm":
+      return ["webm"];
+    case "audio/mp4":
+      return ["m4a", "mp4"];
+    case "audio/mpeg":
+      return ["mp3", "mpeg"];
+    default:
+      return [];
+  }
 }
 
 function isGeneratedApiError(error: unknown): error is Error & {

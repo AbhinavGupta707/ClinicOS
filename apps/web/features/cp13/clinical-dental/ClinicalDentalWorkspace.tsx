@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 import {
   classifyClinicalCapabilityFailure,
-  loadClinicalDentalWorkspace,
+  createLatestClinicalDentalWorkspaceLoader,
   optionalPublicString,
   requestClinicalMediaAccess,
   uploadClinicalMedia,
@@ -26,22 +26,28 @@ type WorkspaceState =
 
 export function ClinicalDentalWorkspace(props: ClinicalDentalWorkspaceProps) {
   const [state, setState] = useState<WorkspaceState>({ status: "loading" });
+  const latestLoader = useMemo(
+    () => createLatestClinicalDentalWorkspaceLoader(props.client),
+    [props.client]
+  );
   const load = useCallback(async () => {
     setState({ status: "loading" });
     try {
-      const data = await loadClinicalDentalWorkspace(props.client, {
+      const result = await latestLoader.load({
         patientId: props.patientId,
         encounterId: props.encounterId
       });
-      setState({ status: "ready", data });
+      if (result.status === "stale") return;
+      setState({ status: "ready", data: result.data });
     } catch (error) {
       setState({ status: "failed", failure: classifyClinicalCapabilityFailure(error) });
     }
-  }, [props.client, props.encounterId, props.patientId]);
+  }, [latestLoader, props.encounterId, props.patientId]);
 
   useEffect(() => {
     void load();
-  }, [load]);
+    return () => latestLoader.invalidate();
+  }, [latestLoader, load]);
 
   if (state.status === "loading") {
     return (

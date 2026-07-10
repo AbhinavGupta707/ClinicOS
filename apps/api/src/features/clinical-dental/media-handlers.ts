@@ -18,7 +18,11 @@ import {
   CLINICAL_MEDIA_ACCESS_MIN_SECONDS,
   CLINICAL_MEDIA_UPLOAD_TTL_MS
 } from "../../../../../packages/domain/src/cp13/clinical-dental/index.ts";
-import type { StoredMediaObject } from "../../media-storage.ts";
+import type {
+  MediaSignedReadAccess,
+  MediaUploadTarget,
+  StoredMediaObject
+} from "../../media-storage.ts";
 import type { ClinicFeatureExecutionContext } from "../contracts.ts";
 import {
   appendAudit,
@@ -110,6 +114,11 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
       }
 
       const uploadId = randomUUID() as UUID;
+      const serverFilename = serverGeneratedMediaFilename(
+        uploadId,
+        input.originalFilename,
+        input.mimeType
+      );
       const expiresAt = new Date(
         context.clock.now().getTime() + CLINICAL_MEDIA_UPLOAD_TTL_MS
       ).toISOString();
@@ -118,7 +127,7 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
         clinicId: request.access.clinicId,
         patientId: input.patientId,
         uploadId,
-        originalFilename: input.originalFilename
+        originalFilename: serverFilename
       });
       const reservation = await context.repositories.clinicalMedia.createMediaUploadReservation({
         id: uploadId,
@@ -127,7 +136,7 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
         toothNumber: input.toothNumber,
         dentalFindingId: input.dentalFindingId,
         mediaType: input.mediaType,
-        originalFilename: input.originalFilename,
+        originalFilename: serverFilename,
         mimeType: input.mimeType.toLowerCase(),
         expectedFileSizeBytes: input.fileSizeBytes,
         expectedSha256Digest: input.sha256Digest,
@@ -138,7 +147,7 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
         tags: input.tags ? [...input.tags] : [],
         provenance: input.provenance ? { ...input.provenance } : {}
       });
-      const uploadTarget = await storage.createUploadTarget({
+      const providerUploadTarget = await storage.createUploadTarget({
         uploadId,
         tenantId: request.access.context.tenant.id,
         clinicId: request.access.clinicId,
@@ -149,7 +158,13 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
         expectedSha256Digest: reservation.expectedSha256Digest,
         expiresAt
       });
-      assertPublicProviderShape(uploadTarget, "upload target");
+      const uploadTarget = publicUploadTarget(providerUploadTarget, {
+        uploadId,
+        mimeType: reservation.mimeType,
+        expectedFileSizeBytes: reservation.expectedFileSizeBytes,
+        requestedExpiresAt: expiresAt,
+        nowMs: context.clock.now().getTime()
+      });
 
       await appendMutationEvidence(request, context, {
         auditAction: "media.upload_requested",
@@ -168,7 +183,7 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
         }
       });
       return created({
-        upload: toPublicMediaUploadReservation(reservation),
+        upload: publicMediaUploadReservation(reservation),
         uploadTarget
       });
     },
@@ -216,7 +231,7 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
         validateStoredObject(reservation, object, {});
       }
       return ok({
-        upload: toPublicMediaUploadReservation(reservation),
+        upload: publicMediaUploadReservation(reservation),
         object: publicStoredObject(object)
       });
     },
@@ -291,7 +306,7 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
           scanStatus: asset.scanStatus
         }
       });
-      return created({ mediaAsset: toPublicMediaAsset(asset) });
+      return created({ mediaAsset: publicMediaAsset(asset) });
     },
 
     listPatientMediaAssets: async (
@@ -305,7 +320,7 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
         await context.repositories.clinicalMedia.listPatientMediaAssets(patientId)
       )
         .slice(0, limit)
-        .map(toPublicMediaAsset);
+        .map(publicMediaAsset);
       await appendAudit(request, context, "media.viewed", {
         patientId,
         resourceType: "media_asset_collection",
@@ -344,12 +359,15 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
       const expiresAt = new Date(
         context.clock.now().getTime() + expiresInSeconds * 1000
       ).toISOString();
-      const access = await storage.createSignedReadAccess({
+      const providerAccess = await storage.createSignedReadAccess({
         objectKey: asset.objectKey,
         mimeType: asset.mimeType,
         expiresAt
       });
-      assertPublicProviderShape(access, "signed media access");
+      const access = publicSignedReadAccess(providerAccess, {
+        requestedExpiresAt: expiresAt,
+        nowMs: context.clock.now().getTime()
+      });
       await appendAudit(request, context, "media.viewed", {
         patientId: asset.patientId,
         resourceType: "media_asset",
@@ -360,7 +378,7 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
           expiresInSeconds
         }
       });
-      return ok({ mediaAsset: toPublicMediaAsset(asset), access });
+      return ok({ mediaAsset: publicMediaAsset(asset), access });
     }
   } as const;
 }
@@ -517,11 +535,256 @@ function assertStorageMatches(
   }
 }
 
-function assertPublicProviderShape(value: unknown, label: string): void {
+function serverGeneratedMediaFilename(
+  uploadId: UUID,
+  originalFilename: string,
+  mimeType: string
+): string {
+  const extension = validatedMediaExtension(originalFilename, mimeType);
+  if (!extension) {
+    throw validation("Clinical media filename extension does not match its MIME type.", {
+      field: "originalFilename"
+    });
+  }
+  return `clinical-media-${uploadId}.${extension}`;
+}
+
+function publicMediaUploadReservation(reservation: MediaUploadReservationRecord) {
+  return {
+    ...toPublicMediaUploadReservation(reservation),
+    originalFilename: publicServerFilename(reservation)
+  };
+}
+
+function publicMediaAsset(asset: MediaAssetRecord) {
+  return {
+    ...toPublicMediaAsset(asset),
+    originalFilename: publicServerFilename(asset)
+  };
+}
+
+function publicServerFilename(
+  record: Pick<
+    MediaUploadReservationRecord | MediaAssetRecord,
+    "id" | "originalFilename" | "mimeType"
+  >
+): string {
+  const extension =
+    validatedMediaExtension(record.originalFilename, record.mimeType) ??
+    canonicalMediaExtension(record.mimeType);
+  if (!extension) {
+    throw configuration("Persisted clinical media MIME type has no safe public extension.");
+  }
+  return `clinical-media-${record.id}.${extension}`;
+}
+
+function validatedMediaExtension(filename: string, mimeType: string): string | null {
+  const extension = filename
+    .trim()
+    .toLowerCase()
+    .match(/\.([a-z0-9]{1,12})$/u)?.[1];
+  if (!extension) return null;
+  return extensionsForMimeType(mimeType).includes(extension) ? extension : null;
+}
+
+function canonicalMediaExtension(mimeType: string): string | null {
+  return extensionsForMimeType(mimeType)[0] ?? null;
+}
+
+function extensionsForMimeType(mimeType: string): readonly string[] {
+  switch (mimeType.split(";", 1)[0]?.trim().toLowerCase()) {
+    case "image/jpeg":
+      return ["jpg", "jpeg"];
+    case "image/png":
+      return ["png"];
+    case "image/webp":
+      return ["webp"];
+    case "image/heic":
+      return ["heic"];
+    case "image/heif":
+      return ["heif"];
+    case "image/tiff":
+      return ["tif", "tiff"];
+    case "application/dicom":
+      return ["dcm", "dicom"];
+    case "application/pdf":
+      return ["pdf"];
+    case "audio/wav":
+      return ["wav"];
+    case "audio/webm":
+      return ["webm"];
+    case "audio/mp4":
+      return ["m4a", "mp4"];
+    case "audio/mpeg":
+      return ["mp3", "mpeg"];
+    default:
+      return [];
+  }
+}
+
+function publicUploadTarget(
+  value: MediaUploadTarget,
+  expected: Readonly<{
+    uploadId: UUID;
+    mimeType: string;
+    expectedFileSizeBytes: number;
+    requestedExpiresAt: string;
+    nowMs: number;
+  }>
+): MediaUploadTarget {
+  const record = providerRecord(value, "upload target");
+  if (record.method !== "PUT") {
+    throw configuration("Media upload provider must use the PUT method.");
+  }
+  if (record.maxBytes !== expected.expectedFileSizeBytes) {
+    throw configuration("Media upload provider returned an inconsistent byte budget.");
+  }
+  const requiredHeaders = publicProviderHeaders(record.requiredHeaders, "upload target", "upload");
+  if (requiredHeaders["content-type"]?.toLowerCase() !== expected.mimeType.toLowerCase()) {
+    throw configuration("Media upload provider returned an inconsistent content-type header.");
+  }
+  if (
+    requiredHeaders["x-clinic-os-upload-id"] !== undefined &&
+    requiredHeaders["x-clinic-os-upload-id"] !== expected.uploadId
+  ) {
+    throw configuration("Media upload provider returned an inconsistent upload identifier.");
+  }
+  return {
+    method: "PUT",
+    uploadUrl: publicProviderUrl(record.uploadUrl, "upload URL", {
+      allowedRelativePath: `/v1/media/uploads/${expected.uploadId}/content`
+    }),
+    expiresAt: publicProviderExpiry(
+      record.expiresAt,
+      expected.requestedExpiresAt,
+      expected.nowMs,
+      "upload target"
+    ),
+    maxBytes: expected.expectedFileSizeBytes,
+    requiredHeaders
+  };
+}
+
+function publicSignedReadAccess(
+  value: MediaSignedReadAccess,
+  expected: Readonly<{ requestedExpiresAt: string; nowMs: number }>
+): MediaSignedReadAccess {
+  const record = providerRecord(value, "signed media access");
+  if (record.method !== "GET") {
+    throw configuration("Signed media access provider must use the GET method.");
+  }
+  return {
+    method: "GET",
+    signedUrl: publicProviderUrl(record.signedUrl, "signed media URL"),
+    expiresAt: publicProviderExpiry(
+      record.expiresAt,
+      expected.requestedExpiresAt,
+      expected.nowMs,
+      "signed media access"
+    ),
+    headers: publicProviderHeaders(record.headers, "signed media access", "access")
+  };
+}
+
+function providerRecord(value: unknown, label: string): Record<string, unknown> {
   if (!value || typeof value !== "object" || Array.isArray(value)) {
     throw configuration(`Media provider returned an invalid ${label}.`);
   }
-  assertNoPrivateMediaKeys(value as Record<string, unknown>, label);
+  return value as Record<string, unknown>;
+}
+
+function publicProviderUrl(
+  value: unknown,
+  label: string,
+  options: { readonly allowedRelativePath?: string } = {}
+): string {
+  if (
+    typeof value !== "string" ||
+    value.length < 1 ||
+    value.length > 8192 ||
+    /[\u0000-\u0020\u007f]/u.test(value)
+  ) {
+    throw configuration(`Media provider returned an invalid ${label}.`);
+  }
+  if (value.startsWith("/")) {
+    if (!options.allowedRelativePath || value !== options.allowedRelativePath) {
+      throw configuration(`Media provider returned an unmediated ${label}.`);
+    }
+    return value;
+  }
+  let parsed: URL;
+  try {
+    parsed = new URL(value);
+  } catch {
+    throw configuration(`Media provider returned an invalid ${label}.`);
+  }
+  if (parsed.protocol !== "https:" || parsed.username || parsed.password) {
+    throw configuration(`Media provider returned an insecure ${label}.`);
+  }
+  return parsed.toString();
+}
+
+function publicProviderExpiry(
+  value: unknown,
+  requestedExpiresAt: string,
+  nowMs: number,
+  label: string
+): string {
+  if (typeof value !== "string") {
+    throw configuration(`Media provider returned an invalid ${label} expiry.`);
+  }
+  const expiryMs = Date.parse(value);
+  const requestedMs = Date.parse(requestedExpiresAt);
+  if (!Number.isFinite(expiryMs) || expiryMs <= nowMs || expiryMs > requestedMs) {
+    throw configuration(`Media provider returned an invalid ${label} expiry.`);
+  }
+  return new Date(expiryMs).toISOString();
+}
+
+function publicProviderHeaders(
+  value: unknown,
+  label: string,
+  mode: "upload" | "access"
+): Record<string, string> {
+  const record = providerRecord(value, `${label} headers`);
+  const entries = Object.entries(record);
+  if (entries.length > 32) {
+    throw configuration(`Media provider returned too many ${label} headers.`);
+  }
+  const headers: Record<string, string> = {};
+  for (const [rawName, rawValue] of entries) {
+    const name = rawName.toLowerCase();
+    if (
+      !/^[!#$%&'*+.^_`|~0-9a-z-]{1,128}$/u.test(name) ||
+      !isPublicProviderHeaderName(name, mode) ||
+      typeof rawValue !== "string" ||
+      rawValue.length > 2048 ||
+      /[\r\n\u0000]/u.test(rawValue)
+    ) {
+      throw configuration(`Media provider returned an unsafe ${label} header.`);
+    }
+    headers[name] = rawValue;
+  }
+  return headers;
+}
+
+function isPublicProviderHeaderName(name: string, mode: "upload" | "access"): boolean {
+  if (mode === "access") {
+    return ["accept", "range", "if-match", "if-none-match"].includes(name);
+  }
+  return (
+    [
+      "content-type",
+      "content-length",
+      "content-md5",
+      "digest",
+      "x-clinic-os-upload-id",
+      "x-amz-content-sha256",
+      "x-amz-server-side-encryption"
+    ].includes(name) ||
+    name.startsWith("x-amz-checksum-") ||
+    name.startsWith("x-amz-server-side-encryption-")
+  );
 }
 
 function assertNoPrivateMediaKeys(value: unknown, label: string): void {

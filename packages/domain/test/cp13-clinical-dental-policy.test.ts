@@ -52,7 +52,15 @@ test("CP13 consent policy gates treatment, photo capture, sharing, and audio ind
   assert.equal(
     evaluateClinicalConsent({ ...baseConsent, aiAudioCaptureAllowed: true }, "media_receive", {
       mediaType: "audio_chunk"
-    }).allowed,
+    }).reason,
+    "raw_audio_retention_consent_required"
+  );
+  assert.equal(
+    evaluateClinicalConsent(
+      { ...baseConsent, aiAudioCaptureAllowed: true, rawAudioRetentionAllowed: true },
+      "media_access",
+      { mediaType: "audio_chunk" }
+    ).allowed,
     true
   );
 });

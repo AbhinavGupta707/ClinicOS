@@ -195,6 +195,23 @@ export function assertDoctorSignature(
   }
 }
 
+export function assertAssignedEncounterProvider(
+  request: ClinicalDentalRequest<ClinicalDentalOperationId>,
+  encounter: Readonly<{ providerUserId: UUID }>
+): void {
+  if (encounter.providerUserId !== request.access.context.user.id) {
+    throw new ApiError(
+      403,
+      "PERMISSION_DENIED",
+      "Only the assigned encounter provider can sign or amend this clinical record.",
+      {
+        reason: "assigned_encounter_provider_required",
+        delegation_supported: false
+      }
+    );
+  }
+}
+
 export async function appendAudit(
   request: ClinicalDentalRequest<ClinicalDentalOperationId>,
   context: ClinicFeatureExecutionContext,

@@ -38,7 +38,8 @@ export type ClinicalConsentBlockReason =
   | "treatment_consent_required"
   | "photo_capture_consent_required"
   | "photo_sharing_consent_required"
-  | "ai_audio_consent_required";
+  | "ai_audio_consent_required"
+  | "raw_audio_retention_consent_required";
 
 export interface ClinicalConsentDecision {
   readonly allowed: boolean;
@@ -111,9 +112,12 @@ export function evaluateClinicalConsent(
   }
 
   if (mediaType === "audio_chunk") {
-    return state.aiAudioCaptureAllowed
+    if (!state.aiAudioCaptureAllowed) {
+      return blocked(workflow, "ai_audio_consent_required", evaluatedAt);
+    }
+    return state.rawAudioRetentionAllowed
       ? allowed(workflow, evaluatedAt)
-      : blocked(workflow, "ai_audio_consent_required", evaluatedAt);
+      : blocked(workflow, "raw_audio_retention_consent_required", evaluatedAt);
   }
 
   return state.treatmentAllowed

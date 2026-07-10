@@ -12,6 +12,7 @@ import type { ClinicFeatureExecutionContext } from "../contracts.ts";
 import {
   appendAudit,
   appendMutationEvidence,
+  assertAssignedEncounterProvider,
   assertDoctorSignature,
   assertEncounterRelationships,
   assertPatientExists,
@@ -339,6 +340,7 @@ export function createClinicalHandlers(dependencies: ClinicalDentalHandlerDepend
       const encounterId = parsedPathId(request, "encounterId");
       const encounter = await context.repositories.clinicalCare.findEncounterById(encounterId);
       if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+      assertAssignedEncounterProvider(request, encounter);
       await requireClinicalConsent(request, context, encounter.patientId, "clinical_note_sign");
       const draft = (
         await context.repositories.clinicalCare.listClinicalNoteVersions(encounterId)
@@ -379,6 +381,7 @@ export function createClinicalHandlers(dependencies: ClinicalDentalHandlerDepend
       const input = parsedBody<AmendClinicalNoteBody>(request);
       const encounter = await context.repositories.clinicalCare.findEncounterById(encounterId);
       if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+      assertAssignedEncounterProvider(request, encounter);
       if (!hasClinicalNoteContent(input.content) || !input.amendmentReason.trim()) {
         throw validation("Clinical note amendment requires content and an amendment reason.", {
           field: !input.amendmentReason.trim() ? "amendmentReason" : "content"
@@ -474,6 +477,15 @@ export function createClinicalHandlers(dependencies: ClinicalDentalHandlerDepend
       if (!existing) {
         throw notFound("Prescription not found.", { prescription_id: prescriptionId });
       }
+      const encounter = await context.repositories.clinicalCare.findEncounterById(
+        existing.encounterId
+      );
+      if (!encounter) {
+        throw conflict("Prescription encounter is unavailable for signature.", {
+          prescription_id: prescriptionId
+        });
+      }
+      assertAssignedEncounterProvider(request, encounter);
       await requireClinicalConsent(request, context, existing.patientId, "prescription_sign");
       if (existing.status !== "draft") {
         throw conflict("Prescription is already signed.", { prescription_id: prescriptionId });

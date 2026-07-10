@@ -20,6 +20,7 @@ import type {
 import { createClinicalDentalHandlerMap } from "../src/features/clinical-dental/index.ts";
 import type {
   ClinicalDentalHandlerDependencies,
+  ClinicalDentalHandlerMap,
   ClinicalDentalOperationId
 } from "../src/features/clinical-dental/types.ts";
 import type {
@@ -38,6 +39,7 @@ import { InMemoryAtomicMutationCoordinator } from "../src/framework/in-memory-te
 const NOW = new Date("2032-02-03T04:05:06.000Z");
 const PATIENT_ID = CHECKPOINT1_SEED_IDS.patients.rheaSynthetic;
 const SECOND_PATIENT_ID = "10000000-0000-4000-8000-000000002099" as UUID;
+const SECOND_DOCTOR_ID = "10000000-0000-4000-8000-000000001099" as UUID;
 
 test("CP13 clinical/dental factory implements all 22 operations with durable evidence and safe media", async () => {
   const harness = createHarness();
@@ -229,6 +231,10 @@ test("CP13 clinical/dental factory implements all 22 operations with durable evi
     harness.context
   );
   const uploadId = entityId(uploadResponse.body, "upload");
+  const publicFilename = entityField(uploadResponse.body, "upload", "originalFilename");
+  assert.equal(publicFilename, `clinical-media-${uploadId}.jpg`);
+  assert.equal(harness.repository.mediaUploadReservations[0]?.originalFilename, publicFilename);
+  assert.notEqual(publicFilename, "synthetic.jpg");
   assertSafeMediaResponse(uploadResponse.body, { allowSignedUrl: true });
   const contentResponse = await handlers.receiveMediaUploadContent(
     request("receiveMediaUploadContent", "assistant", {
@@ -436,6 +442,197 @@ test("CP13 clinical safety denies wrong role, revoked consent, wrong patient, te
   );
 });
 
+test("CP13 signatures fail closed unless the doctor is the assigned encounter provider", async () => {
+  const harness = createHarness();
+  const handlers = createClinicalDentalHandlerMap(harness.dependencies);
+  await handlers.createPatientConsent(
+    request("createPatientConsent", "assistant", {
+      path: { patientId: PATIENT_ID },
+      body: consentBody("treatment_registration"),
+      idempotencyKey: "cp13-assigned-provider-consent"
+    }),
+    harness.context
+  );
+  const encounter = await handlers.createEncounter(
+    request("createEncounter", "assistant", {
+      body: { patientId: PATIENT_ID, providerUserId: CHECKPOINT1_SEED_IDS.users.doctor },
+      idempotencyKey: "cp13-assigned-provider-encounter"
+    }),
+    harness.context
+  );
+  const encounterId = entityId(encounter.body, "encounter");
+  await handlers.startEncounter(
+    request("startEncounter", "assistant", {
+      path: { encounterId },
+      idempotencyKey: "cp13-assigned-provider-start"
+    }),
+    harness.context
+  );
+  await handlers.saveEncounterClinicalNoteDraft(
+    request("saveEncounterClinicalNoteDraft", "assistant", {
+      path: { encounterId },
+      body: { content: { diagnosis: "Synthetic diagnosis" }, readyForSign: true },
+      idempotencyKey: "cp13-assigned-provider-draft"
+    }),
+    harness.context
+  );
+  await assert.rejects(
+    handlers.signEncounterClinicalNote(
+      request("signEncounterClinicalNote", "doctor", {
+        path: { encounterId },
+        userId: SECOND_DOCTOR_ID,
+        idempotencyKey: "cp13-unassigned-note-sign"
+      }),
+      harness.context
+    ),
+    hasStatus(403)
+  );
+  await handlers.signEncounterClinicalNote(
+    request("signEncounterClinicalNote", "doctor", {
+      path: { encounterId },
+      idempotencyKey: "cp13-assigned-note-sign"
+    }),
+    harness.context
+  );
+  await assert.rejects(
+    handlers.amendEncounterClinicalNote(
+      request("amendEncounterClinicalNote", "doctor", {
+        path: { encounterId },
+        userId: SECOND_DOCTOR_ID,
+        body: {
+          content: { followUpInstructions: "Synthetic correction" },
+          amendmentReason: "Synthetic correction reason"
+        },
+        idempotencyKey: "cp13-unassigned-note-amend"
+      }),
+      harness.context
+    ),
+    hasStatus(403)
+  );
+  const prescription = await handlers.createEncounterPrescription(
+    request("createEncounterPrescription", "assistant", {
+      path: { encounterId },
+      body: {
+        medications: [{ name: "Synthetic medicine", frequency: "OD", duration: "2 days" }]
+      },
+      idempotencyKey: "cp13-assigned-provider-prescription"
+    }),
+    harness.context
+  );
+  const prescriptionId = entityId(prescription.body, "prescription");
+  await assert.rejects(
+    handlers.signPrescription(
+      request("signPrescription", "doctor", {
+        path: { prescriptionId },
+        userId: SECOND_DOCTOR_ID,
+        idempotencyKey: "cp13-unassigned-prescription-sign"
+      }),
+      harness.context
+    ),
+    hasStatus(403)
+  );
+  await handlers.signPrescription(
+    request("signPrescription", "doctor", {
+      path: { prescriptionId },
+      idempotencyKey: "cp13-assigned-prescription-sign"
+    }),
+    harness.context
+  );
+});
+
+test("CP13 raw audio storage and access require capture plus retention consent", async () => {
+  const harness = createHarness();
+  const handlers = createClinicalDentalHandlerMap(harness.dependencies);
+  const captureConsent = await handlers.createPatientConsent(
+    request("createPatientConsent", "assistant", {
+      path: { patientId: PATIENT_ID },
+      body: consentBody("ai_audio_capture"),
+      idempotencyKey: "cp13-audio-capture-consent"
+    }),
+    harness.context
+  );
+  const bytes = new TextEncoder().encode("synthetic-audio");
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const reserveRequest = (idempotencyKey: string) =>
+    request("requestMediaUploadUrl", "assistant", {
+      body: {
+        patientId: PATIENT_ID,
+        mediaType: "audio_chunk",
+        originalFilename: "patient-spoken-name.wav",
+        mimeType: "audio/wav",
+        fileSizeBytes: bytes.byteLength,
+        sha256Digest: digest
+      },
+      idempotencyKey
+    });
+  await assert.rejects(
+    handlers.requestMediaUploadUrl(
+      reserveRequest("cp13-audio-reserve-without-retention"),
+      harness.context
+    ),
+    hasStatus(409)
+  );
+  const retentionConsent = await handlers.createPatientConsent(
+    request("createPatientConsent", "assistant", {
+      path: { patientId: PATIENT_ID },
+      body: consentBody("raw_audio_retention"),
+      idempotencyKey: "cp13-audio-retention-consent"
+    }),
+    harness.context
+  );
+  const reserved = await handlers.requestMediaUploadUrl(
+    reserveRequest("cp13-audio-reserve-with-retention"),
+    harness.context
+  );
+  const uploadId = entityId(reserved.body, "upload");
+  assert.equal(
+    entityField(reserved.body, "upload", "originalFilename"),
+    `clinical-media-${uploadId}.wav`
+  );
+  await handlers.receiveMediaUploadContent(
+    request("receiveMediaUploadContent", "assistant", {
+      path: { uploadId },
+      body: bytes,
+      idempotencyKey: "cp13-audio-content"
+    }),
+    harness.context
+  );
+  const completed = await handlers.completeMediaUpload(
+    request("completeMediaUpload", "assistant", {
+      path: { uploadId },
+      body: {
+        patientId: PATIENT_ID,
+        contentLength: bytes.byteLength,
+        sha256Digest: digest,
+        mimeType: "audio/wav"
+      },
+      idempotencyKey: "cp13-audio-complete"
+    }),
+    harness.context
+  );
+  const mediaAssetId = entityId(completed.body, "mediaAsset");
+  await handlers.revokePatientConsent(
+    request("revokePatientConsent", "assistant", {
+      path: { patientId: PATIENT_ID, consentId: entityId(retentionConsent.body, "consent") },
+      body: { reason: "Synthetic raw audio retention withdrawal" },
+      idempotencyKey: "cp13-audio-retention-revoke"
+    }),
+    harness.context
+  );
+  await assert.rejects(
+    handlers.createSignedMediaAccess(
+      request("createSignedMediaAccess", "doctor", {
+        path: { mediaAssetId },
+        body: { expiresInSeconds: 60 },
+        idempotencyKey: "cp13-audio-access-after-retention-revoke"
+      }),
+      harness.context
+    ),
+    hasStatus(409)
+  );
+  assert.equal(entityId(captureConsent.body, "consent").length, 36);
+});
+
 test("CP13 handler execution remains idempotent under the frozen mutation coordinator", async () => {
   const harness = createHarness();
   const handlers = createClinicalDentalHandlerMap(harness.dependencies);
@@ -538,11 +735,236 @@ test("CP13 patient-supplied media cannot bypass inspection with not_required", a
   assert.equal(harness.repository.mediaAssets.length, 0);
 });
 
+test("CP13 media sanitizes client filenames and rejects invalid provider DTOs", async () => {
+  const filenameHarness = createHarness();
+  const filenameHandlers = createClinicalDentalHandlerMap(filenameHarness.dependencies);
+  await grantConsents(filenameHandlers, filenameHarness.context, ["photo_capture"], "filename");
+  await assert.rejects(
+    filenameHandlers.requestMediaUploadUrl(
+      request("requestMediaUploadUrl", "assistant", {
+        body: {
+          patientId: PATIENT_ID,
+          mediaType: "intraoral_photo",
+          originalFilename: "patient-name.pdf",
+          mimeType: "image/jpeg",
+          fileSizeBytes: 10
+        },
+        idempotencyKey: "cp13-invalid-filename-extension"
+      }),
+      filenameHarness.context
+    ),
+    hasStatus(400)
+  );
+
+  const uploadCases: ReadonlyArray<
+    readonly [
+      string,
+      (input: Parameters<MediaStorageProvider["createUploadTarget"]>[0]) => MediaUploadTarget
+    ]
+  > = [
+    [
+      "method",
+      (input) =>
+        ({
+          ...validUploadTarget(input),
+          method: "POST"
+        }) as unknown as MediaUploadTarget
+    ],
+    ["url", (input) => ({ ...validUploadTarget(input), uploadUrl: "http://media.test/upload" })],
+    [
+      "headers",
+      (input) => ({
+        ...validUploadTarget(input),
+        requiredHeaders: {
+          ...validUploadTarget(input).requiredHeaders,
+          authorization: "private-provider-credential"
+        }
+      })
+    ],
+    [
+      "expiry",
+      (input) => ({
+        ...validUploadTarget(input),
+        expiresAt: new Date(Date.parse(input.expiresAt) + 1_000).toISOString()
+      })
+    ]
+  ];
+  for (const [caseName, createTarget] of uploadCases) {
+    const harness = createHarness({
+      storageOverrides: { createUploadTarget: async (input) => createTarget(input) }
+    });
+    const handlers = createClinicalDentalHandlerMap(harness.dependencies);
+    await grantConsents(handlers, harness.context, ["photo_capture"], `upload-${caseName}`);
+    await assert.rejects(
+      handlers.requestMediaUploadUrl(
+        request("requestMediaUploadUrl", "assistant", {
+          body: {
+            patientId: PATIENT_ID,
+            mediaType: "intraoral_photo",
+            originalFilename: "synthetic.jpg",
+            mimeType: "image/jpeg",
+            fileSizeBytes: 10
+          },
+          idempotencyKey: `cp13-invalid-upload-${caseName}`
+        }),
+        harness.context
+      ),
+      hasStatus(503),
+      caseName
+    );
+  }
+
+  const accessCases: ReadonlyArray<
+    readonly [
+      string,
+      (
+        input: Parameters<MediaStorageProvider["createSignedReadAccess"]>[0]
+      ) => MediaSignedReadAccess
+    ]
+  > = [
+    [
+      "method",
+      (input) =>
+        ({ ...validSignedAccess(input), method: "POST" }) as unknown as MediaSignedReadAccess
+    ],
+    ["url", (input) => ({ ...validSignedAccess(input), signedUrl: "http://media.test/access" })],
+    [
+      "headers",
+      (input) => ({
+        ...validSignedAccess(input),
+        headers: { authorization: "private-provider-credential" }
+      })
+    ],
+    [
+      "expiry",
+      (input) => ({
+        ...validSignedAccess(input),
+        expiresAt: new Date(Date.parse(input.expiresAt) + 1_000).toISOString()
+      })
+    ]
+  ];
+  for (const [caseName, createAccess] of accessCases) {
+    const harness = createHarness({
+      storageOverrides: { createSignedReadAccess: async (input) => createAccess(input) }
+    });
+    const handlers = createClinicalDentalHandlerMap(harness.dependencies);
+    const mediaAssetId = await createViewablePhotoAsset(
+      handlers,
+      harness.context,
+      `access-${caseName}`
+    );
+    await assert.rejects(
+      handlers.createSignedMediaAccess(
+        request("createSignedMediaAccess", "doctor", {
+          path: { mediaAssetId },
+          body: { expiresInSeconds: 60 },
+          idempotencyKey: `cp13-invalid-access-${caseName}`
+        }),
+        harness.context
+      ),
+      hasStatus(503),
+      caseName
+    );
+  }
+});
+
+async function grantConsents(
+  handlers: ClinicalDentalHandlerMap,
+  context: ClinicFeatureExecutionContext,
+  purposes: readonly string[],
+  keyPrefix: string
+): Promise<void> {
+  for (const purpose of purposes) {
+    await handlers.createPatientConsent(
+      request("createPatientConsent", "assistant", {
+        path: { patientId: PATIENT_ID },
+        body: consentBody(purpose),
+        idempotencyKey: `cp13-${keyPrefix}-${purpose}`
+      }),
+      context
+    );
+  }
+}
+
+async function createViewablePhotoAsset(
+  handlers: ClinicalDentalHandlerMap,
+  context: ClinicFeatureExecutionContext,
+  keyPrefix: string
+): Promise<UUID> {
+  await grantConsents(handlers, context, ["photo_capture", "photo_sharing"], keyPrefix);
+  const bytes = new TextEncoder().encode(`synthetic-${keyPrefix}`);
+  const digest = createHash("sha256").update(bytes).digest("hex");
+  const reserved = await handlers.requestMediaUploadUrl(
+    request("requestMediaUploadUrl", "assistant", {
+      body: {
+        patientId: PATIENT_ID,
+        mediaType: "intraoral_photo",
+        originalFilename: "synthetic.jpg",
+        mimeType: "image/jpeg",
+        fileSizeBytes: bytes.byteLength,
+        sha256Digest: digest
+      },
+      idempotencyKey: `cp13-${keyPrefix}-reserve`
+    }),
+    context
+  );
+  const uploadId = entityId(reserved.body, "upload");
+  await handlers.receiveMediaUploadContent(
+    request("receiveMediaUploadContent", "assistant", {
+      path: { uploadId },
+      body: bytes,
+      idempotencyKey: `cp13-${keyPrefix}-content`
+    }),
+    context
+  );
+  const completed = await handlers.completeMediaUpload(
+    request("completeMediaUpload", "assistant", {
+      path: { uploadId },
+      body: {
+        patientId: PATIENT_ID,
+        contentLength: bytes.byteLength,
+        sha256Digest: digest,
+        mimeType: "image/jpeg"
+      },
+      idempotencyKey: `cp13-${keyPrefix}-complete`
+    }),
+    context
+  );
+  return entityId(completed.body, "mediaAsset");
+}
+
+function validUploadTarget(
+  input: Parameters<MediaStorageProvider["createUploadTarget"]>[0]
+): MediaUploadTarget {
+  return {
+    method: "PUT",
+    uploadUrl: `/v1/media/uploads/${input.uploadId}/content`,
+    expiresAt: input.expiresAt,
+    maxBytes: input.expectedFileSizeBytes,
+    requiredHeaders: {
+      "content-type": input.mimeType,
+      "x-clinic-os-upload-id": input.uploadId
+    }
+  };
+}
+
+function validSignedAccess(
+  input: Parameters<MediaStorageProvider["createSignedReadAccess"]>[0]
+): MediaSignedReadAccess {
+  return {
+    method: "GET",
+    signedUrl: "https://media.test/access/opaque-token",
+    expiresAt: input.expiresAt,
+    headers: { accept: input.mimeType }
+  };
+}
+
 function createHarness(
   options: {
     readonly clinicId?: UUID;
     readonly repository?: LocalFixtureClinicOperationsRepository;
     readonly inspectionScanStatus?: MediaScanStatus;
+    readonly storageOverrides?: DurableTestMediaStorageOptions;
   } = {}
 ) {
   const repository = options.repository ?? new LocalFixtureClinicOperationsRepository({ clock });
@@ -570,7 +992,7 @@ function createHarness(
       await repository.appendOutboxEvent(scope, event);
     }
   };
-  const storage = new DurableTestMediaStorage();
+  const storage = new DurableTestMediaStorage(options.storageOverrides);
   const dependencies: ClinicalDentalHandlerDependencies = {
     mediaStorage: storage,
     mediaInspection: {
@@ -666,11 +1088,13 @@ function request<TOperationId extends ClinicalDentalOperationId>(
     readonly body?: unknown;
     readonly idempotencyKey?: string;
     readonly clinicId?: UUID;
+    readonly userId?: UUID;
   }
 ): ClinicFeatureOperationRequest<TOperationId> {
   const clinicId = input.clinicId ?? CHECKPOINT1_SEED_IDS.clinicId;
   const userId =
-    role === "doctor" ? CHECKPOINT1_SEED_IDS.users.doctor : CHECKPOINT1_SEED_IDS.users.assistant;
+    input.userId ??
+    (role === "doctor" ? CHECKPOINT1_SEED_IDS.users.doctor : CHECKPOINT1_SEED_IDS.users.assistant);
   const accessContext = {
     tenant: { id: CHECKPOINT1_SEED_IDS.tenantId, status: "active" },
     user: { id: userId, status: "active" },
@@ -735,6 +1159,8 @@ function assertSafeMediaResponse(
     assert.notEqual(key, "objectKey");
     assert.notEqual(key, "storageProvider");
     assert.notEqual(key, "storageRegion");
+    assert.notEqual(key, "providerSecret");
+    assert.notEqual(key, "localPath");
     if (!options.allowSignedUrl) assert.notEqual(key, "signedUrl");
   });
 }
@@ -753,26 +1179,42 @@ function walk(value: unknown, visitKey: (key: string) => void): void {
 
 const clock: Clock = { now: () => new Date(NOW.getTime()) };
 
+interface DurableTestMediaStorageOptions {
+  readonly createUploadTarget?: MediaStorageProvider["createUploadTarget"];
+  readonly createSignedReadAccess?: MediaStorageProvider["createSignedReadAccess"];
+  readonly includePrivateProviderFields?: boolean;
+}
+
 class DurableTestMediaStorage implements MediaStorageProvider {
   readonly providerKey = "local_simulator" as const;
   readonly region = "test-region";
   readonly objects = new Map<string, StoredMediaObject>();
+  readonly options: DurableTestMediaStorageOptions;
+
+  constructor(options: DurableTestMediaStorageOptions = {}) {
+    this.options = options;
+  }
 
   buildObjectKey(input: { uploadId: UUID }): string {
     return `private/test/${input.uploadId}`;
   }
 
-  async createUploadTarget(input: {
-    uploadId: UUID;
-    expiresAt: string;
-  }): Promise<MediaUploadTarget> {
-    return {
-      method: "PUT",
-      uploadUrl: `/v1/media/uploads/${input.uploadId}/content`,
-      expiresAt: input.expiresAt,
-      maxBytes: 100 * 1024 * 1024,
-      requiredHeaders: { "content-type": "application/octet-stream" }
-    };
+  async createUploadTarget(
+    input: Parameters<MediaStorageProvider["createUploadTarget"]>[0]
+  ): Promise<MediaUploadTarget> {
+    const target = this.options.createUploadTarget
+      ? await this.options.createUploadTarget(input)
+      : {
+          method: "PUT",
+          uploadUrl: `/v1/media/uploads/${input.uploadId}/content`,
+          expiresAt: input.expiresAt,
+          maxBytes: input.expectedFileSizeBytes,
+          requiredHeaders: {
+            "content-type": input.mimeType,
+            "x-clinic-os-upload-id": input.uploadId
+          }
+        };
+    return this.withPrivateProviderFields(target);
   }
 
   async receiveUpload(input: {
@@ -797,17 +1239,30 @@ class DurableTestMediaStorage implements MediaStorageProvider {
     return this.objects.get(objectKey) ?? null;
   }
 
-  async createSignedReadAccess(input: {
-    objectKey: string;
-    mimeType: string;
-    expiresAt: string;
-  }): Promise<MediaSignedReadAccess> {
+  async createSignedReadAccess(
+    input: Parameters<MediaStorageProvider["createSignedReadAccess"]>[0]
+  ): Promise<MediaSignedReadAccess> {
     assert.ok(this.objects.has(input.objectKey));
+    const access = this.options.createSignedReadAccess
+      ? await this.options.createSignedReadAccess(input)
+      : {
+          method: "GET" as const,
+          signedUrl: "https://media.test/access/opaque-token",
+          expiresAt: input.expiresAt,
+          headers: { accept: input.mimeType }
+        };
+    return this.withPrivateProviderFields(access);
+  }
+
+  private withPrivateProviderFields<T extends MediaUploadTarget | MediaSignedReadAccess>(
+    value: T
+  ): T {
+    if (this.options.includePrivateProviderFields === false) return value;
     return {
-      method: "GET",
-      signedUrl: "https://media.test/access/opaque-token",
-      expiresAt: input.expiresAt,
-      headers: { accept: input.mimeType }
-    };
+      ...value,
+      objectKey: "private/provider/object-key",
+      providerSecret: "test-only-provider-secret",
+      localPath: "/private/provider/path"
+    } as T;
   }
 }

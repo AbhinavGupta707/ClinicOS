@@ -14,7 +14,7 @@ begin;
 
 -- Referenced keys for patient-association foreign keys.
 create unique index if not exists patients_cp13_clinic_identity_uidx
-  on patients (tenant_id, primary_clinic_id, id);
+  on patients (tenant_id, clinic_id, id);
 create unique index if not exists appointments_cp13_patient_identity_uidx
   on appointments (tenant_id, clinic_id, id, patient_id);
 create unique index if not exists encounters_cp13_patient_identity_uidx
@@ -82,7 +82,7 @@ alter table encounters
   drop constraint if exists encounters_cp13_patient_clinic_fk,
   add constraint encounters_cp13_patient_clinic_fk
     foreign key (tenant_id, clinic_id, patient_id)
-    references patients (tenant_id, primary_clinic_id, id) on delete restrict,
+    references patients (tenant_id, clinic_id, id) on delete restrict,
   drop constraint if exists encounters_cp13_appointment_patient_fk,
   add constraint encounters_cp13_appointment_patient_fk
     foreign key (tenant_id, clinic_id, appointment_id, patient_id)
@@ -93,13 +93,13 @@ alter table clinical_note_versions
   drop constraint if exists clinical_notes_cp13_encounter_patient_fk,
   add constraint clinical_notes_cp13_encounter_patient_fk
     foreign key (tenant_id, clinic_id, encounter_id, patient_id)
-    references encounters (tenant_id, clinic_id, id, patient_id) on delete cascade;
+    references encounters (tenant_id, clinic_id, id, patient_id) on delete restrict;
 
 alter table prescriptions
   drop constraint if exists prescriptions_cp13_encounter_patient_fk,
   add constraint prescriptions_cp13_encounter_patient_fk
     foreign key (tenant_id, clinic_id, encounter_id, patient_id)
-    references encounters (tenant_id, clinic_id, id, patient_id) on delete cascade;
+    references encounters (tenant_id, clinic_id, id, patient_id) on delete restrict;
 
 alter table dental_findings
   drop constraint if exists dental_findings_cp13_encounter_patient_fk,

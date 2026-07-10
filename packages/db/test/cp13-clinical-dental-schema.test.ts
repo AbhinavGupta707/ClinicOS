@@ -39,7 +39,7 @@ test("CP13 clinical/dental uses the frozen transaction-bound module operations",
   }
 });
 
-test("CP13 schema proposal closes wrong-patient links and persists provider-owned content receipts", async () => {
+test("CP13 schema proposal closes wrong-patient links and proposes provider-owned content receipts", async () => {
   const sql = await readFile(
     new URL("../schema-proposals/cp13/clinical-dental.sql", import.meta.url),
     "utf8"
@@ -65,6 +65,17 @@ test("CP13 schema proposal closes wrong-patient links and persists provider-owne
   assert.match(sql, /on delete set null \(appointment_id\)/u);
   assert.match(sql, /on delete set null \(encounter_id\)/u);
   assert.match(sql, /on delete set null \(dental_finding_id\)/u);
+  assert.match(sql, /on patients \(tenant_id, clinic_id, id\)/u);
+  assert.match(sql, /references patients \(tenant_id, clinic_id, id\) on delete restrict/u);
+  assert.match(
+    sql,
+    /clinical_notes_cp13_encounter_patient_fk[\s\S]*?references encounters \(tenant_id, clinic_id, id, patient_id\) on delete restrict/u
+  );
+  assert.match(
+    sql,
+    /prescriptions_cp13_encounter_patient_fk[\s\S]*?references encounters \(tenant_id, clinic_id, id, patient_id\) on delete restrict/u
+  );
+  assert.doesNotMatch(sql, /primary_clinic_id|on delete cascade/u);
   assert.match(sql, /This is not a canonical migration/u);
   assert.doesNotMatch(sql, /scan_status\s*=\s*:/u);
 });

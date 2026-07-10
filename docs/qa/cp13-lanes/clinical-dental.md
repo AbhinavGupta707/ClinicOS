@@ -46,25 +46,32 @@ for media operations and have no product fallback.
 
 The generated-client web feature contains real list, upload, completion, and signed-access calls.
 It exposes honest loading, denied, unavailable, and error states and has no fixture or direct-fetch
-fallback.
+fallback. A latest-load generation guard prevents a deferred patient/encounter A response or error
+from overwriting the current patient/encounter B state.
 
 ## Safety and integrity controls
 
 - Treatment consent gates encounter treatment, clinical notes, prescriptions, and dental changes.
-- Photo capture gates patient-supplied media ingestion; photo sharing gates signed access. Audio
-  additionally requires the AI-audio consent purpose.
+- Photo capture gates patient-supplied media ingestion; photo sharing gates signed access. Durable
+  raw-audio ingestion and access require both AI-audio capture and raw-audio retention consent.
 - Consent revocation is effective immediately under the injected clock and blocks subsequent gated
   activity. A note amendment remains permitted after revocation only as an additive correction to
   an already signed clinical record; it cannot replace or delete the signed version.
-- Only an active doctor may own an encounter or sign notes/prescriptions. Assistants may draft but
-  cannot sign.
+- Only an active doctor may own an encounter. Signing notes, appending amendments, and signing
+  prescriptions additionally require that the doctor is the encounter's assigned provider;
+  delegation is unsupported and fails closed until a durable delegation model exists. Assistants
+  may draft but cannot sign.
 - Tenant, clinic, patient, appointment, encounter, dental-finding, and media relationships fail
   closed. AI-originated dental findings remain drafts until a doctor explicitly reviews them.
 - Dental numbering is validated as FDI permanent dentition; revisions are additive, history is
   ordered, and snapshots retain the source finding versions.
-- Media has a 100 MiB binary budget, allowlisted MIME types, SHA-256/size/MIME verification,
-  expiring reservations, provider identity checks, restart-safe provider stat verification,
-  required inspection/quarantine for patient-supplied content, and short-lived signed access.
+- Media has a 100 MiB binary budget, allowlisted MIME types and filename extensions,
+  SHA-256/size/MIME verification, expiring reservations, provider identity checks, restart-safe
+  provider stat verification, required inspection/quarantine for patient-supplied content, and
+  short-lived signed access. Client basenames are not persisted or returned; a server-generated
+  non-PHI basename retains only the validated extension.
+- Upload and signed-access provider results are projected into narrow DTOs after method, mediated
+  URL, byte budget, header, and expiry validation. Provider-only fields are discarded.
 - Responses and audit/outbox metadata never expose storage object keys, filesystem paths, provider
   internals, or signed URLs except the dedicated signed-access response.
 - Successful mutations emit transaction-bound audit/outbox evidence, and clinical/dental mutations
@@ -80,11 +87,13 @@ prove that an appointment, encounter, dental finding, note, prescription, or med
 belongs to the same patient. The proposal adds patient-scoped composite identities/foreign keys and
 a preflight that fails on historical wrong-patient associations.
 
-The proposal also adds durable provider-receipt fields between object upload and completion. Master
-integration must reconcile these changes into the single canonical CP13 migration and add a
-transaction-bound `clinicalMedia.recordReceivedContent` repository port. Active-doctor assignment
-is time-varying and deliberately remains an application/RLS relationship-authority decision rather
-than a static foreign key.
+The proposal also describes provider-receipt fields between object upload and completion. This
+does not fix durable receipt persistence: master integration must reconcile the fields into the
+single canonical CP13 migration and add a transaction-bound
+`clinicalMedia.recordReceivedContent` repository port. The corrected proposal references
+`patients.clinic_id` and retains restrictive deletion for clinical notes and prescriptions.
+Active-doctor assignment is time-varying and deliberately remains an application/RLS
+relationship-authority decision rather than a static foreign key.
 
 ## Verification
 
@@ -92,9 +101,9 @@ All commands were run from the lane worktree with no live service or provider de
 
 | Verification                         | Result                                                                                        | Skips |
 | ------------------------------------ | --------------------------------------------------------------------------------------------- | ----- |
-| Focused API/domain/db/web CP13 tests | Passed                                                                                        | 0     |
-| `npm run test -w @clinic-os/api`     | 80/80 passed (rerun with sandbox permission for loopback sockets)                             | 0     |
-| `npm run test -w @clinic-os/web`     | 65/65 passed                                                                                  | 0     |
+| Focused API/domain/db/web CP13 tests | 17/17 passed                                                                                  | 0     |
+| `npm run test -w @clinic-os/api`     | 83/83 passed (rerun with sandbox permission for loopback sockets)                             | 0     |
+| `npm run test -w @clinic-os/web`     | 66/66 passed                                                                                  | 0     |
 | `npm run test -w @clinic-os/domain`  | 57/57 passed                                                                                  | 0     |
 | `npm run test -w @clinic-os/db`      | 69/69 passed                                                                                  | 0     |
 | Root `npm run test`                  | Passed across every workspace                                                                 | 0     |
@@ -104,7 +113,7 @@ All commands were run from the lane worktree with no live service or provider de
 | `node scripts/check-clock-usage.mjs` | Passed                                                                                        | 0     |
 
 The initial sandboxed API test invocation could not open its loopback test listener and reported 17
-environmental skips. The approved loopback rerun passed all 80 API tests with zero skips, and the
+environmental skips. The approved loopback rerun passed all 83 API tests with zero skips, and the
 final root test gate also passed with zero skips.
 
 Evidence level is E1/E2 for the isolated lane: policy, handler, provider-contract, generated-client
