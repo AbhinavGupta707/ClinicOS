@@ -782,3 +782,12 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   scope and namespaced ports inside the existing transaction; absent handlers retain legacy parity,
   and a registered feature fails closed without a unit of work. API typecheck, the 76-test zero-skip
   socket suite and the focused transaction-scope/lease test pass.
+- The continuity lane's early contract audit found that the Postgres owner projection still returned
+  empty CP6 operational arrays marked `schema_dependency`, even though the durable forced-RLS tables
+  already exist. The master corrected the shared adapter to project recalls, SOP runs with stable
+  template codes, lab reconciliation, inventory exceptions/procurement suggestions, incidents and
+  incident-linked CAPA. Both data-source groups are now `ready` with counts matching their declared
+  provenance; the aggregate projection remains PHI-safe. DB typecheck and all 68 DB tests pass, and
+  an authorized read-only local-runtime query exercised the real SQL successfully. Bounded due
+  generation/catch-up remains a separate master-owned integration gate; no lane may claim it from
+  request headers or an unbounded repository loop.

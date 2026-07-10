@@ -4042,6 +4042,107 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
         `,
         [scope.tenantId, scope.clinicId, range.startAt, range.endAt]
       );
+      const recallRows = await client.query<RecallRow>(
+        `
+          select *
+          from recalls
+          where tenant_id = $1 and clinic_id = $2 and created_at <= $3
+        `,
+        [scope.tenantId, scope.clinicId, range.endAt]
+      );
+      const sopRunRows = await client.query<OwnerDashboardSopRunProjectionRow>(
+        `
+          select sop_runs.*, sop_templates.code as template_key
+          from sop_runs
+          join sop_templates
+            on sop_templates.tenant_id = sop_runs.tenant_id
+            and sop_templates.clinic_id = sop_runs.clinic_id
+            and sop_templates.id = sop_runs.template_id
+          where sop_runs.tenant_id = $1
+            and sop_runs.clinic_id = $2
+            and sop_runs.created_at <= $3
+        `,
+        [scope.tenantId, scope.clinicId, range.endAt]
+      );
+      const labCaseRows = await client.query<OwnerDashboardLabCaseProjectionRow>(
+        `
+          select
+            lab_cases.*,
+            latest_reconciliation.reconciliation_record_status,
+            latest_reconciliation.reconciliation_entry_status,
+            latest_reconciliation.reconciliation_invoice_amount_minor,
+            latest_reconciliation.reconciliation_variance_amount_minor
+          from lab_cases
+          left join lateral (
+            select
+              lab_reconciliations.status as reconciliation_record_status,
+              lab_reconciliation_entries.status as reconciliation_entry_status,
+              lab_reconciliation_entries.invoice_amount_minor as reconciliation_invoice_amount_minor,
+              lab_reconciliation_entries.variance_amount_minor as reconciliation_variance_amount_minor
+            from lab_reconciliation_entries
+            join lab_reconciliations
+              on lab_reconciliations.tenant_id = lab_reconciliation_entries.tenant_id
+              and lab_reconciliations.clinic_id = lab_reconciliation_entries.clinic_id
+              and lab_reconciliations.id = lab_reconciliation_entries.reconciliation_id
+            where lab_reconciliation_entries.tenant_id = lab_cases.tenant_id
+              and lab_reconciliation_entries.clinic_id = lab_cases.clinic_id
+              and lab_reconciliation_entries.lab_case_id = lab_cases.id
+            order by lab_reconciliations.created_at desc, lab_reconciliation_entries.created_at desc
+            limit 1
+          ) as latest_reconciliation on true
+          where lab_cases.tenant_id = $1
+            and lab_cases.clinic_id = $2
+            and lab_cases.created_at <= $3
+        `,
+        [scope.tenantId, scope.clinicId, range.endAt]
+      );
+      const inventoryExceptionRows =
+        await client.query<OwnerDashboardInventoryExceptionProjectionRow>(
+          `
+            select
+              inventory_check_run_lines.*,
+              inventory_items.sku as item_key,
+              latest_suggestion.id as procurement_suggestion_id,
+              latest_suggestion.status as procurement_status,
+              latest_suggestion.task_id as procurement_task_id,
+              latest_suggestion.updated_at as procurement_updated_at
+            from inventory_check_run_lines
+            join inventory_items
+              on inventory_items.tenant_id = inventory_check_run_lines.tenant_id
+              and inventory_items.clinic_id = inventory_check_run_lines.clinic_id
+              and inventory_items.id = inventory_check_run_lines.item_id
+            left join lateral (
+              select id, status, task_id, updated_at
+              from procurement_suggestions
+              where tenant_id = inventory_check_run_lines.tenant_id
+                and clinic_id = inventory_check_run_lines.clinic_id
+                and source_check_run_line_id = inventory_check_run_lines.id
+              order by created_at desc
+              limit 1
+            ) as latest_suggestion on true
+            where inventory_check_run_lines.tenant_id = $1
+              and inventory_check_run_lines.clinic_id = $2
+              and inventory_check_run_lines.exception_type is not null
+              and inventory_check_run_lines.counted_at <= $3
+          `,
+          [scope.tenantId, scope.clinicId, range.endAt]
+        );
+      const incidentRows = await client.query<IncidentRow>(
+        `
+          select *
+          from incidents
+          where tenant_id = $1 and clinic_id = $2 and occurred_at <= $3
+        `,
+        [scope.tenantId, scope.clinicId, range.endAt]
+      );
+      const correctiveActionRows = await client.query<CorrectiveActionRow>(
+        `
+          select *
+          from corrective_actions
+          where tenant_id = $1 and clinic_id = $2 and created_at <= $3
+        `,
+        [scope.tenantId, scope.clinicId, range.endAt]
+      );
 
       const leads = leadRows.rows.map(mapLeadRow);
       const appointments = appointmentRows.rows.map(mapAppointmentRow);
@@ -4052,6 +4153,11 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
       const invoices = invoiceRows.rows.map(mapInvoiceRow);
       const payments = paymentRows.rows.map(mapPaymentTransactionRow);
       const tasks = taskRows.rows.map(mapTaskRow);
+      const recalls = recallRows.rows.map(mapRecallRow);
+      const sopRuns = sopRunRows.rows.map((row) => ({ row, record: mapSopRunRow(row) }));
+      const labCases = labCaseRows.rows.map((row) => ({ row, record: mapLabCaseRow(row) }));
+      const incidents = incidentRows.rows.map(mapIncidentRow);
+      const correctiveActions = correctiveActionRows.rows.map(mapCorrectiveActionRow);
 
       return {
         patients: patientRows.rows.map((patient) => ({
@@ -4130,17 +4236,16 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           amountMinor: payment.amountMinor,
           receivedAt: payment.receivedAt
         })),
-        recalls: tasks
-          .filter((task) => task.taskType === "recall" && task.dueAt)
-          .map((task) => ({
-            id: task.id,
-            patientId: task.patientId,
-            source: null,
-            status: task.status === "done" ? "completed" : "due",
-            dueAt: task.dueAt ?? task.createdAt,
-            completedAt: task.status === "done" ? task.updatedAt : null,
-            bookedAppointmentId: null
-          })),
+        recalls: recalls.map((recall) => ({
+          id: recall.id,
+          patientId: recall.patientId,
+          source: null,
+          status: ownerDashboardRecallStatus(recall.status),
+          dueAt: recall.dueAt,
+          completedAt:
+            recall.status === "completed" ? (recall.lastActionAt ?? recall.updatedAt) : null,
+          bookedAppointmentId: recall.appointmentId
+        })),
         tasks: tasks.map((task) => ({
           id: task.id,
           patientId: task.patientId,
@@ -4150,11 +4255,61 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
           createdAt: task.createdAt,
           updatedAt: task.updatedAt
         })),
-        sopRuns: [],
-        labCases: [],
-        inventoryExceptions: [],
-        incidents: [],
-        correctiveActions: [],
+        sopRuns: sopRuns.map(({ row, record }) => ({
+          id: record.id,
+          templateKey: row.template_key,
+          status: ownerDashboardSopRunStatus(record.status),
+          scheduledFor: record.dueAt,
+          completedAt: record.completedAt
+        })),
+        labCases: labCases.map(({ row, record }) => ({
+          id: record.id,
+          patientId: record.patientId,
+          status: record.status,
+          dueAt: record.dueAt,
+          createdAt: record.createdAt,
+          completedAt: record.completedAt,
+          reconciliationStatus: ownerDashboardLabReconciliationStatus(row, record),
+          expectedAmountMinor: record.expectedCostMinor ?? 0,
+          invoiceAmountMinor:
+            row.reconciliation_invoice_amount_minor === null
+              ? null
+              : Number(row.reconciliation_invoice_amount_minor)
+        })),
+        inventoryExceptions: inventoryExceptionRows.rows.map((row) => ({
+          id: row.id,
+          itemKey: row.item_key,
+          severity: ownerDashboardInventorySeverity(row.exception_type),
+          status: ownerDashboardInventoryStatus(row.procurement_status),
+          detectedAt: ownerDashboardRequiredInstant(
+            row.counted_at,
+            "inventory exception counted_at"
+          ),
+          resolvedAt:
+            row.procurement_status === "dismissed" && row.procurement_updated_at
+              ? toIso(row.procurement_updated_at)
+              : null,
+          procurementTaskId: row.procurement_task_id
+        })),
+        incidents: incidents.map((incident) => ({
+          id: incident.id,
+          category: incident.category,
+          severity: incident.severity,
+          status: ownerDashboardIncidentStatus(incident.status),
+          occurredAt: incident.occurredAt
+        })),
+        correctiveActions: correctiveActions
+          .filter((action): action is CorrectiveActionRecord & { incidentId: UUID } =>
+            Boolean(action.incidentId)
+          )
+          .map((action) => ({
+            id: action.id,
+            incidentId: action.incidentId,
+            status: ownerDashboardCorrectiveActionStatus(action.status),
+            dueAt: action.dueAt,
+            assignedAt: action.createdAt,
+            completedAt: action.completedAt
+          })),
         dataSources: [
           {
             key: "owner-dashboard-core-domain-tables",
@@ -4164,11 +4319,14 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
               patientRows.rows.length +
               leads.length +
               appointments.length +
+              encounters.length +
+              attributionTouches.length +
               treatmentPlans.length +
               procedures.length +
               invoices.length +
               payments.length +
-              tasks.length,
+              tasks.length +
+              recalls.length,
             provenance: [
               "patients",
               "leads",
@@ -4179,24 +4337,30 @@ export class PostgresClinicOperationsRepository implements ClinicOperationsRepos
               "procedure_performed_records",
               "invoices",
               "payment_transactions",
-              "tasks"
+              "tasks",
+              "recalls"
             ],
-            notes: "Live projection uses existing CP2-CP5 durable tables and the CP2 tasks table."
+            notes: "Live projection uses the durable core clinic-day and continuity tables."
           },
           {
             key: "cp6-continuity-operations-tables",
             label: "CP6 lab, inventory, SOP, incident, and CAPA tables",
-            status: "schema_dependency",
-            recordCount: 0,
+            status: "ready",
+            recordCount:
+              sopRuns.length +
+              labCases.length +
+              inventoryExceptionRows.rows.length +
+              incidents.length +
+              correctiveActions.filter((action) => action.incidentId).length,
             provenance: [
               "sop_runs",
               "lab_cases",
-              "inventory_exceptions",
+              "inventory_check_run_lines",
+              "procurement_suggestions",
               "incidents",
               "corrective_actions"
             ],
-            notes:
-              "Waiting on Workflow/Task Backend and Lab/Inventory/Event CP6 migrations before live rows can contribute."
+            notes: "Live projection reads the CP6 durable RLS-protected operational tables."
           }
         ]
       };
@@ -11197,6 +11361,17 @@ interface LabReconciliationEntryRow {
   created_at: Date | string;
 }
 
+interface OwnerDashboardLabCaseProjectionRow extends LabCaseRow {
+  reconciliation_record_status: LabReconciliationRecord["status"] | null;
+  reconciliation_entry_status: LabReconciliationEntryRecord["status"] | null;
+  reconciliation_invoice_amount_minor: number | string | null;
+  reconciliation_variance_amount_minor: number | string | null;
+}
+
+interface OwnerDashboardSopRunProjectionRow extends SopRunRow {
+  template_key: string;
+}
+
 interface InventoryCategoryRow {
   id: UUID;
   tenant_id: UUID;
@@ -11319,6 +11494,14 @@ interface ProcurementSuggestionRow {
   created_by_user_id: UUID;
   created_at: Date | string;
   updated_at: Date | string;
+}
+
+interface OwnerDashboardInventoryExceptionProjectionRow extends InventoryCheckRunLineRow {
+  item_key: string;
+  procurement_suggestion_id: UUID | null;
+  procurement_status: ProcurementSuggestionRecord["status"] | null;
+  procurement_task_id: UUID | null;
+  procurement_updated_at: Date | string | null;
 }
 
 interface IncidentRow {
@@ -12996,6 +13179,78 @@ function mapCorrectiveActionRow(row: CorrectiveActionRow): CorrectiveActionRecor
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at)
   };
+}
+
+function ownerDashboardRecallStatus(
+  status: RecallRecord["status"]
+): OwnerDashboardProjectionData["recalls"][number]["status"] {
+  if (status === "contacted") return "contacted";
+  if (status === "booked") return "booked";
+  if (status === "completed") return "completed";
+  if (status === "cancelled" || status === "skipped") return "cancelled";
+  return "due";
+}
+
+function ownerDashboardSopRunStatus(
+  status: SopRunStatus
+): OwnerDashboardProjectionData["sopRuns"][number]["status"] {
+  if (status === "due") return "scheduled";
+  if (status === "overdue") return "missed";
+  return status;
+}
+
+function ownerDashboardLabReconciliationStatus(
+  row: OwnerDashboardLabCaseProjectionRow,
+  record: LabCaseRecord
+): OwnerDashboardProjectionData["labCases"][number]["reconciliationStatus"] {
+  if ((record.expectedCostMinor ?? 0) <= 0) return "not_required";
+  if (!row.reconciliation_entry_status || !row.reconciliation_record_status) return "pending";
+  if (
+    row.reconciliation_entry_status === "matched" &&
+    ["matched", "approved"].includes(row.reconciliation_record_status) &&
+    Number(row.reconciliation_variance_amount_minor ?? 0) === 0
+  ) {
+    return "matched";
+  }
+  return "variance";
+}
+
+function ownerDashboardInventorySeverity(
+  exceptionType: InventoryCheckRunLineRecord["exceptionType"]
+): OwnerDashboardProjectionData["inventoryExceptions"][number]["severity"] {
+  if (!exceptionType) throw new Error("Owner dashboard inventory exception type is missing.");
+  if (exceptionType === "missing_item" || exceptionType === "expired") return "critical";
+  if (exceptionType === "damaged") return "high";
+  if (exceptionType === "low_stock") return "medium";
+  return "low";
+}
+
+function ownerDashboardRequiredInstant(value: Date | string | null, field: string): string {
+  if (value === null) throw new Error(`Owner dashboard projection is missing ${field}.`);
+  return toIso(value);
+}
+
+function ownerDashboardInventoryStatus(
+  status: ProcurementSuggestionRecord["status"] | null
+): OwnerDashboardProjectionData["inventoryExceptions"][number]["status"] {
+  if (status === "converted_to_task") return "procurement_requested";
+  if (status === "dismissed") return "resolved";
+  return "open";
+}
+
+function ownerDashboardIncidentStatus(
+  status: IncidentRecord["status"]
+): OwnerDashboardProjectionData["incidents"][number]["status"] {
+  if (status === "cancelled") return "cancelled";
+  if (status === "resolved" || status === "closed") return "closed";
+  return "open";
+}
+
+function ownerDashboardCorrectiveActionStatus(
+  status: CorrectiveActionRecord["status"]
+): OwnerDashboardProjectionData["correctiveActions"][number]["status"] {
+  if (status === "open") return "assigned";
+  return status;
 }
 
 function toInventoryException(
