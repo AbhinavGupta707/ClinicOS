@@ -40,6 +40,16 @@ export interface PaymentProviderEventResultProjection {
   readonly providerEvent: Record<string, unknown>;
 }
 
+export interface DurablePaymentProviderEventResultProjection extends PaymentProviderEventResultProjection {
+  readonly verificationEvidence: PaymentProviderEventEvidenceProjection;
+}
+
+export interface PaymentProviderEventEvidenceProjection {
+  readonly rawBodySha256: string;
+  readonly signatureSha256: string;
+  readonly normalizedEvent: Record<string, unknown>;
+}
+
 export interface PaymentReconciliationProjection {
   readonly id: UUID;
   readonly reason: Cp13PaymentReconciliationReason;
@@ -70,7 +80,8 @@ export interface DurablePaymentProviderEventPort {
     | {
         readonly outcome: "duplicate";
         readonly eventId: UUID;
-        readonly result: PaymentProviderEventResultProjection;
+        readonly storedEvidence: PaymentProviderEventEvidenceProjection;
+        readonly result: DurablePaymentProviderEventResultProjection;
       }
     | { readonly outcome: "in_progress"; readonly eventId: UUID }
   >;
@@ -89,7 +100,7 @@ export interface DurablePaymentProviderEventPort {
     readonly providerEventRecordId: UUID;
     readonly processingStatus: "applied" | "ignored" | "reconciliation_required" | "failed";
     readonly processedAt: string;
-    readonly result: PaymentProviderEventResultProjection;
+    readonly result: DurablePaymentProviderEventResultProjection;
   }): Promise<void>;
 }
 
@@ -149,6 +160,8 @@ async function applyVerifiedRazorpayPaymentEvent(
 ): Promise<ApiResponse> {
   assertVerifiedRequest(request);
   const now = validNow(context).toISOString();
+  const normalizedEvent = safeProviderEvent(request.event);
+  const verificationEvidence = providerEventVerificationEvidence(request, normalizedEvent);
   const claim = await context.providerEvents.claimVerifiedEvent({
     providerAccountKey: request.accountScope.providerAccountKey,
     providerEventId: request.event.providerEventId,
@@ -157,13 +170,40 @@ async function applyVerifiedRazorpayPaymentEvent(
     eventKind: request.event.eventKind,
     rawBodySha256: request.verification.rawBodySha256,
     signatureSha256: request.verification.signatureSha256,
-    normalizedEvent: safeProviderEvent(request.event),
+    normalizedEvent,
     receivedAt: request.metadata.receivedAt.toISOString(),
     leaseOwner: request.metadata.requestId,
     leaseExpiresAt: new Date(new Date(now).getTime() + 30_000).toISOString()
   });
   if (claim.outcome === "duplicate") {
-    return { status: 200, body: { ...claim.result, status: "duplicate", replayed: true } };
+    const mismatchFields = [
+      ...providerEventEvidenceMismatchFields(claim.storedEvidence, verificationEvidence),
+      ...providerEventEvidenceMismatchFields(
+        claim.result.verificationEvidence,
+        verificationEvidence
+      )
+    ].filter((field, index, fields) => fields.indexOf(field) === index);
+    if (mismatchFields.length > 0) {
+      throw new ApiError(
+        409,
+        "CONFLICT",
+        "A duplicate provider event does not match its stored verified evidence.",
+        {
+          reason: "provider_event_evidence_mismatch",
+          reconciliation_required: true,
+          provider_event_record_id: claim.eventId,
+          mismatch_fields: mismatchFields
+        }
+      );
+    }
+    return {
+      status: 200,
+      body: {
+        ...publicProviderEventResult(claim.result),
+        status: "duplicate",
+        replayed: true
+      }
+    };
   }
   if (claim.outcome === "in_progress") {
     throw new ApiError(
@@ -174,7 +214,7 @@ async function applyVerifiedRazorpayPaymentEvent(
     );
   }
 
-  const providerEvent = safeProviderEvent(request.event);
+  const providerEvent = normalizedEvent;
   const scopeMismatch =
     (request.event.tenantId && request.event.tenantId !== request.accountScope.tenantId) ||
     (request.event.clinicId && request.event.clinicId !== request.accountScope.clinicId);
@@ -248,7 +288,8 @@ async function applyVerifiedRazorpayPaymentEvent(
       invoice,
       transaction: existing,
       reconciliationItem: null,
-      providerEvent
+      providerEvent,
+      verificationEvidence
     });
     await context.providerEvents.completeEvent({
       providerEventRecordId: claim.eventId,
@@ -256,7 +297,7 @@ async function applyVerifiedRazorpayPaymentEvent(
       processedAt: now,
       result
     });
-    return { status: 200, body: result };
+    return { status: 200, body: publicProviderEventResult(result) };
   }
 
   const decision = decideVerifiedCp13ProviderPayment({
@@ -272,7 +313,8 @@ async function applyVerifiedRazorpayPaymentEvent(
       invoice,
       transaction: null,
       reconciliationItem: null,
-      providerEvent
+      providerEvent,
+      verificationEvidence
     });
     await context.evidence.appendIntegrationAudit(
       integrationAudit(
@@ -292,7 +334,7 @@ async function applyVerifiedRazorpayPaymentEvent(
       processedAt: now,
       result
     });
-    return { status: 200, body: result };
+    return { status: 200, body: publicProviderEventResult(result) };
   }
   if (decision.kind === "reconcile_without_settlement") {
     return reconcileAndComplete(request, context, claim.eventId, {
@@ -398,7 +440,8 @@ async function applyVerifiedRazorpayPaymentEvent(
     invoice: updatedInvoice,
     transaction,
     reconciliationItem,
-    providerEvent
+    providerEvent,
+    verificationEvidence
   });
   await context.providerEvents.completeEvent({
     providerEventRecordId: claim.eventId,
@@ -411,7 +454,7 @@ async function applyVerifiedRazorpayPaymentEvent(
     processedAt: now,
     result
   });
-  return { status: 200, body: result };
+  return { status: 200, body: publicProviderEventResult(result) };
 }
 
 async function reconcileAndComplete(
@@ -474,7 +517,8 @@ async function reconcileAndComplete(
     invoice: input.invoice,
     transaction: null,
     reconciliationItem,
-    providerEvent: input.providerEvent
+    providerEvent: input.providerEvent,
+    verificationEvidence: providerEventVerificationEvidence(request, input.providerEvent)
   });
   await context.providerEvents.completeEvent({
     providerEventRecordId,
@@ -482,7 +526,7 @@ async function reconcileAndComplete(
     processedAt: input.processedAt,
     result
   });
-  return { status: 200, body: result };
+  return { status: 200, body: publicProviderEventResult(result) };
 }
 
 function assertVerifiedRequest(request: VerifiedRazorpayPaymentEventRequest): void {
@@ -552,6 +596,30 @@ function providerEvidence(request: VerifiedRazorpayPaymentEventRequest) {
   };
 }
 
+function providerEventVerificationEvidence(
+  request: VerifiedRazorpayPaymentEventRequest,
+  normalizedEvent: Record<string, unknown>
+): PaymentProviderEventEvidenceProjection {
+  return {
+    rawBodySha256: request.verification.rawBodySha256,
+    signatureSha256: request.verification.signatureSha256,
+    normalizedEvent
+  };
+}
+
+function providerEventEvidenceMismatchFields(
+  stored: PaymentProviderEventEvidenceProjection,
+  incoming: PaymentProviderEventEvidenceProjection
+): string[] {
+  const mismatches: string[] = [];
+  if (stored.rawBodySha256 !== incoming.rawBodySha256) mismatches.push("raw_body_sha256");
+  if (stored.signatureSha256 !== incoming.signatureSha256) mismatches.push("signature_sha256");
+  if (stableJson(stored.normalizedEvent) !== stableJson(incoming.normalizedEvent)) {
+    mismatches.push("normalized_event");
+  }
+  return mismatches;
+}
+
 function safeProviderEvent(event: PaymentProviderWebhookEvent) {
   return {
     providerKey: event.providerKey,
@@ -577,15 +645,41 @@ function resultProjection(input: {
   readonly transaction: PaymentTransactionRecord | null;
   readonly reconciliationItem: PaymentReconciliationProjection | null;
   readonly providerEvent: Record<string, unknown>;
-}): PaymentProviderEventResultProjection {
+  readonly verificationEvidence: PaymentProviderEventEvidenceProjection;
+}): DurablePaymentProviderEventResultProjection {
   return {
     status: input.status,
     replayed: input.replayed,
     invoice: input.invoice ? publicInvoice(input.invoice) : null,
     transaction: input.transaction ? publicTransaction(input.transaction) : null,
     reconciliationItem: input.reconciliationItem,
-    providerEvent: input.providerEvent
+    providerEvent: input.providerEvent,
+    verificationEvidence: input.verificationEvidence
   };
+}
+
+function publicProviderEventResult(
+  result: DurablePaymentProviderEventResultProjection
+): PaymentProviderEventResultProjection {
+  const { verificationEvidence: _verificationEvidence, ...publicResult } = result;
+  return publicResult;
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(stableJsonValue(value));
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entryValue]) => entryValue !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entryValue]) => [key, stableJsonValue(entryValue)])
+    );
+  }
+  return value;
 }
 
 function publicInvoice(detail: InvoiceDetail) {

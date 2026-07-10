@@ -5,7 +5,9 @@ import type { InvoiceDetail, PaymentTransactionRecord, UUID } from "@clinic-os/d
 import { ApiError } from "../src/errors.ts";
 import {
   createTreatmentBillingProviderOperationService,
+  type DurablePaymentProviderEventResultProjection,
   type DurablePaymentProviderEventPort,
+  type PaymentProviderEventEvidenceProjection,
   type PaymentProviderEventResultProjection,
   type PaymentProviderTransactionEvidencePort,
   type PaymentReconciliationProjection,
@@ -40,6 +42,7 @@ test("CP13 signed provider overpayment applies only the balance and survives ser
   assert.equal(first.status, 200);
   assert.equal(firstBody.status, "reconciliation_required");
   assert.equal(firstBody.replayed, false);
+  assert.equal("verificationEvidence" in firstBody, false);
   assert.equal(billing.recordCalls, 1);
   assert.equal(billing.transactions[0]?.amountMinor, 6_000);
   assert.equal(billing.transactions[0]?.verificationStatus, "verified");
@@ -47,6 +50,10 @@ test("CP13 signed provider overpayment applies only the balance and survives ser
   assert.equal(durableLedger.reconciliations[0]?.unallocatedAmountMinor, 1_000);
   assert.equal(evidence.audit.length, 1);
   assert.equal(evidence.outbox.length, 1);
+  assert.equal(
+    [...durableLedger.completed.values()][0]?.verificationEvidence.signatureSha256,
+    SIGNATURE_DIGEST
+  );
 
   const restartedService = createTreatmentBillingProviderOperationService();
   const replay = await restartedService.receiveRazorpayPaymentWebhook(
@@ -58,6 +65,48 @@ test("CP13 signed provider overpayment applies only the balance and survives ser
   assert.equal(replayBody.replayed, true);
   assert.equal(billing.recordCalls, 1, "restart/retry must not record settlement twice");
   assert.equal(durableLedger.reconciliations.length, 1);
+});
+
+test("CP13 duplicate provider events conflict when stored verified evidence differs", async () => {
+  const durableLedger = new InMemoryDurableProviderLedger();
+  const billing = new BillingStore(invoiceDetail(6_000));
+  const service = createTreatmentBillingProviderOperationService();
+  const original = verifiedRequest({ providerEventId: "evt-evidence-conflict-001" });
+  await service.receiveRazorpayPaymentWebhook(
+    original,
+    providerContext(billing, durableLedger, new EvidenceRecorder())
+  );
+
+  const conflictingRequests = [
+    verifiedRequest({
+      providerEventId: "evt-evidence-conflict-001",
+      signatureSha256: "c".repeat(64)
+    }),
+    verifiedRequest({
+      providerEventId: "evt-evidence-conflict-001",
+      rawBodySha256: "d".repeat(64)
+    }),
+    verifiedRequest({
+      providerEventId: "evt-evidence-conflict-001",
+      amountPaise: 5_000
+    })
+  ];
+  for (const conflicting of conflictingRequests) {
+    await assert.rejects(
+      service.receiveRazorpayPaymentWebhook(
+        conflicting,
+        providerContext(billing, durableLedger, new EvidenceRecorder())
+      ),
+      (error) =>
+        error instanceof ApiError &&
+        error.status === 409 &&
+        error.code === "CONFLICT" &&
+        error.details.reason === "provider_event_evidence_mismatch" &&
+        error.details.reconciliation_required === true
+    );
+  }
+  assert.equal(billing.recordCalls, 1);
+  assert.equal(durableLedger.completed.size, 1);
 });
 
 test("CP13 bad or missing provider references persist reconciliation without paid state", async () => {
@@ -229,8 +278,9 @@ class BillingStore {
 }
 
 class InMemoryDurableProviderLedger implements DurablePaymentProviderEventPort {
-  readonly completed = new Map<string, PaymentProviderEventResultProjection>();
+  readonly completed = new Map<string, DurablePaymentProviderEventResultProjection>();
   readonly claims = new Map<UUID, string>();
+  readonly evidence = new Map<string, PaymentProviderEventEvidenceProjection>();
   readonly reconciliations: PaymentReconciliationProjection[] = [];
   claimCalls = 0;
 
@@ -243,12 +293,24 @@ class InMemoryDurableProviderLedger implements DurablePaymentProviderEventPort {
       ([, eventId]) => eventId === input.providerEventId
     )?.[0];
     if (completed && existingId) {
-      return { outcome: "duplicate" as const, eventId: existingId, result: completed };
+      const storedEvidence = this.evidence.get(input.providerEventId);
+      if (!storedEvidence) throw new Error("Provider event evidence was not found.");
+      return {
+        outcome: "duplicate" as const,
+        eventId: existingId,
+        storedEvidence,
+        result: completed
+      };
     }
     const eventId =
       existingId ??
       (`10000000-0000-4000-8000-${String(9_000 + this.claimCalls).padStart(12, "0")}` as UUID);
     this.claims.set(eventId, input.providerEventId);
+    this.evidence.set(input.providerEventId, {
+      rawBodySha256: input.rawBodySha256,
+      signatureSha256: input.signatureSha256,
+      normalizedEvent: structuredClone(input.normalizedEvent)
+    });
     return { outcome: "claimed" as const, eventId };
   }
 
@@ -308,6 +370,7 @@ async function runAtomically<TResult>(
     recordCalls: billing.recordCalls,
     completed: new Map(ledger.completed),
     claims: new Map(ledger.claims),
+    providerEvidence: new Map(ledger.evidence),
     reconciliations: structuredClone(ledger.reconciliations),
     claimCalls: ledger.claimCalls,
     audit: structuredClone(evidence.audit),
@@ -323,6 +386,8 @@ async function runAtomically<TResult>(
     snapshot.completed.forEach((value, key) => ledger.completed.set(key, value));
     ledger.claims.clear();
     snapshot.claims.forEach((value, key) => ledger.claims.set(key, value));
+    ledger.evidence.clear();
+    snapshot.providerEvidence.forEach((value, key) => ledger.evidence.set(key, value));
     ledger.reconciliations.splice(0, ledger.reconciliations.length, ...snapshot.reconciliations);
     ledger.claimCalls = snapshot.claimCalls;
     evidence.audit.splice(0, evidence.audit.length, ...snapshot.audit);
@@ -350,7 +415,10 @@ function verifiedRequest(input: {
   readonly tenantId?: string | null;
   readonly amountPaise?: number;
   readonly providerPaymentId?: string | null;
+  readonly rawBodySha256?: string;
+  readonly signatureSha256?: string;
 }): VerifiedRazorpayPaymentEventRequest {
+  const rawBodySha256 = input.rawBodySha256 ?? RAW_DIGEST;
   return {
     operationId: "receiveRazorpayPaymentWebhook",
     accountScope: {
@@ -361,8 +429,8 @@ function verifiedRequest(input: {
     verification: {
       status: "verified",
       providerKey: "razorpay",
-      rawBodySha256: RAW_DIGEST,
-      signatureSha256: SIGNATURE_DIGEST
+      rawBodySha256,
+      signatureSha256: input.signatureSha256 ?? SIGNATURE_DIGEST
     },
     event: {
       providerKey: "razorpay",
@@ -383,7 +451,7 @@ function verifiedRequest(input: {
       amountPaise: input.amountPaise ?? 6_000,
       currency: "INR",
       method: "upi",
-      rawBodySha256: RAW_DIGEST,
+      rawBodySha256,
       payload: { redactedInLaneService: true }
     },
     metadata: {

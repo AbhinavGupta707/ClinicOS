@@ -36,6 +36,21 @@
   route. Components show denied, unavailable, empty, partial-payment, reconciliation, and
   instruction-request truth.
 
+## Correction pass
+
+- Manual-payment, provider-request, and clinic-operation outbox keys are now namespaced by verified
+  tenant, clinic, actor, operation, resource and caller key. Manual-payment replay also requires the
+  stored canonical intent digest to match invoice, amount, method, reason, reference, timestamp and
+  structured evidence; drift returns a conflict without another payment effect.
+- Provider payment links require a usable HTTPS payment URL. Invoice QR requests require either a
+  non-empty QR string or a usable HTTPS QR image URL before any payment-request row is persisted.
+- The provider-event claim/result boundary now carries the stored raw-body fingerprint, signature
+  fingerprint and normalized event evidence. A duplicate whose stored or result evidence differs
+  returns an explicit reconciliation-required conflict instead of replaying a settlement result.
+- Patient-instruction API and event projections no longer claim a generated `outboxEventId`. The
+  frozen repository may still generate an internal unbound value; replacing that shared behavior
+  requires an event port that returns and atomically binds the actual durable outbox row ID.
+
 ## Schema decision
 
 The existing CP5 treatment, invoice, payment, receipt, and instruction tables are sufficient for
@@ -62,12 +77,12 @@ Final results:
 - `npm --workspace @clinic-os/api run typecheck` — pass.
 - `npm --workspace @clinic-os/web run typecheck` — pass.
 - `npm --workspace @clinic-os/web run lint` — pass, zero warnings.
-- focused Node lane matrix — 17/17 pass, zero skips.
+- focused Node lane matrix — 20/20 pass, zero skips.
 - focused web loader/component matrix — 4/4 pass, zero skips.
 - complete domain package — 57/57 pass, zero skips.
 - complete DB package — 69/69 pass, zero skips.
 - complete web package — 65/65 pass, zero skips.
-- complete API package with local loopback binding outside the socket-restricted sandbox — 88/88
+- complete API package with local loopback binding outside the socket-restricted sandbox — 91/91
   pass, zero skips. The preliminary sandbox run named 17 socket-only skips; the authoritative local
   rerun executed all of them.
 - `git diff --check` — pass before evidence finalization; rerun at handoff.
@@ -88,10 +103,20 @@ lockfile metadata line was restored; the lane has no manifest or lockfile diff.
    generated DOM body type and prove `ClinicOsApiClient` satisfies this port during composition.
 3. The provider service is intentionally not registered without the canonical migration and real
    durable provider-event adapter. Master must compose it behind the existing raw-body
-   signature-before-parse route and registered provider-account authority.
+   signature-before-parse route and registered provider-account authority. The canonical ledger
+   and every provider-event/idempotency uniqueness decision must remain provider-account scoped;
+   the lane proposal is not a substitute for that master-owned migration and adapter.
 4. The canonical domain event taxonomy has no `treatment_plan.updated` event. The update handler
    persists its audit evidence but does not mislabel an outbox event. Master should add the shared
    event deliberately if CP13 orchestration requires downstream plan-update consumption.
 5. Route registration, generated-client construction, navigation, browser/390px smoke, and E3
    Postgres restart evidence are master-owned integration work. This lane does not claim browser,
    durable-local provider-ledger, official Razorpay sandbox, delivery/read, or settlement evidence.
+6. The frozen billing port has no durable payment-request intent claim/completion record. A crash
+   after provider creation but before local persistence cannot be proven recovered by this lane;
+   master must add one atomic intent/recovery design rather than treating a provider note as an
+   idempotency guarantee.
+7. The frozen clinical-care/evidence ports cannot bind a patient instruction to the actual outbox
+   row ID because append returns no ID and the repository independently generates one. This lane
+   returns `null` instead of making that false association; master must reconcile the shared ports
+   and repository before exposing an outbox linkage.

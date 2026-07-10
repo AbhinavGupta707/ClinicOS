@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import { permissionsForScope } from "@clinic-os/auth";
 import type { DomainEventType, PermissionKey, UUID } from "@clinic-os/domain";
 import type {
@@ -332,13 +332,11 @@ async function handleCreatePatientInstruction(
   const patientId = pathUuid(request, "patientId");
   const body = requestBody(request);
   const channel = body.channel === "whatsapp" ? "whatsapp" : "print";
-  const outboxEventId = channel === "whatsapp" ? (randomUUID() as UUID) : null;
   const instruction = await context.repositories.clinicalCare.createPatientInstruction(patientId, {
     channel,
     templateId: requiredString(body.templateId, "templateId"),
     title: nullableString(body.title),
-    body: nullableString(body.body),
-    outboxEventId
+    body: nullableString(body.body)
   });
   if (!instruction) throw notFound("Patient was not found.", { patient_id: patientId });
   assertInstructionRemainsRequestEvidence(instruction);
@@ -405,7 +403,7 @@ async function handleCreateInvoicePaymentRequest(
     currency: invoice.currency,
     description: nullableString(body.description),
     expiresAt: nullableString(body.expiresAt),
-    idempotencyKey: idempotencyKey(request),
+    idempotencyKey: scopedOperationIdempotencyKey(request, invoiceId),
     customer: nullableRecord(body.customer),
     metadata: recordValue(body.metadata)
   };
@@ -465,6 +463,7 @@ async function handleCreateInvoicePaymentRequest(
     eventType: "payment.requested",
     aggregateType: "payment_request",
     aggregateId: paymentRequest.id,
+    idempotencyResourceId: invoiceId,
     payload: paymentRequestEvidence(paymentRequest)
   });
   return created({
@@ -498,11 +497,13 @@ async function handleRecordInvoiceManualPayment(
   } catch (error) {
     throw validationFrom(error);
   }
-  const key = idempotencyKey(request);
+  const key = scopedOperationIdempotencyKey(request, invoiceId);
+  const intentDigest = manualPaymentIntentDigest(invoiceId, input);
   const existing = invoiceDetail.payments.find(
     (payment) => payment.provider === "manual" && payment.idempotencyKey === key
   );
   if (existing) {
+    assertManualPaymentReplayMatches(existing, invoiceId, input, intentDigest);
     return created({
       invoice: publicInvoice(invoiceDetail),
       transaction: publicPaymentTransaction(existing),
@@ -540,6 +541,8 @@ async function handleRecordInvoiceManualPayment(
     receivedAt: input.receivedAt,
     recordedByUserId: request.access.context.user.id,
     metadata: {
+      cp13IntentDigest: intentDigest,
+      cp13IntentVersion: 1,
       reason: input.reason,
       reference: input.reference,
       evidence: input.evidence
@@ -557,6 +560,7 @@ async function handleRecordInvoiceManualPayment(
     eventType: "payment.manually_recorded",
     aggregateType: "payment_transaction",
     aggregateId: transaction.id,
+    idempotencyResourceId: invoiceId,
     payload: manualPaymentEvidence(transaction, input.reason, input.reference)
   });
   return created({
@@ -603,6 +607,7 @@ async function appendMutationEvidence(
     readonly eventType: DomainEventType;
     readonly aggregateType: string;
     readonly aggregateId: UUID;
+    readonly idempotencyResourceId?: UUID;
     readonly payload: Record<string, unknown>;
   }
 ): Promise<void> {
@@ -613,7 +618,7 @@ async function appendMutationEvidence(
     aggregateType: input.aggregateType,
     aggregateId: input.aggregateId,
     patientId: input.patientId,
-    idempotencyKey: outboxIdempotencyKey(request),
+    idempotencyKey: outboxIdempotencyKey(request, input.idempotencyResourceId ?? input.aggregateId),
     correlationId: request.metadata.requestId,
     payload: input.payload,
     occurredAt
@@ -762,12 +767,28 @@ function idempotencyKey(
   return requiredString(headers["idempotency-key"], "idempotency-key");
 }
 
+function scopedOperationIdempotencyKey(
+  request: ClinicFeatureOperationRequest<TreatmentBillingClinicOperationId>,
+  resourceId: UUID
+): string {
+  return [
+    "cp13",
+    request.access.context.tenant.id,
+    request.access.clinicId,
+    request.access.context.user.id,
+    request.operationId,
+    resourceId,
+    idempotencyKey(request)
+  ].join(":");
+}
+
 function outboxIdempotencyKey(
-  request: ClinicFeatureOperationRequest<TreatmentBillingClinicOperationId>
+  request: ClinicFeatureOperationRequest<TreatmentBillingClinicOperationId>,
+  resourceId: UUID
 ): string | null {
   const headers = objectValue(request.parsed.headers, "headers");
   const key = headers["idempotency-key"];
-  return typeof key === "string" ? `cp13:${request.operationId}:${key}` : null;
+  return typeof key === "string" ? scopedOperationIdempotencyKey(request, resourceId) : null;
 }
 
 function validNow(context: ClinicFeatureExecutionContext): Date {
@@ -816,17 +837,35 @@ function assertProviderRequestResult(
   }
 ): void {
   const expectedKind = expected.requestType;
+  const hasUsableArtifact =
+    expectedKind === "payment_link"
+      ? isUsableHttpsUrl(result.paymentUrl)
+      : isNonEmptyString(result.qrString) || isUsableHttpsUrl(result.qrImageUrl);
   if (
     result.status !== "created" ||
     result.amountPaise !== expected.amountMinor ||
     result.currency !== expected.currency ||
     result.requestKind !== expectedKind ||
-    result.providerRequestId.trim().length === 0
+    result.providerRequestId.trim().length === 0 ||
+    !hasUsableArtifact
   ) {
     throw dependencyUnavailable("Payment provider returned an inconsistent request result.", {
       provider_key: result.providerKey,
       reason: "provider_result_mismatch"
     });
+  }
+}
+
+function isNonEmptyString(value: string | null | undefined): value is string {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function isUsableHttpsUrl(value: string | null | undefined): value is string {
+  if (!isNonEmptyString(value)) return false;
+  try {
+    return new URL(value).protocol === "https:";
+  } catch {
+    return false;
   }
 }
 
@@ -937,7 +976,7 @@ function publicInstruction(instruction: PatientInstructionRecord) {
     status: instruction.status,
     renderedAt: instruction.renderedAt,
     printJobId: instruction.printJobId,
-    outboxEventId: instruction.outboxEventId,
+    outboxEventId: null,
     providerConfirmationReceived: false,
     providerDeliveryConfirmedAt: null,
     deliveredAt: null,
@@ -1023,12 +1062,85 @@ function instructionEvidence(instruction: PatientInstructionRecord) {
     channel: instruction.channel,
     status: instruction.status,
     printJobId: instruction.printJobId,
-    outboxEventId: instruction.outboxEventId,
+    outboxEventId: null,
     providerConfirmationReceived: false,
     providerDeliveryConfirmedAt: null,
     deliveredAt: null,
     readAt: null
   };
+}
+
+function manualPaymentIntentDigest(
+  invoiceId: UUID,
+  input: {
+    readonly amountMinor: number;
+    readonly currency: string;
+    readonly method: string;
+    readonly reason: string;
+    readonly reference: string;
+    readonly receivedAt: string | null;
+    readonly evidence: Record<string, unknown>;
+  }
+): string {
+  return createHash("sha256")
+    .update(
+      stableJson({
+        invoiceId,
+        amountMinor: input.amountMinor,
+        currency: input.currency,
+        method: input.method,
+        reason: input.reason,
+        reference: input.reference,
+        receivedAt: input.receivedAt,
+        evidence: input.evidence
+      })
+    )
+    .digest("hex");
+}
+
+function assertManualPaymentReplayMatches(
+  existing: PaymentTransactionRecord,
+  invoiceId: UUID,
+  input: {
+    readonly amountMinor: number;
+    readonly currency: string;
+    readonly method: string;
+  },
+  intentDigest: string
+): void {
+  const storedIntentDigest = existing.metadata.cp13IntentDigest;
+  if (
+    existing.invoiceId !== invoiceId ||
+    existing.amountMinor !== input.amountMinor ||
+    existing.currency !== input.currency ||
+    existing.method !== input.method ||
+    existing.status !== "manually_recorded" ||
+    existing.verificationStatus !== "not_required_manual" ||
+    storedIntentDigest !== intentDigest
+  ) {
+    throw conflict("Idempotency key was already used for different manual payment evidence.", {
+      invoice_id: invoiceId,
+      payment_transaction_id: existing.id,
+      reason: "idempotency_intent_mismatch"
+    });
+  }
+}
+
+function stableJson(value: unknown): string {
+  return JSON.stringify(stableJsonValue(value));
+}
+
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value as Record<string, unknown>)
+        .filter(([, entryValue]) => entryValue !== undefined)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, entryValue]) => [key, stableJsonValue(entryValue)])
+    );
+  }
+  return value;
 }
 
 function paymentRequestEvidence(request: PaymentRequestRecord) {

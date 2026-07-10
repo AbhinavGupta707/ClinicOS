@@ -9,6 +9,7 @@ import type {
   PaymentRequestRecord,
   PaymentTransactionRecord,
   ProcedurePerformedRecord,
+  RecordPaymentTransactionInput,
   TreatmentPlanDetail,
   UUID
 } from "@clinic-os/domain";
@@ -27,6 +28,7 @@ import {
 const TENANT_ID = "10000000-0000-4000-8000-000000000001" as UUID;
 const CLINIC_ID = "10000000-0000-4000-8000-000000000101" as UUID;
 const USER_ID = "10000000-0000-4000-8000-000000001001" as UUID;
+const OTHER_USER_ID = "10000000-0000-4000-8000-000000001002" as UUID;
 const PATIENT_ID = "10000000-0000-4000-8000-000000002001" as UUID;
 const ENCOUNTER_ID = "10000000-0000-4000-8000-000000003001" as UUID;
 const PLAN_ID = "10000000-0000-4000-8000-000000004001" as UUID;
@@ -35,6 +37,7 @@ const ITEM_ID = "10000000-0000-4000-8000-000000004003" as UUID;
 const PRICEBOOK_ID = "10000000-0000-4000-8000-000000005001" as UUID;
 const PROCEDURE_ID = "10000000-0000-4000-8000-000000006001" as UUID;
 const INVOICE_ID = "10000000-0000-4000-8000-000000007001" as UUID;
+const OTHER_INVOICE_ID = "10000000-0000-4000-8000-000000007099" as UUID;
 const PAYMENT_ID = "10000000-0000-4000-8000-000000008001" as UUID;
 const PAYMENT_REQUEST_ID = "10000000-0000-4000-8000-000000008002" as UUID;
 const RECEIPT_ID = "10000000-0000-4000-8000-000000008003" as UUID;
@@ -329,59 +332,95 @@ test("CP13 maps wrong tenant and invalid workflow state without leaking another 
   );
 });
 
-test("CP13 manual payment requires evidence and replays before revalidating a reduced balance", async () => {
-  const existing = manualPayment({
-    amountMinor: 4_000,
-    idempotencyKey: "manual-payment-retry-001"
-  });
-  const originalInvoice = invoiceDetail({
-    paidMinor: 4_000,
-    payments: [existing],
-    balanceMinor: 6_000
-  });
+test("CP13 manual payment namespaces keys and rejects replay intent drift", async () => {
+  const evidence = evidenceRecorder();
+  let detail = invoiceDetail({ paidMinor: 0 });
   let recordCalls = 0;
-  const context = executionContext({
-    billing: {
-      findInvoiceById: async () => originalInvoice,
-      recordPaymentTransaction: async () => {
-        recordCalls += 1;
-        return existing;
+  let capturedInput: RecordPaymentTransactionInput | null = null;
+  const context = executionContext(
+    {
+      billing: {
+        findInvoiceById: async () => detail,
+        recordPaymentTransaction: async (input: RecordPaymentTransactionInput) => {
+          recordCalls += 1;
+          capturedInput = input;
+          const transaction: PaymentTransactionRecord = {
+            ...manualPayment({
+              amountMinor: input.amountMinor,
+              idempotencyKey: input.idempotencyKey ?? ""
+            }),
+            method: input.method,
+            receivedAt: input.receivedAt ?? FIXED_NOW,
+            recordedByUserId: input.recordedByUserId ?? null,
+            metadata: input.metadata ?? {}
+          };
+          detail = invoiceDetail({
+            paidMinor: input.amountMinor,
+            balanceMinor: 10_000 - input.amountMinor,
+            payments: [transaction]
+          });
+          return transaction;
+        }
       }
-    }
-  });
+    },
+    evidence
+  );
   const handlers = createTreatmentBillingHandlerMap({ paymentProvider: availableProvider() });
-
-  const replay = await handlers.recordInvoiceManualPayment(
+  const originalBody = {
+    amountMinor: 1_000,
+    currency: "INR",
+    method: "upi",
+    reason: "Synthetic accountant-verified UPI payment.",
+    reference: "SYN-UPI-REPLAY-001",
+    evidence: { registerLine: "synthetic-replay-001", approval: { initials: "SA" } }
+  };
+  const requestFor = (body: Record<string, unknown>) =>
     operationRequest("recordInvoiceManualPayment", "accountant", {
       path: { invoiceId: INVOICE_ID },
       headers: idempotencyHeaders("manual-payment-retry-001"),
-      body: {
-        amountMinor: 9_000,
-        currency: "INR",
-        method: "cash",
-        reason: "Synthetic counter register evidence.",
-        reference: "SYN-CASH-001",
-        evidence: { registerLine: "synthetic-001" }
-      }
-    }),
-    context
-  );
+      body
+    });
+
+  const recorded = await handlers.recordInvoiceManualPayment(requestFor(originalBody), context);
+  assert.equal((recorded.body as { replayed: boolean }).replayed, false);
+  assert.equal(recordCalls, 1);
+  const expectedKey = [
+    "cp13",
+    TENANT_ID,
+    CLINIC_ID,
+    USER_ID,
+    "recordInvoiceManualPayment",
+    INVOICE_ID,
+    "manual-payment-retry-001"
+  ].join(":");
+  assert.equal(capturedInput?.idempotencyKey, expectedKey);
+  assert.equal(evidence.outbox[0]?.idempotencyKey, expectedKey);
+  assert.match(String(capturedInput?.metadata?.cp13IntentDigest), /^[0-9a-f]{64}$/u);
+
+  const replay = await handlers.recordInvoiceManualPayment(requestFor(originalBody), context);
   assert.equal((replay.body as { replayed: boolean }).replayed, true);
-  assert.equal(recordCalls, 0);
+  assert.equal(recordCalls, 1);
+
+  for (const changedBody of [
+    { ...originalBody, amountMinor: 2_000 },
+    { ...originalBody, evidence: { registerLine: "different-evidence" } }
+  ]) {
+    await assert.rejects(
+      handlers.recordInvoiceManualPayment(requestFor(changedBody), context),
+      (error) =>
+        error instanceof ApiError &&
+        error.status === 409 &&
+        error.details.reason === "idempotency_intent_mismatch"
+    );
+  }
+  assert.equal(recordCalls, 1);
 
   await assert.rejects(
     handlers.recordInvoiceManualPayment(
       operationRequest("recordInvoiceManualPayment", "accountant", {
         path: { invoiceId: INVOICE_ID },
-        headers: idempotencyHeaders("manual-payment-new-001"),
-        body: {
-          amountMinor: 1_000,
-          currency: "INR",
-          method: "cash",
-          reason: "Evidence deliberately missing.",
-          reference: "SYN-CASH-002",
-          evidence: {}
-        }
+        headers: idempotencyHeaders("manual-payment-missing-evidence-001"),
+        body: { ...originalBody, evidence: {} }
       }),
       context
     ),
@@ -390,46 +429,6 @@ test("CP13 manual payment requires evidence and replays before revalidating a re
       error.status === 400 &&
       /supporting evidence/u.test(error.message)
   );
-
-  const newEvidence = evidenceRecorder();
-  const unpaidInvoice = invoiceDetail({ paidMinor: 0 });
-  const newPayment = manualPayment({
-    amountMinor: 1_000,
-    idempotencyKey: "manual-payment-new-002"
-  });
-  const partiallyPaidInvoice = invoiceDetail({
-    paidMinor: 1_000,
-    balanceMinor: 9_000,
-    payments: [newPayment]
-  });
-  let reads = 0;
-  const newContext = executionContext(
-    {
-      billing: {
-        findInvoiceById: async () => (reads++ === 0 ? unpaidInvoice : partiallyPaidInvoice),
-        recordPaymentTransaction: async () => newPayment
-      }
-    },
-    newEvidence
-  );
-  const recorded = await handlers.recordInvoiceManualPayment(
-    operationRequest("recordInvoiceManualPayment", "accountant", {
-      path: { invoiceId: INVOICE_ID },
-      headers: idempotencyHeaders("manual-payment-new-002"),
-      body: {
-        amountMinor: 1_000,
-        currency: "INR",
-        method: "upi",
-        reason: "Synthetic accountant-verified UPI payment.",
-        reference: "SYN-UPI-002",
-        evidence: { registerLine: "synthetic-002" }
-      }
-    }),
-    newContext
-  );
-  assert.equal((recorded.body as { replayed: boolean }).replayed, false);
-  assert.equal(newEvidence.audit[0]?.action, "payment.manually_recorded");
-  assert.equal(newEvidence.outbox[0]?.eventType, "payment.manually_recorded");
 });
 
 test("CP13 payment request uses the captured provider dependency and persists no invented amount", async () => {
@@ -476,12 +475,118 @@ test("CP13 payment request uses the captured provider dependency and persists no
   );
 });
 
+test("CP13 provider and outbox keys are scoped by actor and invoice", async () => {
+  const baseProvider = availableProvider();
+  const providerKeys: string[] = [];
+  const provider: PaymentProvider = {
+    ...baseProvider,
+    createInvoiceQr: async (input) => {
+      providerKeys.push(input.idempotencyKey ?? "");
+      return baseProvider.createInvoiceQr(input);
+    }
+  };
+  const handlers = createTreatmentBillingHandlerMap({ paymentProvider: provider });
+  const outboxKeys: string[] = [];
+  const execute = async (invoiceId: UUID, userId: UUID) => {
+    const detail = invoiceDetail({ paidMinor: 0, invoiceId });
+    const evidence = evidenceRecorder();
+    const context = executionContext(
+      {
+        billing: {
+          findInvoiceById: async () => detail,
+          createPaymentRequest: async (input: Record<string, unknown>) =>
+            paymentRequestRecord(Number(input.amountMinor), invoiceId)
+        }
+      },
+      evidence
+    );
+    await handlers.createInvoicePaymentRequest(
+      operationRequest(
+        "createInvoicePaymentRequest",
+        "accountant",
+        {
+          path: { invoiceId },
+          headers: idempotencyHeaders("shared-caller-key-001"),
+          body: { requestType: "invoice_qr", amountMinor: 1_000, metadata: {} }
+        },
+        { userId }
+      ),
+      context
+    );
+    outboxKeys.push(String(evidence.outbox[0]?.idempotencyKey));
+  };
+
+  await execute(INVOICE_ID, USER_ID);
+  await execute(INVOICE_ID, OTHER_USER_ID);
+  await execute(OTHER_INVOICE_ID, USER_ID);
+
+  assert.equal(new Set(providerKeys).size, 3);
+  assert.deepEqual(outboxKeys, providerKeys);
+  assert.match(providerKeys[0] ?? "", new RegExp(`${USER_ID}.*${INVOICE_ID}`, "u"));
+  assert.match(providerKeys[1] ?? "", new RegExp(`${OTHER_USER_ID}.*${INVOICE_ID}`, "u"));
+  assert.match(providerKeys[2] ?? "", new RegExp(`${USER_ID}.*${OTHER_INVOICE_ID}`, "u"));
+});
+
+test("CP13 payment requests reject missing or unusable provider artifacts", async () => {
+  const detail = invoiceDetail({ paidMinor: 0 });
+  let persistenceCalls = 0;
+  const context = executionContext({
+    billing: {
+      findInvoiceById: async () => detail,
+      createPaymentRequest: async () => {
+        persistenceCalls += 1;
+        return paymentRequestRecord(1_000);
+      }
+    }
+  });
+  const baseProvider = availableProvider();
+  const missingQrProvider: PaymentProvider = {
+    ...baseProvider,
+    createInvoiceQr: async (input) => ({
+      ...(await baseProvider.createInvoiceQr(input)),
+      qrString: null,
+      qrImageUrl: null
+    })
+  };
+  const invalidLinkProvider: PaymentProvider = {
+    ...baseProvider,
+    createPaymentLink: async (input) => ({
+      ...(await baseProvider.createPaymentLink(input)),
+      paymentUrl: "ftp://payments.synthetic.invalid/not-usable"
+    })
+  };
+
+  for (const [requestType, provider] of [
+    ["invoice_qr", missingQrProvider],
+    ["payment_link", invalidLinkProvider]
+  ] as const) {
+    const handlers = createTreatmentBillingHandlerMap({ paymentProvider: provider });
+    await assert.rejects(
+      handlers.createInvoicePaymentRequest(
+        operationRequest("createInvoicePaymentRequest", "accountant", {
+          path: { invoiceId: INVOICE_ID },
+          headers: idempotencyHeaders(`missing-artifact-${requestType}`),
+          body: { requestType, amountMinor: 1_000 }
+        }),
+        context
+      ),
+      (error) =>
+        error instanceof ApiError && error.status === 503 && error.code === "DEPENDENCY_UNAVAILABLE"
+    );
+  }
+  assert.equal(persistenceCalls, 0);
+});
+
 test("CP13 instruction output remains print/send-request evidence only", async () => {
   const evidence = evidenceRecorder();
+  let instructionInput: Record<string, unknown> | null = null;
   const context = executionContext(
     {
       clinicalCare: {
-        createPatientInstruction: async () => patientInstruction()
+        createPatientInstruction: async (_patientId: UUID, input: Record<string, unknown>) => {
+          instructionInput = input;
+          return patientInstruction();
+        }
       }
     },
     evidence
@@ -503,10 +608,13 @@ test("CP13 instruction output remains print/send-request evidence only", async (
   assert.equal(response.status, 202);
   const instruction = (response.body as { instruction: PatientInstructionRecord }).instruction;
   assert.equal(instruction.status, "send_requested");
+  assert.equal(instruction.outboxEventId, null);
   assert.equal(instruction.providerConfirmationReceived, false);
   assert.equal(instruction.deliveredAt, null);
   assert.equal(instruction.readAt, null);
   assert.equal(evidence.outbox[0]?.eventType, "instruction.send_requested");
+  assert.equal(Object.prototype.hasOwnProperty.call(instructionInput, "outboxEventId"), false);
+  assert.equal((evidence.outbox[0]?.payload as { outboxEventId?: unknown }).outboxEventId, null);
 });
 
 function executionContext(
@@ -555,8 +663,10 @@ function operationRequest(
     readonly query?: Record<string, unknown>;
     readonly headers?: Record<string, unknown>;
     readonly body?: unknown;
-  }
+  },
+  authority: { readonly userId?: UUID } = {}
 ): ClinicFeatureOperationRequest<TreatmentBillingClinicOperationId> {
+  const userId = authority.userId ?? USER_ID;
   const clinic = {
     id: CLINIC_ID,
     tenantId: TENANT_ID,
@@ -582,17 +692,15 @@ function operationRequest(
       status: "active"
     },
     user: {
-      id: USER_ID,
+      id: userId,
       displayName: `Synthetic ${role}`,
       email: null,
       phone: null,
       status: "active"
     },
-    memberships: [{ tenantId: TENANT_ID, userId: USER_ID, status: "active" }],
-    clinicAssignments: [
-      { tenantId: TENANT_ID, clinicId: CLINIC_ID, userId: USER_ID, status: "active" }
-    ],
-    roleAssignments: [{ tenantId: TENANT_ID, clinicId: CLINIC_ID, userId: USER_ID, roleSlug: role }]
+    memberships: [{ tenantId: TENANT_ID, userId, status: "active" }],
+    clinicAssignments: [{ tenantId: TENANT_ID, clinicId: CLINIC_ID, userId, status: "active" }],
+    roleAssignments: [{ tenantId: TENANT_ID, clinicId: CLINIC_ID, userId, roleSlug: role }]
   });
   return {
     operationId,
@@ -727,11 +835,13 @@ function invoiceDetail(input: {
   readonly paidMinor: number;
   readonly balanceMinor?: number;
   readonly payments?: PaymentTransactionRecord[];
+  readonly invoiceId?: UUID;
 }): InvoiceDetail {
-  const procedure = input.procedure ?? performedProcedure(INVOICE_ID);
+  const invoiceId = input.invoiceId ?? INVOICE_ID;
+  const procedure = input.procedure ?? performedProcedure(invoiceId);
   return {
     invoice: {
-      id: INVOICE_ID,
+      id: invoiceId,
       tenantId: TENANT_ID,
       clinicId: CLINIC_ID,
       patientId: PATIENT_ID,
@@ -759,7 +869,7 @@ function invoiceDetail(input: {
         id: "10000000-0000-4000-8000-000000007002" as UUID,
         tenantId: TENANT_ID,
         clinicId: CLINIC_ID,
-        invoiceId: INVOICE_ID,
+        invoiceId,
         patientId: PATIENT_ID,
         procedurePerformedId: procedure.id,
         treatmentPlanEstimateItemId: ITEM_ID,
@@ -810,12 +920,15 @@ function manualPayment(input: {
   };
 }
 
-function paymentRequestRecord(amountMinor: number): PaymentRequestRecord {
+function paymentRequestRecord(
+  amountMinor: number,
+  invoiceId: UUID = INVOICE_ID
+): PaymentRequestRecord {
   return {
     id: PAYMENT_REQUEST_ID,
     tenantId: TENANT_ID,
     clinicId: CLINIC_ID,
-    invoiceId: INVOICE_ID,
+    invoiceId,
     patientId: PATIENT_ID,
     provider: "razorpay",
     requestType: "dynamic_qr",

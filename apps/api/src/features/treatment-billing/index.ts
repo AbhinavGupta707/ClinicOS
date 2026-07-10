@@ -7,7 +7,9 @@ export {
 } from "./handlers.ts";
 export {
   createTreatmentBillingProviderOperationService,
+  type DurablePaymentProviderEventResultProjection,
   type DurablePaymentProviderEventPort,
+  type PaymentProviderEventEvidenceProjection,
   type PaymentProviderEventResultProjection,
   type PaymentProviderTransactionEvidencePort,
   type PaymentReconciliationProjection,
