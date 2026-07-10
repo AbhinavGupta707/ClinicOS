@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   Cp14BffRuntime,
+  type Cp14BffConfiguration,
   type Cp14BffRequest,
   type Cp14OidcTokenClient,
   type Cp14SafeWebSession,
@@ -15,6 +16,49 @@ const issuer = "https://identity.example/realms/clinic-os";
 describe("CP14 same-origin BFF", () => {
   it("fails closed without the confidential client secret", () => {
     expect(() => newRuntime({ clientSecret: null })).toThrow(/client secret is missing/);
+  });
+
+  it("rejects unproved MFA markers and mismatched session assurance policy", async () => {
+    expect(() =>
+      newRuntime({
+        configurationOverrides: {
+          mfaAssurancePolicy: {
+            ...mfaPolicy(),
+            acceptedAcrValues: ["urn:unproved:aal2"]
+          }
+        }
+      })
+    ).toThrow(/reviewed realm evidence/);
+
+    const tokenClient = new TestTokenClient();
+    const runtime = newRuntime({
+      tokenClient,
+      sessionAssurance: {
+        amr: ["otp"],
+        acr: "urn:unproved:aal2",
+        mfaVerified: true
+      }
+    });
+    await expect(authenticate(runtime, tokenClient)).rejects.toThrow(/MFA assurance/);
+  });
+
+  it("rejects query and path confusion in issuer and server endpoints", () => {
+    const invalidConfigurations: Array<Partial<Cp14BffConfiguration>> = [
+      { issuer: `${issuer}?tenant=attacker` },
+      { issuer: `${issuer}/protocol/openid-connect` },
+      { authorizationEndpoint: `${issuer}/protocol/openid-connect/auth/extra` },
+      { tokenEndpoint: `${issuer}/protocol/openid-connect/token?audience=attacker` },
+      { tokenEndpoint: `${issuer}/protocol/openid-connect/token/introspect` },
+      { revocationEndpoint: `${issuer}/protocol/openid-connect/revoke?token=confused` },
+      { callbackUri: "https://app.example/auth/callback?next=https://attacker.example" },
+      { callbackUri: "https://app.example/auth/%63allback" },
+      { apiBaseUrl: "https://api.internal.example/?upstream=attacker" }
+    ];
+    for (const configurationOverrides of invalidConfigurations) {
+      expect(() => newRuntime({ configurationOverrides })).toThrow(
+        /issuer|OIDC endpoint|forbidden components|canonical|API base/
+      );
+    }
   });
 
   it("runs PKCE login/callback/session/proxy/logout without exposing tokens to browser JS", async () => {
@@ -68,6 +112,7 @@ describe("CP14 same-origin BFF", () => {
     const sessionBody = session.body as Record<string, unknown>;
     expect(sessionBody.authenticated).toBe(true);
     expect(sessionBody.csrfToken).toMatch(/^[A-Za-z0-9_-]{43}$/);
+    expect(sessionBody.mfaVerified).toBe(true);
     expect(JSON.stringify(sessionBody)).not.toContain("access-token");
     expect(JSON.stringify(sessionBody)).not.toContain("refresh-token");
 
@@ -191,6 +236,8 @@ class TestTokenClient implements Cp14OidcTokenClient {
       issuer,
       authorizedParty: "clinic-os-web-bff",
       keycloakSessionId: "session-id-000001",
+      amr: ["pwd", "otp"],
+      acr: "urn:clinicos:aal2",
       ...tokenSet(new Date(now.getTime() + 10_000))
     };
   }
@@ -253,6 +300,14 @@ class TestSessions implements Cp14WebSessionsPort {
   readonly csrfToken = "z".repeat(43);
   active = false;
   accessToken = `access-token-${"a".repeat(32)}`;
+
+  constructor(
+    private readonly assurance: {
+      amr: readonly string[];
+      acr: string | null;
+      mfaVerified: boolean;
+    } = { amr: ["pwd", "otp"], acr: "urn:clinicos:aal2", mfaVerified: true }
+  ) {}
 
   async createAuthenticatedSession(): Promise<{
     cookie: string;
@@ -319,8 +374,10 @@ class TestSessions implements Cp14WebSessionsPort {
     return {
       absoluteExpiresAt: new Date(now.getTime() + 3_600_000).toISOString(),
       csrfToken: this.csrfToken,
-      acr: "urn:clinicos:aal2",
-      amr: ["pwd", "otp"],
+      acr: this.assurance.acr,
+      amr: this.assurance.amr,
+      mfaAssurancePolicyId: mfaPolicy().policyId,
+      mfaVerified: this.assurance.mfaVerified,
       shouldRotate: false
     };
   }
@@ -331,12 +388,19 @@ function newRuntime(input: {
   tokenClient?: TestTokenClient;
   apiCalls?: Array<Record<string, unknown>>;
   apiResponseHeaders?: Record<string, string>;
+  configurationOverrides?: Partial<Cp14BffConfiguration>;
+  sessionAssurance?: {
+    amr: readonly string[];
+    acr: string | null;
+    mfaVerified: boolean;
+  };
 }) {
-  const sessions = new TestSessions();
+  const sessions = new TestSessions(input.sessionAssurance);
   return new Cp14BffRuntime({
     configuration: {
       productionLike: true,
       issuer,
+      mfaAssurancePolicy: mfaPolicy(),
       authorizationEndpoint: `${issuer}/protocol/openid-connect/auth`,
       tokenEndpoint: `${issuer}/protocol/openid-connect/token`,
       revocationEndpoint: `${issuer}/protocol/openid-connect/revoke`,
@@ -346,7 +410,8 @@ function newRuntime(input: {
       webOrigin: "https://app.example",
       callbackUri: "https://app.example/auth/callback",
       apiBaseUrl: "https://api.internal.example/",
-      allowedApiPathPrefixes: ["/v1/me", "/v1/patients"]
+      allowedApiPathPrefixes: ["/v1/me", "/v1/patients"],
+      ...input.configurationOverrides
     },
     security: {
       assertBoundary: (request) => {
@@ -383,6 +448,7 @@ function newRuntime(input: {
         expect(policy.expectedIssuer).toBe(issuer);
         expect(policy.requiredAudience).toBe("clinic-os-api");
         expect(policy.acceptedAuthorizedParties).toEqual(["clinic-os-web-bff"]);
+        expect(policy.mfaAssurancePolicy.policyId).toBe(mfaPolicy().policyId);
         return {
           subject: "keycloak-subject-0001",
           issuer,
@@ -467,5 +533,16 @@ function tokenSet(at: Date): Cp14WebSessionTokenSet {
     idToken: `identity-token-${"i".repeat(32)}`,
     accessExpiresAt: new Date(at.getTime() + 300_000),
     refreshExpiresAt: new Date(at.getTime() + 3_600_000)
+  };
+}
+
+function mfaPolicy() {
+  return {
+    policyId: "clinicos-amr-two-factor-v1",
+    reviewedRealmEvidenceId: null,
+    acceptedAcrValues: [] as string[],
+    primaryFactorAmrValues: ["pwd"],
+    secondaryFactorAmrValues: ["otp", "totp", "webauthn"],
+    phishingResistantAmrValues: [] as string[]
   };
 }

@@ -50,6 +50,12 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: false,
     requiresPatientId: false
   },
+  "auth.refresh.recovery_uncertain": {
+    category: "security",
+    riskLevel: "critical",
+    phiInvolved: false,
+    requiresPatientId: false
+  },
   "auth.mfa.denied": {
     category: "security",
     riskLevel: "high",

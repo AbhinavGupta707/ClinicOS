@@ -2,6 +2,8 @@ import {
   AuthenticationError,
   assertMfaForAccess,
   deriveVerifiedRequestScope,
+  normalizeCanonicalKeycloakIssuer,
+  normalizeMfaAssurancePolicy,
   principalFromProductionKeycloakClaims,
   type ProductionAuthenticatedPrincipal,
   type VerifiedRequestScope
@@ -109,6 +111,7 @@ export class IdentitySessionEdgeGuard {
         roleSlugs: scope.roleSlugs,
         amr: principal.amr,
         acr: principal.acr,
+        mfaAssurancePolicy: this.#configuration.mfaAssurancePolicy,
         subject: principal.subject,
         issuer: principal.issuer,
         authorizedParty: principal.authorizedParty,
@@ -153,10 +156,11 @@ export function assertNoBrowserSessionCookie(
 function normalizeConfiguration(
   configuration: IdentitySessionEdgeConfiguration
 ): IdentitySessionEdgeConfiguration {
-  const expectedIssuer = normalizeIdentityIssuer(
+  const expectedIssuer = normalizeCanonicalKeycloakIssuer(
     configuration.expectedIssuer,
     configuration.productionLike
   );
+  const mfaAssurancePolicy = normalizeMfaAssurancePolicy(configuration.mfaAssurancePolicy);
   if (
     !/^[A-Za-z0-9._:-]{3,128}$/.test(configuration.requiredAudience) ||
     configuration.acceptedAuthorizedParties.some(
@@ -183,45 +187,5 @@ function normalizeConfiguration(
   ) {
     throw new Error("Production browser sessions require a __Host- cookie name.");
   }
-  return Object.freeze({ ...configuration, expectedIssuer });
-}
-
-function normalizeIdentityIssuer(value: string, productionLike: boolean): string {
-  if (
-    typeof value !== "string" ||
-    value.length < 16 ||
-    value.length > 512 ||
-    value.trim() !== value ||
-    /[\u0000-\u001F\u007F\\]/.test(value)
-  ) {
-    throw new Error("Identity edge issuer is malformed or unbounded.");
-  }
-  let issuer: URL;
-  try {
-    issuer = new URL(value);
-  } catch {
-    throw new Error("Identity edge issuer is malformed.");
-  }
-  if (issuer.username || issuer.password || issuer.search || issuer.hash) {
-    throw new Error("Identity edge issuer cannot contain userinfo, query, or fragment.");
-  }
-  if (!/^\/realms\/[a-z][a-z0-9-]{2,62}$/.test(issuer.pathname)) {
-    throw new Error("Identity edge issuer must use one canonical bounded Keycloak realm path.");
-  }
-  if (productionLike) {
-    if (issuer.protocol !== "https:" || issuer.port) {
-      throw new Error("Production identity issuer must use canonical HTTPS without a port.");
-    }
-  } else if (issuer.protocol === "http:") {
-    if (!["localhost", "127.0.0.1", "::1"].includes(issuer.hostname)) {
-      throw new Error("Local HTTP identity issuer is restricted to the loopback host.");
-    }
-  } else if (issuer.protocol !== "https:") {
-    throw new Error("Identity edge issuer protocol is not accepted.");
-  }
-  const canonical = `${issuer.origin}${issuer.pathname}`;
-  if (value !== canonical) {
-    throw new Error("Identity edge issuer is not in canonical form.");
-  }
-  return canonical;
+  return Object.freeze({ ...configuration, expectedIssuer, mfaAssurancePolicy });
 }

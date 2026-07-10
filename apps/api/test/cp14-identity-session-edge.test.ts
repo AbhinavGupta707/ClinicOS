@@ -49,6 +49,45 @@ test("identity edge preserves verified tenant/clinic authority and MFA for privi
     (error) => error instanceof BoundaryError && error.code === "UNAUTHENTICATED"
   );
   assert.equal(auditOutbox.intents.at(-1)?.action, "auth.mfa.denied");
+  for (const bypassClaims of [
+    { ...tokenClaims(["otp"]), acr: "urn:unproved:aal2" },
+    { ...tokenClaims(["webauthn"]), acr: "urn:unproved:mfa" },
+    { ...tokenClaims(["mfa"]), acr: "2" }
+  ]) {
+    await assert.rejects(
+      guard.verify({
+        claims: bypassClaims,
+        accessContext: context("owner_admin"),
+        clinics: [clinic()],
+        selectedClinicId: clinicId,
+        now
+      }),
+      (error) => error instanceof BoundaryError && error.code === "UNAUTHENTICATED"
+    );
+  }
+
+  const reviewedAcrGuard = new IdentitySessionEdgeGuard({
+    configuration: {
+      ...configuration(),
+      mfaAssurancePolicy: {
+        ...mfaPolicy(),
+        policyId: "reviewed-realm-acr-v1",
+        reviewedRealmEvidenceId: "realm-evidence-2026-07-10",
+        acceptedAcrValues: ["urn:clinicos:reviewed:aal2"]
+      }
+    },
+    revocations: new TestRevocationStore(),
+    securityAuditOutbox: new TestSecurityAuditOutbox()
+  });
+  await assert.doesNotReject(
+    reviewedAcrGuard.verify({
+      claims: { ...tokenClaims(["pwd"]), acr: "urn:clinicos:reviewed:aal2" },
+      accessContext: context("owner_admin"),
+      clinics: [clinic()],
+      selectedClinicId: clinicId,
+      now
+    })
+  );
   auditOutbox.fail = true;
   await assert.rejects(
     guard.verify({
@@ -256,10 +295,22 @@ function configuration() {
   return {
     productionLike: true,
     expectedIssuer: issuer,
+    mfaAssurancePolicy: mfaPolicy(),
     requiredAudience: "clinic-os-api",
     acceptedAuthorizedParties: ["clinic-os-web-bff", "clinic-os-mobile"] as [string, ...string[]],
     maximumAccessTokenLifetimeSeconds: 300,
     browserSessionCookieName: "__Host-clinicos_session"
+  };
+}
+
+function mfaPolicy() {
+  return {
+    policyId: "clinicos-amr-two-factor-v1",
+    reviewedRealmEvidenceId: null,
+    acceptedAcrValues: [] as string[],
+    primaryFactorAmrValues: ["pwd"],
+    secondaryFactorAmrValues: ["otp", "totp", "webauthn"],
+    phishingResistantAmrValues: [] as string[]
   };
 }
 

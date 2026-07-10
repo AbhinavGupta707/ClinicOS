@@ -17,7 +17,7 @@ export type RequiredSecurityAuditIntent =
       reasonCode: string;
     })
   | (RequiredSecurityAuditBase & {
-      action: "auth.refresh.replay_detected";
+      action: "auth.refresh.replay_detected" | "auth.refresh.recovery_uncertain";
       issuer: string;
       authorizedParty: string;
       reasonCode: string;

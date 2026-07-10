@@ -237,6 +237,7 @@ test("session, refresh replay, MFA, and JML audit actions are security-classifie
   assert.equal(classifyAuditAction("auth.session.rotated").riskLevel, "medium");
   assert.equal(classifyAuditAction("auth.session.revoked").riskLevel, "high");
   assert.equal(classifyAuditAction("auth.refresh.replay_detected").riskLevel, "critical");
+  assert.equal(classifyAuditAction("auth.refresh.recovery_uncertain").riskLevel, "critical");
   assert.equal(classifyAuditAction("auth.mfa.denied").riskLevel, "high");
   assert.equal(classifyAuditAction("identity.joiner.completed").category, "administration");
   assert.equal(classifyAuditAction("identity.mover.completed").riskLevel, "critical");

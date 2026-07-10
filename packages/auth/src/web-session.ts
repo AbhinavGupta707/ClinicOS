@@ -9,6 +9,12 @@ import {
   validateRequiredSecurityAuditIntent,
   type RequiredSecurityAuditIntent
 } from "./security-audit.ts";
+import {
+  hasMfaEvidence,
+  normalizeCanonicalKeycloakIssuer,
+  normalizeMfaAssurancePolicy,
+  type MfaAssurancePolicy
+} from "./production-identity.ts";
 
 const OPAQUE_ID_PATTERN = /^[A-Za-z0-9_-]{43,128}$/;
 const COOKIE_NAME_PATTERN = /^(?:__Host-)?[A-Za-z0-9_-]{3,64}$/;
@@ -36,6 +42,8 @@ export interface SessionEncryptionKey {
 
 export interface WebSessionPolicy {
   productionLike: boolean;
+  expectedIssuer: string;
+  mfaAssurancePolicy: MfaAssurancePolicy;
   cookieName: string;
   secureCookie: boolean;
   idleTtlSeconds: number;
@@ -176,6 +184,8 @@ export interface RefreshedWebSessionTokenSet extends WebSessionTokenSet {
   issuer: string;
   authorizedParty: string;
   keycloakSessionId?: string | null;
+  amr: readonly string[];
+  acr: string | null;
 }
 
 export interface WebSessionTokenRefresher {
@@ -228,6 +238,8 @@ export interface SafeWebSession {
   authorityRevision: string;
   amr: readonly string[];
   acr: string | null;
+  mfaAssurancePolicyId: string;
+  mfaVerified: boolean;
   csrfToken: string;
   shouldRotate: boolean;
 }
@@ -239,6 +251,31 @@ export interface CreatedWebSession {
 }
 
 export type RotatedWebSession = CreatedWebSession;
+
+export type WebSessionRefreshProviderFailure =
+  | {
+      classification: "confirmed_rejection";
+      reasonCode: "invalid_grant" | "session_expired" | "consent_revoked" | "identity_disabled";
+    }
+  | {
+      classification: "confirmed_replay";
+      reasonCode: "refresh_token_reuse";
+    }
+  | {
+      classification: "transport_uncertain";
+      reasonCode: "timeout" | "network_error" | "provider_unavailable" | "malformed_response";
+    };
+
+/** Official OIDC adapters use this only after classifying the provider/transport result. */
+export class WebSessionRefreshProviderError extends Error {
+  readonly failure: WebSessionRefreshProviderFailure;
+
+  constructor(failure: WebSessionRefreshProviderFailure) {
+    super("OIDC refresh did not produce an accepted durable token result.");
+    this.name = "WebSessionRefreshProviderError";
+    this.failure = Object.freeze({ ...failure });
+  }
+}
 
 export class WebSessionError extends Error {
   readonly code:
@@ -296,7 +333,13 @@ export class WebSessionManager {
     now: Date;
   }): Promise<CreatedWebSession> {
     const now = trustedInstant(input.now, "session creation time");
-    validateIdentity(input.subject, input.issuer, input.authorizedParty, input.authorityRevision);
+    validateIdentity(
+      input.subject,
+      input.issuer,
+      input.authorizedParty,
+      input.authorityRevision,
+      this.#policy.expectedIssuer
+    );
     validateTokenSet(input.tokens, now);
 
     if (input.previousSessionId) {
@@ -325,7 +368,7 @@ export class WebSessionManager {
         absoluteExpiresAt: absoluteExpiresAt.toISOString(),
         authorityRevision: input.authorityRevision,
         amr: normalizeAmr(input.amr ?? []),
-        acr: input.acr ?? null
+        acr: normalizeAcr(input.acr ?? null)
       };
       const sessionKey = this.#sessionKey(sessionId);
       const envelope = encryptRecord(record, sessionKey, this.#policy, this.#randomBytes);
@@ -529,7 +572,7 @@ export class WebSessionManager {
       refreshExpiresAt.getTime() <= now.getTime() ||
       lastSeenAt.getTime() + this.#policy.idleTtlSeconds * 1000 <= now.getTime()
     ) {
-      await this.#revokeLoaded({ sessionKey, envelope, record, now, lastSeenAt }, "expired", false);
+      await this.#revokeLoaded({ sessionKey, envelope, record, now, lastSeenAt }, "expired", null);
       throw new WebSessionError("expired_session", "Session has expired.");
     }
 
@@ -541,7 +584,7 @@ export class WebSessionManager {
       await this.#revokeLoaded(
         { sessionKey, envelope, record, now, lastSeenAt },
         "membership_revoked",
-        false
+        null
       );
       throw new WebSessionError("authority_changed", "Verified membership is inactive.");
     }
@@ -549,7 +592,7 @@ export class WebSessionManager {
       await this.#revokeLoaded(
         { sessionKey, envelope, record, now, lastSeenAt },
         "authority_changed",
-        false
+        null
       );
       throw new WebSessionError("authority_changed", "Session authority is stale.");
     }
@@ -578,7 +621,7 @@ export class WebSessionManager {
         leaseExpiresAt
       });
       if (claim.status === "orphaned_dispatched_refresh") {
-        await this.#revokeUncertainRefresh(current);
+        return this.#revokeUncertainRefresh(current);
       }
       if (claim.status === "missing_or_revoked") {
         throw new WebSessionError("revoked_session", "Session is unavailable or revoked.");
@@ -641,6 +684,7 @@ export class WebSessionManager {
         if (
           refreshed.subject !== current.record.subject ||
           refreshed.issuer !== current.record.issuer ||
+          refreshed.issuer !== this.#policy.expectedIssuer ||
           refreshed.authorizedParty !== current.record.authorizedParty ||
           (current.record.keycloakSessionId &&
             refreshed.keycloakSessionId !== current.record.keycloakSessionId)
@@ -651,43 +695,61 @@ export class WebSessionManager {
           );
         }
       } catch (error) {
-        const replayDetected = hasErrorCode(error, "refresh_replay");
-        await this.#revokeLoaded(
-          current,
-          replayDetected ? "refresh_replay" : "refresh_rejected",
-          replayDetected
-        );
-        throw new WebSessionError(
-          replayDetected ? "refresh_replay" : "refresh_rejected",
-          replayDetected
-            ? "Identity provider detected refresh-token replay; the session family was revoked."
-            : "Identity provider rejected or invalidated session refresh."
-        );
+        if (
+          error instanceof WebSessionRefreshProviderError &&
+          error.failure.classification === "confirmed_replay"
+        ) {
+          await this.#revokeLoaded(current, "refresh_replay", "auth.refresh.replay_detected");
+          throw new WebSessionError(
+            "refresh_replay",
+            "Identity provider detected refresh-token replay; the session family was revoked."
+          );
+        }
+        if (
+          error instanceof WebSessionRefreshProviderError &&
+          error.failure.classification === "confirmed_rejection"
+        ) {
+          await this.#revokeLoaded(current, "refresh_rejected", null);
+          throw new WebSessionError(
+            "refresh_rejected",
+            "Identity provider confirmed that session refresh was rejected."
+          );
+        }
+        return this.#revokeUncertainRefresh(current);
       }
 
-      const nextRecord: StoredWebSessionRecord = {
-        ...current.record,
-        recordVersion: current.record.recordVersion + 1,
-        accessToken: refreshed.accessToken,
-        refreshToken: refreshed.refreshToken,
-        idToken: refreshed.idToken ?? current.record.idToken,
-        accessExpiresAt: refreshed.accessExpiresAt.toISOString(),
-        refreshExpiresAt: refreshed.refreshExpiresAt.toISOString()
-      };
-      const nextEnvelope = encryptRecord(
-        nextRecord,
-        current.sessionKey,
-        this.#policy,
-        this.#randomBytes
-      );
-      const completed = await this.#store.completeRefresh({
-        sessionKey: current.sessionKey,
-        expectedRecordVersion: current.record.recordVersion,
-        leaseId,
-        envelope: nextEnvelope,
-        lastSeenAt: current.now,
-        expiresAt: new Date(nextRecord.absoluteExpiresAt)
-      });
+      let nextRecord: StoredWebSessionRecord;
+      let nextEnvelope: WebSessionEnvelope;
+      let completed: boolean;
+      try {
+        nextRecord = {
+          ...current.record,
+          recordVersion: current.record.recordVersion + 1,
+          accessToken: refreshed.accessToken,
+          refreshToken: refreshed.refreshToken,
+          idToken: refreshed.idToken ?? current.record.idToken,
+          accessExpiresAt: refreshed.accessExpiresAt.toISOString(),
+          refreshExpiresAt: refreshed.refreshExpiresAt.toISOString(),
+          amr: normalizeAmr(refreshed.amr),
+          acr: normalizeAcr(refreshed.acr)
+        };
+        nextEnvelope = encryptRecord(
+          nextRecord,
+          current.sessionKey,
+          this.#policy,
+          this.#randomBytes
+        );
+        completed = await this.#store.completeRefresh({
+          sessionKey: current.sessionKey,
+          expectedRecordVersion: current.record.recordVersion,
+          leaseId,
+          envelope: nextEnvelope,
+          lastSeenAt: current.now,
+          expiresAt: new Date(nextRecord.absoluteExpiresAt)
+        });
+      } catch {
+        return this.#revokeUncertainRefresh(current);
+      }
       if (!completed) {
         await this.#revokeUncertainRefresh(current);
       }
@@ -727,7 +789,7 @@ export class WebSessionManager {
   async #revokeLoaded(
     loaded: LoadedSession,
     reason: WebSessionRevocationReason,
-    replayOrUncertain: boolean
+    refreshAuditAction: "auth.refresh.replay_detected" | "auth.refresh.recovery_uncertain" | null
   ): Promise<void> {
     const sessionRevoked = this.#sessionAudit(
       loaded.record,
@@ -737,12 +799,12 @@ export class WebSessionManager {
       loaded.now
     );
     const requiredAudits: readonly [RequiredSecurityAuditIntent, ...RequiredSecurityAuditIntent[]] =
-      replayOrUncertain
+      refreshAuditAction
         ? [
             this.#sessionAudit(
               loaded.record,
               loaded.envelope.familyKey,
-              "auth.refresh.replay_detected",
+              refreshAuditAction,
               reason,
               loaded.now
             ),
@@ -760,7 +822,11 @@ export class WebSessionManager {
   }
 
   async #revokeUncertainRefresh(loaded: LoadedSession): Promise<never> {
-    await this.#revokeLoaded(loaded, "refresh_recovery_uncertain", false);
+    await this.#revokeLoaded(
+      loaded,
+      "refresh_recovery_uncertain",
+      "auth.refresh.recovery_uncertain"
+    );
     throw new WebSessionError(
       "refresh_recovery_required",
       "A dispatched refresh did not commit durably; the session family was revoked."
@@ -774,7 +840,8 @@ export class WebSessionManager {
       | "auth.session.created"
       | "auth.session.rotated"
       | "auth.session.revoked"
-      | "auth.refresh.replay_detected",
+      | "auth.refresh.replay_detected"
+      | "auth.refresh.recovery_uncertain",
     reasonCode: string,
     occurredAt: Date
   ): RequiredSecurityAuditIntent {
@@ -821,6 +888,11 @@ export class WebSessionManager {
       authorityRevision: record.authorityRevision,
       amr: record.amr,
       acr: record.acr,
+      mfaAssurancePolicyId: this.#policy.mfaAssurancePolicy.policyId,
+      mfaVerified: hasMfaEvidence(
+        { amr: record.amr, acr: record.acr },
+        this.#policy.mfaAssurancePolicy
+      ),
       csrfToken: this.#csrfToken(sessionId),
       shouldRotate: rotatedAt.getTime() + this.#policy.rotateAfterSeconds * 1000 <= now.getTime()
     };
@@ -864,6 +936,17 @@ interface NormalizedSessionEncryptionKey {
 }
 
 function normalizePolicy(policy: WebSessionPolicy): NormalizedWebSessionPolicy {
+  let expectedIssuer: string;
+  let mfaAssurancePolicy: MfaAssurancePolicy;
+  try {
+    expectedIssuer = normalizeCanonicalKeycloakIssuer(policy.expectedIssuer, policy.productionLike);
+    mfaAssurancePolicy = normalizeMfaAssurancePolicy(policy.mfaAssurancePolicy);
+  } catch (error) {
+    throw new WebSessionError(
+      "invalid_configuration",
+      error instanceof Error ? error.message : "Session identity policy is invalid."
+    );
+  }
   if (!COOKIE_NAME_PATTERN.test(policy.cookieName)) {
     throw new WebSessionError("invalid_configuration", "Session cookie name is invalid.");
   }
@@ -912,6 +995,8 @@ function normalizePolicy(policy: WebSessionPolicy): NormalizedWebSessionPolicy {
   }
   return {
     ...policy,
+    expectedIssuer,
+    mfaAssurancePolicy,
     lookupHmacKey: copyHmacKey(policy.lookupHmacKey, "session lookup HMAC key"),
     csrfHmacKey: copyHmacKey(policy.csrfHmacKey, "CSRF HMAC key"),
     encryptionKeys
@@ -1001,7 +1086,13 @@ function validateStoredRecord(
   ) {
     throw new WebSessionError("invalid_session", "Session record version is invalid.");
   }
-  validateIdentity(record.subject, record.issuer, record.authorizedParty, record.authorityRevision);
+  validateIdentity(
+    record.subject,
+    record.issuer,
+    record.authorizedParty,
+    record.authorityRevision,
+    policy.expectedIssuer
+  );
   assertOpaqueId(record.familyId, "session family id");
   for (const value of [
     record.createdAt,
@@ -1023,6 +1114,8 @@ function validateStoredRecord(
   if (!TOKEN_PATTERN.test(record.accessToken) || !TOKEN_PATTERN.test(record.refreshToken)) {
     throw new WebSessionError("invalid_session", "Session token material is malformed.");
   }
+  normalizeAmr(record.amr);
+  normalizeAcr(record.acr);
 }
 
 function validateTokenSet(tokens: WebSessionTokenSet, now: Date): void {
@@ -1043,19 +1136,14 @@ function validateIdentity(
   subject: string,
   issuer: string,
   authorizedParty: string,
-  authorityRevision: string
+  authorityRevision: string,
+  expectedIssuer: string
 ): void {
   if (!subject || Buffer.byteLength(subject) > 255 || /[\u0000\r\n]/.test(subject)) {
     throw new WebSessionError("invalid_session", "Session subject is invalid.");
   }
-  let parsedIssuer: URL;
-  try {
-    parsedIssuer = new URL(issuer);
-  } catch {
-    throw new WebSessionError("invalid_session", "Session issuer is invalid.");
-  }
-  if (!["https:", "http:"].includes(parsedIssuer.protocol) || parsedIssuer.hash) {
-    throw new WebSessionError("invalid_session", "Session issuer is invalid.");
+  if (issuer !== expectedIssuer) {
+    throw new WebSessionError("invalid_session", "Session issuer does not match configuration.");
   }
   if (!/^[A-Za-z0-9._:-]{3,128}$/.test(authorizedParty)) {
     throw new WebSessionError("invalid_session", "Session authorized party is invalid.");
@@ -1119,6 +1207,14 @@ function normalizeAmr(values: readonly string[]): string[] {
   return normalized.sort();
 }
 
+function normalizeAcr(value: string | null): string | null {
+  if (value === null) return null;
+  if (!/^[\x21-\x7E]{1,255}$/.test(value) || value.trim() !== value) {
+    throw new WebSessionError("invalid_session", "Session authentication context is invalid.");
+  }
+  return value;
+}
+
 function assertPolicySeconds(value: number, minimum: number, maximum: number, label: string): void {
   if (!Number.isSafeInteger(value) || value < minimum || value > maximum) {
     throw new WebSessionError(
@@ -1147,13 +1243,4 @@ function secureEqual(left: string, right: string): boolean {
   const leftBuffer = Buffer.from(left, "utf8");
   const rightBuffer = Buffer.from(right, "utf8");
   return leftBuffer.length === rightBuffer.length && timingSafeEqual(leftBuffer, rightBuffer);
-}
-
-function hasErrorCode(error: unknown, code: string): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === code
-  );
 }

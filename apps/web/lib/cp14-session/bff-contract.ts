@@ -5,6 +5,7 @@ const MUTATION_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
 export interface Cp14BffConfiguration {
   productionLike: boolean;
   issuer: string;
+  mfaAssurancePolicy: Cp14MfaAssurancePolicy;
   authorizationEndpoint: string;
   tokenEndpoint: string;
   revocationEndpoint: string;
@@ -16,6 +17,15 @@ export interface Cp14BffConfiguration {
   apiBaseUrl: string;
   allowedApiPathPrefixes: readonly string[];
   stateCookieName?: string;
+}
+
+export interface Cp14MfaAssurancePolicy {
+  policyId: string;
+  reviewedRealmEvidenceId: string | null;
+  acceptedAcrValues: readonly string[];
+  primaryFactorAmrValues: readonly string[];
+  secondaryFactorAmrValues: readonly string[];
+  phishingResistantAmrValues: readonly string[];
 }
 
 export interface Cp14BffRequest {
@@ -40,6 +50,8 @@ export interface Cp14SafeWebSession {
   csrfToken: string;
   acr: string | null;
   amr: readonly string[];
+  mfaAssurancePolicyId: string;
+  mfaVerified: boolean;
   shouldRotate: boolean;
 }
 
@@ -131,6 +143,7 @@ export interface Cp14IdentityValidator {
       expectedIssuer: string;
       requiredAudience: string;
       acceptedAuthorizedParties: readonly string[];
+      mfaAssurancePolicy: Cp14MfaAssurancePolicy;
     }
   ): {
     subject: string;
@@ -188,6 +201,8 @@ export interface Cp14OidcTokenClient {
       issuer: string;
       authorizedParty: string;
       keycloakSessionId?: string | null;
+      amr: readonly string[];
+      acr: string | null;
     }
   >;
   revoke(input: {
@@ -303,7 +318,8 @@ export class Cp14BffRuntime {
       now,
       expectedIssuer: this.#configuration.issuer,
       requiredAudience: this.#configuration.apiAudience,
-      acceptedAuthorizedParties: [this.#configuration.clientId]
+      acceptedAuthorizedParties: [this.#configuration.clientId],
+      mfaAssurancePolicy: this.#configuration.mfaAssurancePolicy
     });
     if (
       exchanged.idTokenNonce !== completed.nonce ||
@@ -334,6 +350,7 @@ export class Cp14BffRuntime {
       previousSessionId,
       now
     });
+    this.#assertSessionMfaPolicy(created.safeSession);
     return {
       status: 303,
       headers: {
@@ -353,10 +370,12 @@ export class Cp14BffRuntime {
     this.#assertBoundary(request);
     const sessionId = this.#requireSessionId(request);
     let session = await this.#sessions.inspect(sessionId, this.#authorityResolver, now);
+    this.#assertSessionMfaPolicy(session);
     let cookie: string | null = null;
     if (session.shouldRotate) {
       const rotated = await this.#sessions.rotate(sessionId, this.#authorityResolver, now);
       session = rotated.safeSession;
+      this.#assertSessionMfaPolicy(session);
       cookie = rotated.cookie;
     }
     return {
@@ -371,7 +390,8 @@ export class Cp14BffRuntime {
         expiresAt: session.absoluteExpiresAt,
         csrfToken: session.csrfToken,
         authenticationAssurance: session.acr,
-        authenticationMethods: [...session.amr]
+        authenticationMethods: [...session.amr],
+        mfaVerified: session.mfaVerified
       }
     };
   }
@@ -426,7 +446,8 @@ export class Cp14BffRuntime {
       authorityResolver: this.#authorityResolver,
       tokenRefresher: this.#tokens,
       now,
-      execute: async (accessToken) => {
+      execute: async (accessToken, session) => {
+        this.#assertSessionMfaPolicy(session);
         const response = await this.#api.send({
           url,
           method,
@@ -495,6 +516,19 @@ export class Cp14BffRuntime {
     }
     return target.toString();
   }
+
+  #assertSessionMfaPolicy(session: Cp14SafeWebSession): void {
+    if (
+      session.mfaAssurancePolicyId !== this.#configuration.mfaAssurancePolicy.policyId ||
+      session.mfaVerified !==
+        hasConfiguredMfaEvidence(session, this.#configuration.mfaAssurancePolicy)
+    ) {
+      throw new Cp14BffError(
+        "UNAUTHENTICATED",
+        "Web session MFA assurance does not match the configured reviewed policy."
+      );
+    }
+  }
 }
 
 function normalizeBffConfiguration(
@@ -503,7 +537,8 @@ function normalizeBffConfiguration(
   if (!configuration.clientSecret || Buffer.byteLength(configuration.clientSecret) < 32) {
     throw new Error("Web BFF client secret is missing or shorter than 32 bytes.");
   }
-  const issuer = trustedServerUrl(configuration.issuer, configuration.productionLike, "issuer");
+  const issuer = canonicalKeycloakIssuerUrl(configuration.issuer, configuration.productionLike);
+  const mfaAssurancePolicy = normalizeBffMfaAssurancePolicy(configuration.mfaAssurancePolicy);
   const authorizationEndpoint = trustedServerUrl(
     configuration.authorizationEndpoint,
     configuration.productionLike,
@@ -519,9 +554,14 @@ function normalizeBffConfiguration(
     configuration.productionLike,
     "revocation endpoint"
   );
-  for (const endpoint of [authorizationEndpoint, tokenEndpoint, revocationEndpoint]) {
-    if (endpoint.origin !== issuer.origin || !endpoint.pathname.startsWith(`${issuer.pathname}/`)) {
-      throw new Error("OIDC endpoints must belong to the configured issuer.");
+  const exactOidcPaths = new Map<URL, string>([
+    [authorizationEndpoint, `${issuer.pathname}/protocol/openid-connect/auth`],
+    [tokenEndpoint, `${issuer.pathname}/protocol/openid-connect/token`],
+    [revocationEndpoint, `${issuer.pathname}/protocol/openid-connect/revoke`]
+  ]);
+  for (const [endpoint, expectedPath] of exactOidcPaths) {
+    if (endpoint.origin !== issuer.origin || endpoint.pathname !== expectedPath) {
+      throw new Error("OIDC endpoint does not match its exact standard issuer path.");
     }
   }
   const webOrigin = trustedOrigin(configuration.webOrigin, configuration.productionLike);
@@ -530,13 +570,22 @@ function normalizeBffConfiguration(
     configuration.productionLike,
     "callback URI"
   );
-  if (callback.origin !== webOrigin)
-    throw new Error("BFF callback must use the configured web origin.");
+  if (
+    callback.origin !== webOrigin ||
+    callback.pathname === "/" ||
+    callback.pathname.includes("%") ||
+    callback.pathname.includes("//")
+  )
+    throw new Error("BFF callback must use one canonical path on the configured web origin.");
   const apiBase = trustedServerUrl(
     configuration.apiBaseUrl,
     configuration.productionLike,
-    "API base URL"
+    "API base URL",
+    "slash"
   );
+  if (apiBase.pathname !== "/") {
+    throw new Error("BFF API base URL must be an exact origin root.");
+  }
   if (
     configuration.allowedApiPathPrefixes.length === 0 ||
     configuration.allowedApiPathPrefixes.some(
@@ -556,7 +605,8 @@ function normalizeBffConfiguration(
   }
   return Object.freeze({
     ...configuration,
-    issuer: issuer.toString().replace(/\/$/, ""),
+    issuer: `${issuer.origin}${issuer.pathname}`,
+    mfaAssurancePolicy,
     authorizationEndpoint: authorizationEndpoint.toString(),
     tokenEndpoint: tokenEndpoint.toString(),
     revocationEndpoint: revocationEndpoint.toString(),
@@ -582,7 +632,21 @@ function parseRequestUrl(value: string, base: string): URL {
   return url;
 }
 
-function trustedServerUrl(value: string, productionLike: boolean, label: string): URL {
+function trustedServerUrl(
+  value: string,
+  productionLike: boolean,
+  label: string,
+  rootForm: "origin" | "slash" = "origin"
+): URL {
+  if (
+    typeof value !== "string" ||
+    value.length < 8 ||
+    value.length > 2048 ||
+    value.trim() !== value ||
+    /[\u0000-\u001F\u007F\\]/.test(value)
+  ) {
+    throw new Error(`BFF ${label} is malformed or unbounded.`);
+  }
   let url: URL;
   try {
     url = new URL(value);
@@ -594,9 +658,23 @@ function trustedServerUrl(value: string, productionLike: boolean, label: string)
     url.protocol === "http:" &&
     ["localhost", "127.0.0.1", "::1"].includes(url.hostname);
   if (url.protocol !== "https:" && !localHttp) throw new Error(`BFF ${label} must use HTTPS.`);
-  if (url.username || url.password || url.hash)
+  if (url.username || url.password || url.search || url.hash)
     throw new Error(`BFF ${label} contains forbidden components.`);
+  if (productionLike && url.port) throw new Error(`BFF ${label} cannot use a production port.`);
+  const canonical =
+    url.pathname === "/" && rootForm === "origin" ? url.origin : `${url.origin}${url.pathname}`;
+  if (value !== canonical) {
+    throw new Error(`BFF ${label} is not in canonical form.`);
+  }
   return url;
+}
+
+function canonicalKeycloakIssuerUrl(value: string, productionLike: boolean): URL {
+  const issuer = trustedServerUrl(value, productionLike, "issuer");
+  if (!/^\/realms\/[a-z][a-z0-9-]{2,62}$/.test(issuer.pathname)) {
+    throw new Error("BFF issuer must use one canonical bounded Keycloak realm path.");
+  }
+  return issuer;
 }
 
 function trustedOrigin(value: string, productionLike: boolean): string {
@@ -604,6 +682,111 @@ function trustedOrigin(value: string, productionLike: boolean): string {
   if (url.pathname !== "/" || url.search)
     throw new Error("BFF web origin cannot include a path or query.");
   return url.origin;
+}
+
+function normalizeBffMfaAssurancePolicy(policy: Cp14MfaAssurancePolicy): Cp14MfaAssurancePolicy {
+  if (!/^[A-Za-z0-9._:-]{8,128}$/.test(policy.policyId)) {
+    throw new Error("BFF MFA assurance policy id is malformed.");
+  }
+  if (
+    policy.reviewedRealmEvidenceId !== null &&
+    !/^[A-Za-z0-9._:-]{8,128}$/.test(policy.reviewedRealmEvidenceId)
+  ) {
+    throw new Error("BFF MFA realm-evidence id is malformed.");
+  }
+  const acceptedAcrValues = exactPolicyValues(
+    policy.acceptedAcrValues,
+    /^[\x21-\x7E]{1,255}$/,
+    "ACR"
+  );
+  if (acceptedAcrValues.some((value) => value.includes("*"))) {
+    throw new Error("BFF MFA ACR allowlist cannot contain wildcards.");
+  }
+  const primaryFactorAmrValues = exactPolicyValues(
+    policy.primaryFactorAmrValues,
+    /^[a-z0-9._:-]{1,64}$/,
+    "primary AMR"
+  );
+  const secondaryFactorAmrValues = exactPolicyValues(
+    policy.secondaryFactorAmrValues,
+    /^[a-z0-9._:-]{1,64}$/,
+    "secondary AMR"
+  );
+  const phishingResistantAmrValues = exactPolicyValues(
+    policy.phishingResistantAmrValues,
+    /^[a-z0-9._:-]{1,64}$/,
+    "phishing-resistant AMR"
+  );
+  const allAmr = [
+    ...primaryFactorAmrValues,
+    ...secondaryFactorAmrValues,
+    ...phishingResistantAmrValues
+  ];
+  if (new Set(allAmr).size !== allAmr.length) {
+    throw new Error("BFF MFA AMR factor classes must be disjoint.");
+  }
+  if (
+    !policy.reviewedRealmEvidenceId &&
+    (acceptedAcrValues.length > 0 || phishingResistantAmrValues.length > 0)
+  ) {
+    throw new Error("BFF ACR and single-factor MFA evidence require reviewed realm evidence.");
+  }
+  return Object.freeze({
+    policyId: policy.policyId,
+    reviewedRealmEvidenceId: policy.reviewedRealmEvidenceId,
+    acceptedAcrValues: Object.freeze(acceptedAcrValues),
+    primaryFactorAmrValues: Object.freeze(primaryFactorAmrValues),
+    secondaryFactorAmrValues: Object.freeze(secondaryFactorAmrValues),
+    phishingResistantAmrValues: Object.freeze(phishingResistantAmrValues)
+  });
+}
+
+function hasConfiguredMfaEvidence(
+  session: Pick<Cp14SafeWebSession, "amr" | "acr">,
+  policy: Cp14MfaAssurancePolicy
+): boolean {
+  const methods = [
+    ...new Set(session.amr.map((value) => value.trim().toLowerCase()).filter(Boolean))
+  ];
+  if (methods.some((value) => !/^[a-z0-9._:-]{1,64}$/.test(value))) {
+    throw new Cp14BffError("UNAUTHENTICATED", "Web session AMR evidence is malformed.");
+  }
+  if (
+    session.acr !== null &&
+    (!/^[\x21-\x7E]{1,255}$/.test(session.acr) || session.acr.trim() !== session.acr)
+  ) {
+    throw new Cp14BffError("UNAUTHENTICATED", "Web session ACR evidence is malformed.");
+  }
+  if (
+    policy.reviewedRealmEvidenceId &&
+    session.acr !== null &&
+    policy.acceptedAcrValues.includes(session.acr)
+  ) {
+    return true;
+  }
+  if (
+    policy.reviewedRealmEvidenceId &&
+    methods.some((method) => policy.phishingResistantAmrValues.includes(method))
+  ) {
+    return true;
+  }
+  return (
+    methods.some((method) => policy.primaryFactorAmrValues.includes(method)) &&
+    methods.some((method) => policy.secondaryFactorAmrValues.includes(method))
+  );
+}
+
+function exactPolicyValues(values: readonly string[], pattern: RegExp, label: string): string[] {
+  if (!Array.isArray(values) || values.length > 32) {
+    throw new Error(`BFF MFA ${label} allowlist is unbounded.`);
+  }
+  if (values.some((value) => !pattern.test(value) || value.trim() !== value)) {
+    throw new Error(`BFF MFA ${label} allowlist is malformed.`);
+  }
+  if (new Set(values).size !== values.length) {
+    throw new Error(`BFF MFA ${label} allowlist contains duplicates.`);
+  }
+  return [...values].sort();
 }
 
 function serializeStateCookie(

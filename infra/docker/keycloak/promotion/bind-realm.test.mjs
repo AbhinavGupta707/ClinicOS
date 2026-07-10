@@ -179,11 +179,17 @@ test("privileged product, administrator, and break-glass MFA boundaries are expl
   const boundary = JSON.parse(await readFile(privilegedMfaBoundaryPath, "utf8"));
   const topology = JSON.parse(await readFile(topologyPath, "utf8"));
   assert.equal(boundary.productWorkforce.realmTemplateEnforcesRoleConditionalMfa, false);
-  assert.equal(boundary.productWorkforce.applicationRequiresVerifiedAmrOrAcr, true);
+  assert.equal(boundary.productWorkforce.applicationMfaAssurancePolicyRequired, true);
+  assert.equal(boundary.productWorkforce.defaultWeakSingleAmrDenied, true);
+  assert.equal(
+    boundary.productWorkforce.acrAcceptanceRequiresExactAllowlistAndReviewedRealmEvidence,
+    true
+  );
   assert.equal(boundary.keycloakAdministration.productionRealmTemplateEnforcesAdminMfa, false);
   assert.equal(boundary.keycloakAdministration.managementRealmOrFederatedOperatorMfaRequired, true);
   assert.equal(boundary.keycloakAdministration.failReadinessUntilRuntimeMfaEvidenceExists, true);
-  assert.equal(boundary.clinicalBreakGlass.verifiedAmrOrAcrRequired, true);
+  assert.equal(boundary.clinicalBreakGlass.applicationMfaAssurancePolicyRequired, true);
+  assert.equal(boundary.clinicalBreakGlass.weakSingleAmrAndUnprovedAcrDenied, true);
   assert.equal(topology.network.adminReadinessRequiresRuntimeMfaEvidence, true);
   assert.equal(topology.network.adminMfaBoundaryPolicy, "operations/privileged-mfa-boundary.json");
 });

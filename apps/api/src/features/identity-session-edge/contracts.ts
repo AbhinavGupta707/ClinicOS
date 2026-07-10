@@ -1,6 +1,7 @@
 import type {
   AccessContext,
   KeycloakAccessTokenClaims,
+  MfaAssurancePolicy,
   RequiredSecurityAuditOutbox
 } from "@clinic-os/auth";
 import type { Clinic, UUID } from "@clinic-os/domain";
@@ -28,6 +29,7 @@ export interface IdentitySecurityAuditOutbox extends RequiredSecurityAuditOutbox
 export interface IdentitySessionEdgeConfiguration {
   productionLike: boolean;
   expectedIssuer: string;
+  mfaAssurancePolicy: MfaAssurancePolicy;
   requiredAudience: string;
   acceptedAuthorizedParties: readonly [string, ...string[]];
   maximumAccessTokenLifetimeSeconds: number;

@@ -6,10 +6,12 @@ import {
   OAuthTransactionManager,
   WebSessionError,
   WebSessionManager,
+  WebSessionRefreshProviderError,
   assertActiveBreakGlassGrant,
   assertMfaForAccess,
   buildJmlControlPlan,
   executeJmlControlPlan,
+  hasMfaEvidence,
   principalFromProductionKeycloakClaims,
   type MobileTokenVault,
   type OAuthTransactionRecord,
@@ -208,6 +210,21 @@ test("web sessions use encrypted opaque cookies, rotate fixation identifiers, an
   assert.match(created.cookie, /HttpOnly/);
   assert.match(created.cookie, /SameSite=Lax/);
   assert.equal(created.cookie.includes("access-token"), false);
+  assert.equal(created.safeSession.mfaAssurancePolicyId, mfaPolicy().policyId);
+  assert.equal(created.safeSession.mfaVerified, true);
+  const weakAssurance = await createWebSessionManager(
+    new TestWebSessionStore()
+  ).createAuthenticatedSession({
+    subject: "keycloak-subject-weak-mfa",
+    issuer: "https://identity.example/realms/clinic-os",
+    authorizedParty: "clinic-os-web-bff",
+    authorityRevision: "authority-revision-1",
+    amr: ["otp"],
+    acr: "urn:unproved:aal2",
+    tokens: tokenSet(now),
+    now
+  });
+  assert.equal(weakAssurance.safeSession.mfaVerified, false);
   const previousId = manager.parseSessionId(created.cookie);
   assert.ok(previousId);
   assert.equal(
@@ -280,6 +297,62 @@ test("web sessions fail closed for revoked memberships and stale authority revis
       new Date(now.getTime() + 1_000)
     ),
     /inactive/
+  );
+});
+
+test("web sessions pin one canonical expected issuer across create and encrypted reload", async () => {
+  const store = new TestWebSessionStore();
+  const manager = createWebSessionManager(store);
+  await assert.rejects(
+    manager.createAuthenticatedSession({
+      subject: "keycloak-subject-wrong-issuer",
+      issuer: "https://attacker.example/realms/clinic-os",
+      authorizedParty: "clinic-os-web-bff",
+      authorityRevision: "authority-revision-1",
+      tokens: tokenSet(now),
+      now
+    }),
+    /does not match configuration/
+  );
+
+  const sessionId = await createWebSession(
+    manager,
+    "keycloak-subject-encrypted-issuer",
+    tokenSet(now)
+  );
+  const miswiredManager = createWebSessionManager(
+    store,
+    "https://identity.example/realms/other-realm"
+  );
+  await assert.rejects(
+    miswiredManager.inspect(sessionId, activeAuthority("authority-revision-1"), now),
+    /does not match configuration/
+  );
+
+  assert.throws(
+    () =>
+      createWebSessionManager(
+        new TestWebSessionStore(),
+        "http://identity.internal/realms/clinic-os"
+      ),
+    /loopback/
+  );
+  assert.throws(
+    () =>
+      createWebSessionManager(
+        new TestWebSessionStore(),
+        "https://identity.example/realms/clinic-os?issuer=confused"
+      ),
+    /query/
+  );
+  assert.throws(
+    () =>
+      createWebSessionManager(
+        new TestWebSessionStore(),
+        "https://identity.example:8443/realms/clinic-os",
+        true
+      ),
+    /without a port/
   );
 });
 
@@ -468,6 +541,11 @@ test("an orphaned dispatched refresh is recovered by revoking once with durable 
     0
   );
   assert.equal(
+    store.auditIntents.filter((intent) => intent.action === "auth.refresh.recovery_uncertain")
+      .length,
+    1
+  );
+  assert.equal(
     store.auditIntents.filter((intent) => intent.action === "auth.session.revoked").length,
     1
   );
@@ -548,6 +626,11 @@ test("lost durable refresh completion fails closed instead of reusing uncertain 
     store.auditIntents.filter((intent) => intent.action === "auth.refresh.replay_detected").length,
     0
   );
+  assert.equal(
+    store.auditIntents.filter((intent) => intent.action === "auth.refresh.recovery_uncertain")
+      .length,
+    1
+  );
 });
 
 test("provider-confirmed refresh replay revokes atomically with replay and session audits", async () => {
@@ -564,7 +647,10 @@ test("provider-confirmed refresh replay revokes atomically with replay and sessi
       tokenRefresher: {
         refresh: async () =>
           Promise.reject(
-            Object.assign(new Error("provider denied refresh"), { code: "refresh_replay" })
+            new WebSessionRefreshProviderError({
+              classification: "confirmed_replay",
+              reasonCode: "refresh_token_reuse"
+            })
           )
       },
       now: new Date(now.getTime() + 1_000),
@@ -580,6 +666,107 @@ test("provider-confirmed refresh replay revokes atomically with replay and sessi
       .map((intent) => intent.action)
       .sort(),
     ["auth.refresh.replay_detected", "auth.session.revoked"]
+  );
+});
+
+test("timeout after possible provider rotation revokes as uncertain without retrying old refresh", async () => {
+  const store = new TestWebSessionStore();
+  const manager = createWebSessionManager(store);
+  const sessionId = await createWebSession(manager, "keycloak-subject-timeout", {
+    ...tokenSet(now),
+    accessExpiresAt: new Date(now.getTime() + 30_000)
+  });
+  let providerCalls = 0;
+  await assert.rejects(
+    manager.withAccessToken({
+      sessionId,
+      authorityResolver: activeAuthority("authority-revision-1"),
+      tokenRefresher: {
+        refresh: async () => {
+          providerCalls += 1;
+          throw new Error("timeout after provider may have rotated refresh token");
+        }
+      },
+      now: new Date(now.getTime() + 1_000),
+      execute: async () => "should-not-run"
+    }),
+    (error) => error instanceof WebSessionError && error.code === "refresh_recovery_required"
+  );
+  assert.equal(providerCalls, 1);
+  assert.deepEqual(
+    store.auditIntents
+      .filter((intent) =>
+        ["auth.refresh.recovery_uncertain", "auth.session.revoked"].includes(intent.action)
+      )
+      .map((intent) => intent.action)
+      .sort(),
+    ["auth.refresh.recovery_uncertain", "auth.session.revoked"]
+  );
+});
+
+test("provider-confirmed invalid_grant is rejected without replay or uncertainty classification", async () => {
+  const store = new TestWebSessionStore();
+  const manager = createWebSessionManager(store);
+  const sessionId = await createWebSession(manager, "keycloak-subject-invalid-grant", {
+    ...tokenSet(now),
+    accessExpiresAt: new Date(now.getTime() + 30_000)
+  });
+  let providerCalls = 0;
+  await assert.rejects(
+    manager.withAccessToken({
+      sessionId,
+      authorityResolver: activeAuthority("authority-revision-1"),
+      tokenRefresher: {
+        refresh: async () => {
+          providerCalls += 1;
+          throw new WebSessionRefreshProviderError({
+            classification: "confirmed_rejection",
+            reasonCode: "invalid_grant"
+          });
+        }
+      },
+      now: new Date(now.getTime() + 1_000),
+      execute: async () => "should-not-run"
+    }),
+    (error) => error instanceof WebSessionError && error.code === "refresh_rejected"
+  );
+  assert.equal(providerCalls, 1);
+  assert.equal(
+    store.auditIntents.filter((intent) => intent.action === "auth.session.revoked").length,
+    1
+  );
+  assert.equal(
+    store.auditIntents.some((intent) => intent.action.startsWith("auth.refresh.")),
+    false
+  );
+});
+
+test("refreshed identity issuer drift revokes as uncertain before persisting new tokens", async () => {
+  const store = new TestWebSessionStore();
+  const manager = createWebSessionManager(store);
+  const sessionId = await createWebSession(manager, "keycloak-subject-refresh-issuer", {
+    ...tokenSet(now),
+    accessExpiresAt: new Date(now.getTime() + 30_000)
+  });
+  await assert.rejects(
+    manager.withAccessToken({
+      sessionId,
+      authorityResolver: activeAuthority("authority-revision-1"),
+      tokenRefresher: {
+        refresh: async () => ({
+          ...refreshedTokenSet("keycloak-subject-refresh-issuer", new Date(now.getTime() + 2_000)),
+          issuer: "https://attacker.example/realms/clinic-os"
+        })
+      },
+      now: new Date(now.getTime() + 1_000),
+      execute: async () => "should-not-run"
+    }),
+    (error) => error instanceof WebSessionError && error.code === "refresh_recovery_required"
+  );
+  assert.equal(
+    store.auditIntents.filter((intent) => intent.action === "auth.refresh.recovery_uncertain")
+      .length,
+    1
   );
 });
 
@@ -703,10 +890,27 @@ test("mobile logout purges locally before requiring upstream refresh-token revoc
 
 test("MFA, JML, and break-glass controls persist required audit evidence", async () => {
   const auditOutbox = new TestRequiredAuditOutbox();
+  assert.equal(hasMfaEvidence({ amr: ["otp"], acr: "urn:unproved:aal2" }, mfaPolicy()), false);
+  assert.equal(hasMfaEvidence({ amr: ["webauthn"], acr: "mfa:2" }, mfaPolicy()), false);
+  assert.equal(hasMfaEvidence({ amr: ["mfa"] }, mfaPolicy()), false);
+  assert.equal(hasMfaEvidence({ amr: ["pwd", "otp"] }, mfaPolicy()), true);
+  assert.equal(
+    hasMfaEvidence(
+      { amr: ["pwd"], acr: "urn:clinicos:reviewed:aal2" },
+      {
+        ...mfaPolicy(),
+        policyId: "reviewed-realm-acr-v1",
+        reviewedRealmEvidenceId: "realm-evidence-2026-07-10",
+        acceptedAcrValues: ["urn:clinicos:reviewed:aal2"]
+      }
+    ),
+    true
+  );
   await assert.rejects(
     assertMfaForAccess({
       roleSlugs: ["platform_admin"],
       amr: ["pwd"],
+      mfaAssurancePolicy: mfaPolicy(),
       subject: "keycloak-subject-0001",
       issuer: "https://identity.example/realms/clinic-os",
       authorizedParty: "clinic-os-web-bff",
@@ -722,6 +926,7 @@ test("MFA, JML, and break-glass controls persist required audit evidence", async
     assertMfaForAccess({
       roleSlugs: ["platform_admin"],
       amr: ["pwd"],
+      mfaAssurancePolicy: mfaPolicy(),
       subject: "keycloak-subject-0001",
       issuer: "https://identity.example/realms/clinic-os",
       authorizedParty: "clinic-os-web-bff",
@@ -736,6 +941,7 @@ test("MFA, JML, and break-glass controls persist required audit evidence", async
     assertMfaForAccess({
       roleSlugs: ["owner_admin"],
       amr: ["pwd", "webauthn"],
+      mfaAssurancePolicy: mfaPolicy(),
       subject: "keycloak-subject-0001",
       issuer: "https://identity.example/realms/clinic-os",
       authorizedParty: "clinic-os-web-bff",
@@ -817,6 +1023,7 @@ test("MFA, JML, and break-glass controls persist required audit evidence", async
         requiredCapability: "patient.phi.read",
         now,
         amr: ["pwd", "otp"],
+        mfaAssurancePolicy: mfaPolicy(),
         issuer: "https://identity.example/realms/clinic-os",
         authorizedParty: "clinic-os-web-bff",
         auditDeduplicationKey: "grant-00000001",
@@ -847,6 +1054,7 @@ test("MFA, JML, and break-glass controls persist required audit evidence", async
     requiredCapability: "patient.phi.read",
     now,
     amr: ["pwd", "webauthn"],
+    mfaAssurancePolicy: mfaPolicy(),
     issuer: "https://identity.example/realms/clinic-os",
     authorizedParty: "clinic-os-web-bff",
     auditDeduplicationKey: "grant-00000002",
@@ -864,6 +1072,7 @@ test("MFA, JML, and break-glass controls persist required audit evidence", async
     assertActiveBreakGlassGrant(scopedGrant, {
       ...scopedInput,
       amr: ["pwd"],
+      acr: "urn:unproved:aal2",
       auditDeduplicationKey: "grant-00000002-no-mfa"
     }),
     /Break-glass access requires multi-factor/
@@ -1189,13 +1398,19 @@ class TestMobileVault implements MobileTokenVault {
   }
 }
 
-function createWebSessionManager(store: WebSessionStore): WebSessionManager {
+function createWebSessionManager(
+  store: WebSessionStore,
+  expectedIssuer = "https://identity.example/realms/clinic-os",
+  productionLike = false
+): WebSessionManager {
   return new WebSessionManager({
     store,
     policy: {
-      productionLike: false,
-      cookieName: "clinicos_cp14_session",
-      secureCookie: false,
+      productionLike,
+      expectedIssuer,
+      mfaAssurancePolicy: mfaPolicy(),
+      cookieName: productionLike ? "__Host-clinicos_cp14_session" : "clinicos_cp14_session",
+      secureCookie: productionLike,
       idleTtlSeconds: 900,
       absoluteTtlSeconds: 3600,
       rotateAfterSeconds: 600,
@@ -1232,7 +1447,20 @@ function refreshedTokenSet(subject: string, at: Date) {
     issuer: "https://identity.example/realms/clinic-os",
     authorizedParty: "clinic-os-web-bff",
     keycloakSessionId: "keycloak-session-001",
+    amr: ["pwd", "otp"],
+    acr: "urn:clinicos:aal2",
     ...tokenSet(at)
+  };
+}
+
+function mfaPolicy() {
+  return {
+    policyId: "clinicos-amr-two-factor-v1",
+    reviewedRealmEvidenceId: null,
+    acceptedAcrValues: [] as string[],
+    primaryFactorAmrValues: ["pwd"],
+    secondaryFactorAmrValues: ["otp", "totp", "webauthn"],
+    phishingResistantAmrValues: [] as string[]
   };
 }
 

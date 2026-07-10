@@ -12,8 +12,24 @@ import {
 } from "./security-audit.ts";
 
 const TOKEN_IDENTIFIER_PATTERN = /^[A-Za-z0-9._:-]{8,255}$/;
-const MFA_METHODS = new Set(["otp", "totp", "webauthn", "webauthn-passwordless", "hwk", "mfa"]);
+const MFA_POLICY_IDENTIFIER_PATTERN = /^[A-Za-z0-9._:-]{8,128}$/;
+const ACR_VALUE_PATTERN = /^[\x21-\x7E]{1,255}$/;
+const AMR_VALUE_PATTERN = /^[a-z0-9._:-]{1,64}$/;
 const PRIVILEGED_ROLES = new Set<ClinicRoleSlug>(["owner_admin", "platform_admin"]);
+
+export interface MfaAssurancePolicy {
+  /** Stable identifier pinned by API, BFF, and session composition. */
+  policyId: string;
+  /** Required before an ACR or single phishing-resistant AMR may be trusted. */
+  reviewedRealmEvidenceId: string | null;
+  /** Exact, case-sensitive ACR values proven by the referenced realm evidence. */
+  acceptedAcrValues: readonly string[];
+  /** A defensible two-factor result requires one value from each disjoint set. */
+  primaryFactorAmrValues: readonly string[];
+  secondaryFactorAmrValues: readonly string[];
+  /** Single-factor acceptance is opt-in and requires reviewed realm evidence. */
+  phishingResistantAmrValues: readonly string[];
+}
 
 export interface ProductionAuthenticatedPrincipal extends AuthenticatedPrincipal {
   authorizedParty: string;
@@ -110,21 +126,93 @@ export function principalFromProductionKeycloakClaims(
       Number.isSafeInteger(claims.auth_time) && claims.auth_time! <= nowSeconds + clockSkewSeconds
         ? new Date(claims.auth_time! * 1000).toISOString()
         : null,
-    acr: claims.acr ?? null,
+    acr: normalizeAuthenticationContextClass(claims.acr ?? null),
     amr
   };
 }
 
-export function hasMfaEvidence(input: { amr: readonly string[]; acr?: string | null }): boolean {
+export function normalizeMfaAssurancePolicy(policy: MfaAssurancePolicy): MfaAssurancePolicy {
+  if (!MFA_POLICY_IDENTIFIER_PATTERN.test(policy.policyId)) {
+    throw new Error("MFA assurance policy id is malformed.");
+  }
+  if (
+    policy.reviewedRealmEvidenceId !== null &&
+    !MFA_POLICY_IDENTIFIER_PATTERN.test(policy.reviewedRealmEvidenceId)
+  ) {
+    throw new Error("MFA assurance realm-evidence id is malformed.");
+  }
+  const acceptedAcrValues = uniqueExactValues(policy.acceptedAcrValues, ACR_VALUE_PATTERN, "ACR");
+  if (acceptedAcrValues.some((value) => value.includes("*"))) {
+    throw new Error("MFA assurance ACR allowlist cannot contain wildcards.");
+  }
+  const primaryFactorAmrValues = uniqueExactValues(
+    policy.primaryFactorAmrValues,
+    AMR_VALUE_PATTERN,
+    "primary AMR"
+  );
+  const secondaryFactorAmrValues = uniqueExactValues(
+    policy.secondaryFactorAmrValues,
+    AMR_VALUE_PATTERN,
+    "secondary AMR"
+  );
+  const phishingResistantAmrValues = uniqueExactValues(
+    policy.phishingResistantAmrValues,
+    AMR_VALUE_PATTERN,
+    "phishing-resistant AMR"
+  );
+  const allAmrValues = [
+    ...primaryFactorAmrValues,
+    ...secondaryFactorAmrValues,
+    ...phishingResistantAmrValues
+  ];
+  if (new Set(allAmrValues).size !== allAmrValues.length) {
+    throw new Error("MFA assurance AMR factor classes must be disjoint.");
+  }
+  if (
+    !policy.reviewedRealmEvidenceId &&
+    (acceptedAcrValues.length > 0 || phishingResistantAmrValues.length > 0)
+  ) {
+    throw new Error(
+      "ACR and single phishing-resistant MFA evidence require reviewed realm evidence."
+    );
+  }
+  return Object.freeze({
+    policyId: policy.policyId,
+    reviewedRealmEvidenceId: policy.reviewedRealmEvidenceId,
+    acceptedAcrValues: Object.freeze(acceptedAcrValues),
+    primaryFactorAmrValues: Object.freeze(primaryFactorAmrValues),
+    secondaryFactorAmrValues: Object.freeze(secondaryFactorAmrValues),
+    phishingResistantAmrValues: Object.freeze(phishingResistantAmrValues)
+  });
+}
+
+export function hasMfaEvidence(
+  input: { amr: readonly string[]; acr?: string | null },
+  policyInput: MfaAssurancePolicy
+): boolean {
+  const policy = normalizeMfaAssurancePolicy(policyInput);
   const methods = normalizeAuthenticationMethods(input.amr);
-  if (methods.some((method) => MFA_METHODS.has(method))) return true;
-  return Boolean(input.acr && /(?:^|[.:_-])(2|mfa|loa2|aal2)(?:$|[.:_-])/i.test(input.acr));
+  const acr = normalizeAuthenticationContextClass(input.acr ?? null);
+  if (policy.reviewedRealmEvidenceId && acr !== null && policy.acceptedAcrValues.includes(acr)) {
+    return true;
+  }
+  if (
+    policy.reviewedRealmEvidenceId &&
+    methods.some((method) => policy.phishingResistantAmrValues.includes(method))
+  ) {
+    return true;
+  }
+  return (
+    methods.some((method) => policy.primaryFactorAmrValues.includes(method)) &&
+    methods.some((method) => policy.secondaryFactorAmrValues.includes(method))
+  );
 }
 
 export async function assertMfaForAccess(input: {
   roleSlugs: readonly ClinicRoleSlug[];
   amr: readonly string[];
   acr?: string | null;
+  mfaAssurancePolicy: MfaAssurancePolicy;
   breakGlass?: boolean;
   subject: string;
   issuer: string;
@@ -134,7 +222,7 @@ export async function assertMfaForAccess(input: {
   auditOutbox: RequiredSecurityAuditOutbox;
 }): Promise<void> {
   const privileged = input.breakGlass || input.roleSlugs.some((role) => PRIVILEGED_ROLES.has(role));
-  if (privileged && !hasMfaEvidence(input)) {
+  if (privileged && !hasMfaEvidence(input, input.mfaAssurancePolicy)) {
     await persistRequiredSecurityAudit(
       input.auditOutbox,
       validateRequiredSecurityAuditIntent({
@@ -317,6 +405,7 @@ export async function assertActiveBreakGlassGrant(
     now: Date;
     amr: readonly string[];
     acr?: string | null;
+    mfaAssurancePolicy: MfaAssurancePolicy;
     issuer: string;
     authorizedParty: string;
     auditDeduplicationKey: string;
@@ -364,11 +453,12 @@ export async function assertActiveBreakGlassGrant(
   ) {
     throw new AuthenticationError("Break-glass grant does not authorize the required capability.");
   }
-  if (!hasMfaEvidence(input)) {
+  if (!hasMfaEvidence(input, input.mfaAssurancePolicy)) {
     await assertMfaForAccess({
       roleSlugs: [],
       amr: input.amr,
       acr: input.acr,
+      mfaAssurancePolicy: input.mfaAssurancePolicy,
       breakGlass: true,
       subject: input.actorUserId,
       issuer: input.issuer,
@@ -409,6 +499,67 @@ function normalizeAuthenticationMethods(values: readonly string[]): string[] {
     throw new AuthenticationError("Keycloak authentication method claim is malformed.");
   }
   return normalized.sort();
+}
+
+function normalizeAuthenticationContextClass(value: string | null): string | null {
+  if (value === null) return null;
+  if (!ACR_VALUE_PATTERN.test(value) || value.trim() !== value) {
+    throw new AuthenticationError("Keycloak authentication context claim is malformed.");
+  }
+  return value;
+}
+
+function uniqueExactValues(values: readonly string[], pattern: RegExp, label: string): string[] {
+  if (!Array.isArray(values) || values.length > 32) {
+    throw new Error(`MFA assurance ${label} allowlist is unbounded.`);
+  }
+  if (values.some((value) => !pattern.test(value) || value.trim() !== value)) {
+    throw new Error(`MFA assurance ${label} allowlist is malformed.`);
+  }
+  if (new Set(values).size !== values.length) {
+    throw new Error(`MFA assurance ${label} allowlist contains duplicates.`);
+  }
+  return [...values].sort();
+}
+
+export function normalizeCanonicalKeycloakIssuer(value: string, productionLike: boolean): string {
+  if (
+    typeof value !== "string" ||
+    value.length < 16 ||
+    value.length > 512 ||
+    value.trim() !== value ||
+    /[\u0000-\u001F\u007F\\]/.test(value)
+  ) {
+    throw new Error("Keycloak issuer is malformed or unbounded.");
+  }
+  let issuer: URL;
+  try {
+    issuer = new URL(value);
+  } catch {
+    throw new Error("Keycloak issuer is malformed.");
+  }
+  if (issuer.username || issuer.password || issuer.search || issuer.hash) {
+    throw new Error("Keycloak issuer cannot contain userinfo, query, or fragment.");
+  }
+  if (!/^\/realms\/[a-z][a-z0-9-]{2,62}$/.test(issuer.pathname)) {
+    throw new Error("Keycloak issuer must use one canonical bounded realm path.");
+  }
+  if (productionLike) {
+    if (issuer.protocol !== "https:" || issuer.port) {
+      throw new Error("Production Keycloak issuer must use canonical HTTPS without a port.");
+    }
+  } else if (issuer.protocol === "http:") {
+    if (!["localhost", "127.0.0.1", "::1"].includes(issuer.hostname)) {
+      throw new Error("Local HTTP Keycloak issuer is restricted to the loopback host.");
+    }
+  } else if (issuer.protocol !== "https:") {
+    throw new Error("Keycloak issuer protocol is not accepted.");
+  }
+  const canonical = `${issuer.origin}${issuer.pathname}`;
+  if (value !== canonical) {
+    throw new Error("Keycloak issuer is not in canonical form.");
+  }
+  return canonical;
 }
 
 function trustedInstant(value: Date, label: string): Date {

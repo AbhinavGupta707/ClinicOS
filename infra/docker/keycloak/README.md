@@ -24,7 +24,9 @@ have elapsed.
 The realm template registers OTP/WebAuthn methods and required actions, but it does **not** by itself
 enforce role-conditional MFA for product roles or MFA for Keycloak administrators. JML must assign
 the required action before product privilege, and ClinicOS must reject privileged or clinical
-break-glass access unless verified token `amr`/`acr` demonstrates MFA. The separate admin hostname
+break-glass access unless the reviewed application policy proves a primary-plus-secondary `amr`
+combination or an exact allowlisted `acr` backed by runtime realm evidence. Generic assurance text
+or one weak factor is denied. The separate admin hostname
 must use a management-realm or federated operator MFA flow and remain unready until runtime denial
 and success evidence exists. `operations/privileged-mfa-boundary.json` makes those distinct
 enforcement owners and break-glass evidence requirements machine-readable.
