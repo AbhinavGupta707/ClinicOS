@@ -4,18 +4,22 @@ import {
   PUBLIC_RECORD_ARRAY_SCHEMA,
   PUBLIC_RECORD_SCHEMA,
   UUID_PATH_SCHEMA,
+  VERSIONED_PUBLIC_RESOURCE_ARRAY_SCHEMA,
+  VERSIONED_PUBLIC_RESOURCE_SCHEMA,
   WRITABLE_JSON_SCHEMA,
   bodySchema,
   defineOperation,
   headersSchema,
   parseOperationRequest,
   parseOperationResponse,
+  parseOperationResponseHeaders,
   pathSchema,
   querySchema,
   responseSchema,
   type EvidenceCheckpoint,
   type HttpMethod,
   type HttpOperationContract,
+  type HttpResponseDefinition,
   type OperationAuth,
   type OperationRequestInput
 } from "./http-contract.ts";
@@ -37,6 +41,8 @@ const stringList = schema.array(shortText, { maxItems: 100 });
 const uuidList = schema.array(uuid, { maxItems: 100 });
 const entity = PUBLIC_RECORD_SCHEMA;
 const entities = PUBLIC_RECORD_ARRAY_SCHEMA;
+const versionedEntity = VERSIONED_PUBLIC_RESOURCE_SCHEMA;
+const versionedEntities = VERSIONED_PUBLIC_RESOURCE_ARRAY_SCHEMA;
 
 const patientSources = [
   "manual",
@@ -143,13 +149,19 @@ const STANDARD_ERROR_RESPONSES = {
   },
   413: { description: "The request exceeds its declared body budget.", schema: API_ERROR_SCHEMA },
   422: { description: "The request failed runtime contract validation.", schema: API_ERROR_SCHEMA },
-  429: { description: "The request exceeded an application abuse budget.", schema: API_ERROR_SCHEMA },
-  500: { description: "The request failed without exposing internal details.", schema: API_ERROR_SCHEMA },
+  429: {
+    description: "The request exceeded an application abuse budget.",
+    schema: API_ERROR_SCHEMA
+  },
+  500: {
+    description: "The request failed without exposing internal details.",
+    schema: API_ERROR_SCHEMA
+  },
   503: {
     description: "A required dependency or configured capability is unavailable.",
     schema: API_ERROR_SCHEMA
   }
-} as const;
+} as const satisfies Readonly<Record<number, HttpResponseDefinition>>;
 
 interface NativeOperationInput {
   readonly operationId: string;
@@ -232,6 +244,79 @@ function operation(input: NativeOperationInput): HttpOperationContract {
 const emptyBody = bodySchema({});
 const singleEntity = (key: string) => responseSchema({ [key]: entity });
 const entityList = (key: string) => responseSchema({ [key]: entities });
+const singleVersionedEntity = (key: string) => responseSchema({ [key]: versionedEntity });
+const versionedEntityList = (key: string) => responseSchema({ [key]: versionedEntities });
+const patientDuplicateProjectionSchema = responseSchema({
+  id: uuid,
+  fullName: shortText,
+  phone: schema.nullable(shortText),
+  email: schema.nullable(schema.string({ format: "email", maxLength: 320 })),
+  createdAt: dateTime
+});
+const patientDuplicateSuggestionSchema = responseSchema({
+  patient: patientDuplicateProjectionSchema,
+  score: schema.integer({ minimum: 0, maximum: 100 }),
+  reasons: schema.array(schema.enum(["phone_exact", "name_exact", "name_similar"]), {
+    maxItems: 3
+  })
+});
+const patientDuplicateSuggestionsSchema = schema.array(patientDuplicateSuggestionSchema, {
+  maxItems: 100
+});
+const patientPrepProjectionSchema = responseSchema({
+  id: uuid,
+  fullName: shortText,
+  phone: schema.nullable(shortText),
+  dateOfBirth: schema.nullable(date),
+  gender: schema.enum(["female", "male", "other", "unknown"])
+});
+const appointmentPrepProjectionSchema = responseSchema({
+  id: uuid,
+  status: schema.enum(appointmentStatuses),
+  startAt: dateTime,
+  endAt: dateTime,
+  providerUserId: uuid,
+  reason: nullableText
+});
+const patientPrepSummarySchema = responseSchema({
+  patient: patientPrepProjectionSchema,
+  appointment: schema.nullable(appointmentPrepProjectionSchema),
+  generatedAt: dateTime,
+  latestIntakeResponse: schema.nullable(entity),
+  consentEnforcementState: entity,
+  activeConsentPurposes: stringList,
+  timelineHighlights: entities,
+  priorClinicalTimeline: entities,
+  medicalHistoryChangePromptRequired: schema.boolean(),
+  dataCoverage: entity
+});
+const morningDashboardSchema = responseSchema({
+  date,
+  appointmentCounts: schema.object(
+    Object.fromEntries(appointmentStatuses.map((status) => [status, nonNegativeInteger] as const)),
+    appointmentStatuses
+  ),
+  totalAppointments: nonNegativeInteger,
+  unconfirmedAppointments: versionedEntities,
+  todaysAppointments: versionedEntities,
+  openLeads: versionedEntities,
+  openTasks: versionedEntities,
+  queue: versionedEntities,
+  newPatientAppointmentIds: uuidList,
+  returningPatientAppointmentIds: uuidList
+});
+const labCaseDetailSchema = responseSchema({
+  labCase: versionedEntity,
+  vendor: entity,
+  items: entities,
+  statusHistory: entities
+});
+const inventoryCheckRunDetailSchema = responseSchema({
+  run: versionedEntity,
+  template: entity,
+  lines: entities,
+  procurementSuggestions: entities
+});
 
 export const ACTIVE_NATIVE_HTTP_OPERATIONS: readonly HttpOperationContract[] = [
   operation({
@@ -295,7 +380,7 @@ export const ACTIVE_NATIVE_HTTP_OPERATIONS: readonly HttpOperationContract[] = [
     tags: ["Payments", "Webhooks"],
     auth: "razorpay_signature",
     body: schema.string({ format: "binary", minLength: 1, maxLength: 1024 * 1024 }),
-    bodyContentType: "application/octet-stream",
+    bodyContentType: "application/json",
     maximumBodyBytes: 1024 * 1024,
     success: {
       200: responseSchema({
@@ -310,7 +395,7 @@ export const ACTIVE_NATIVE_HTTP_OPERATIONS: readonly HttpOperationContract[] = [
     providerEventIdempotency: true,
     nativeRuntimeEnforcement: "partial",
     requiredMasterWiring: [
-      "Keep raw-body signature verification before JSON parsing and business effects.",
+      "Accept provider application/json while preserving the exact bounded raw bytes for signature verification before parsing or business effects.",
       "Persist provider event IDs and reject duplicate/out-of-order effects atomically.",
       "Serve this operation only after the official callback is registered and sandbox-verified."
     ]
@@ -324,6 +409,343 @@ export const ACTIVE_NATIVE_HTTP_OPERATIONS: readonly HttpOperationContract[] = [
   ...cp8Operations(),
   ...cp9Operations(),
   ...cp10Operations()
+];
+
+export type VersionedResourceFamily =
+  | "appointment"
+  | "corrective_action"
+  | "dental_finding"
+  | "encounter"
+  | "inventory_check_run"
+  | "lab_case"
+  | "lead"
+  | "patient"
+  | "queue_entry"
+  | "sop_run"
+  | "task"
+  | "treatment_plan";
+
+export interface VersionedResourceResponseSource {
+  readonly operationId: string;
+  readonly status: number;
+  readonly responsePath: string;
+  readonly role: "action" | "aggregate" | "create" | "list" | "read" | "update";
+}
+
+export interface VersionedResourceResponseContract {
+  readonly family: VersionedResourceFamily;
+  readonly updateOperationId: string;
+  readonly sources: readonly VersionedResourceResponseSource[];
+}
+
+export const VERSIONED_RESOURCE_RESPONSE_CONTRACTS: readonly VersionedResourceResponseContract[] = [
+  {
+    family: "patient",
+    updateOperationId: "updatePatient",
+    sources: [
+      { operationId: "listPatients", status: 200, responsePath: "patients[]", role: "list" },
+      { operationId: "createPatient", status: 201, responsePath: "patient", role: "create" },
+      { operationId: "getPatient", status: 200, responsePath: "patient", role: "read" },
+      { operationId: "updatePatient", status: 200, responsePath: "patient", role: "update" }
+    ]
+  },
+  {
+    family: "lead",
+    updateOperationId: "updateLeadStatus",
+    sources: [
+      { operationId: "createPatient", status: 201, responsePath: "matchedLead", role: "action" },
+      { operationId: "listLeads", status: 200, responsePath: "leads[]", role: "list" },
+      { operationId: "createLead", status: 201, responsePath: "lead", role: "create" },
+      { operationId: "matchLeadToPatient", status: 200, responsePath: "lead", role: "action" },
+      {
+        operationId: "convertLeadToAppointment",
+        status: 201,
+        responsePath: "lead",
+        role: "action"
+      },
+      { operationId: "updateLeadStatus", status: 200, responsePath: "lead", role: "update" },
+      {
+        operationId: "getMorningDashboard",
+        status: 200,
+        responsePath: "dashboard.openLeads[]",
+        role: "aggregate"
+      }
+    ]
+  },
+  {
+    family: "appointment",
+    updateOperationId: "updateAppointment",
+    sources: [
+      {
+        operationId: "convertLeadToAppointment",
+        status: 201,
+        responsePath: "appointment",
+        role: "action"
+      },
+      {
+        operationId: "listAppointments",
+        status: 200,
+        responsePath: "appointments[]",
+        role: "list"
+      },
+      {
+        operationId: "createAppointment",
+        status: 201,
+        responsePath: "appointment",
+        role: "create"
+      },
+      {
+        operationId: "updateAppointment",
+        status: 200,
+        responsePath: "appointment",
+        role: "update"
+      },
+      {
+        operationId: "confirmAppointment",
+        status: 200,
+        responsePath: "appointment",
+        role: "action"
+      },
+      {
+        operationId: "checkInAppointment",
+        status: 200,
+        responsePath: "appointment",
+        role: "action"
+      },
+      {
+        operationId: "markAppointmentNoShow",
+        status: 200,
+        responsePath: "appointment",
+        role: "action"
+      },
+      {
+        operationId: "getMorningDashboard",
+        status: 200,
+        responsePath: "dashboard.unconfirmedAppointments[]",
+        role: "aggregate"
+      },
+      {
+        operationId: "getMorningDashboard",
+        status: 200,
+        responsePath: "dashboard.todaysAppointments[]",
+        role: "aggregate"
+      }
+    ]
+  },
+  {
+    family: "queue_entry",
+    updateOperationId: "updateQueueEntry",
+    sources: [
+      {
+        operationId: "checkInAppointment",
+        status: 200,
+        responsePath: "queueEntry",
+        role: "create"
+      },
+      { operationId: "listQueue", status: 200, responsePath: "queue[]", role: "list" },
+      {
+        operationId: "updateQueueEntry",
+        status: 200,
+        responsePath: "queueEntry",
+        role: "update"
+      },
+      {
+        operationId: "getMorningDashboard",
+        status: 200,
+        responsePath: "dashboard.queue[]",
+        role: "aggregate"
+      }
+    ]
+  },
+  {
+    family: "encounter",
+    updateOperationId: "saveEncounterClinicalNoteDraft",
+    sources: [
+      { operationId: "createEncounter", status: 201, responsePath: "encounter", role: "create" },
+      { operationId: "getEncounter", status: 200, responsePath: "encounter", role: "read" },
+      { operationId: "startEncounter", status: 200, responsePath: "encounter", role: "action" },
+      {
+        operationId: "saveEncounterClinicalNoteDraft",
+        status: 200,
+        responsePath: "encounter",
+        role: "update"
+      },
+      {
+        operationId: "signEncounterClinicalNote",
+        status: 200,
+        responsePath: "encounter",
+        role: "action"
+      },
+      {
+        operationId: "amendEncounterClinicalNote",
+        status: 200,
+        responsePath: "encounter",
+        role: "action"
+      }
+    ]
+  },
+  {
+    family: "dental_finding",
+    updateOperationId: "updateDentalFinding",
+    sources: [
+      {
+        operationId: "getPatientDentalChart",
+        status: 200,
+        responsePath: "findings[]",
+        role: "list"
+      },
+      {
+        operationId: "createPatientDentalFinding",
+        status: 201,
+        responsePath: "finding",
+        role: "create"
+      },
+      {
+        operationId: "createEncounterDentalFinding",
+        status: 201,
+        responsePath: "finding",
+        role: "create"
+      },
+      {
+        operationId: "updateDentalFinding",
+        status: 200,
+        responsePath: "finding",
+        role: "update"
+      }
+    ]
+  },
+  {
+    family: "treatment_plan",
+    updateOperationId: "updateTreatmentPlan",
+    sources: [
+      {
+        operationId: "createPatientTreatmentPlan",
+        status: 201,
+        responsePath: "treatmentPlan",
+        role: "create"
+      },
+      {
+        operationId: "updateTreatmentPlan",
+        status: 200,
+        responsePath: "treatmentPlan",
+        role: "update"
+      },
+      {
+        operationId: "acceptTreatmentPlan",
+        status: 200,
+        responsePath: "treatmentPlan",
+        role: "action"
+      },
+      {
+        operationId: "createEncounterProcedurePerformed",
+        status: 201,
+        responsePath: "treatmentPlan",
+        role: "action"
+      }
+    ]
+  },
+  {
+    family: "task",
+    updateOperationId: "updateTask",
+    sources: [
+      { operationId: "listTasks", status: 200, responsePath: "tasks[]", role: "list" },
+      { operationId: "createTask", status: 201, responsePath: "task", role: "create" },
+      { operationId: "updateTask", status: 200, responsePath: "task", role: "update" },
+      {
+        operationId: "generateDueContinuityTasks",
+        status: 202,
+        responsePath: "recallTasksCreated[]",
+        role: "action"
+      },
+      {
+        operationId: "generateDueContinuityTasks",
+        status: 202,
+        responsePath: "followUpTasksCreated[]",
+        role: "action"
+      },
+      {
+        operationId: "getMorningDashboard",
+        status: 200,
+        responsePath: "dashboard.openTasks[]",
+        role: "aggregate"
+      }
+    ]
+  },
+  {
+    family: "sop_run",
+    updateOperationId: "updateSopRun",
+    sources: [
+      { operationId: "listSopRuns", status: 200, responsePath: "sopRuns[]", role: "list" },
+      {
+        operationId: "generateDueSopRuns",
+        status: 202,
+        responsePath: "sopRunsCreated[]",
+        role: "create"
+      },
+      { operationId: "updateSopRun", status: 200, responsePath: "sopRun", role: "update" }
+    ]
+  },
+  {
+    family: "lab_case",
+    updateOperationId: "updateLabCase",
+    sources: [
+      { operationId: "listLabCases", status: 200, responsePath: "labCases[]", role: "list" },
+      {
+        operationId: "createLabCase",
+        status: 201,
+        responsePath: "labCase.labCase",
+        role: "create"
+      },
+      {
+        operationId: "updateLabCase",
+        status: 200,
+        responsePath: "labCase.labCase",
+        role: "update"
+      }
+    ]
+  },
+  {
+    family: "inventory_check_run",
+    updateOperationId: "updateInventoryCheckRun",
+    sources: [
+      {
+        operationId: "createInventoryCheckRun",
+        status: 201,
+        responsePath: "checkRun.run",
+        role: "create"
+      },
+      {
+        operationId: "updateInventoryCheckRun",
+        status: 200,
+        responsePath: "checkRun.run",
+        role: "update"
+      }
+    ]
+  },
+  {
+    family: "corrective_action",
+    updateOperationId: "updateCorrectiveAction",
+    sources: [
+      {
+        operationId: "listCorrectiveActions",
+        status: 200,
+        responsePath: "correctiveActions[]",
+        role: "list"
+      },
+      {
+        operationId: "createCorrectiveAction",
+        status: 201,
+        responsePath: "correctiveAction",
+        role: "create"
+      },
+      {
+        operationId: "updateCorrectiveAction",
+        status: 200,
+        responsePath: "correctiveAction",
+        role: "update"
+      }
+    ]
+  }
 ];
 
 function healthDependencyOperations(): HttpOperationContract[] {
@@ -412,7 +834,7 @@ function cp2Operations(): HttpOperationContract[] {
         phone: shortText,
         source: schema.enum(patientSources)
       },
-      success: { 200: entityList("patients") }
+      success: { 200: versionedEntityList("patients") }
     }),
     operation({
       operationId: "createPatient",
@@ -425,9 +847,9 @@ function cp2Operations(): HttpOperationContract[] {
       body: patientBody,
       success: {
         201: responseSchema({
-          patient: entity,
-          duplicateSuggestions: entities,
-          matchedLead: schema.nullable(entity)
+          patient: versionedEntity,
+          duplicateSuggestions: patientDuplicateSuggestionsSchema,
+          matchedLead: schema.nullable(versionedEntity)
         })
       }
     }),
@@ -441,7 +863,7 @@ function cp2Operations(): HttpOperationContract[] {
       phi: "read",
       pathProperties: { patientId: uuid },
       mutation: false,
-      success: { 200: singleEntity("patient") }
+      success: { 200: singleVersionedEntity("patient") }
     }),
     operation({
       operationId: "updatePatient",
@@ -464,7 +886,7 @@ function cp2Operations(): HttpOperationContract[] {
         { minProperties: 1 }
       ),
       optimisticConcurrency: true,
-      success: { 200: singleEntity("patient") }
+      success: { 200: singleVersionedEntity("patient") }
     }),
     operation({
       operationId: "getPatientTimeline",
@@ -490,7 +912,7 @@ function cp2Operations(): HttpOperationContract[] {
       mutation: false,
       paginated: true,
       queryProperties: { source: schema.enum(leadSources), status: schema.enum(leadStatuses) },
-      success: { 200: entityList("leads") }
+      success: { 200: versionedEntityList("leads") }
     }),
     operation({
       operationId: "createLead",
@@ -516,7 +938,12 @@ function cp2Operations(): HttpOperationContract[] {
         },
         ["primaryContact", "source"]
       ),
-      success: { 201: responseSchema({ lead: entity, patientMatchSuggestions: entities }) }
+      success: {
+        201: responseSchema({
+          lead: versionedEntity,
+          patientMatchSuggestions: patientDuplicateSuggestionsSchema
+        })
+      }
     }),
     operation({
       operationId: "matchLeadToPatient",
@@ -528,7 +955,7 @@ function cp2Operations(): HttpOperationContract[] {
       phi: "write",
       pathProperties: { leadId: uuid },
       body: bodySchema({ patientId: uuid }, ["patientId"]),
-      success: { 200: singleEntity("lead") }
+      success: { 200: singleVersionedEntity("lead") }
     }),
     operation({
       operationId: "convertLeadToAppointment",
@@ -554,7 +981,9 @@ function cp2Operations(): HttpOperationContract[] {
         },
         ["providerUserId", "appointmentTypeId", "startAt"]
       ),
-      success: { 201: responseSchema({ lead: entity, appointment: entity }) }
+      success: {
+        201: responseSchema({ lead: versionedEntity, appointment: versionedEntity })
+      }
     }),
     operation({
       operationId: "updateLeadStatus",
@@ -567,7 +996,7 @@ function cp2Operations(): HttpOperationContract[] {
       pathProperties: { leadId: uuid },
       body: bodySchema({ status: schema.enum(leadStatuses) }, ["status"]),
       optimisticConcurrency: true,
-      success: { 200: singleEntity("lead") }
+      success: { 200: singleVersionedEntity("lead") }
     }),
     operation({
       operationId: "listAppointments",
@@ -580,7 +1009,7 @@ function cp2Operations(): HttpOperationContract[] {
       mutation: false,
       paginated: true,
       queryProperties: { date, providerId: uuid, status: schema.enum(appointmentStatuses) },
-      success: { 200: entityList("appointments") }
+      success: { 200: versionedEntityList("appointments") }
     }),
     operation({
       operationId: "createAppointment",
@@ -591,7 +1020,7 @@ function cp2Operations(): HttpOperationContract[] {
       tags: ["Appointments"],
       phi: "write",
       body: appointmentBody,
-      success: { 201: singleEntity("appointment") }
+      success: { 201: singleVersionedEntity("appointment") }
     }),
     operation({
       operationId: "updateAppointment",
@@ -604,7 +1033,7 @@ function cp2Operations(): HttpOperationContract[] {
       pathProperties: { appointmentId: uuid },
       body: bodySchema({ status: schema.enum(appointmentStatuses) }, ["status"]),
       optimisticConcurrency: true,
-      success: { 200: singleEntity("appointment") }
+      success: { 200: singleVersionedEntity("appointment") }
     }),
     ...appointmentActionOperations(),
     operation({
@@ -649,7 +1078,7 @@ function cp2Operations(): HttpOperationContract[] {
       mutation: false,
       paginated: true,
       queryProperties: { date },
-      success: { 200: entityList("queue") }
+      success: { 200: versionedEntityList("queue") }
     }),
     operation({
       operationId: "updateQueueEntry",
@@ -662,7 +1091,7 @@ function cp2Operations(): HttpOperationContract[] {
       pathProperties: { queueEntryId: uuid },
       body: bodySchema({ status: schema.enum(queueStatuses) }, ["status"]),
       optimisticConcurrency: true,
-      success: { 200: singleEntity("queueEntry") }
+      success: { 200: singleVersionedEntity("queueEntry") }
     }),
     operation({
       operationId: "getMorningDashboard",
@@ -674,7 +1103,7 @@ function cp2Operations(): HttpOperationContract[] {
       phi: "read",
       mutation: false,
       queryProperties: { date },
-      success: { 200: singleEntity("dashboard") }
+      success: { 200: responseSchema({ dashboard: morningDashboardSchema }) }
     })
   ];
 }
@@ -690,7 +1119,7 @@ function appointmentActionOperations(): HttpOperationContract[] {
       tags: ["Appointments"],
       phi: "write",
       pathProperties: { appointmentId: uuid },
-      success: { 200: singleEntity("appointment") }
+      success: { 200: singleVersionedEntity("appointment") }
     }),
     operation({
       operationId: "checkInAppointment",
@@ -701,7 +1130,9 @@ function appointmentActionOperations(): HttpOperationContract[] {
       tags: ["Appointments", "Queue"],
       phi: "write",
       pathProperties: { appointmentId: uuid },
-      success: { 200: responseSchema({ appointment: entity, queueEntry: entity }) }
+      success: {
+        200: responseSchema({ appointment: versionedEntity, queueEntry: versionedEntity })
+      }
     }),
     operation({
       operationId: "markAppointmentNoShow",
@@ -712,7 +1143,7 @@ function appointmentActionOperations(): HttpOperationContract[] {
       tags: ["Appointments"],
       phi: "write",
       pathProperties: { appointmentId: uuid },
-      success: { 200: singleEntity("appointment") }
+      success: { 200: singleVersionedEntity("appointment") }
     })
   ];
 }
@@ -801,7 +1232,12 @@ function cp3Operations(): HttpOperationContract[] {
       pathProperties: { patientId: uuid },
       queryProperties: { appointmentId: uuid },
       mutation: false,
-      success: { 200: responseSchema({ prepSummary: entity, summary: entity }) }
+      success: {
+        200: responseSchema({
+          prepSummary: patientPrepSummarySchema,
+          summary: patientPrepSummarySchema
+        })
+      }
     }),
     operation({
       operationId: "listPatientConsents",
@@ -869,7 +1305,7 @@ function cp3Operations(): HttpOperationContract[] {
         },
         ["patientId", "providerUserId"]
       ),
-      success: { 201: singleEntity("encounter") }
+      success: { 201: singleVersionedEntity("encounter") }
     }),
     operation({
       operationId: "getEncounter",
@@ -881,7 +1317,9 @@ function cp3Operations(): HttpOperationContract[] {
       phi: "read",
       pathProperties: { encounterId: uuid },
       mutation: false,
-      success: { 200: responseSchema({ encounter: entity, noteVersions: entities }) }
+      success: {
+        200: responseSchema({ encounter: versionedEntity, noteVersions: entities })
+      }
     }),
     operation({
       operationId: "startEncounter",
@@ -892,7 +1330,7 @@ function cp3Operations(): HttpOperationContract[] {
       tags: ["Clinical", "Encounters"],
       phi: "write",
       pathProperties: { encounterId: uuid },
-      success: { 200: singleEntity("encounter") }
+      success: { 200: singleVersionedEntity("encounter") }
     }),
     operation({
       operationId: "saveEncounterClinicalNoteDraft",
@@ -907,7 +1345,7 @@ function cp3Operations(): HttpOperationContract[] {
         "content"
       ]),
       optimisticConcurrency: true,
-      success: { 200: responseSchema({ encounter: schema.nullable(entity), note: entity }) }
+      success: { 200: responseSchema({ encounter: versionedEntity, note: entity }) }
     }),
     operation({
       operationId: "signEncounterClinicalNote",
@@ -918,7 +1356,7 @@ function cp3Operations(): HttpOperationContract[] {
       tags: ["Clinical", "Signatures"],
       phi: "write",
       pathProperties: { encounterId: uuid },
-      success: { 200: responseSchema({ encounter: entity, note: entity }) }
+      success: { 200: responseSchema({ encounter: versionedEntity, note: entity }) }
     }),
     operation({
       operationId: "amendEncounterClinicalNote",
@@ -933,7 +1371,9 @@ function cp3Operations(): HttpOperationContract[] {
         "content",
         "amendmentReason"
       ]),
-      success: { 200: responseSchema({ encounter: entity, note: entity, amendedFrom: entity }) }
+      success: {
+        200: responseSchema({ encounter: versionedEntity, note: entity, amendedFrom: entity })
+      }
     }),
     operation({
       operationId: "createEncounterPrescription",
@@ -1030,7 +1470,7 @@ function cp4Operations(): HttpOperationContract[] {
       success: {
         200: responseSchema({
           dentalChart: entity,
-          findings: entities,
+          findings: versionedEntities,
           history: entities,
           snapshots: entities
         })
@@ -1046,7 +1486,7 @@ function cp4Operations(): HttpOperationContract[] {
       phi: "write",
       pathProperties: { patientId: uuid },
       body: dentalFindingBody,
-      success: { 201: responseSchema({ finding: entity, history: entity }) }
+      success: { 201: responseSchema({ finding: versionedEntity, history: entity }) }
     }),
     operation({
       operationId: "createEncounterDentalFinding",
@@ -1058,7 +1498,7 @@ function cp4Operations(): HttpOperationContract[] {
       phi: "write",
       pathProperties: { encounterId: uuid },
       body: dentalFindingBody,
-      success: { 201: responseSchema({ finding: entity, history: entity }) }
+      success: { 201: responseSchema({ finding: versionedEntity, history: entity }) }
     }),
     operation({
       operationId: "updateDentalFinding",
@@ -1071,7 +1511,7 @@ function cp4Operations(): HttpOperationContract[] {
       pathProperties: { findingId: uuid },
       body: updateDentalBody,
       optimisticConcurrency: true,
-      success: { 200: responseSchema({ finding: entity, history: entity }) }
+      success: { 200: responseSchema({ finding: versionedEntity, history: entity }) }
     }),
     operation({
       operationId: "listDentalFindingHistory",
@@ -1234,7 +1674,7 @@ function cp5Operations(): HttpOperationContract[] {
       phi: "write",
       pathProperties: { patientId: uuid },
       body: treatmentPlanBody,
-      success: { 201: singleEntity("treatmentPlan") },
+      success: { 201: singleVersionedEntity("treatmentPlan") },
       requiredMasterWiring: [
         "Reject unknown writable fields before handler execution.",
         "Derive unit price, tax, discounts and totals from the active server pricebook; ignore no client price authority.",
@@ -1261,7 +1701,7 @@ function cp5Operations(): HttpOperationContract[] {
         { minProperties: 1 }
       ),
       optimisticConcurrency: true,
-      success: { 200: singleEntity("treatmentPlan") }
+      success: { 200: singleVersionedEntity("treatmentPlan") }
     }),
     operation({
       operationId: "acceptTreatmentPlan",
@@ -1273,7 +1713,7 @@ function cp5Operations(): HttpOperationContract[] {
       phi: "write",
       pathProperties: { treatmentPlanId: uuid },
       body: bodySchema({ acceptedByName: nullableText, acceptanceEvidence: WRITABLE_JSON_SCHEMA }),
-      success: { 200: singleEntity("treatmentPlan") }
+      success: { 200: singleVersionedEntity("treatmentPlan") }
     }),
     operation({
       operationId: "createEncounterProcedurePerformed",
@@ -1295,7 +1735,9 @@ function cp5Operations(): HttpOperationContract[] {
         },
         ["treatmentPlanId", "treatmentPlanEstimateItemId"]
       ),
-      success: { 201: responseSchema({ procedure: entity, treatmentPlan: entity }) }
+      success: {
+        201: responseSchema({ procedure: entity, treatmentPlan: versionedEntity })
+      }
     }),
     operation({
       operationId: "createInvoice",
@@ -1516,7 +1958,7 @@ function cp6Operations(): HttpOperationContract[] {
         patientId: uuid,
         sourceWorkflow: schema.enum(taskSources)
       },
-      success: { 200: entityList("tasks") }
+      success: { 200: versionedEntityList("tasks") }
     }),
     operation({
       operationId: "createTask",
@@ -1548,7 +1990,7 @@ function cp6Operations(): HttpOperationContract[] {
         },
         ["title"]
       ),
-      success: { 201: singleEntity("task") }
+      success: { 201: singleVersionedEntity("task") }
     }),
     operation({
       operationId: "updateTask",
@@ -1574,7 +2016,7 @@ function cp6Operations(): HttpOperationContract[] {
         { minProperties: 1 }
       ),
       optimisticConcurrency: true,
-      success: { 200: singleEntity("task") }
+      success: { 200: singleVersionedEntity("task") }
     }),
     operation({
       operationId: "generateDueContinuityTasks",
@@ -1586,8 +2028,8 @@ function cp6Operations(): HttpOperationContract[] {
       body: bodySchema({ asOf: dateTime }),
       success: {
         202: responseSchema({
-          recallTasksCreated: entities,
-          followUpTasksCreated: entities,
+          recallTasksCreated: versionedEntities,
+          followUpTasksCreated: versionedEntities,
           recallsCreated: entities,
           skippedExistingKeys: stringList
         })
@@ -1734,7 +2176,7 @@ function cp6Operations(): HttpOperationContract[] {
       tags: ["Quality", "Corrective Actions"],
       mutation: false,
       paginated: true,
-      success: { 200: entityList("correctiveActions") }
+      success: { 200: versionedEntityList("correctiveActions") }
     }),
     operation({
       operationId: "createCorrectiveAction",
@@ -1755,7 +2197,7 @@ function cp6Operations(): HttpOperationContract[] {
         },
         ["title", "description", "ownerUserId", "dueAt"]
       ),
-      success: { 201: singleEntity("correctiveAction") }
+      success: { 201: singleVersionedEntity("correctiveAction") }
     }),
     operation({
       operationId: "updateCorrectiveAction",
@@ -1774,7 +2216,7 @@ function cp6Operations(): HttpOperationContract[] {
         ["status", "completionEvidence"]
       ),
       optimisticConcurrency: true,
-      success: { 200: singleEntity("correctiveAction") }
+      success: { 200: singleVersionedEntity("correctiveAction") }
     })
   ];
 }
@@ -1842,7 +2284,7 @@ function sopOperations(taskPriorities: readonly string[]): HttpOperationContract
       mutation: false,
       paginated: true,
       queryProperties: { date, status: schema.enum(runStatuses), dueBefore: dateTime },
-      success: { 200: entityList("sopRuns") }
+      success: { 200: versionedEntityList("sopRuns") }
     }),
     operation({
       operationId: "generateDueSopRuns",
@@ -1853,7 +2295,10 @@ function sopOperations(taskPriorities: readonly string[]): HttpOperationContract
       tags: ["SOP"],
       body: bodySchema({ asOf: dateTime }),
       success: {
-        202: responseSchema({ sopRunsCreated: entities, skippedExistingKeys: stringList })
+        202: responseSchema({
+          sopRunsCreated: versionedEntities,
+          skippedExistingKeys: stringList
+        })
       }
     }),
     operation({
@@ -1884,7 +2329,7 @@ function sopOperations(taskPriorities: readonly string[]): HttpOperationContract
         { minProperties: 1 }
       ),
       optimisticConcurrency: true,
-      success: { 200: singleEntity("sopRun") }
+      success: { 200: singleVersionedEntity("sopRun") }
     })
   ];
 }
@@ -1944,7 +2389,7 @@ function labOperations(labStatuses: readonly string[]): HttpOperationContract[] 
       mutation: false,
       paginated: true,
       queryProperties: { status: schema.enum(labStatuses), dueBefore: dateTime, vendorId: uuid },
-      success: { 200: entityList("labCases") }
+      success: { 200: versionedEntityList("labCases") }
     }),
     operation({
       operationId: "createLabCase",
@@ -1973,7 +2418,7 @@ function labOperations(labStatuses: readonly string[]): HttpOperationContract[] 
         },
         ["vendorId", "patientId", "title", "dueAt", "items"]
       ),
-      success: { 201: singleEntity("labCase") }
+      success: { 201: responseSchema({ labCase: labCaseDetailSchema }) }
     }),
     operation({
       operationId: "updateLabCase",
@@ -1989,7 +2434,7 @@ function labOperations(labStatuses: readonly string[]): HttpOperationContract[] 
         ["status"]
       ),
       optimisticConcurrency: true,
-      success: { 200: singleEntity("labCase") }
+      success: { 200: responseSchema({ labCase: labCaseDetailSchema }) }
     }),
     operation({
       operationId: "createLabReconciliation",
@@ -2186,7 +2631,7 @@ function inventoryOperations(): HttpOperationContract[] {
       summary: "Create an inventory check run",
       tags: ["Inventory"],
       body: bodySchema({ templateId: uuid, notes: nullableText }, ["templateId"]),
-      success: { 201: singleEntity("checkRun") }
+      success: { 201: responseSchema({ checkRun: inventoryCheckRunDetailSchema }) }
     }),
     operation({
       operationId: "updateInventoryCheckRun",
@@ -2211,7 +2656,7 @@ function inventoryOperations(): HttpOperationContract[] {
         ["status"]
       ),
       optimisticConcurrency: true,
-      success: { 200: singleEntity("checkRun") }
+      success: { 200: responseSchema({ checkRun: inventoryCheckRunDetailSchema }) }
     }),
     operation({
       operationId: "listInventoryExceptions",
@@ -2973,6 +3418,34 @@ export function parseNativeOperationResponse(operationId: string, status: number
   return parseOperationResponse(getNativeHttpOperation(operationId), status, body);
 }
 
+export function parseNativeOperationResponseHeaders(
+  operationId: string,
+  status: number,
+  headers: unknown
+) {
+  return parseOperationResponseHeaders(getNativeHttpOperation(operationId), status, headers);
+}
+
+export function resolveNativeResponseSchemaPath(
+  operationId: string,
+  status: number,
+  responsePath: string
+): RuntimeSchema {
+  const response = getNativeHttpOperation(operationId).responses[status];
+  if (!response) throw new Error(`Missing ${status} response for ${operationId}`);
+  let current = response.schema;
+  for (const rawSegment of responsePath.split(".")) {
+    const array = rawSegment.endsWith("[]");
+    const segment = array ? rawSegment.slice(0, -2) : rawSegment;
+    const property = current.properties?.[segment];
+    if (!property) {
+      throw new Error(`Missing response schema path ${responsePath} for ${operationId}`);
+    }
+    current = array ? (property.items ?? {}) : property;
+  }
+  return current;
+}
+
 export function normalizedRouteKey(method: HttpMethod, path: string): string {
   return `${method} ${path.replace(/\{[^}]+\}/g, "{}")}`;
 }
@@ -3004,10 +3477,13 @@ export function assertNativeHttpContractRegistry(): void {
       throw new Error(`Query schema must be strict for ${candidate.operationId}`);
     }
     if (candidate.request.body?.contentType === "application/json") {
-      if (candidate.request.body.schema.type !== "object") {
+      const rawJsonWebhook =
+        candidate.auth === "razorpay_signature" &&
+        candidate.request.body.schema.format === "binary";
+      if (!rawJsonWebhook && candidate.request.body.schema.type !== "object") {
         throw new Error(`JSON body must be an object for ${candidate.operationId}`);
       }
-      if (candidate.request.body.schema.additionalProperties !== false) {
+      if (!rawJsonWebhook && candidate.request.body.schema.additionalProperties !== false) {
         throw new Error(
           `Writable JSON body must reject unknown fields for ${candidate.operationId}`
         );
@@ -3023,6 +3499,68 @@ export function assertNativeHttpContractRegistry(): void {
       const required = candidate.request.headers.required ?? [];
       if (!required.includes("if-match")) {
         throw new Error(`If-Match metadata drift for ${candidate.operationId}`);
+      }
+    }
+    for (const [statusText, response] of Object.entries(candidate.responses)) {
+      const status = Number(statusText);
+      if (!response.headers["x-request-id"]?.required) {
+        throw new Error(`x-request-id response metadata drift for ${candidate.operationId}`);
+      }
+      if (status === 429 && !response.headers["Retry-After"]?.required) {
+        throw new Error(`Retry-After response metadata drift for ${candidate.operationId}`);
+      }
+      if (
+        status >= 200 &&
+        status < 300 &&
+        candidate.idempotency.mode === "header" &&
+        !response.headers["idempotency-replayed"]?.required
+      ) {
+        throw new Error(`Replay response metadata drift for ${candidate.operationId}`);
+      }
+    }
+    if (candidate.concurrency.mode === "if-match") {
+      const successful = Object.entries(candidate.responses).filter(
+        ([status]) => Number(status) >= 200 && Number(status) < 300
+      );
+      if (successful.some(([, response]) => !response.headers.ETag?.required)) {
+        throw new Error(`ETag response metadata drift for ${candidate.operationId}`);
+      }
+    }
+  }
+
+  const conditionalOperations = ACTIVE_NATIVE_HTTP_OPERATIONS.filter(
+    (candidate) => candidate.concurrency.mode === "if-match"
+  ).map((candidate) => candidate.operationId);
+  const mappedConditionalOperations = VERSIONED_RESOURCE_RESPONSE_CONTRACTS.map(
+    (contract) => contract.updateOperationId
+  );
+  if (
+    conditionalOperations.length !== mappedConditionalOperations.length ||
+    conditionalOperations.some((operationId) => !mappedConditionalOperations.includes(operationId))
+  ) {
+    throw new Error("Versioned resource family mapping does not cover every If-Match operation.");
+  }
+  for (const contract of VERSIONED_RESOURCE_RESPONSE_CONTRACTS) {
+    if (!contract.sources.some((source) => source.role === "update")) {
+      throw new Error(`Missing update response source for ${contract.family}`);
+    }
+    if (
+      !contract.sources.some((source) =>
+        ["aggregate", "create", "list", "read"].includes(source.role)
+      )
+    ) {
+      throw new Error(`Missing initial response source for ${contract.family}`);
+    }
+    for (const source of contract.sources) {
+      const definition = resolveNativeResponseSchemaPath(
+        source.operationId,
+        source.status,
+        source.responsePath
+      );
+      if (definition["x-clinicos-json-kind"] !== "versioned-public") {
+        throw new Error(
+          `Response source ${source.operationId}:${source.responsePath} is not versioned-public.`
+        );
       }
     }
   }

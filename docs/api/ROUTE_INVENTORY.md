@@ -4,6 +4,10 @@ The machine-readable active inventory is
 `packages/api-contracts/generated/native-route-inventory.json`. It is generated from runtime
 schemas and independently compared with static discovery of `apps/api/src/server.ts`.
 
+The same inventory includes the exact response paths that expose initial `rowVersion` values for
+the twelve If-Match resource families. Human-readable mapping and runtime-integration obligations
+are in `docs/api/VERSIONED_RESPONSE_METADATA.md`.
+
 ## Active operation totals
 
 | Origin    | Active operations | Principal families                                                                       |

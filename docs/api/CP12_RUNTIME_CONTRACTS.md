@@ -37,8 +37,16 @@ router. The registry records whether the existing route is currently `route-pari
   object key. Those are storage/scanner authority.
 - Authenticated mutations require `Idempotency-Key`. Mutable `PATCH` operations also require
   `If-Match` metadata.
+- Canonical mutable resource representations require `id` and positive safe-integer `rowVersion`.
+  Reduced suggestions, summaries, histories and snapshots remain projections rather than false
+  concurrency sources.
+- Strong resource ETags use canonical `"rv-<rowVersion>"` syntax. Singleton GETs and mutations with
+  one unambiguous version source require an ETag; collections carry versions per item and no
+  collection ETag.
 - PHI-bearing responses are `no-store`. Response validation recursively blocks private storage,
   raw provider payload and secret field names from generic public records.
+- Razorpay uses provider-standard `application/json` transport while preserving the exact bounded
+  raw bytes for signature verification before parsing.
 
 ## Stable error shape
 
@@ -93,7 +101,8 @@ The master or later API-framework lane must:
    atomic unit of work as the domain mutation/audit/outbox effect. Same-key/different-digest is a
    conflict; same digest replays the original status/body.
 5. Emit resource ETags and enforce `If-Match` atomically for registry operations marked
-   `if-match`. Do not implement this as a pre-read followed by an unguarded write.
+   `if-match`. Select/shape every mapped `row_version` as public `rowVersion`; do not implement this
+   as a pre-read followed by an unguarded write. See `docs/api/VERSIONED_RESPONSE_METADATA.md`.
 6. Apply the declared collection limit in repository queries. Existing native handlers that ignore
    `limit` must be tightened rather than relying on response truncation.
 7. Validate success responses before they leave the controller. A private-field response failure
@@ -102,6 +111,11 @@ The master or later API-framework lane must:
    clock, unit-of-work and fixture-detection behavior unchanged.
 9. Regenerate and compare the namespaced artifacts, then assemble any final aggregate OpenAPI/client
    only after the integrated route/security pipeline is frozen.
+10. Emit and validate the generated response-header contract: request ID everywhere, required
+    `false|true` replay truth on successful header-idempotent mutations, singleton ETags, and bounded
+    delta-second retry guidance on `429`.
+11. Remove the fixture Razorpay content-type rewrite. Preserve raw request bytes without changing
+    the production JSON media type.
 
 ## Intentional legacy tightening
 
@@ -111,7 +125,8 @@ integration must update in-repository consumers in one reviewed change before ma
 enforcement active. Important changes include:
 
 - `Idempotency-Key` replaces body-local idempotency aliases.
-- `If-Match` is required for mutable `PATCH` operations.
+- `If-Match` is required for mutable `PATCH` operations and accepts only canonical strong
+  `"rv-<rowVersion>"` values.
 - list `limit` is bounded at 100.
 - treatment-plan client price/tax/discount fields are removed.
 - media scan/quarantine/storage metadata is removed from public completion input.

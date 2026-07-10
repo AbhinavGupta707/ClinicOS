@@ -4,8 +4,22 @@
 export type JsonPrimitive = string | number | boolean | null;
 export type JsonValue = JsonPrimitive | readonly JsonValue[] | { readonly [key: string]: JsonValue };
 export type PublicJsonObject = Readonly<Record<string, JsonValue>>;
+export type VersionedPublicResource = PublicJsonObject & { readonly id: string; readonly rowVersion: number };
 export type WritableJsonObject = Readonly<Record<string, JsonValue>>;
 export type ClinicOsApiErrorCode = "BAD_REQUEST" | "UNAUTHENTICATED" | "PERMISSION_DENIED" | "NOT_FOUND" | "VALIDATION_ERROR" | "CONFLICT" | "PAYLOAD_TOO_LARGE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "AI_PROVIDER_UNAVAILABLE" | "DEPENDENCY_UNAVAILABLE" | "CONFIGURATION_ERROR";
+
+export interface ClinicOsApiResponseMetadata {
+  readonly status: number;
+  readonly requestId: string | null;
+  readonly etag: string | null;
+  readonly idempotencyReplayed: boolean;
+  readonly retryAfterSeconds: number | null;
+}
+
+export interface ClinicOsApiResponse<T> {
+  readonly body: T;
+  readonly metadata: ClinicOsApiResponseMetadata;
+}
 
 export interface ClinicOsApiClientOptions {
   readonly baseUrl: string;
@@ -29,14 +43,22 @@ export class ClinicOsApiError extends Error {
   readonly code: ClinicOsApiErrorCode;
   readonly details: PublicJsonObject;
   readonly requestId: string;
+  readonly responseMetadata: ClinicOsApiResponseMetadata;
 
-  constructor(status: number, body: ClinicOsApiErrorBody) {
+  constructor(status: number, body: ClinicOsApiErrorBody, metadata?: ClinicOsApiResponseMetadata) {
     super(body.error.message);
     this.name = "ClinicOsApiError";
     this.status = status;
     this.code = body.error.code;
     this.details = body.error.details;
     this.requestId = body.error.request_id;
+    this.responseMetadata = metadata ?? {
+      status,
+      requestId: body.error.request_id,
+      etag: null,
+      idempotencyReplayed: false,
+      retryAfterSeconds: null
+    };
   }
 }
 
@@ -52,6 +74,7 @@ interface ExecuteInput {
   readonly pathTemplate: string;
   readonly auth: "bearer" | "none" | "razorpay_signature";
   readonly contentType: "application/json" | "application/octet-stream" | null;
+  readonly bodyEncoding: "json" | "raw";
   readonly successStatuses: readonly number[];
   readonly input: GeneratedRequestInput;
 }
@@ -77,6 +100,46 @@ function appendQuery(url: string, values?: Readonly<Record<string, unknown>>): s
   const serialized = query.toString();
   return serialized ? url + "?" + serialized : url;
 }
+
+function parseIdempotencyReplayed(value: string | null): boolean {
+  if (value === null || value === "false") return false;
+  if (value === "true") return true;
+  throw new TypeError("Invalid idempotency-replayed response header.");
+}
+
+function parseRetryAfterSeconds(value: string | null): number | null {
+  if (value === null) return null;
+  if (!/^[1-9][0-9]{0,4}$/.test(value)) {
+    throw new TypeError("Invalid Retry-After response header.");
+  }
+  const seconds = Number(value);
+  if (!Number.isSafeInteger(seconds) || seconds < 1 || seconds > 86400) {
+    throw new TypeError("Retry-After response header is outside the supported delta-seconds range.");
+  }
+  return seconds;
+}
+
+function parseStrongRowVersionEtag(value: string | null): string | null {
+  if (value === null) return null;
+  const match = /^"rv-([1-9][0-9]{0,15})"$/.exec(value);
+  const rowVersion = Number(match?.[1]);
+  if (!match || !Number.isSafeInteger(rowVersion) || rowVersion < 1) {
+    throw new TypeError("Invalid strong row-version ETag response header.");
+  }
+  return value;
+}
+
+function extractResponseMetadata(response: Response): ClinicOsApiResponseMetadata {
+  return {
+    status: response.status,
+    requestId: response.headers.get("x-request-id"),
+    etag: parseStrongRowVersionEtag(response.headers.get("etag")),
+    idempotencyReplayed: parseIdempotencyReplayed(
+      response.headers.get("idempotency-replayed")
+    ),
+    retryAfterSeconds: parseRetryAfterSeconds(response.headers.get("retry-after"))
+  };
+}
 export type HealthLiveRequest = Readonly<Record<string, never>>;
 export type HealthLiveResponse = { readonly status: "ok"; readonly service: "clinic-os-api"; readonly request_id: string } | { readonly error: { readonly code: "BAD_REQUEST" | "UNAUTHENTICATED" | "PERMISSION_DENIED" | "NOT_FOUND" | "VALIDATION_ERROR" | "CONFLICT" | "PAYLOAD_TOO_LARGE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "AI_PROVIDER_UNAVAILABLE" | "DEPENDENCY_UNAVAILABLE" | "CONFIGURATION_ERROR"; readonly message: string; readonly details: PublicJsonObject; readonly request_id: string } };
 export type HealthReadyRequest = Readonly<Record<string, never>>;
@@ -88,37 +151,37 @@ export type GetCurrentIdentityResponse = { readonly user: PublicJsonObject; read
 export type ReceiveRazorpayPaymentWebhookRequest = { readonly headers: { readonly "x-razorpay-signature": string }; readonly body: Uint8Array };
 export type ReceiveRazorpayPaymentWebhookResponse = { readonly status: string; readonly replayed: boolean; readonly invoice: PublicJsonObject | null; readonly transaction: PublicJsonObject | null; readonly reconciliationItem: PublicJsonObject | null; readonly providerEvent: PublicJsonObject };
 export type ListPatientsRequest = { readonly query?: { readonly query?: string; readonly phone?: string; readonly source?: "manual" | "whatsapp" | "phone" | "call" | "walkin" | "practo" | "google" | "website" | "instagram" | "referral" | "recall_campaign" | "imported" | "external_system"; readonly limit?: number } };
-export type ListPatientsResponse = { readonly patients: readonly (PublicJsonObject)[] };
+export type ListPatientsResponse = { readonly patients: readonly (VersionedPublicResource)[] };
 export type CreatePatientRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly fullName: string; readonly phone: string; readonly email?: string | null; readonly dateOfBirth?: string | null; readonly gender?: "female" | "male" | "other" | "unknown"; readonly source: "manual" | "whatsapp" | "phone" | "call" | "walkin" | "practo" | "google" | "website" | "instagram" | "referral" | "recall_campaign" | "imported" | "external_system"; readonly sourceDetail?: WritableJsonObject; readonly leadId?: string | null } };
-export type CreatePatientResponse = { readonly patient: PublicJsonObject; readonly duplicateSuggestions: readonly (PublicJsonObject)[]; readonly matchedLead: PublicJsonObject | null };
+export type CreatePatientResponse = { readonly patient: VersionedPublicResource; readonly duplicateSuggestions: readonly ({ readonly patient: { readonly id: string; readonly fullName: string; readonly phone: string | null; readonly email: string | null; readonly createdAt: string }; readonly score: number; readonly reasons: readonly ("phone_exact" | "name_exact" | "name_similar")[] })[]; readonly matchedLead: VersionedPublicResource | null };
 export type GetPatientRequest = { readonly path: { readonly patientId: string } };
-export type GetPatientResponse = { readonly patient: PublicJsonObject };
+export type GetPatientResponse = { readonly patient: VersionedPublicResource };
 export type UpdatePatientRequest = { readonly path: { readonly patientId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly fullName?: string; readonly phone?: string | null; readonly email?: string | null; readonly dateOfBirth?: string | null; readonly gender?: "female" | "male" | "other" | "unknown" } };
-export type UpdatePatientResponse = { readonly patient: PublicJsonObject };
+export type UpdatePatientResponse = { readonly patient: VersionedPublicResource };
 export type GetPatientTimelineRequest = { readonly path: { readonly patientId: string }; readonly query?: { readonly limit?: number } };
 export type GetPatientTimelineResponse = { readonly timeline: readonly (PublicJsonObject)[]; readonly items: readonly (PublicJsonObject)[] };
 export type ListLeadsRequest = { readonly query?: { readonly source?: "manual" | "whatsapp" | "phone" | "call" | "walkin" | "practo" | "google" | "website" | "instagram" | "referral" | "recall_campaign"; readonly status?: "new" | "contacted" | "matched" | "booked" | "lost" | "duplicate" | "spam"; readonly limit?: number } };
-export type ListLeadsResponse = { readonly leads: readonly (PublicJsonObject)[] };
+export type ListLeadsResponse = { readonly leads: readonly (VersionedPublicResource)[] };
 export type CreateLeadRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly primaryContact: string; readonly intent?: "appointment_request" | "pricing_query" | "followup" | "emergency" | "lab_vendor" | "unknown"; readonly source: "manual" | "whatsapp" | "phone" | "call" | "walkin" | "practo" | "google" | "website" | "instagram" | "referral" | "recall_campaign"; readonly sourceDetail?: WritableJsonObject } };
-export type CreateLeadResponse = { readonly lead: PublicJsonObject; readonly patientMatchSuggestions: readonly (PublicJsonObject)[] };
+export type CreateLeadResponse = { readonly lead: VersionedPublicResource; readonly patientMatchSuggestions: readonly ({ readonly patient: { readonly id: string; readonly fullName: string; readonly phone: string | null; readonly email: string | null; readonly createdAt: string }; readonly score: number; readonly reasons: readonly ("phone_exact" | "name_exact" | "name_similar")[] })[] };
 export type MatchLeadToPatientRequest = { readonly path: { readonly leadId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly patientId: string } };
-export type MatchLeadToPatientResponse = { readonly lead: PublicJsonObject };
+export type MatchLeadToPatientResponse = { readonly lead: VersionedPublicResource };
 export type ConvertLeadToAppointmentRequest = { readonly path: { readonly leadId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly providerUserId: string; readonly appointmentTypeId: string; readonly chairId?: string | null; readonly status?: "requested" | "booked"; readonly startAt: string; readonly endAt?: string; readonly durationMinutes?: number; readonly reason?: string | null; readonly notes?: string | null; readonly allowConflictOverride?: boolean } };
-export type ConvertLeadToAppointmentResponse = { readonly lead: PublicJsonObject; readonly appointment: PublicJsonObject };
+export type ConvertLeadToAppointmentResponse = { readonly lead: VersionedPublicResource; readonly appointment: VersionedPublicResource };
 export type UpdateLeadStatusRequest = { readonly path: { readonly leadId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly status: "new" | "contacted" | "matched" | "booked" | "lost" | "duplicate" | "spam" } };
-export type UpdateLeadStatusResponse = { readonly lead: PublicJsonObject };
+export type UpdateLeadStatusResponse = { readonly lead: VersionedPublicResource };
 export type ListAppointmentsRequest = { readonly query?: { readonly date?: string; readonly providerId?: string; readonly status?: "requested" | "booked" | "confirmed" | "checked_in" | "in_consult" | "completed" | "cancelled" | "no_show"; readonly limit?: number } };
-export type ListAppointmentsResponse = { readonly appointments: readonly (PublicJsonObject)[] };
+export type ListAppointmentsResponse = { readonly appointments: readonly (VersionedPublicResource)[] };
 export type CreateAppointmentRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly patientId: string; readonly leadId?: string | null; readonly providerUserId: string; readonly appointmentTypeId: string; readonly chairId?: string | null; readonly status?: "requested" | "booked"; readonly startAt: string; readonly endAt?: string; readonly durationMinutes?: number; readonly source?: "manual" | "whatsapp" | "phone" | "call" | "walkin" | "practo" | "google" | "website" | "instagram" | "referral" | "recall_campaign"; readonly reason?: string | null; readonly notes?: string | null; readonly allowConflictOverride?: boolean } };
-export type CreateAppointmentResponse = { readonly appointment: PublicJsonObject };
+export type CreateAppointmentResponse = { readonly appointment: VersionedPublicResource };
 export type UpdateAppointmentRequest = { readonly path: { readonly appointmentId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly status: "requested" | "booked" | "confirmed" | "checked_in" | "in_consult" | "completed" | "cancelled" | "no_show" } };
-export type UpdateAppointmentResponse = { readonly appointment: PublicJsonObject };
+export type UpdateAppointmentResponse = { readonly appointment: VersionedPublicResource };
 export type ConfirmAppointmentRequest = { readonly path: { readonly appointmentId: string }; readonly headers: { readonly "idempotency-key": string } };
-export type ConfirmAppointmentResponse = { readonly appointment: PublicJsonObject };
+export type ConfirmAppointmentResponse = { readonly appointment: VersionedPublicResource };
 export type CheckInAppointmentRequest = { readonly path: { readonly appointmentId: string }; readonly headers: { readonly "idempotency-key": string } };
-export type CheckInAppointmentResponse = { readonly appointment: PublicJsonObject; readonly queueEntry: PublicJsonObject };
+export type CheckInAppointmentResponse = { readonly appointment: VersionedPublicResource; readonly queueEntry: VersionedPublicResource };
 export type MarkAppointmentNoShowRequest = { readonly path: { readonly appointmentId: string }; readonly headers: { readonly "idempotency-key": string } };
-export type MarkAppointmentNoShowResponse = { readonly appointment: PublicJsonObject };
+export type MarkAppointmentNoShowResponse = { readonly appointment: VersionedPublicResource };
 export type ListAppointmentTypesRequest = Readonly<Record<string, never>>;
 export type ListAppointmentTypesResponse = { readonly appointmentTypes: readonly (PublicJsonObject)[] };
 export type ListChairsRequest = Readonly<Record<string, never>>;
@@ -126,11 +189,11 @@ export type ListChairsResponse = { readonly chairs: readonly (PublicJsonObject)[
 export type ListProviderSchedulesRequest = { readonly query?: { readonly providerId?: string } };
 export type ListProviderSchedulesResponse = { readonly providerSchedules: readonly (PublicJsonObject)[] };
 export type ListQueueRequest = { readonly query?: { readonly date?: string; readonly limit?: number } };
-export type ListQueueResponse = { readonly queue: readonly (PublicJsonObject)[] };
+export type ListQueueResponse = { readonly queue: readonly (VersionedPublicResource)[] };
 export type UpdateQueueEntryRequest = { readonly path: { readonly queueEntryId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly status: "waiting" | "called" | "in_consult" | "completed" | "cancelled" } };
-export type UpdateQueueEntryResponse = { readonly queueEntry: PublicJsonObject };
+export type UpdateQueueEntryResponse = { readonly queueEntry: VersionedPublicResource };
 export type GetMorningDashboardRequest = { readonly query?: { readonly date?: string } };
-export type GetMorningDashboardResponse = { readonly dashboard: PublicJsonObject };
+export type GetMorningDashboardResponse = { readonly dashboard: { readonly date: string; readonly appointmentCounts: { readonly requested: number; readonly booked: number; readonly confirmed: number; readonly checked_in: number; readonly in_consult: number; readonly completed: number; readonly cancelled: number; readonly no_show: number }; readonly totalAppointments: number; readonly unconfirmedAppointments: readonly (VersionedPublicResource)[]; readonly todaysAppointments: readonly (VersionedPublicResource)[]; readonly openLeads: readonly (VersionedPublicResource)[]; readonly openTasks: readonly (VersionedPublicResource)[]; readonly queue: readonly (VersionedPublicResource)[]; readonly newPatientAppointmentIds: readonly (string)[]; readonly returningPatientAppointmentIds: readonly (string)[] } };
 export type ListIntakeFormTemplatesRequest = Readonly<Record<string, never>>;
 export type ListIntakeFormTemplatesResponse = { readonly templates: readonly (PublicJsonObject)[] };
 export type CreateIntakeFormTemplateRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly code: string; readonly displayName: string; readonly formType: "patient_intake" | "medical_history" | "consent_capture"; readonly version?: number; readonly schema: WritableJsonObject; readonly active?: boolean } };
@@ -138,7 +201,7 @@ export type CreateIntakeFormTemplateResponse = { readonly template: PublicJsonOb
 export type SubmitPatientIntakeFormRequest = { readonly path: { readonly patientId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly templateId: string; readonly source?: "digital" | "assistant_paper_card"; readonly responses: WritableJsonObject; readonly medicalHistorySnapshot?: WritableJsonObject; readonly provenance?: WritableJsonObject } };
 export type SubmitPatientIntakeFormResponse = { readonly formResponse: PublicJsonObject; readonly submission: PublicJsonObject };
 export type GetPatientPrepSummaryRequest = { readonly path: { readonly patientId: string }; readonly query?: { readonly appointmentId?: string } };
-export type GetPatientPrepSummaryResponse = { readonly prepSummary: PublicJsonObject; readonly summary: PublicJsonObject };
+export type GetPatientPrepSummaryResponse = { readonly prepSummary: { readonly patient: { readonly id: string; readonly fullName: string; readonly phone: string | null; readonly dateOfBirth: string | null; readonly gender: "female" | "male" | "other" | "unknown" }; readonly appointment: { readonly id: string; readonly status: "requested" | "booked" | "confirmed" | "checked_in" | "in_consult" | "completed" | "cancelled" | "no_show"; readonly startAt: string; readonly endAt: string; readonly providerUserId: string; readonly reason: string | null }; readonly generatedAt: string; readonly latestIntakeResponse: PublicJsonObject | null; readonly consentEnforcementState: PublicJsonObject; readonly activeConsentPurposes: readonly (string)[]; readonly timelineHighlights: readonly (PublicJsonObject)[]; readonly priorClinicalTimeline: readonly (PublicJsonObject)[]; readonly medicalHistoryChangePromptRequired: boolean; readonly dataCoverage: PublicJsonObject }; readonly summary: { readonly patient: { readonly id: string; readonly fullName: string; readonly phone: string | null; readonly dateOfBirth: string | null; readonly gender: "female" | "male" | "other" | "unknown" }; readonly appointment: { readonly id: string; readonly status: "requested" | "booked" | "confirmed" | "checked_in" | "in_consult" | "completed" | "cancelled" | "no_show"; readonly startAt: string; readonly endAt: string; readonly providerUserId: string; readonly reason: string | null }; readonly generatedAt: string; readonly latestIntakeResponse: PublicJsonObject | null; readonly consentEnforcementState: PublicJsonObject; readonly activeConsentPurposes: readonly (string)[]; readonly timelineHighlights: readonly (PublicJsonObject)[]; readonly priorClinicalTimeline: readonly (PublicJsonObject)[]; readonly medicalHistoryChangePromptRequired: boolean; readonly dataCoverage: PublicJsonObject } };
 export type ListPatientConsentsRequest = { readonly path: { readonly patientId: string } };
 export type ListPatientConsentsResponse = { readonly consents: readonly (PublicJsonObject)[]; readonly enforcementState: PublicJsonObject };
 export type CreatePatientConsentRequest = { readonly path: { readonly patientId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly purpose: "treatment_registration" | "privacy_notice" | "whatsapp_communication" | "marketing_recall" | "ai_audio_capture" | "raw_audio_retention" | "photo_capture" | "photo_sharing" | "abdm_abha" | "procedure_treatment"; readonly templateCode: string; readonly templateVersion: number; readonly captureMethod?: "digital_patient" | "assistant_paper_card" | "clinic_staff" | "imported_record"; readonly grantedByName?: string | null; readonly relationshipToPatient?: string | null; readonly evidence: WritableJsonObject; readonly provenance: WritableJsonObject } };
@@ -146,29 +209,29 @@ export type CreatePatientConsentResponse = { readonly consent: PublicJsonObject;
 export type RevokePatientConsentRequest = { readonly path: { readonly patientId: string; readonly consentId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly reason: string } };
 export type RevokePatientConsentResponse = { readonly consent: PublicJsonObject; readonly enforcementState: PublicJsonObject };
 export type CreateEncounterRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly patientId: string; readonly appointmentId?: string | null; readonly providerUserId: string; readonly reason?: string | null; readonly medicalHistorySnapshot?: WritableJsonObject } };
-export type CreateEncounterResponse = { readonly encounter: PublicJsonObject };
+export type CreateEncounterResponse = { readonly encounter: VersionedPublicResource };
 export type GetEncounterRequest = { readonly path: { readonly encounterId: string } };
-export type GetEncounterResponse = { readonly encounter: PublicJsonObject; readonly noteVersions: readonly (PublicJsonObject)[] };
+export type GetEncounterResponse = { readonly encounter: VersionedPublicResource; readonly noteVersions: readonly (PublicJsonObject)[] };
 export type StartEncounterRequest = { readonly path: { readonly encounterId: string }; readonly headers: { readonly "idempotency-key": string } };
-export type StartEncounterResponse = { readonly encounter: PublicJsonObject };
+export type StartEncounterResponse = { readonly encounter: VersionedPublicResource };
 export type SaveEncounterClinicalNoteDraftRequest = { readonly path: { readonly encounterId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly content: { readonly chiefComplaint?: string; readonly history?: string; readonly examination?: string; readonly investigations?: string; readonly diagnosis?: string; readonly treatmentPlan?: string; readonly treatmentPerformed?: string; readonly followUpInstructions?: string; readonly additionalSections?: WritableJsonObject }; readonly readyForSign?: boolean } };
-export type SaveEncounterClinicalNoteDraftResponse = { readonly encounter: PublicJsonObject | null; readonly note: PublicJsonObject };
+export type SaveEncounterClinicalNoteDraftResponse = { readonly encounter: VersionedPublicResource; readonly note: PublicJsonObject };
 export type SignEncounterClinicalNoteRequest = { readonly path: { readonly encounterId: string }; readonly headers: { readonly "idempotency-key": string } };
-export type SignEncounterClinicalNoteResponse = { readonly encounter: PublicJsonObject; readonly note: PublicJsonObject };
+export type SignEncounterClinicalNoteResponse = { readonly encounter: VersionedPublicResource; readonly note: PublicJsonObject };
 export type AmendEncounterClinicalNoteRequest = { readonly path: { readonly encounterId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly content: { readonly chiefComplaint?: string; readonly history?: string; readonly examination?: string; readonly investigations?: string; readonly diagnosis?: string; readonly treatmentPlan?: string; readonly treatmentPerformed?: string; readonly followUpInstructions?: string; readonly additionalSections?: WritableJsonObject }; readonly amendmentReason: string } };
-export type AmendEncounterClinicalNoteResponse = { readonly encounter: PublicJsonObject; readonly note: PublicJsonObject; readonly amendedFrom: PublicJsonObject };
+export type AmendEncounterClinicalNoteResponse = { readonly encounter: VersionedPublicResource; readonly note: PublicJsonObject; readonly amendedFrom: PublicJsonObject };
 export type CreateEncounterPrescriptionRequest = { readonly path: { readonly encounterId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly medications: readonly ({ readonly name: string; readonly strength?: string; readonly route?: string; readonly frequency: string; readonly duration: string; readonly instructions?: string })[]; readonly notes?: string | null } };
 export type CreateEncounterPrescriptionResponse = { readonly prescription: PublicJsonObject };
 export type SignPrescriptionRequest = { readonly path: { readonly prescriptionId: string }; readonly headers: { readonly "idempotency-key": string } };
 export type SignPrescriptionResponse = { readonly prescription: PublicJsonObject };
 export type GetPatientDentalChartRequest = { readonly path: { readonly patientId: string } };
-export type GetPatientDentalChartResponse = { readonly dentalChart: PublicJsonObject; readonly findings: readonly (PublicJsonObject)[]; readonly history: readonly (PublicJsonObject)[]; readonly snapshots: readonly (PublicJsonObject)[] };
+export type GetPatientDentalChartResponse = { readonly dentalChart: PublicJsonObject; readonly findings: readonly (VersionedPublicResource)[]; readonly history: readonly (PublicJsonObject)[]; readonly snapshots: readonly (PublicJsonObject)[] };
 export type CreatePatientDentalFindingRequest = { readonly path: { readonly patientId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly encounterId?: string | null; readonly toothNumber: string; readonly surface?: "distal" | "occlusal" | "buccal" | "lingual" | "mesial" | "cervical" | null; readonly findingType: "caries" | "cervical_erosion" | "restoration" | "crown" | "missing" | "mobility" | "rct" | "periodontal_note" | "watch_item"; readonly severity?: string | null; readonly status?: "active" | "watch" | "treated" | "historical" | "entered_in_error"; readonly reviewStatus?: "needs_review" | "reviewed"; readonly source?: "manual" | "ai_draft" | "imported" | "historical"; readonly confidence?: number | null; readonly notes?: string | null; readonly provenance?: WritableJsonObject; readonly treatmentReference?: WritableJsonObject } };
-export type CreatePatientDentalFindingResponse = { readonly finding: PublicJsonObject; readonly history: PublicJsonObject };
+export type CreatePatientDentalFindingResponse = { readonly finding: VersionedPublicResource; readonly history: PublicJsonObject };
 export type CreateEncounterDentalFindingRequest = { readonly path: { readonly encounterId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly encounterId?: string | null; readonly toothNumber: string; readonly surface?: "distal" | "occlusal" | "buccal" | "lingual" | "mesial" | "cervical" | null; readonly findingType: "caries" | "cervical_erosion" | "restoration" | "crown" | "missing" | "mobility" | "rct" | "periodontal_note" | "watch_item"; readonly severity?: string | null; readonly status?: "active" | "watch" | "treated" | "historical" | "entered_in_error"; readonly reviewStatus?: "needs_review" | "reviewed"; readonly source?: "manual" | "ai_draft" | "imported" | "historical"; readonly confidence?: number | null; readonly notes?: string | null; readonly provenance?: WritableJsonObject; readonly treatmentReference?: WritableJsonObject } };
-export type CreateEncounterDentalFindingResponse = { readonly finding: PublicJsonObject; readonly history: PublicJsonObject };
+export type CreateEncounterDentalFindingResponse = { readonly finding: VersionedPublicResource; readonly history: PublicJsonObject };
 export type UpdateDentalFindingRequest = { readonly path: { readonly findingId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly encounterId?: string | null; readonly toothNumber?: string; readonly surface?: string | null; readonly findingType?: string; readonly severity?: string | null; readonly status?: "active" | "watch" | "treated" | "historical" | "entered_in_error"; readonly reviewStatus?: "needs_review" | "reviewed"; readonly source?: "manual" | "ai_draft" | "imported" | "historical"; readonly confidence?: number | null; readonly notes?: string | null; readonly provenance?: WritableJsonObject; readonly treatmentReference?: WritableJsonObject; readonly changeReason: string } };
-export type UpdateDentalFindingResponse = { readonly finding: PublicJsonObject; readonly history: PublicJsonObject };
+export type UpdateDentalFindingResponse = { readonly finding: VersionedPublicResource; readonly history: PublicJsonObject };
 export type ListDentalFindingHistoryRequest = { readonly path: { readonly findingId: string } };
 export type ListDentalFindingHistoryResponse = { readonly history: readonly (PublicJsonObject)[] };
 export type CreateDentalChartSnapshotRequest = { readonly path: { readonly patientId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly encounterId?: string | null; readonly reason?: string | null; readonly provenance?: WritableJsonObject } };
@@ -186,13 +249,13 @@ export type CreateSignedMediaAccessResponse = { readonly mediaAsset: PublicJsonO
 export type ListPricebookProceduresRequest = Readonly<Record<string, never>>;
 export type ListPricebookProceduresResponse = { readonly procedures: readonly (PublicJsonObject)[] };
 export type CreatePatientTreatmentPlanRequest = { readonly path: { readonly patientId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly encounterId?: string | null; readonly title: string; readonly clinicalSummary?: string | null; readonly status?: "draft" | "presented"; readonly phases: readonly ({ readonly title: string; readonly description?: string | null; readonly estimatedStartAfterDays?: number | null; readonly items: readonly ({ readonly pricebookProcedureId: string; readonly dentalFindingId?: string | null; readonly toothNumber?: string | null; readonly quantity?: number; readonly estimatedVisits?: number; readonly priority?: string | null; readonly notes?: string | null })[] })[] } };
-export type CreatePatientTreatmentPlanResponse = { readonly treatmentPlan: PublicJsonObject };
+export type CreatePatientTreatmentPlanResponse = { readonly treatmentPlan: VersionedPublicResource };
 export type UpdateTreatmentPlanRequest = { readonly path: { readonly treatmentPlanId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly title?: string; readonly clinicalSummary?: string | null; readonly status?: "draft" | "presented" | "declined" | "deferred" | "cancelled"; readonly phases?: readonly ({ readonly title: string; readonly description?: string | null; readonly estimatedStartAfterDays?: number | null; readonly items: readonly ({ readonly pricebookProcedureId: string; readonly dentalFindingId?: string | null; readonly toothNumber?: string | null; readonly quantity?: number; readonly estimatedVisits?: number; readonly priority?: string | null; readonly notes?: string | null })[] })[] } };
-export type UpdateTreatmentPlanResponse = { readonly treatmentPlan: PublicJsonObject };
+export type UpdateTreatmentPlanResponse = { readonly treatmentPlan: VersionedPublicResource };
 export type AcceptTreatmentPlanRequest = { readonly path: { readonly treatmentPlanId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly acceptedByName?: string | null; readonly acceptanceEvidence?: WritableJsonObject } };
-export type AcceptTreatmentPlanResponse = { readonly treatmentPlan: PublicJsonObject };
+export type AcceptTreatmentPlanResponse = { readonly treatmentPlan: VersionedPublicResource };
 export type CreateEncounterProcedurePerformedRequest = { readonly path: { readonly encounterId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly treatmentPlanId: string; readonly treatmentPlanEstimateItemId: string; readonly performedAt?: string | null; readonly notes?: string | null; readonly outcome?: string | null; readonly provenance?: WritableJsonObject } };
-export type CreateEncounterProcedurePerformedResponse = { readonly procedure: PublicJsonObject; readonly treatmentPlan: PublicJsonObject };
+export type CreateEncounterProcedurePerformedResponse = { readonly procedure: PublicJsonObject; readonly treatmentPlan: VersionedPublicResource };
 export type CreateInvoiceRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: Readonly<Record<string, never>> | Readonly<Record<string, never>> };
 export type CreateInvoiceResponse = { readonly invoice: PublicJsonObject };
 export type GetInvoiceRequest = { readonly path: { readonly invoiceId: string } };
@@ -208,13 +271,13 @@ export type RecordInvoiceManualPaymentResponse = { readonly invoice: PublicJsonO
 export type GetOwnerDashboardRequest = { readonly query?: { readonly from?: string; readonly to?: string } };
 export type GetOwnerDashboardResponse = { readonly dashboard: PublicJsonObject };
 export type ListTasksRequest = { readonly query?: { readonly status?: "open" | "in_progress" | "done" | "cancelled"; readonly dueDate?: string; readonly dueBefore?: string; readonly assignedToUserId?: string; readonly patientId?: string; readonly sourceWorkflow?: "manual" | "appointment_confirmation" | "recall_generation" | "post_op_follow_up" | "payment_follow_up" | "sop_run" | "lab_case" | "inventory_check" | "incident_capa" | "system"; readonly limit?: number } };
-export type ListTasksResponse = { readonly tasks: readonly (PublicJsonObject)[] };
+export type ListTasksResponse = { readonly tasks: readonly (VersionedPublicResource)[] };
 export type CreateTaskRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly patientId?: string | null; readonly leadId?: string | null; readonly appointmentId?: string | null; readonly invoiceId?: string | null; readonly encounterId?: string | null; readonly treatmentPlanId?: string | null; readonly procedurePerformedId?: string | null; readonly taskType?: "confirmation" | "missed_call" | "whatsapp_request" | "follow_up" | "post_op_follow_up" | "recall" | "payment_due" | "payment_follow_up" | "lab_case" | "sop" | "inventory_check" | "procurement" | "incident" | "corrective_action" | "manual"; readonly sourceWorkflow?: "manual" | "appointment_confirmation" | "recall_generation" | "post_op_follow_up" | "payment_follow_up" | "sop_run" | "lab_case" | "inventory_check" | "incident_capa" | "system"; readonly sourceRecordType?: string | null; readonly sourceRecordId?: string | null; readonly title: string; readonly description?: string | null; readonly priority?: "low" | "normal" | "high" | "urgent"; readonly status?: "open" | "in_progress" | "done" | "cancelled"; readonly dueAt?: string | null; readonly assignedToUserId?: string | null } };
-export type CreateTaskResponse = { readonly task: PublicJsonObject };
+export type CreateTaskResponse = { readonly task: VersionedPublicResource };
 export type UpdateTaskRequest = { readonly path: { readonly taskId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly status?: "open" | "in_progress" | "done" | "cancelled"; readonly assignedToUserId?: string | null; readonly priority?: "low" | "normal" | "high" | "urgent"; readonly dueAt?: string | null; readonly title?: string; readonly description?: string | null; readonly completionEvidence?: WritableJsonObject; readonly cancelledReason?: string | null } };
-export type UpdateTaskResponse = { readonly task: PublicJsonObject };
+export type UpdateTaskResponse = { readonly task: VersionedPublicResource };
 export type GenerateDueContinuityTasksRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly asOf?: string } };
-export type GenerateDueContinuityTasksResponse = { readonly recallTasksCreated: readonly (PublicJsonObject)[]; readonly followUpTasksCreated: readonly (PublicJsonObject)[]; readonly recallsCreated: readonly (PublicJsonObject)[]; readonly skippedExistingKeys: readonly (string)[] };
+export type GenerateDueContinuityTasksResponse = { readonly recallTasksCreated: readonly (VersionedPublicResource)[]; readonly followUpTasksCreated: readonly (VersionedPublicResource)[]; readonly recallsCreated: readonly (PublicJsonObject)[]; readonly skippedExistingKeys: readonly (string)[] };
 export type CreateRecallRuleRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly code: string; readonly title: string; readonly anchor?: "procedure_completed" | "checkout_completed"; readonly offsetDays?: number; readonly procedureCategory?: string | null; readonly pricebookProcedureId?: string | null; readonly defaultTaskTitle?: string | null; readonly defaultTaskPriority?: "low" | "normal" | "high" | "urgent" } };
 export type CreateRecallRuleResponse = { readonly recallRule: PublicJsonObject };
 export type ListRecallsRequest = { readonly query?: { readonly status?: "due" | "contact_requested" | "contacted" | "booked" | "completed" | "cancelled" | "skipped"; readonly dueBefore?: string; readonly patientId?: string; readonly limit?: number } };
@@ -226,21 +289,21 @@ export type CreateSopTemplateResponse = { readonly sopTemplate: PublicJsonObject
 export type CreateSopScheduleRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly templateId: string; readonly title: string; readonly recurrenceType: "daily" | "weekly" | "monthly" | "interval_days"; readonly intervalDays?: number | null; readonly dayOfWeek?: number | null; readonly dayOfMonth?: number | null; readonly dueTime: string; readonly timezone?: string | null; readonly startsOn: string; readonly endsOn?: string | null; readonly assignedToUserId?: string | null; readonly defaultTaskPriority?: "low" | "normal" | "high" | "urgent" } };
 export type CreateSopScheduleResponse = { readonly sopSchedule: PublicJsonObject };
 export type ListSopRunsRequest = { readonly query?: { readonly date?: string; readonly status?: "due" | "in_progress" | "completed" | "cancelled" | "overdue"; readonly dueBefore?: string; readonly limit?: number } };
-export type ListSopRunsResponse = { readonly sopRuns: readonly (PublicJsonObject)[] };
+export type ListSopRunsResponse = { readonly sopRuns: readonly (VersionedPublicResource)[] };
 export type GenerateDueSopRunsRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly asOf?: string } };
-export type GenerateDueSopRunsResponse = { readonly sopRunsCreated: readonly (PublicJsonObject)[]; readonly skippedExistingKeys: readonly (string)[] };
+export type GenerateDueSopRunsResponse = { readonly sopRunsCreated: readonly (VersionedPublicResource)[]; readonly skippedExistingKeys: readonly (string)[] };
 export type UpdateSopRunRequest = { readonly path: { readonly sopRunId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly status?: "due" | "in_progress" | "completed" | "cancelled" | "overdue"; readonly completionEvidence?: WritableJsonObject; readonly items?: readonly ({ readonly itemId: string; readonly status: "pending" | "done" | "skipped"; readonly evidence: WritableJsonObject })[] } };
-export type UpdateSopRunResponse = { readonly sopRun: PublicJsonObject };
+export type UpdateSopRunResponse = { readonly sopRun: VersionedPublicResource };
 export type ListLabVendorsRequest = { readonly query?: { readonly limit?: number } };
 export type ListLabVendorsResponse = { readonly labVendors: readonly (PublicJsonObject)[] };
 export type CreateLabVendorRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly displayName: string; readonly phone?: string | null; readonly email?: string | null; readonly address?: WritableJsonObject; readonly taxRegistrationNumber?: string | null; readonly paymentTermsDays?: number } };
 export type CreateLabVendorResponse = { readonly labVendor: PublicJsonObject };
 export type ListLabCasesRequest = { readonly query?: { readonly status?: "draft" | "ready_for_pickup" | "sent_to_lab" | "received_by_lab" | "due" | "returned" | "fitted" | "completed" | "cancelled" | "rework_required"; readonly dueBefore?: string; readonly vendorId?: string; readonly limit?: number } };
-export type ListLabCasesResponse = { readonly labCases: readonly (PublicJsonObject)[] };
+export type ListLabCasesResponse = { readonly labCases: readonly (VersionedPublicResource)[] };
 export type CreateLabCaseRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly vendorId: string; readonly patientId: string; readonly encounterId?: string | null; readonly treatmentPlanId?: string | null; readonly treatmentPlanEstimateItemId?: string | null; readonly procedurePerformedId?: string | null; readonly title: string; readonly priority?: "routine" | "urgent"; readonly dueAt: string; readonly clinicalNotes?: string | null; readonly internalNotes?: string | null; readonly expectedCostMinor?: number | null; readonly slipMetadata?: WritableJsonObject; readonly items: readonly ({ readonly itemType: string; readonly toothNumber?: string | null; readonly material?: string | null; readonly shade?: string | null; readonly quantity?: number; readonly notes?: string | null })[] } };
-export type CreateLabCaseResponse = { readonly labCase: PublicJsonObject };
+export type CreateLabCaseResponse = { readonly labCase: { readonly labCase: VersionedPublicResource; readonly vendor: PublicJsonObject; readonly items: readonly (PublicJsonObject)[]; readonly statusHistory: readonly (PublicJsonObject)[] } };
 export type UpdateLabCaseRequest = { readonly path: { readonly labCaseId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly status: "draft" | "ready_for_pickup" | "sent_to_lab" | "received_by_lab" | "due" | "returned" | "fitted" | "completed" | "cancelled" | "rework_required"; readonly reason?: string | null; readonly evidence?: WritableJsonObject } };
-export type UpdateLabCaseResponse = { readonly labCase: PublicJsonObject };
+export type UpdateLabCaseResponse = { readonly labCase: { readonly labCase: VersionedPublicResource; readonly vendor: PublicJsonObject; readonly items: readonly (PublicJsonObject)[]; readonly statusHistory: readonly (PublicJsonObject)[] } };
 export type CreateLabReconciliationRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly vendorId: string; readonly periodStart: string; readonly periodEnd: string; readonly status?: "draft" | "submitted" | "matched" | "variance_review" | "approved" | "cancelled"; readonly invoiceReference?: string | null; readonly invoiceAmountMinor?: number | null; readonly evidence: WritableJsonObject; readonly entries: readonly ({ readonly labCaseId: string; readonly status?: "matched" | "amount_variance" | "missing_invoice" | "unbilled_case" | "excluded"; readonly invoiceAmountMinor?: number | null; readonly notes?: string | null })[] } };
 export type CreateLabReconciliationResponse = { readonly labReconciliation: PublicJsonObject };
 export type ListInventoryCategoriesRequest = { readonly query?: { readonly limit?: number } };
@@ -258,9 +321,9 @@ export type ListInventoryCheckTemplatesResponse = { readonly templates: readonly
 export type CreateInventoryCheckTemplateRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly code: string; readonly displayName: string; readonly cadence?: "daily" | "weekly" | "monthly" | "ad_hoc"; readonly active?: boolean; readonly lines: readonly ({ readonly itemId: string; readonly sequence?: number; readonly drawerLocation: string; readonly expectedQuantity?: number | null; readonly required?: boolean; readonly instructions?: string | null })[] } };
 export type CreateInventoryCheckTemplateResponse = { readonly template: PublicJsonObject };
 export type CreateInventoryCheckRunRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly templateId: string; readonly notes?: string | null } };
-export type CreateInventoryCheckRunResponse = { readonly checkRun: PublicJsonObject };
+export type CreateInventoryCheckRunResponse = { readonly checkRun: { readonly run: VersionedPublicResource; readonly template: PublicJsonObject; readonly lines: readonly (PublicJsonObject)[]; readonly procurementSuggestions: readonly (PublicJsonObject)[] } };
 export type UpdateInventoryCheckRunRequest = { readonly path: { readonly checkRunId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly status: "draft" | "in_progress" | "completed" | "cancelled"; readonly notes?: string | null; readonly lines?: readonly ({ readonly lineId: string; readonly countedQuantity: number; readonly exceptionNotes?: string | null })[] } };
-export type UpdateInventoryCheckRunResponse = { readonly checkRun: PublicJsonObject };
+export type UpdateInventoryCheckRunResponse = { readonly checkRun: { readonly run: VersionedPublicResource; readonly template: PublicJsonObject; readonly lines: readonly (PublicJsonObject)[]; readonly procurementSuggestions: readonly (PublicJsonObject)[] } };
 export type ListInventoryExceptionsRequest = { readonly query?: { readonly itemId?: string; readonly checkRunId?: string; readonly limit?: number } };
 export type ListInventoryExceptionsResponse = { readonly exceptions: readonly (PublicJsonObject)[] };
 export type ListIncidentsRequest = { readonly query?: { readonly status?: "open" | "under_review" | "capa_assigned" | "resolved" | "closed" | "cancelled"; readonly severity?: "low" | "medium" | "high" | "critical"; readonly category?: "clinical" | "operational" | "lab" | "inventory" | "billing" | "safety" | "patient_experience" | "security_privacy" | "other"; readonly limit?: number } };
@@ -268,11 +331,11 @@ export type ListIncidentsResponse = { readonly incidents: readonly (PublicJsonOb
 export type CreateIncidentRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly patientId?: string | null; readonly appointmentId?: string | null; readonly labCaseId?: string | null; readonly inventoryItemId?: string | null; readonly category: "clinical" | "operational" | "lab" | "inventory" | "billing" | "safety" | "patient_experience" | "security_privacy" | "other"; readonly severity: "low" | "medium" | "high" | "critical"; readonly occurredAt: string; readonly location?: string | null; readonly summary: string; readonly description: string; readonly impact?: string | null; readonly learning?: string | null; readonly immediateAction?: string | null; readonly evidence?: WritableJsonObject; readonly ownerUserId?: string | null } };
 export type CreateIncidentResponse = { readonly incident: PublicJsonObject };
 export type ListCorrectiveActionsRequest = { readonly query?: { readonly limit?: number } };
-export type ListCorrectiveActionsResponse = { readonly correctiveActions: readonly (PublicJsonObject)[] };
+export type ListCorrectiveActionsResponse = { readonly correctiveActions: readonly (VersionedPublicResource)[] };
 export type CreateCorrectiveActionRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly incidentId?: string | null; readonly actionType?: "corrective" | "preventive"; readonly title: string; readonly description: string; readonly ownerUserId: string; readonly dueAt: string; readonly verificationEvidence?: WritableJsonObject } };
-export type CreateCorrectiveActionResponse = { readonly correctiveAction: PublicJsonObject };
+export type CreateCorrectiveActionResponse = { readonly correctiveAction: VersionedPublicResource };
 export type UpdateCorrectiveActionRequest = { readonly path: { readonly correctiveActionId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly status: "open" | "in_progress" | "completed" | "cancelled"; readonly completionEvidence: WritableJsonObject; readonly verificationEvidence?: WritableJsonObject } };
-export type UpdateCorrectiveActionResponse = { readonly correctiveAction: PublicJsonObject };
+export type UpdateCorrectiveActionResponse = { readonly correctiveAction: VersionedPublicResource };
 export type ListProviderHealthRequest = Readonly<Record<string, never>>;
 export type ListProviderHealthResponse = { readonly providers: readonly (PublicJsonObject)[] };
 export type ListDeadLetterEventsRequest = { readonly query?: { readonly status?: "unreviewed" | "replay_requested" | "replayed" | "ignored" | "blocked" | "open" | "retry_scheduled" | "resolved" | "discarded"; readonly limit?: number } };
@@ -475,6 +538,10 @@ export class ClinicOsApiClient {
   }
 
   async execute<T>(operation: ExecuteInput): Promise<T> {
+    return (await this.executeWithMetadata<T>(operation)).body;
+  }
+
+  async executeWithMetadata<T>(operation: ExecuteInput): Promise<ClinicOsApiResponse<T>> {
     const headers: Record<string, string> = { ...(operation.input.headers ?? {}) };
     if (operation.auth === "bearer") {
       const token = await this.#options.getAccessToken?.();
@@ -485,24 +552,26 @@ export class ClinicOsApiClient {
     const requestId = this.#options.getRequestId?.();
     if (requestId) headers["x-request-id"] = requestId;
     let body: string | Uint8Array | undefined;
-    if (operation.contentType === "application/json") {
-      headers["content-type"] = "application/json";
-      body = JSON.stringify(operation.input.body ?? {});
-    } else if (operation.contentType === "application/octet-stream") {
-      headers["content-type"] = "application/octet-stream";
+    if (operation.bodyEncoding === "raw") {
+      if (!operation.contentType) throw new TypeError("Raw ClinicOS operations require a content type.");
+      headers["content-type"] = operation.contentType;
       if (!(operation.input.body instanceof Uint8Array)) {
         throw new TypeError("Binary ClinicOS operations require a Uint8Array body.");
       }
       body = operation.input.body;
+    } else if (operation.contentType === "application/json") {
+      headers["content-type"] = "application/json";
+      body = JSON.stringify(operation.input.body ?? {});
     }
     const path = interpolatePath(operation.pathTemplate, operation.input.path ?? {});
     const url = appendQuery(`${this.#options.baseUrl.replace(/\/$/, "")}${path}`, operation.input.query);
     const response = await this.#fetch(url, { method: operation.method, headers, ...(body === undefined ? {} : { body }) });
+    const metadata = extractResponseMetadata(response);
     const payload = (await response.json()) as T | ClinicOsApiErrorBody;
     if (!operation.successStatuses.includes(response.status)) {
-      throw new ClinicOsApiError(response.status, payload as ClinicOsApiErrorBody);
+      throw new ClinicOsApiError(response.status, payload as ClinicOsApiErrorBody, metadata);
     }
-    return payload as T;
+    return { body: payload as T, metadata };
   }
 
   async healthLive(input?: HealthLiveRequest): Promise<HealthLiveResponse> {
@@ -511,6 +580,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/health/live",
       auth: "none",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200,503],
+      input: input ?? {}
+    });
+  }
+
+  async healthLiveWithMetadata(input?: HealthLiveRequest): Promise<ClinicOsApiResponse<HealthLiveResponse>> {
+    return this.executeWithMetadata<HealthLiveResponse>({
+      method: "GET",
+      pathTemplate: "/health/live",
+      auth: "none",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200,503],
       input: input ?? {}
     });
@@ -522,6 +604,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/health/ready",
       auth: "none",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200,503],
+      input: input ?? {}
+    });
+  }
+
+  async healthReadyWithMetadata(input?: HealthReadyRequest): Promise<ClinicOsApiResponse<HealthReadyResponse>> {
+    return this.executeWithMetadata<HealthReadyResponse>({
+      method: "GET",
+      pathTemplate: "/health/ready",
+      auth: "none",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200,503],
       input: input ?? {}
     });
@@ -533,6 +628,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/health/startup",
       auth: "none",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200,503],
+      input: input ?? {}
+    });
+  }
+
+  async healthStartupWithMetadata(input?: HealthStartupRequest): Promise<ClinicOsApiResponse<HealthStartupResponse>> {
+    return this.executeWithMetadata<HealthStartupResponse>({
+      method: "GET",
+      pathTemplate: "/health/startup",
+      auth: "none",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200,503],
       input: input ?? {}
     });
@@ -544,6 +652,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/me",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getCurrentIdentityWithMetadata(input?: GetCurrentIdentityRequest): Promise<ClinicOsApiResponse<GetCurrentIdentityResponse>> {
+    return this.executeWithMetadata<GetCurrentIdentityResponse>({
+      method: "GET",
+      pathTemplate: "/v1/me",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -554,7 +675,20 @@ export class ClinicOsApiClient {
       method: "POST",
       pathTemplate: "/v1/payment-webhooks/razorpay",
       auth: "razorpay_signature",
-      contentType: "application/octet-stream",
+      contentType: "application/json",
+      bodyEncoding: "raw",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async receiveRazorpayPaymentWebhookWithMetadata(input: ReceiveRazorpayPaymentWebhookRequest): Promise<ClinicOsApiResponse<ReceiveRazorpayPaymentWebhookResponse>> {
+    return this.executeWithMetadata<ReceiveRazorpayPaymentWebhookResponse>({
+      method: "POST",
+      pathTemplate: "/v1/payment-webhooks/razorpay",
+      auth: "razorpay_signature",
+      contentType: "application/json",
+      bodyEncoding: "raw",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -566,6 +700,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listPatientsWithMetadata(input?: ListPatientsRequest): Promise<ClinicOsApiResponse<ListPatientsResponse>> {
+    return this.executeWithMetadata<ListPatientsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -577,6 +724,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createPatientWithMetadata(input: CreatePatientRequest): Promise<ClinicOsApiResponse<CreatePatientResponse>> {
+    return this.executeWithMetadata<CreatePatientResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -588,6 +748,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getPatientWithMetadata(input: GetPatientRequest): Promise<ClinicOsApiResponse<GetPatientResponse>> {
+    return this.executeWithMetadata<GetPatientResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -599,6 +772,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async updatePatientWithMetadata(input: UpdatePatientRequest): Promise<ClinicOsApiResponse<UpdatePatientResponse>> {
+    return this.executeWithMetadata<UpdatePatientResponse>({
+      method: "PATCH",
+      pathTemplate: "/v1/patients/{patientId}",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -610,6 +796,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/timeline",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getPatientTimelineWithMetadata(input: GetPatientTimelineRequest): Promise<ClinicOsApiResponse<GetPatientTimelineResponse>> {
+    return this.executeWithMetadata<GetPatientTimelineResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/timeline",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -621,6 +820,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/leads",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listLeadsWithMetadata(input?: ListLeadsRequest): Promise<ClinicOsApiResponse<ListLeadsResponse>> {
+    return this.executeWithMetadata<ListLeadsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/leads",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -632,6 +844,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/leads",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createLeadWithMetadata(input: CreateLeadRequest): Promise<ClinicOsApiResponse<CreateLeadResponse>> {
+    return this.executeWithMetadata<CreateLeadResponse>({
+      method: "POST",
+      pathTemplate: "/v1/leads",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -643,6 +868,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/leads/{leadId}/match-patient",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async matchLeadToPatientWithMetadata(input: MatchLeadToPatientRequest): Promise<ClinicOsApiResponse<MatchLeadToPatientResponse>> {
+    return this.executeWithMetadata<MatchLeadToPatientResponse>({
+      method: "POST",
+      pathTemplate: "/v1/leads/{leadId}/match-patient",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -654,6 +892,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/leads/{leadId}/convert-to-appointment",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async convertLeadToAppointmentWithMetadata(input: ConvertLeadToAppointmentRequest): Promise<ClinicOsApiResponse<ConvertLeadToAppointmentResponse>> {
+    return this.executeWithMetadata<ConvertLeadToAppointmentResponse>({
+      method: "POST",
+      pathTemplate: "/v1/leads/{leadId}/convert-to-appointment",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -665,6 +916,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/leads/{leadId}/status",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async updateLeadStatusWithMetadata(input: UpdateLeadStatusRequest): Promise<ClinicOsApiResponse<UpdateLeadStatusResponse>> {
+    return this.executeWithMetadata<UpdateLeadStatusResponse>({
+      method: "PATCH",
+      pathTemplate: "/v1/leads/{leadId}/status",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -676,6 +940,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/appointments",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listAppointmentsWithMetadata(input?: ListAppointmentsRequest): Promise<ClinicOsApiResponse<ListAppointmentsResponse>> {
+    return this.executeWithMetadata<ListAppointmentsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/appointments",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -687,6 +964,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/appointments",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createAppointmentWithMetadata(input: CreateAppointmentRequest): Promise<ClinicOsApiResponse<CreateAppointmentResponse>> {
+    return this.executeWithMetadata<CreateAppointmentResponse>({
+      method: "POST",
+      pathTemplate: "/v1/appointments",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -698,6 +988,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/appointments/{appointmentId}",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async updateAppointmentWithMetadata(input: UpdateAppointmentRequest): Promise<ClinicOsApiResponse<UpdateAppointmentResponse>> {
+    return this.executeWithMetadata<UpdateAppointmentResponse>({
+      method: "PATCH",
+      pathTemplate: "/v1/appointments/{appointmentId}",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -709,6 +1012,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/appointments/{appointmentId}/confirm",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async confirmAppointmentWithMetadata(input: ConfirmAppointmentRequest): Promise<ClinicOsApiResponse<ConfirmAppointmentResponse>> {
+    return this.executeWithMetadata<ConfirmAppointmentResponse>({
+      method: "POST",
+      pathTemplate: "/v1/appointments/{appointmentId}/confirm",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -720,6 +1036,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/appointments/{appointmentId}/check-in",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async checkInAppointmentWithMetadata(input: CheckInAppointmentRequest): Promise<ClinicOsApiResponse<CheckInAppointmentResponse>> {
+    return this.executeWithMetadata<CheckInAppointmentResponse>({
+      method: "POST",
+      pathTemplate: "/v1/appointments/{appointmentId}/check-in",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -731,6 +1060,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/appointments/{appointmentId}/mark-no-show",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async markAppointmentNoShowWithMetadata(input: MarkAppointmentNoShowRequest): Promise<ClinicOsApiResponse<MarkAppointmentNoShowResponse>> {
+    return this.executeWithMetadata<MarkAppointmentNoShowResponse>({
+      method: "POST",
+      pathTemplate: "/v1/appointments/{appointmentId}/mark-no-show",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -742,6 +1084,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/appointment-types",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listAppointmentTypesWithMetadata(input?: ListAppointmentTypesRequest): Promise<ClinicOsApiResponse<ListAppointmentTypesResponse>> {
+    return this.executeWithMetadata<ListAppointmentTypesResponse>({
+      method: "GET",
+      pathTemplate: "/v1/appointment-types",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -753,6 +1108,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/chairs",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listChairsWithMetadata(input?: ListChairsRequest): Promise<ClinicOsApiResponse<ListChairsResponse>> {
+    return this.executeWithMetadata<ListChairsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/chairs",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -764,6 +1132,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/provider-schedules",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listProviderSchedulesWithMetadata(input?: ListProviderSchedulesRequest): Promise<ClinicOsApiResponse<ListProviderSchedulesResponse>> {
+    return this.executeWithMetadata<ListProviderSchedulesResponse>({
+      method: "GET",
+      pathTemplate: "/v1/provider-schedules",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -775,6 +1156,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/queue",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listQueueWithMetadata(input?: ListQueueRequest): Promise<ClinicOsApiResponse<ListQueueResponse>> {
+    return this.executeWithMetadata<ListQueueResponse>({
+      method: "GET",
+      pathTemplate: "/v1/queue",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -786,6 +1180,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/queue/{queueEntryId}",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async updateQueueEntryWithMetadata(input: UpdateQueueEntryRequest): Promise<ClinicOsApiResponse<UpdateQueueEntryResponse>> {
+    return this.executeWithMetadata<UpdateQueueEntryResponse>({
+      method: "PATCH",
+      pathTemplate: "/v1/queue/{queueEntryId}",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -797,6 +1204,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/dashboard/morning",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getMorningDashboardWithMetadata(input?: GetMorningDashboardRequest): Promise<ClinicOsApiResponse<GetMorningDashboardResponse>> {
+    return this.executeWithMetadata<GetMorningDashboardResponse>({
+      method: "GET",
+      pathTemplate: "/v1/dashboard/morning",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -808,6 +1228,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/form-templates",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listIntakeFormTemplatesWithMetadata(input?: ListIntakeFormTemplatesRequest): Promise<ClinicOsApiResponse<ListIntakeFormTemplatesResponse>> {
+    return this.executeWithMetadata<ListIntakeFormTemplatesResponse>({
+      method: "GET",
+      pathTemplate: "/v1/form-templates",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -819,6 +1252,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/form-templates",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createIntakeFormTemplateWithMetadata(input: CreateIntakeFormTemplateRequest): Promise<ClinicOsApiResponse<CreateIntakeFormTemplateResponse>> {
+    return this.executeWithMetadata<CreateIntakeFormTemplateResponse>({
+      method: "POST",
+      pathTemplate: "/v1/form-templates",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -830,6 +1276,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/form-responses",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async submitPatientIntakeFormWithMetadata(input: SubmitPatientIntakeFormRequest): Promise<ClinicOsApiResponse<SubmitPatientIntakeFormResponse>> {
+    return this.executeWithMetadata<SubmitPatientIntakeFormResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/form-responses",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -841,6 +1300,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/prep-summary",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getPatientPrepSummaryWithMetadata(input: GetPatientPrepSummaryRequest): Promise<ClinicOsApiResponse<GetPatientPrepSummaryResponse>> {
+    return this.executeWithMetadata<GetPatientPrepSummaryResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/prep-summary",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -852,6 +1324,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/consents",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listPatientConsentsWithMetadata(input: ListPatientConsentsRequest): Promise<ClinicOsApiResponse<ListPatientConsentsResponse>> {
+    return this.executeWithMetadata<ListPatientConsentsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/consents",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -863,6 +1348,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/consents",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createPatientConsentWithMetadata(input: CreatePatientConsentRequest): Promise<ClinicOsApiResponse<CreatePatientConsentResponse>> {
+    return this.executeWithMetadata<CreatePatientConsentResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/consents",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -874,6 +1372,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/consents/{consentId}/revoke",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async revokePatientConsentWithMetadata(input: RevokePatientConsentRequest): Promise<ClinicOsApiResponse<RevokePatientConsentResponse>> {
+    return this.executeWithMetadata<RevokePatientConsentResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/consents/{consentId}/revoke",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -885,6 +1396,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/encounters",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createEncounterWithMetadata(input: CreateEncounterRequest): Promise<ClinicOsApiResponse<CreateEncounterResponse>> {
+    return this.executeWithMetadata<CreateEncounterResponse>({
+      method: "POST",
+      pathTemplate: "/v1/encounters",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -896,6 +1420,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/encounters/{encounterId}",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getEncounterWithMetadata(input: GetEncounterRequest): Promise<ClinicOsApiResponse<GetEncounterResponse>> {
+    return this.executeWithMetadata<GetEncounterResponse>({
+      method: "GET",
+      pathTemplate: "/v1/encounters/{encounterId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -907,6 +1444,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/encounters/{encounterId}/start",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async startEncounterWithMetadata(input: StartEncounterRequest): Promise<ClinicOsApiResponse<StartEncounterResponse>> {
+    return this.executeWithMetadata<StartEncounterResponse>({
+      method: "POST",
+      pathTemplate: "/v1/encounters/{encounterId}/start",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -918,6 +1468,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/encounters/{encounterId}",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async saveEncounterClinicalNoteDraftWithMetadata(input: SaveEncounterClinicalNoteDraftRequest): Promise<ClinicOsApiResponse<SaveEncounterClinicalNoteDraftResponse>> {
+    return this.executeWithMetadata<SaveEncounterClinicalNoteDraftResponse>({
+      method: "PATCH",
+      pathTemplate: "/v1/encounters/{encounterId}",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -929,6 +1492,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/encounters/{encounterId}/sign-note",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async signEncounterClinicalNoteWithMetadata(input: SignEncounterClinicalNoteRequest): Promise<ClinicOsApiResponse<SignEncounterClinicalNoteResponse>> {
+    return this.executeWithMetadata<SignEncounterClinicalNoteResponse>({
+      method: "POST",
+      pathTemplate: "/v1/encounters/{encounterId}/sign-note",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -940,6 +1516,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/encounters/{encounterId}/amend-note",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async amendEncounterClinicalNoteWithMetadata(input: AmendEncounterClinicalNoteRequest): Promise<ClinicOsApiResponse<AmendEncounterClinicalNoteResponse>> {
+    return this.executeWithMetadata<AmendEncounterClinicalNoteResponse>({
+      method: "POST",
+      pathTemplate: "/v1/encounters/{encounterId}/amend-note",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -951,6 +1540,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/encounters/{encounterId}/prescriptions",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createEncounterPrescriptionWithMetadata(input: CreateEncounterPrescriptionRequest): Promise<ClinicOsApiResponse<CreateEncounterPrescriptionResponse>> {
+    return this.executeWithMetadata<CreateEncounterPrescriptionResponse>({
+      method: "POST",
+      pathTemplate: "/v1/encounters/{encounterId}/prescriptions",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -962,6 +1564,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/prescriptions/{prescriptionId}/sign",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async signPrescriptionWithMetadata(input: SignPrescriptionRequest): Promise<ClinicOsApiResponse<SignPrescriptionResponse>> {
+    return this.executeWithMetadata<SignPrescriptionResponse>({
+      method: "POST",
+      pathTemplate: "/v1/prescriptions/{prescriptionId}/sign",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -973,6 +1588,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/dental-chart",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getPatientDentalChartWithMetadata(input: GetPatientDentalChartRequest): Promise<ClinicOsApiResponse<GetPatientDentalChartResponse>> {
+    return this.executeWithMetadata<GetPatientDentalChartResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/dental-chart",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -984,6 +1612,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/dental-findings",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createPatientDentalFindingWithMetadata(input: CreatePatientDentalFindingRequest): Promise<ClinicOsApiResponse<CreatePatientDentalFindingResponse>> {
+    return this.executeWithMetadata<CreatePatientDentalFindingResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/dental-findings",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -995,6 +1636,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/encounters/{encounterId}/dental-findings",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createEncounterDentalFindingWithMetadata(input: CreateEncounterDentalFindingRequest): Promise<ClinicOsApiResponse<CreateEncounterDentalFindingResponse>> {
+    return this.executeWithMetadata<CreateEncounterDentalFindingResponse>({
+      method: "POST",
+      pathTemplate: "/v1/encounters/{encounterId}/dental-findings",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1006,6 +1660,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/dental-findings/{findingId}",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async updateDentalFindingWithMetadata(input: UpdateDentalFindingRequest): Promise<ClinicOsApiResponse<UpdateDentalFindingResponse>> {
+    return this.executeWithMetadata<UpdateDentalFindingResponse>({
+      method: "PATCH",
+      pathTemplate: "/v1/dental-findings/{findingId}",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1017,6 +1684,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/dental-findings/{findingId}/history",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listDentalFindingHistoryWithMetadata(input: ListDentalFindingHistoryRequest): Promise<ClinicOsApiResponse<ListDentalFindingHistoryResponse>> {
+    return this.executeWithMetadata<ListDentalFindingHistoryResponse>({
+      method: "GET",
+      pathTemplate: "/v1/dental-findings/{findingId}/history",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1028,6 +1708,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/dental-chart/snapshots",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createDentalChartSnapshotWithMetadata(input: CreateDentalChartSnapshotRequest): Promise<ClinicOsApiResponse<CreateDentalChartSnapshotResponse>> {
+    return this.executeWithMetadata<CreateDentalChartSnapshotResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/dental-chart/snapshots",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1039,6 +1732,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/media/upload-urls",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async requestMediaUploadUrlWithMetadata(input: RequestMediaUploadUrlRequest): Promise<ClinicOsApiResponse<RequestMediaUploadUrlResponse>> {
+    return this.executeWithMetadata<RequestMediaUploadUrlResponse>({
+      method: "POST",
+      pathTemplate: "/v1/media/upload-urls",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1050,6 +1756,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/media/uploads/{uploadId}/content",
       auth: "bearer",
       contentType: "application/octet-stream",
+      bodyEncoding: "raw",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async receiveMediaUploadContentWithMetadata(input: ReceiveMediaUploadContentRequest): Promise<ClinicOsApiResponse<ReceiveMediaUploadContentResponse>> {
+    return this.executeWithMetadata<ReceiveMediaUploadContentResponse>({
+      method: "PUT",
+      pathTemplate: "/v1/media/uploads/{uploadId}/content",
+      auth: "bearer",
+      contentType: "application/octet-stream",
+      bodyEncoding: "raw",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1061,6 +1780,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/media/uploads/{uploadId}/complete",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async completeMediaUploadWithMetadata(input: CompleteMediaUploadRequest): Promise<ClinicOsApiResponse<CompleteMediaUploadResponse>> {
+    return this.executeWithMetadata<CompleteMediaUploadResponse>({
+      method: "POST",
+      pathTemplate: "/v1/media/uploads/{uploadId}/complete",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1072,6 +1804,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/media",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listPatientMediaAssetsWithMetadata(input: ListPatientMediaAssetsRequest): Promise<ClinicOsApiResponse<ListPatientMediaAssetsResponse>> {
+    return this.executeWithMetadata<ListPatientMediaAssetsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/media",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1083,6 +1828,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/media/assets/{mediaAssetId}/signed-url",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async createSignedMediaAccessWithMetadata(input: CreateSignedMediaAccessRequest): Promise<ClinicOsApiResponse<CreateSignedMediaAccessResponse>> {
+    return this.executeWithMetadata<CreateSignedMediaAccessResponse>({
+      method: "POST",
+      pathTemplate: "/v1/media/assets/{mediaAssetId}/signed-url",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1094,6 +1852,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/pricebook/procedures",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listPricebookProceduresWithMetadata(input?: ListPricebookProceduresRequest): Promise<ClinicOsApiResponse<ListPricebookProceduresResponse>> {
+    return this.executeWithMetadata<ListPricebookProceduresResponse>({
+      method: "GET",
+      pathTemplate: "/v1/pricebook/procedures",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1105,6 +1876,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/treatment-plans",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createPatientTreatmentPlanWithMetadata(input: CreatePatientTreatmentPlanRequest): Promise<ClinicOsApiResponse<CreatePatientTreatmentPlanResponse>> {
+    return this.executeWithMetadata<CreatePatientTreatmentPlanResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/treatment-plans",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1116,6 +1900,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/treatment-plans/{treatmentPlanId}",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async updateTreatmentPlanWithMetadata(input: UpdateTreatmentPlanRequest): Promise<ClinicOsApiResponse<UpdateTreatmentPlanResponse>> {
+    return this.executeWithMetadata<UpdateTreatmentPlanResponse>({
+      method: "PATCH",
+      pathTemplate: "/v1/treatment-plans/{treatmentPlanId}",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1127,6 +1924,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/treatment-plans/{treatmentPlanId}/accept",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async acceptTreatmentPlanWithMetadata(input: AcceptTreatmentPlanRequest): Promise<ClinicOsApiResponse<AcceptTreatmentPlanResponse>> {
+    return this.executeWithMetadata<AcceptTreatmentPlanResponse>({
+      method: "POST",
+      pathTemplate: "/v1/treatment-plans/{treatmentPlanId}/accept",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1138,6 +1948,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/encounters/{encounterId}/procedures",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createEncounterProcedurePerformedWithMetadata(input: CreateEncounterProcedurePerformedRequest): Promise<ClinicOsApiResponse<CreateEncounterProcedurePerformedResponse>> {
+    return this.executeWithMetadata<CreateEncounterProcedurePerformedResponse>({
+      method: "POST",
+      pathTemplate: "/v1/encounters/{encounterId}/procedures",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1149,6 +1972,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/invoices",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createInvoiceWithMetadata(input: CreateInvoiceRequest): Promise<ClinicOsApiResponse<CreateInvoiceResponse>> {
+    return this.executeWithMetadata<CreateInvoiceResponse>({
+      method: "POST",
+      pathTemplate: "/v1/invoices",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1160,6 +1996,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/invoices/{invoiceId}",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getInvoiceWithMetadata(input: GetInvoiceRequest): Promise<ClinicOsApiResponse<GetInvoiceResponse>> {
+    return this.executeWithMetadata<GetInvoiceResponse>({
+      method: "GET",
+      pathTemplate: "/v1/invoices/{invoiceId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1171,6 +2020,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/invoices/{invoiceId}/receipts",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createInvoiceReceiptWithMetadata(input: CreateInvoiceReceiptRequest): Promise<ClinicOsApiResponse<CreateInvoiceReceiptResponse>> {
+    return this.executeWithMetadata<CreateInvoiceReceiptResponse>({
+      method: "POST",
+      pathTemplate: "/v1/invoices/{invoiceId}/receipts",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1182,6 +2044,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/instructions",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201,202],
+      input: input ?? {}
+    });
+  }
+
+  async createPatientInstructionWithMetadata(input: CreatePatientInstructionRequest): Promise<ClinicOsApiResponse<CreatePatientInstructionResponse>> {
+    return this.executeWithMetadata<CreatePatientInstructionResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/instructions",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201,202],
       input: input ?? {}
     });
@@ -1193,6 +2068,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/invoices/{invoiceId}/payment-requests",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createInvoicePaymentRequestWithMetadata(input: CreateInvoicePaymentRequestRequest): Promise<ClinicOsApiResponse<CreateInvoicePaymentRequestResponse>> {
+    return this.executeWithMetadata<CreateInvoicePaymentRequestResponse>({
+      method: "POST",
+      pathTemplate: "/v1/invoices/{invoiceId}/payment-requests",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1204,6 +2092,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/invoices/{invoiceId}/manual-payments",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async recordInvoiceManualPaymentWithMetadata(input: RecordInvoiceManualPaymentRequest): Promise<ClinicOsApiResponse<RecordInvoiceManualPaymentResponse>> {
+    return this.executeWithMetadata<RecordInvoiceManualPaymentResponse>({
+      method: "POST",
+      pathTemplate: "/v1/invoices/{invoiceId}/manual-payments",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1215,6 +2116,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/owner-dashboard",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getOwnerDashboardWithMetadata(input?: GetOwnerDashboardRequest): Promise<ClinicOsApiResponse<GetOwnerDashboardResponse>> {
+    return this.executeWithMetadata<GetOwnerDashboardResponse>({
+      method: "GET",
+      pathTemplate: "/v1/owner-dashboard",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1226,6 +2140,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/tasks",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listTasksWithMetadata(input?: ListTasksRequest): Promise<ClinicOsApiResponse<ListTasksResponse>> {
+    return this.executeWithMetadata<ListTasksResponse>({
+      method: "GET",
+      pathTemplate: "/v1/tasks",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1237,6 +2164,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/tasks",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createTaskWithMetadata(input: CreateTaskRequest): Promise<ClinicOsApiResponse<CreateTaskResponse>> {
+    return this.executeWithMetadata<CreateTaskResponse>({
+      method: "POST",
+      pathTemplate: "/v1/tasks",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1248,6 +2188,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/tasks/{taskId}",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async updateTaskWithMetadata(input: UpdateTaskRequest): Promise<ClinicOsApiResponse<UpdateTaskResponse>> {
+    return this.executeWithMetadata<UpdateTaskResponse>({
+      method: "PATCH",
+      pathTemplate: "/v1/tasks/{taskId}",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1259,6 +2212,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/tasks/generate-due",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [202],
+      input: input ?? {}
+    });
+  }
+
+  async generateDueContinuityTasksWithMetadata(input: GenerateDueContinuityTasksRequest): Promise<ClinicOsApiResponse<GenerateDueContinuityTasksResponse>> {
+    return this.executeWithMetadata<GenerateDueContinuityTasksResponse>({
+      method: "POST",
+      pathTemplate: "/v1/tasks/generate-due",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [202],
       input: input ?? {}
     });
@@ -1270,6 +2236,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/recall-rules",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createRecallRuleWithMetadata(input: CreateRecallRuleRequest): Promise<ClinicOsApiResponse<CreateRecallRuleResponse>> {
+    return this.executeWithMetadata<CreateRecallRuleResponse>({
+      method: "POST",
+      pathTemplate: "/v1/recall-rules",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1281,6 +2260,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/recalls",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listRecallsWithMetadata(input?: ListRecallsRequest): Promise<ClinicOsApiResponse<ListRecallsResponse>> {
+    return this.executeWithMetadata<ListRecallsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/recalls",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1292,6 +2284,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/recalls/{recallId}/actions",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async recordRecallActionWithMetadata(input: RecordRecallActionRequest): Promise<ClinicOsApiResponse<RecordRecallActionResponse>> {
+    return this.executeWithMetadata<RecordRecallActionResponse>({
+      method: "POST",
+      pathTemplate: "/v1/recalls/{recallId}/actions",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1303,6 +2308,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/sop-templates",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createSopTemplateWithMetadata(input: CreateSopTemplateRequest): Promise<ClinicOsApiResponse<CreateSopTemplateResponse>> {
+    return this.executeWithMetadata<CreateSopTemplateResponse>({
+      method: "POST",
+      pathTemplate: "/v1/sop-templates",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1314,6 +2332,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/sop-schedules",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createSopScheduleWithMetadata(input: CreateSopScheduleRequest): Promise<ClinicOsApiResponse<CreateSopScheduleResponse>> {
+    return this.executeWithMetadata<CreateSopScheduleResponse>({
+      method: "POST",
+      pathTemplate: "/v1/sop-schedules",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1325,6 +2356,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/sop-runs",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listSopRunsWithMetadata(input?: ListSopRunsRequest): Promise<ClinicOsApiResponse<ListSopRunsResponse>> {
+    return this.executeWithMetadata<ListSopRunsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/sop-runs",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1336,6 +2380,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/sop-runs/generate-due",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [202],
+      input: input ?? {}
+    });
+  }
+
+  async generateDueSopRunsWithMetadata(input: GenerateDueSopRunsRequest): Promise<ClinicOsApiResponse<GenerateDueSopRunsResponse>> {
+    return this.executeWithMetadata<GenerateDueSopRunsResponse>({
+      method: "POST",
+      pathTemplate: "/v1/sop-runs/generate-due",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [202],
       input: input ?? {}
     });
@@ -1347,6 +2404,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/sop-runs/{sopRunId}",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async updateSopRunWithMetadata(input: UpdateSopRunRequest): Promise<ClinicOsApiResponse<UpdateSopRunResponse>> {
+    return this.executeWithMetadata<UpdateSopRunResponse>({
+      method: "PATCH",
+      pathTemplate: "/v1/sop-runs/{sopRunId}",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1358,6 +2428,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/lab-vendors",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listLabVendorsWithMetadata(input?: ListLabVendorsRequest): Promise<ClinicOsApiResponse<ListLabVendorsResponse>> {
+    return this.executeWithMetadata<ListLabVendorsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/lab-vendors",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1369,6 +2452,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/lab-vendors",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createLabVendorWithMetadata(input: CreateLabVendorRequest): Promise<ClinicOsApiResponse<CreateLabVendorResponse>> {
+    return this.executeWithMetadata<CreateLabVendorResponse>({
+      method: "POST",
+      pathTemplate: "/v1/lab-vendors",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1380,6 +2476,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/lab-cases",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listLabCasesWithMetadata(input?: ListLabCasesRequest): Promise<ClinicOsApiResponse<ListLabCasesResponse>> {
+    return this.executeWithMetadata<ListLabCasesResponse>({
+      method: "GET",
+      pathTemplate: "/v1/lab-cases",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1391,6 +2500,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/lab-cases",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createLabCaseWithMetadata(input: CreateLabCaseRequest): Promise<ClinicOsApiResponse<CreateLabCaseResponse>> {
+    return this.executeWithMetadata<CreateLabCaseResponse>({
+      method: "POST",
+      pathTemplate: "/v1/lab-cases",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1402,6 +2524,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/lab-cases/{labCaseId}",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async updateLabCaseWithMetadata(input: UpdateLabCaseRequest): Promise<ClinicOsApiResponse<UpdateLabCaseResponse>> {
+    return this.executeWithMetadata<UpdateLabCaseResponse>({
+      method: "PATCH",
+      pathTemplate: "/v1/lab-cases/{labCaseId}",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1413,6 +2548,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/lab-reconciliations",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createLabReconciliationWithMetadata(input: CreateLabReconciliationRequest): Promise<ClinicOsApiResponse<CreateLabReconciliationResponse>> {
+    return this.executeWithMetadata<CreateLabReconciliationResponse>({
+      method: "POST",
+      pathTemplate: "/v1/lab-reconciliations",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1424,6 +2572,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/inventory/categories",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listInventoryCategoriesWithMetadata(input?: ListInventoryCategoriesRequest): Promise<ClinicOsApiResponse<ListInventoryCategoriesResponse>> {
+    return this.executeWithMetadata<ListInventoryCategoriesResponse>({
+      method: "GET",
+      pathTemplate: "/v1/inventory/categories",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1435,6 +2596,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/inventory/categories",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createInventoryCategoryWithMetadata(input: CreateInventoryCategoryRequest): Promise<ClinicOsApiResponse<CreateInventoryCategoryResponse>> {
+    return this.executeWithMetadata<CreateInventoryCategoryResponse>({
+      method: "POST",
+      pathTemplate: "/v1/inventory/categories",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1446,6 +2620,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/inventory/items",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listInventoryItemsWithMetadata(input?: ListInventoryItemsRequest): Promise<ClinicOsApiResponse<ListInventoryItemsResponse>> {
+    return this.executeWithMetadata<ListInventoryItemsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/inventory/items",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1457,6 +2644,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/inventory/items",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createInventoryItemWithMetadata(input: CreateInventoryItemRequest): Promise<ClinicOsApiResponse<CreateInventoryItemResponse>> {
+    return this.executeWithMetadata<CreateInventoryItemResponse>({
+      method: "POST",
+      pathTemplate: "/v1/inventory/items",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1468,6 +2668,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/inventory/stock-ledger",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createStockLedgerEntryWithMetadata(input: CreateStockLedgerEntryRequest): Promise<ClinicOsApiResponse<CreateStockLedgerEntryResponse>> {
+    return this.executeWithMetadata<CreateStockLedgerEntryResponse>({
+      method: "POST",
+      pathTemplate: "/v1/inventory/stock-ledger",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1479,6 +2692,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/inventory/check-templates",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listInventoryCheckTemplatesWithMetadata(input?: ListInventoryCheckTemplatesRequest): Promise<ClinicOsApiResponse<ListInventoryCheckTemplatesResponse>> {
+    return this.executeWithMetadata<ListInventoryCheckTemplatesResponse>({
+      method: "GET",
+      pathTemplate: "/v1/inventory/check-templates",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1490,6 +2716,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/inventory/check-templates",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createInventoryCheckTemplateWithMetadata(input: CreateInventoryCheckTemplateRequest): Promise<ClinicOsApiResponse<CreateInventoryCheckTemplateResponse>> {
+    return this.executeWithMetadata<CreateInventoryCheckTemplateResponse>({
+      method: "POST",
+      pathTemplate: "/v1/inventory/check-templates",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1501,6 +2740,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/inventory/check-runs",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createInventoryCheckRunWithMetadata(input: CreateInventoryCheckRunRequest): Promise<ClinicOsApiResponse<CreateInventoryCheckRunResponse>> {
+    return this.executeWithMetadata<CreateInventoryCheckRunResponse>({
+      method: "POST",
+      pathTemplate: "/v1/inventory/check-runs",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1512,6 +2764,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/inventory/check-runs/{checkRunId}",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async updateInventoryCheckRunWithMetadata(input: UpdateInventoryCheckRunRequest): Promise<ClinicOsApiResponse<UpdateInventoryCheckRunResponse>> {
+    return this.executeWithMetadata<UpdateInventoryCheckRunResponse>({
+      method: "PATCH",
+      pathTemplate: "/v1/inventory/check-runs/{checkRunId}",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1523,6 +2788,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/inventory/exceptions",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listInventoryExceptionsWithMetadata(input?: ListInventoryExceptionsRequest): Promise<ClinicOsApiResponse<ListInventoryExceptionsResponse>> {
+    return this.executeWithMetadata<ListInventoryExceptionsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/inventory/exceptions",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1534,6 +2812,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/incidents",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listIncidentsWithMetadata(input?: ListIncidentsRequest): Promise<ClinicOsApiResponse<ListIncidentsResponse>> {
+    return this.executeWithMetadata<ListIncidentsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/incidents",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1545,6 +2836,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/incidents",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createIncidentWithMetadata(input: CreateIncidentRequest): Promise<ClinicOsApiResponse<CreateIncidentResponse>> {
+    return this.executeWithMetadata<CreateIncidentResponse>({
+      method: "POST",
+      pathTemplate: "/v1/incidents",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1556,6 +2860,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/corrective-actions",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listCorrectiveActionsWithMetadata(input?: ListCorrectiveActionsRequest): Promise<ClinicOsApiResponse<ListCorrectiveActionsResponse>> {
+    return this.executeWithMetadata<ListCorrectiveActionsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/corrective-actions",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1567,6 +2884,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/corrective-actions",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createCorrectiveActionWithMetadata(input: CreateCorrectiveActionRequest): Promise<ClinicOsApiResponse<CreateCorrectiveActionResponse>> {
+    return this.executeWithMetadata<CreateCorrectiveActionResponse>({
+      method: "POST",
+      pathTemplate: "/v1/corrective-actions",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1578,6 +2908,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/corrective-actions/{correctiveActionId}",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async updateCorrectiveActionWithMetadata(input: UpdateCorrectiveActionRequest): Promise<ClinicOsApiResponse<UpdateCorrectiveActionResponse>> {
+    return this.executeWithMetadata<UpdateCorrectiveActionResponse>({
+      method: "PATCH",
+      pathTemplate: "/v1/corrective-actions/{correctiveActionId}",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1589,6 +2932,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/provider-health",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listProviderHealthWithMetadata(input?: ListProviderHealthRequest): Promise<ClinicOsApiResponse<ListProviderHealthResponse>> {
+    return this.executeWithMetadata<ListProviderHealthResponse>({
+      method: "GET",
+      pathTemplate: "/v1/provider-health",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1600,6 +2956,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/dead-letter-events",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listDeadLetterEventsWithMetadata(input?: ListDeadLetterEventsRequest): Promise<ClinicOsApiResponse<ListDeadLetterEventsResponse>> {
+    return this.executeWithMetadata<ListDeadLetterEventsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/dead-letter-events",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1611,6 +2980,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/dead-letter-events/{deadLetterEventId}/replay",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [202],
+      input: input ?? {}
+    });
+  }
+
+  async replayDeadLetterEventWithMetadata(input: ReplayDeadLetterEventRequest): Promise<ClinicOsApiResponse<ReplayDeadLetterEventResponse>> {
+    return this.executeWithMetadata<ReplayDeadLetterEventResponse>({
+      method: "POST",
+      pathTemplate: "/v1/dead-letter-events/{deadLetterEventId}/replay",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [202],
       input: input ?? {}
     });
@@ -1622,6 +3004,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/migration-batches",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listMigrationBatchesWithMetadata(input?: ListMigrationBatchesRequest): Promise<ClinicOsApiResponse<ListMigrationBatchesResponse>> {
+    return this.executeWithMetadata<ListMigrationBatchesResponse>({
+      method: "GET",
+      pathTemplate: "/v1/migration-batches",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1633,6 +3028,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/migration-batches",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createMigrationBatchWithMetadata(input: CreateMigrationBatchRequest): Promise<ClinicOsApiResponse<CreateMigrationBatchResponse>> {
+    return this.executeWithMetadata<CreateMigrationBatchResponse>({
+      method: "POST",
+      pathTemplate: "/v1/migration-batches",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1644,6 +3052,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/migration-batches/{batchId}",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getMigrationBatchWithMetadata(input: GetMigrationBatchRequest): Promise<ClinicOsApiResponse<GetMigrationBatchResponse>> {
+    return this.executeWithMetadata<GetMigrationBatchResponse>({
+      method: "GET",
+      pathTemplate: "/v1/migration-batches/{batchId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1655,6 +3076,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/migration-batches/{batchId}/rows",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listMigrationBatchRowsWithMetadata(input: ListMigrationBatchRowsRequest): Promise<ClinicOsApiResponse<ListMigrationBatchRowsResponse>> {
+    return this.executeWithMetadata<ListMigrationBatchRowsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/migration-batches/{batchId}/rows",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1666,6 +3100,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/migration-batches/{batchId}/rows/{rowId}/resolve",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async resolveMigrationBatchRowWithMetadata(input: ResolveMigrationBatchRowRequest): Promise<ClinicOsApiResponse<ResolveMigrationBatchRowResponse>> {
+    return this.executeWithMetadata<ResolveMigrationBatchRowResponse>({
+      method: "POST",
+      pathTemplate: "/v1/migration-batches/{batchId}/rows/{rowId}/resolve",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1677,6 +3124,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/migration-batches/{batchId}/commit",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [202],
+      input: input ?? {}
+    });
+  }
+
+  async commitMigrationBatchWithMetadata(input: CommitMigrationBatchRequest): Promise<ClinicOsApiResponse<CommitMigrationBatchResponse>> {
+    return this.executeWithMetadata<CommitMigrationBatchResponse>({
+      method: "POST",
+      pathTemplate: "/v1/migration-batches/{batchId}/commit",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [202],
       input: input ?? {}
     });
@@ -1688,6 +3148,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/migration-batches/{batchId}/rollback",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [202],
+      input: input ?? {}
+    });
+  }
+
+  async rollbackMigrationBatchWithMetadata(input: RollbackMigrationBatchRequest): Promise<ClinicOsApiResponse<RollbackMigrationBatchResponse>> {
+    return this.executeWithMetadata<RollbackMigrationBatchResponse>({
+      method: "POST",
+      pathTemplate: "/v1/migration-batches/{batchId}/rollback",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [202],
       input: input ?? {}
     });
@@ -1699,6 +3172,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/encounters/{encounterId}/ai-scribe/sessions",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listEncounterAiScribeSessionsWithMetadata(input: ListEncounterAiScribeSessionsRequest): Promise<ClinicOsApiResponse<ListEncounterAiScribeSessionsResponse>> {
+    return this.executeWithMetadata<ListEncounterAiScribeSessionsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/encounters/{encounterId}/ai-scribe/sessions",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1710,6 +3196,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/encounters/{encounterId}/ai-scribe/sessions",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createAiScribeSessionWithMetadata(input: CreateAiScribeSessionRequest): Promise<ClinicOsApiResponse<CreateAiScribeSessionResponse>> {
+    return this.executeWithMetadata<CreateAiScribeSessionResponse>({
+      method: "POST",
+      pathTemplate: "/v1/encounters/{encounterId}/ai-scribe/sessions",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1721,6 +3220,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/ai-scribe/sessions/{sessionId}",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getAiScribeSessionWithMetadata(input: GetAiScribeSessionRequest): Promise<ClinicOsApiResponse<GetAiScribeSessionResponse>> {
+    return this.executeWithMetadata<GetAiScribeSessionResponse>({
+      method: "GET",
+      pathTemplate: "/v1/ai-scribe/sessions/{sessionId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1732,6 +3244,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/ai-scribe/sessions/{sessionId}/transcript-segments",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createAiScribeTranscriptSegmentWithMetadata(input: CreateAiScribeTranscriptSegmentRequest): Promise<ClinicOsApiResponse<CreateAiScribeTranscriptSegmentResponse>> {
+    return this.executeWithMetadata<CreateAiScribeTranscriptSegmentResponse>({
+      method: "POST",
+      pathTemplate: "/v1/ai-scribe/sessions/{sessionId}/transcript-segments",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1743,6 +3268,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/ai-scribe/sessions/{sessionId}/source-anchors",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createAiScribeSourceAnchorWithMetadata(input: CreateAiScribeSourceAnchorRequest): Promise<ClinicOsApiResponse<CreateAiScribeSourceAnchorResponse>> {
+    return this.executeWithMetadata<CreateAiScribeSourceAnchorResponse>({
+      method: "POST",
+      pathTemplate: "/v1/ai-scribe/sessions/{sessionId}/source-anchors",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1754,6 +3292,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/ai-scribe/sessions/{sessionId}/generate-drafts",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async generateAiScribeDraftsWithMetadata(input: GenerateAiScribeDraftsRequest): Promise<ClinicOsApiResponse<GenerateAiScribeDraftsResponse>> {
+    return this.executeWithMetadata<GenerateAiScribeDraftsResponse>({
+      method: "POST",
+      pathTemplate: "/v1/ai-scribe/sessions/{sessionId}/generate-drafts",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1765,6 +3316,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/ai-scribe/sessions/{sessionId}/review-decisions",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async recordAiScribeReviewDecisionWithMetadata(input: RecordAiScribeReviewDecisionRequest): Promise<ClinicOsApiResponse<RecordAiScribeReviewDecisionResponse>> {
+    return this.executeWithMetadata<RecordAiScribeReviewDecisionResponse>({
+      method: "POST",
+      pathTemplate: "/v1/ai-scribe/sessions/{sessionId}/review-decisions",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1776,6 +3340,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/ai-scribe/sessions/{sessionId}/retention-delete",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async deleteAiScribeRetainedPayloadsWithMetadata(input: DeleteAiScribeRetainedPayloadsRequest): Promise<ClinicOsApiResponse<DeleteAiScribeRetainedPayloadsResponse>> {
+    return this.executeWithMetadata<DeleteAiScribeRetainedPayloadsResponse>({
+      method: "POST",
+      pathTemplate: "/v1/ai-scribe/sessions/{sessionId}/retention-delete",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1787,6 +3364,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/audit-events",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listAuditEventsWithMetadata(input?: ListAuditEventsRequest): Promise<ClinicOsApiResponse<ListAuditEventsResponse>> {
+    return this.executeWithMetadata<ListAuditEventsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/audit-events",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1798,6 +3388,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/audit-events/{auditEventId}/reviews",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async reviewAuditEventWithMetadata(input: ReviewAuditEventRequest): Promise<ClinicOsApiResponse<ReviewAuditEventResponse>> {
+    return this.executeWithMetadata<ReviewAuditEventResponse>({
+      method: "POST",
+      pathTemplate: "/v1/audit-events/{auditEventId}/reviews",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1809,6 +3412,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/record-exports",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listPatientRecordExportsWithMetadata(input: ListPatientRecordExportsRequest): Promise<ClinicOsApiResponse<ListPatientRecordExportsResponse>> {
+    return this.executeWithMetadata<ListPatientRecordExportsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/record-exports",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1820,6 +3436,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}/record-exports",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createPatientRecordExportWithMetadata(input: CreatePatientRecordExportRequest): Promise<ClinicOsApiResponse<CreatePatientRecordExportResponse>> {
+    return this.executeWithMetadata<CreatePatientRecordExportResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/record-exports",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1831,6 +3460,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/privacy/deletion-requests",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listDeletionRequestsWithMetadata(input?: ListDeletionRequestsRequest): Promise<ClinicOsApiResponse<ListDeletionRequestsResponse>> {
+    return this.executeWithMetadata<ListDeletionRequestsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/privacy/deletion-requests",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1842,6 +3484,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/privacy/deletion-requests",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createDeletionRequestWithMetadata(input: CreateDeletionRequestRequest): Promise<ClinicOsApiResponse<CreateDeletionRequestResponse>> {
+    return this.executeWithMetadata<CreateDeletionRequestResponse>({
+      method: "POST",
+      pathTemplate: "/v1/privacy/deletion-requests",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1853,6 +3508,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/privacy/deletion-requests/{deletionRequestId}/review",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async reviewDeletionRequestWithMetadata(input: ReviewDeletionRequestRequest): Promise<ClinicOsApiResponse<ReviewDeletionRequestResponse>> {
+    return this.executeWithMetadata<ReviewDeletionRequestResponse>({
+      method: "POST",
+      pathTemplate: "/v1/privacy/deletion-requests/{deletionRequestId}/review",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1864,6 +3532,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/privacy/retention-runs",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [202],
+      input: input ?? {}
+    });
+  }
+
+  async runRetentionJobWithMetadata(input: RunRetentionJobRequest): Promise<ClinicOsApiResponse<RunRetentionJobResponse>> {
+    return this.executeWithMetadata<RunRetentionJobResponse>({
+      method: "POST",
+      pathTemplate: "/v1/privacy/retention-runs",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [202],
       input: input ?? {}
     });
@@ -1875,6 +3556,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/break-glass/access-requests",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listBreakGlassAccessRequestsWithMetadata(input?: ListBreakGlassAccessRequestsRequest): Promise<ClinicOsApiResponse<ListBreakGlassAccessRequestsResponse>> {
+    return this.executeWithMetadata<ListBreakGlassAccessRequestsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/break-glass/access-requests",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1886,6 +3580,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/break-glass/access-requests",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createBreakGlassAccessRequestWithMetadata(input: CreateBreakGlassAccessRequestRequest): Promise<ClinicOsApiResponse<CreateBreakGlassAccessRequestResponse>> {
+    return this.executeWithMetadata<CreateBreakGlassAccessRequestResponse>({
+      method: "POST",
+      pathTemplate: "/v1/break-glass/access-requests",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [201],
       input: input ?? {}
     });
@@ -1897,6 +3604,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/break-glass/access-requests/{breakGlassAccessId}/review",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async reviewBreakGlassAccessRequestWithMetadata(input: ReviewBreakGlassAccessRequestRequest): Promise<ClinicOsApiResponse<ReviewBreakGlassAccessRequestResponse>> {
+    return this.executeWithMetadata<ReviewBreakGlassAccessRequestResponse>({
+      method: "POST",
+      pathTemplate: "/v1/break-glass/access-requests/{breakGlassAccessId}/review",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
@@ -1908,6 +3628,19 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/pilot-readiness",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getPilotReadinessWithMetadata(input?: GetPilotReadinessRequest): Promise<ClinicOsApiResponse<GetPilotReadinessResponse>> {
+    return this.executeWithMetadata<GetPilotReadinessResponse>({
+      method: "GET",
+      pathTemplate: "/v1/pilot-readiness",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}
     });
