@@ -151,6 +151,11 @@ import {
   systemClock
 } from "@clinic-os/domain";
 import { buildSetLocalIdentityRlsStatements, buildSetLocalRlsStatements } from "./rls.ts";
+import {
+  createScopedPostgresApiRequestGuards,
+  type ScopedApiRequestGuardsPort
+} from "./api-request-guards.ts";
+import { createRepositoryPortTransactionLease } from "./modules/core/scoped-repository-port.ts";
 import type {
   AppointmentConflictFilter,
   AppointmentSearchFilter,
@@ -477,6 +482,7 @@ export class PostgresAuditEventSink {
 export interface PostgresClinicUnitOfWorkContext {
   repository: PostgresClinicOperationsRepository;
   auditSink: PostgresAuditEventSink;
+  requestGuards: ScopedApiRequestGuardsPort;
 }
 
 export class PostgresClinicUnitOfWork {
@@ -491,12 +497,25 @@ export class PostgresClinicUnitOfWork {
   async run<T>(callback: (context: PostgresClinicUnitOfWorkContext) => Promise<T>): Promise<T> {
     return withTransaction(this.#client, async (client) => {
       const transactionClient = new TransactionBoundSqlClient(client);
-      return callback({
-        repository: new PostgresClinicOperationsRepository(transactionClient, {
-          clock: this.#clock
-        }),
-        auditSink: new PostgresAuditEventSink(transactionClient)
-      });
+      const requestGuardLease = createRepositoryPortTransactionLease();
+      try {
+        const result = await callback({
+          repository: new PostgresClinicOperationsRepository(transactionClient, {
+            clock: this.#clock
+          }),
+          auditSink: new PostgresAuditEventSink(transactionClient),
+          requestGuards: createScopedPostgresApiRequestGuards(transactionClient, requestGuardLease)
+        });
+        await requestGuardLease.close();
+        return result;
+      } catch (error) {
+        try {
+          await requestGuardLease.close();
+        } catch {
+          // Preserve the first domain/database error while still draining transaction-bound work.
+        }
+        throw error;
+      }
     });
   }
 }
