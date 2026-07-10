@@ -53,6 +53,23 @@ export async function extractNativeRouterRoutes() {
     ts.forEachChild(node, (child) => walk(child, context));
   }
   walk(sourceFile);
+
+  const nestApplicationPath = resolve(
+    repositoryRoot,
+    "apps/api/src/framework/nest-application.ts"
+  );
+  const nestSource = await readOptionalSource(nestApplicationPath);
+  if (nestSource !== null) {
+    const nestSourceFile = ts.createSourceFile(
+      nestApplicationPath,
+      nestSource,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TS
+    );
+    collectNestDecoratorRoutes(nestSourceFile, routes);
+  }
+
   return [...routes].sort();
 }
 
@@ -150,6 +167,50 @@ function normalizeRegexRoute(literal) {
   pattern = pattern.replace(/\\\//g, "/");
   pattern = pattern.replace(/\(\[\^\/\]\+\)/g, "{}");
   return pattern;
+}
+
+function collectNestDecoratorRoutes(sourceFile, routes) {
+  const methods = new Map([
+    ["Delete", "DELETE"],
+    ["Get", "GET"],
+    ["Patch", "PATCH"],
+    ["Post", "POST"],
+    ["Put", "PUT"]
+  ]);
+
+  function walk(node) {
+    if (
+      ts.isCallExpression(node) &&
+      ts.isIdentifier(node.expression) &&
+      node.expression.text === "decorateRoute" &&
+      node.arguments.length >= 3
+    ) {
+      const decorator = node.arguments[2];
+      if (
+        decorator &&
+        ts.isCallExpression(decorator) &&
+        ts.isIdentifier(decorator.expression)
+      ) {
+        const method = methods.get(decorator.expression.text);
+        const path = decorator.arguments[0];
+        if (method && path && ts.isStringLiteral(path)) {
+          routes.add(`${method} ${normalizeLiteralRoute(`/${path.text.replace(/^\//u, "")}`)}`);
+        }
+      }
+    }
+    ts.forEachChild(node, walk);
+  }
+
+  walk(sourceFile);
+}
+
+async function readOptionalSource(path) {
+  try {
+    return await readFile(path, "utf8");
+  } catch (error) {
+    if (error && typeof error === "object" && error.code === "ENOENT") return null;
+    throw error;
+  }
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
