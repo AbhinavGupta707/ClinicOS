@@ -1,4 +1,8 @@
-import { BoundaryError, type AtomicBudgetStore, type BudgetConsumptionRequest } from "@clinic-os/security";
+import {
+  BoundaryError,
+  type AtomicBudgetStore,
+  type BudgetConsumptionRequest
+} from "@clinic-os/security";
 import { createClient } from "redis";
 
 const CONSUME_BUDGET_SCRIPT = `
@@ -25,6 +29,7 @@ return {1, math.max(0, limit - next), ttl}
 
 interface RedisBudgetClient {
   readonly isOpen: boolean;
+  readonly isReady: boolean;
   connect(): Promise<unknown>;
   ping(): Promise<string>;
   eval(
@@ -41,10 +46,15 @@ export class RedisAtomicBudgetStore implements AtomicBudgetStore {
   #connecting: Promise<void> | null = null;
 
   constructor(input: { redisUrl: string; keyPrefix?: string; client?: RedisBudgetClient }) {
-    if (!input.redisUrl && !input.client) throw new Error("Redis budget store requires a Redis URL.");
+    if (!input.redisUrl && !input.client)
+      throw new Error("Redis budget store requires a Redis URL.");
     this.#client =
       input.client ??
-      (createClient({ url: input.redisUrl }) as unknown as RedisBudgetClient);
+      (createClient({
+        url: input.redisUrl,
+        commandsQueueMaxLength: 256,
+        disableOfflineQueue: true
+      }) as unknown as RedisBudgetClient);
     this.#prefix = input.keyPrefix ?? "clinicos:abuse:v1";
     this.#client.on("error", (error) => {
       console.error(
@@ -108,7 +118,10 @@ export class RedisAtomicBudgetStore implements AtomicBudgetStore {
   }
 
   async #ensureConnected(): Promise<void> {
-    if (this.#client.isOpen) return;
+    if (this.#client.isReady) return;
+    if (this.#client.isOpen) {
+      throw new Error("Redis abuse-budget dependency is reconnecting.");
+    }
     if (!this.#connecting) {
       this.#connecting = this.#client.connect().then(() => undefined);
     }
@@ -116,6 +129,9 @@ export class RedisAtomicBudgetStore implements AtomicBudgetStore {
       await this.#connecting;
     } finally {
       this.#connecting = null;
+    }
+    if (!this.#client.isReady) {
+      throw new Error("Redis abuse-budget dependency did not become ready.");
     }
   }
 }

@@ -230,6 +230,28 @@ test("Redis budget adapter consumes atomically and fails closed when Redis is un
     unavailable.consume({ bucketKey: "bucket", limit: 1, cost: 1, windowSeconds: 60, now }),
     (error) => error instanceof BoundaryError && error.code === "DEPENDENCY_UNAVAILABLE"
   );
+
+  const reconnectingClient = new FakeRedisClient({ ready: false });
+  const recovering = new RedisAtomicBudgetStore({ redisUrl: "", client: reconnectingClient });
+  await assert.rejects(recovering.readiness(), /reconnecting/);
+  await assert.rejects(
+    recovering.consume({ bucketKey: "bucket", limit: 1, cost: 1, windowSeconds: 60, now }),
+    (error) => error instanceof BoundaryError && error.code === "DEPENDENCY_UNAVAILABLE"
+  );
+  reconnectingClient.recover();
+  await recovering.readiness();
+  assert.equal(
+    (
+      await recovering.consume({
+        bucketKey: "recovered-bucket",
+        limit: 1,
+        cost: 1,
+        windowSeconds: 60,
+        now
+      })
+    ).allowed,
+    true
+  );
 });
 
 test("invalid mutation responses roll back before completion and cannot be replayed", async () => {
@@ -909,17 +931,25 @@ function chunkedRequest(
 
 class FakeRedisClient {
   isOpen = true;
+  isReady: boolean;
   errorListenerRegistered = false;
   #consumed = 0;
   #failEval: boolean;
 
-  constructor(input: { failEval?: boolean } = {}) {
+  constructor(input: { failEval?: boolean; ready?: boolean } = {}) {
     this.#failEval = input.failEval ?? false;
+    this.isReady = input.ready ?? true;
   }
 
   connect() {
     this.isOpen = true;
+    this.isReady = true;
     return Promise.resolve();
+  }
+
+  recover() {
+    this.isOpen = true;
+    this.isReady = true;
   }
 
   ping() {
@@ -938,6 +968,7 @@ class FakeRedisClient {
 
   quit() {
     this.isOpen = false;
+    this.isReady = false;
     return Promise.resolve();
   }
 
