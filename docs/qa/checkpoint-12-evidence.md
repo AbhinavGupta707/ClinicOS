@@ -3,21 +3,21 @@
 ## Evidence metadata
 
 ```yaml
-evidence_id: CP12-INTEGRATED-CANDIDATE-20260710-002
+evidence_id: CP12-INTEGRATED-CANDIDATE-20260710-003
 checkpoint: CP12
 launch_revision: 1166baa7a816b614d896cf267066f31f40eac142
 candidate_branch: codex/integration/checkpoint-12
-candidate_revision_before_evidence_commit: 1b571ed
+candidate_revision_before_evidence_commit: a2d3bca
 tier: E1-deterministic-plus-E3-clean-durable-local
 environment: local-codex-synthetic-only
 data: deterministic-synthetic-no-real-phi
 operator: ClinicOS master orchestrator
 overall_release_decision: NO-GO
-checkpoint_promotion: BLOCKED_EXTERNAL_AUTHORITY_DEPENDENCY_AUDIT
+checkpoint_promotion: PASS_PENDING_PROMOTION
 ```
 
 The evidence commit cannot self-reference. The master must record the evidence and promotion commits
-in the checkpoint log after the remaining audit passes.
+in the checkpoint log after promotion.
 
 ## Integrated result
 
@@ -169,18 +169,23 @@ behavior is separately covered by the live helper/runtime smoke above.
 - Local fixture implementations remain typed test doubles and cannot satisfy non-fixture durability
   checks.
 
-## Remaining promotion gate
+## Dependency audit evidence
 
-`npm run security:audit` is the only incomplete CP12 exit gate. Running it transmits the repository's
-dependency inventory to the configured npm registry. The user explicitly authorized that disclosure
-after being informed of its contents and destination. The managed execution policy still rejected
-the command as unacceptable external disclosure and prohibited retries, indirect execution and
-workarounds. No alternative command or cached result is substituted for the required audit.
+An authorized operator ran the exact `npm run security:audit` command and supplied the complete
+terminal transcript. The repository script invokes `npm audit --audit-level=high`. The result
+contains zero high or critical advisories and therefore passes the configured CP12 gate. It reports
+21 moderate advisories across these transitive paths:
 
-An authorized operator or approved CI environment must run the exact command and provide its complete
-output and exit status. The master must review and append that evidence, run the final
-format/diff/repository checks over the evidence edits, commit the evidence, promote CP12 to `main`,
-run post-promotion verification and only then start CP13.
+- Next to PostCSS (`GHSA-qx2v-qp2m-jg93`);
+- Temporal packages to protobufjs (`GHSA-f38q-mgvj-vph7`);
+- Expo/config-plugins to xcode/uuid (`GHSA-w5hq-g745-h8pq`).
+
+No automatic fix was run. Suggested force remediation would introduce breaking framework changes.
+These moderate findings remain open under PRR-018 for reviewed CP14/CP17 dependency remediation;
+they do not fail the repository's high-severity audit threshold.
+
+The master must now run the final format/diff/repository checks, commit this evidence, promote CP12
+to `main`, run post-promotion verification and only then start CP13.
 
 ## Artifacts
 
@@ -197,6 +202,6 @@ run post-promotion verification and only then start CP13.
 
 ## Decision
 
-The implementation and all authorized local gates are complete, but this is not yet a promoted
-checkpoint. `main` remains at the verified CP11 launch base. CP13 must not start until the external
-dependency audit passes, the candidate is promoted to `main`, and post-promotion checks are green.
+The CP12 integration candidate passes every exit gate and is authorized for promotion. `main`
+remains at the verified CP11 launch base until the controlled merge and post-promotion verification
+complete. CP13 must not start before those steps are green.

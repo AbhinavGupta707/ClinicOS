@@ -4,7 +4,7 @@
 
 **Candidate:** `codex/integration/checkpoint-12`
 
-**Evidence:** E1 deterministic plus E3 clean-durable-local candidate evidence; dependency-audit output from an approved external execution environment pending
+**Evidence:** E1 deterministic plus E3 clean-durable-local candidate evidence; high-severity dependency-audit gate passed
 
 **Overall release decision:** unchanged **NO-GO**
 
@@ -61,10 +61,9 @@ Master review found and corrected issues before accepting the candidate:
 ## Honest limitations
 
 CP12 does not close the overall production-readiness decision. The current candidate has complete
-deterministic, clean-durable-local, fault-injection, restart and browser verification. Promotion
-remains blocked only because the managed execution policy rejected the dependency audit even after
-the user explicitly authorized transmission to the configured npm registry. An authorized operator
-or approved CI environment must provide the audit output and exit status; no workaround is allowed.
+deterministic, clean-durable-local, fault-injection, restart, browser and high-severity dependency
+audit evidence. The audit retains 21 moderate transitive findings under PRR-018 for CP14/CP17; it has
+zero high or critical findings and passes the configured CP12 threshold.
 
 PRR-012 and PRR-028 are implemented in the candidate but must remain unclosed until promotion.
 PRR-017's CP12 application-layer controls are implemented, while deployed WAF, noisy-neighbor load,

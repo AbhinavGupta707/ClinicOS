@@ -4,7 +4,7 @@
 
 **Candidate branch:** `codex/integration/checkpoint-12`
 
-**Evidence tier:** E1 deterministic plus E3 clean-durable-local evidence; promotion remains gated by dependency-audit output from an approved external execution environment
+**Evidence tier:** E1 deterministic plus E3 clean-durable-local evidence; every CP12 exit gate passes
 
 **Release effect:** none until the complete CP12 exit gate passes and the candidate is promoted to `main`
 
@@ -116,8 +116,7 @@ pass their runtime body and header schemas before commit/replay completion.
 The integrated candidate is not a release or production-readiness claim. The zero-skip
 socket-enabled suite, focused real Postgres/Redis request-guard/readiness matrix, repeated runtime
 and worker restarts, repeatable Playwright and in-app browser smoke have passed. The sole remaining
-CP12 gate is the dependency audit. The user explicitly authorized the registry transmission, but the
-managed execution policy still rejected agent-originated disclosure and prohibited workarounds. An
-authorized operator or approved CI environment must provide the exact command output and exit
-status. Edge/WAF noisy-neighbor load evidence remains a CP14 closure requirement for the broader
-PRR-017 finding.
+An authorized operator supplied the exact dependency-audit transcript. The configured high-severity
+gate passes with zero high or critical advisories; 21 moderate transitive advisories remain recorded
+under PRR-018 for CP14/CP17. All CP12 promotion evidence now passes. Edge/WAF noisy-neighbor load
+evidence remains a CP14 closure requirement for the broader PRR-017 finding.

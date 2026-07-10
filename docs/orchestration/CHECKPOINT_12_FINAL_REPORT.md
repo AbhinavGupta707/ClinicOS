@@ -1,4 +1,4 @@
-# Checkpoint 12 Integration Candidate Report — Managed Audit Execution Blocked
+# Checkpoint 12 Final Integration Report — Promotion Gate Passed
 
 **Checkpoint:** CP12 — Modular API and Generated Contracts
 
@@ -6,11 +6,10 @@
 
 **Integration branch:** `codex/integration/checkpoint-12`
 
-**Candidate before blocker update:** `32b0e77`
+**Candidate before audit closeout:** `a2d3bca`
 
-**Checkpoint status:** implementation, review, durable-local verification and browser verification
-complete; the user explicitly authorized the external npm dependency-inventory audit, but the
-managed execution policy still rejected agent-originated disclosure
+**Checkpoint status:** complete integration candidate; all CP12 exit gates pass and promotion to
+`main` is authorized after the final repository rerun
 
 **Overall pilot/production decision:** **NO-GO**
 
@@ -47,25 +46,25 @@ dependency order. Workers did not merge, push, alter release truth or use master
 
 ## Exit-gate status
 
-| Gate                                                             | Status                                                                                                           |
-| ---------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| 128-route inventory and uniform boundary controls                | Pass                                                                                                             |
-| Strict runtime request/response schemas and generated drift gate | Pass: exact 128-operation OpenAPI, client and inventory                                                          |
-| Durable idempotency and optimistic concurrency                   | Pass: request guards 10/10; row-version projection 5/5                                                           |
-| CP11 clock ownership                                             | Pass: 37 owned sites                                                                                             |
-| Check/typecheck/lint/build                                       | Pass                                                                                                             |
-| Full socket-enabled workspace tests                              | Pass with zero skips; API 74/74                                                                                  |
-| Clean Postgres bootstrap/RLS/role isolation                      | Pass repeatedly: 15 migrations, 97/97 forced RLS                                                                 |
-| DB migration/repository/worker/readiness fault matrix            | Pass                                                                                                             |
-| Runtime-ID API smoke and restart                                 | Pass three times, including after API restart                                                                    |
-| Worker clean restart cycles                                      | Pass twice with empty canonical outbox and clean shutdown                                                        |
-| Local API performance comparison                                 | Pass; no material regression in the measured route set                                                           |
-| Browser Use and repeatable Playwright                            | Pass for assistant and owner roles at desktop and 390px                                                          |
-| Secret scan                                                      | Pass                                                                                                             |
-| Dependency audit                                                 | **Blocked:** explicit permission is required to transmit the dependency inventory to the configured npm registry |
-| Evidence/threat delta/report                                     | Current candidate record complete; audit outcome must be appended before promotion                               |
-| Promotion to `main`                                              | Not allowed until the dependency audit passes                                                                    |
-| CP13 launch                                                      | Not allowed until CP12 promotion and post-promotion verification                                                 |
+| Gate                                                             | Status                                                                                                |
+| ---------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------- |
+| 128-route inventory and uniform boundary controls                | Pass                                                                                                  |
+| Strict runtime request/response schemas and generated drift gate | Pass: exact 128-operation OpenAPI, client and inventory                                               |
+| Durable idempotency and optimistic concurrency                   | Pass: request guards 10/10; row-version projection 5/5                                                |
+| CP11 clock ownership                                             | Pass: 37 owned sites                                                                                  |
+| Check/typecheck/lint/build                                       | Pass                                                                                                  |
+| Full socket-enabled workspace tests                              | Pass with zero skips; API 74/74                                                                       |
+| Clean Postgres bootstrap/RLS/role isolation                      | Pass repeatedly: 15 migrations, 97/97 forced RLS                                                      |
+| DB migration/repository/worker/readiness fault matrix            | Pass                                                                                                  |
+| Runtime-ID API smoke and restart                                 | Pass three times, including after API restart                                                         |
+| Worker clean restart cycles                                      | Pass twice with empty canonical outbox and clean shutdown                                             |
+| Local API performance comparison                                 | Pass; no material regression in the measured route set                                                |
+| Browser Use and repeatable Playwright                            | Pass for assistant and owner roles at desktop and 390px                                               |
+| Secret scan                                                      | Pass                                                                                                  |
+| Dependency audit                                                 | Pass at the high threshold: zero high/critical; 21 moderate advisories retained for later remediation |
+| Evidence/threat delta/report                                     | Pass; final audit outcome recorded                                                                    |
+| Promotion to `main`                                              | Authorized after the final repository rerun                                                           |
+| CP13 launch                                                      | Not allowed until CP12 promotion and post-promotion verification                                      |
 
 ## Review findings resolved before candidate acceptance
 
@@ -104,14 +103,13 @@ The in-app browser and Playwright checks use explicitly labelled synthetic fixtu
 rendering, role denial, unavailable-state honesty, responsive controls and browser/API contract
 alignment; they do not prove durable provider completion or a deployed production surface.
 
-## Required external-execution action
+## Dependency audit result
 
-The repository's `npm run security:audit` command sends the package-lock dependency inventory to the
-configured npm registry. The user explicitly authorized that transmission after being informed of
-the contents and destination. The managed execution policy nevertheless rejected the command as an
-unacceptable external disclosure and prohibited retries, indirect execution and workarounds.
+An authorized operator ran the exact `npm run security:audit` command against the configured npm
+registry and provided the complete terminal transcript. The `--audit-level=high` gate passes with
+zero high or critical advisories. The report retains 21 moderate advisories in three transitive
+paths: Next/PostCSS, Temporal/protobufjs and Expo/xcode/uuid.
 
-An authorized operator or approved CI environment must run the exact `npm run security:audit`
-command and provide the complete output and exit status. The master must review that evidence,
-record the result, rerun the final repository checks after evidence edits, and only then promote CP12
-to `main` and begin CP13.
+No `npm audit fix` or `--force` action was taken. The suggested force remediations include breaking
+framework changes and are not acceptable as an unreviewed CP12 closeout mutation. The moderate
+advisories remain visible under PRR-018 for planned dependency remediation in CP14/CP17.

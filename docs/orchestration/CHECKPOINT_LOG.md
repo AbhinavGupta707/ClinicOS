@@ -703,12 +703,19 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 - Browser evidence passes: assistant Playwright 3/3; targeted owner Playwright 3/3; in-app browser
   inspection for both roles; 390px no horizontal overflow, reachable primary controls, truthful
   fixture/provider/cloud unavailable states and no browser warnings/errors.
-- Promotion is blocked only by an external-execution requirement. `npm run security:audit` transmits
+- Promotion was temporarily blocked by an external-execution requirement. `npm run security:audit` transmits
   the dependency inventory to the configured npm registry. The user explicitly authorized the
   disclosure after being informed of the contents and destination, but the managed execution policy
   still rejected it and prohibited retry, indirect execution or workaround. An authorized operator
   or approved CI environment must run the exact command and provide its complete output and exit
   status. `main` stays at `1166baa`; CP13 has not started.
+- The authorized operator supplied the complete `npm run security:audit` transcript. The configured
+  `--audit-level=high` gate passes with zero high/critical advisories. Twenty-one moderate advisories
+  remain in the Next/PostCSS, Temporal/protobufjs and Expo/xcode/uuid transitive paths. No automatic
+  or force fix was run; the moderate findings remain visible under PRR-018 for CP14/CP17.
+- With the audit evidence accepted, every CP12 exit gate passes. Promotion is authorized after the
+  final repository rerun; CP13 remains stopped until the controlled merge and post-promotion checks
+  are green.
 - Candidate evidence: `docs/qa/checkpoint-12-evidence.md`; integrated threat/control truth:
   `docs/security/checkpoint-12-route-control-inventory.md` and
   `docs/security/checkpoint-12-security-foundation-delta.md`; candidate report:
