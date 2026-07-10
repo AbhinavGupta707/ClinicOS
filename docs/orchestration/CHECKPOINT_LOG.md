@@ -967,7 +967,7 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 ## CP14 Active Integration Candidate - 2026-07-10
 
 - CP14 remains active on `codex/integration/checkpoint-14`; `main` remains the verified CP13 base.
-  The implementation candidate before evidence-only closeout is `1b99a3fc`. No Terraform apply,
+  The implementation candidate before evidence-only closeout is `eae79c0d`. No Terraform apply,
   staging/pilot environment, ECR publish, signing, DNS, provider activation, alert delivery or
   recovery mutation has occurred.
 - Integrated Terraform, identity/session/edge, private-media, observability/recovery and master
@@ -975,8 +975,9 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   migration 0019 and local database, API socket, worker, workflow, telemetry, fault and synthetic
   recovery evidence pass without skips.
 - Master security integration added immutable action pins, CodeQL, Trivy repository/IaC/image
-  gates, npm/Syft SBOMs, a governed license gate and Dependabot. GitHub security run
-  `29124735794` passed CodeQL, SCA/IaC/secrets/SBOM/license and all three ARM64 application images.
+  gates, npm/Syft SBOMs, a governed license gate and Dependabot. At exact candidate `eae79c0d`,
+  GitHub quality run `29125220038` and security run `29125220024` both pass; the latter covers
+  CodeQL, SCA/IaC/secrets/SBOM/license and all three ARM64 application images.
 - API, web and worker images use a digest-pinned Node 22.22.2 Alpine base, patched OpenSSL, no
   runtime npm/corepack/yarn, UID/GID 10001 and immutable source-revision labels. Final local scans
   report zero high/critical findings and zero embedded secrets; the web image also passes a
