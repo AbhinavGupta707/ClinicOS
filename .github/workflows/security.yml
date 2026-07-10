@@ -1,0 +1,106 @@
+name: security
+
+on:
+  push:
+    branches:
+      - main
+      - "codex/**"
+  pull_request:
+  schedule:
+    - cron: "17 2 * * 2"
+
+permissions:
+  contents: read
+
+jobs:
+  codeql:
+    name: CodeQL SAST
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    permissions:
+      contents: read
+      security-events: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@1ad29ea4a422cce9a242a9fae469541dcd08addc # v4
+        with:
+          languages: javascript-typescript
+          build-mode: none
+          queries: security-extended
+
+      - name: Analyze
+        uses: github/codeql-action/analyze@1ad29ea4a422cce9a242a9fae469541dcd08addc # v4
+        with:
+          category: /language:javascript-typescript
+
+  repository-security:
+    name: SCA, IaC, secrets, SBOM and licenses
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.22.2"
+          cache: npm
+
+      - name: Install locked dependencies
+        run: npm ci --ignore-scripts
+
+      - name: Trivy dependency and secret gate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table
+          skip-dirs: research,scripts/research,node_modules,.git
+          version: v0.70.0
+
+      - name: Trivy Terraform policy gate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: config
+          scan-ref: infra/terraform
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table
+          version: v0.70.0
+
+      - name: Generate production dependency SBOM
+        run: npm sbom --sbom-format=cyclonedx --omit=dev > clinicos-production.cdx.json
+
+      - name: Enforce dependency license policy
+        run: node scripts/check-sbom-licenses.mjs clinicos-production.cdx.json
+
+      - name: Generate source SBOM with Syft
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          path: .
+          format: cyclonedx-json
+          output-file: clinicos-source.cdx.json
+          artifact-name: clinicos-source-sbom.cdx.json
+          upload-artifact: false
+          upload-release-assets: false
+          syft-version: v1.46.0
+
+      - name: Upload reviewed SBOMs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: clinicos-sboms-${{ github.sha }}
+          path: |
+            clinicos-production.cdx.json
+            clinicos-source.cdx.json
+          if-no-files-found: error
+          retention-days: 30
