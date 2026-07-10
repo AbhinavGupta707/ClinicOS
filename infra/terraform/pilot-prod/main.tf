@@ -109,14 +109,15 @@ module "platform" {
     images        = var.image_uris
     image_users   = var.image_users
     capacity = {
-      api               = { cpu = 1024, memory = 2048, desired_count = 2, minimum_count = 2, maximum_count = 6, use_fargate_spot = false }
-      web               = { cpu = 512, memory = 1024, desired_count = 2, minimum_count = 2, maximum_count = 6, use_fargate_spot = false }
-      worker            = { cpu = 1024, memory = 2048, desired_count = 2, minimum_count = 2, maximum_count = 6, use_fargate_spot = false }
-      keycloak          = { cpu = 1024, memory = 2048, desired_count = 3, minimum_count = 3, maximum_count = 6, use_fargate_spot = false }
-      temporal-frontend = { cpu = 1024, memory = 2048, desired_count = 2, minimum_count = 2, maximum_count = 4, use_fargate_spot = false }
-      temporal-history  = { cpu = 2048, memory = 4096, desired_count = 2, minimum_count = 2, maximum_count = 6, use_fargate_spot = false }
-      temporal-matching = { cpu = 1024, memory = 2048, desired_count = 2, minimum_count = 2, maximum_count = 4, use_fargate_spot = false }
-      temporal-worker   = { cpu = 1024, memory = 2048, desired_count = 1, minimum_count = 1, maximum_count = 3, use_fargate_spot = false }
+      api                        = { cpu = 1024, memory = 2048, desired_count = 2, minimum_count = 2, maximum_count = 6, use_fargate_spot = false }
+      web                        = { cpu = 512, memory = 1024, desired_count = 2, minimum_count = 2, maximum_count = 6, use_fargate_spot = false }
+      worker                     = { cpu = 1024, memory = 2048, desired_count = 2, minimum_count = 2, maximum_count = 6, use_fargate_spot = false }
+      keycloak                   = { cpu = 1024, memory = 2048, desired_count = 3, minimum_count = 3, maximum_count = 6, use_fargate_spot = false }
+      temporal-frontend          = { cpu = 1024, memory = 2048, desired_count = 2, minimum_count = 2, maximum_count = 4, use_fargate_spot = false }
+      temporal-internal-frontend = { cpu = 1024, memory = 2048, desired_count = 2, minimum_count = 2, maximum_count = 4, use_fargate_spot = false }
+      temporal-history           = { cpu = 2048, memory = 4096, desired_count = 2, minimum_count = 2, maximum_count = 6, use_fargate_spot = false }
+      temporal-matching          = { cpu = 1024, memory = 2048, desired_count = 2, minimum_count = 2, maximum_count = 4, use_fargate_spot = false }
+      temporal-worker            = { cpu = 1024, memory = 2048, desired_count = 1, minimum_count = 1, maximum_count = 3, use_fargate_spot = false }
     }
   }
   backup = {

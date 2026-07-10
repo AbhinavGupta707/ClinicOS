@@ -48,6 +48,15 @@ test("realm promotion is deterministic, exact-bound, and secret-free", async () 
       .map((client) => client.attributes["pkce.code.challenge.method"]),
     ["S256", "S256"]
   );
+  const temporalWorker = realm.clients.find(
+    (client) => client.clientId === "clinic-os-temporal-worker"
+  );
+  assert.equal(temporalWorker.serviceAccountsEnabled, true);
+  assert.equal(
+    temporalWorker.protocolMappers.find((mapper) => mapper.name === "temporal-worker-permissions")
+      .config["claim.value"],
+    '["default:worker","default:write"]'
+  );
 });
 
 test("realm promotion accepts only the approved exact mobile custom scheme", async () => {

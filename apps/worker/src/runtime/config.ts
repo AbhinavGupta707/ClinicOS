@@ -9,6 +9,17 @@ export interface WorkerEnvironment {
   readonly temporalAddress?: string;
   readonly temporalNamespace?: string;
   readonly temporalTaskQueue?: string;
+  readonly temporalTls?: {
+    readonly serverName: string;
+    readonly caCertificate: string;
+    readonly clientCertificate: string;
+    readonly clientKey: string;
+  };
+  readonly temporalAuth?: {
+    readonly tokenUrl: string;
+    readonly clientId: string;
+    readonly clientSecret: string;
+  };
   readonly healthPort: number;
   readonly outboxBatchSize: number;
   readonly outboxPollIntervalMs: number;
@@ -35,6 +46,14 @@ export function parseWorkerEnvironment(env: NodeJS.ProcessEnv): WorkerEnvironmen
   if (productionLike && !dueGenerationCursorSecret) {
     throw new Error("CLINIC_OS_ABUSE_BUDGET_KEY_SECRET is required for CP13 workflow activities");
   }
+  const temporalTls = parseTemporalTls(env);
+  const temporalAuth = parseTemporalAuth(env);
+  if (productionLike && env.TEMPORAL_ADDRESS && !temporalTls) {
+    throw new Error("Production-like Temporal connections require mutual TLS");
+  }
+  if (productionLike && env.TEMPORAL_ADDRESS && !temporalAuth) {
+    throw new Error("Production-like Temporal connections require OAuth authorization");
+  }
 
   return {
     nodeEnv: env.NODE_ENV ?? "development",
@@ -45,6 +64,8 @@ export function parseWorkerEnvironment(env: NodeJS.ProcessEnv): WorkerEnvironmen
     ...(env.TEMPORAL_ADDRESS ? { temporalAddress: env.TEMPORAL_ADDRESS } : {}),
     ...(env.TEMPORAL_NAMESPACE ? { temporalNamespace: env.TEMPORAL_NAMESPACE } : {}),
     ...(env.TEMPORAL_TASK_QUEUE ? { temporalTaskQueue: env.TEMPORAL_TASK_QUEUE } : {}),
+    ...(temporalTls ? { temporalTls } : {}),
+    ...(temporalAuth ? { temporalAuth } : {}),
     healthPort: parsePositiveInteger(env.WORKER_HEALTH_PORT, 8082),
     outboxBatchSize: parsePositiveInteger(env.OUTBOX_BATCH_SIZE, 25),
     outboxPollIntervalMs: parsePositiveInteger(env.OUTBOX_POLL_INTERVAL_MS, 1000),
@@ -57,6 +78,96 @@ export function parseWorkerEnvironment(env: NodeJS.ProcessEnv): WorkerEnvironmen
     ...(env.RAZORPAY_WEBHOOK_SECRET ? { razorpayWebhookSecret: env.RAZORPAY_WEBHOOK_SECRET } : {}),
     ...(env.RAZORPAY_WEBHOOK_URL ? { razorpayWebhookUrl: env.RAZORPAY_WEBHOOK_URL } : {})
   };
+}
+
+function parseTemporalAuth(env: NodeJS.ProcessEnv): WorkerEnvironment["temporalAuth"] {
+  const names = [
+    "TEMPORAL_AUTH_TOKEN_URL",
+    "TEMPORAL_AUTH_CLIENT_ID",
+    "TEMPORAL_AUTH_CLIENT_SECRET"
+  ] as const;
+  const supplied = names.filter((name) => Boolean(env[name]));
+  if (supplied.length === 0) return undefined;
+  const missing = names.filter((name) => !env[name]);
+  if (missing.length) {
+    throw new Error(`Temporal OAuth configuration is incomplete: ${missing.join(", ")}`);
+  }
+  const tokenUrl = env.TEMPORAL_AUTH_TOKEN_URL as string;
+  const clientId = env.TEMPORAL_AUTH_CLIENT_ID as string;
+  const clientSecret = env.TEMPORAL_AUTH_CLIENT_SECRET as string;
+  let parsed: URL;
+  try {
+    parsed = new URL(tokenUrl);
+  } catch {
+    throw new Error("TEMPORAL_AUTH_TOKEN_URL must be a canonical HTTPS endpoint");
+  }
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username ||
+    parsed.password ||
+    parsed.search ||
+    parsed.hash ||
+    tokenUrl !== `${parsed.origin}${parsed.pathname}` ||
+    !/^\/realms\/[a-z][a-z0-9-]{2,62}\/protocol\/openid-connect\/token$/u.test(parsed.pathname)
+  ) {
+    throw new Error("TEMPORAL_AUTH_TOKEN_URL must be a canonical HTTPS realm token endpoint");
+  }
+  if (
+    clientId !== "clinic-os-temporal-worker" ||
+    clientSecret.length < 32 ||
+    clientSecret.length > 512
+  ) {
+    throw new Error("Temporal OAuth client identity or secret is outside the approved contract");
+  }
+  return { tokenUrl, clientId, clientSecret };
+}
+
+function parseTemporalTls(env: NodeJS.ProcessEnv): WorkerEnvironment["temporalTls"] {
+  const names = [
+    "TEMPORAL_TLS_SERVER_NAME",
+    "TEMPORAL_TLS_CA_CERT",
+    "TEMPORAL_TLS_CLIENT_CERT",
+    "TEMPORAL_TLS_CLIENT_KEY"
+  ] as const;
+  const supplied = names.filter((name) => Boolean(env[name]));
+  if (supplied.length === 0) return undefined;
+  const missing = names.filter((name) => !env[name]);
+  if (missing.length) {
+    throw new Error(`Temporal mTLS configuration is incomplete: ${missing.join(", ")}`);
+  }
+
+  const serverName = env.TEMPORAL_TLS_SERVER_NAME as string;
+  const caCertificate = boundedPem(
+    env.TEMPORAL_TLS_CA_CERT as string,
+    "TEMPORAL_TLS_CA_CERT",
+    /-----BEGIN CERTIFICATE-----/u
+  );
+  const clientCertificate = boundedPem(
+    env.TEMPORAL_TLS_CLIENT_CERT as string,
+    "TEMPORAL_TLS_CLIENT_CERT",
+    /-----BEGIN CERTIFICATE-----/u
+  );
+  const clientKey = boundedPem(
+    env.TEMPORAL_TLS_CLIENT_KEY as string,
+    "TEMPORAL_TLS_CLIENT_KEY",
+    /-----BEGIN (?:RSA |EC )?PRIVATE KEY-----/u
+  );
+  if (
+    serverName.length > 253 ||
+    !/^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/u.test(
+      serverName
+    )
+  ) {
+    throw new Error("TEMPORAL_TLS_SERVER_NAME must be a bounded canonical DNS name");
+  }
+  return { serverName, caCertificate, clientCertificate, clientKey };
+}
+
+function boundedPem(value: string, name: string, marker: RegExp): string {
+  if (value.length < 64 || value.length > 65_536 || !marker.test(value)) {
+    throw new Error(`${name} must contain one bounded PEM value`);
+  }
+  return value;
 }
 
 function parsePaymentProvider(value: string | undefined): WorkerEnvironment["paymentProvider"] {

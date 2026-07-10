@@ -38,7 +38,7 @@ locals {
     length(var.admin_ingress.allowed_operator_cidrs) > 0
   )
   required_capacity = toset([
-    "api", "keycloak", "temporal-frontend", "temporal-history", "temporal-matching",
+    "api", "keycloak", "temporal-frontend", "temporal-internal-frontend", "temporal-history", "temporal-matching",
     "temporal-worker", "web", "worker",
   ])
   repository_names = toset(["adot", "api", "keycloak", "temporal", "web", "worker"])
@@ -320,7 +320,7 @@ module "workload_security" {
   name_prefix                 = local.name_prefix
   vpc_id                      = module.network_primary.vpc_id
   vpc_cidr                    = module.network_primary.vpc_cidr
-  service_ports               = [3000, 4100, 57800, 7233, 7234, 7235, 7239, 7800, 8080]
+  service_ports               = [3000, 4100, 6933, 6934, 6935, 6936, 6939, 57800, 7233, 7234, 7235, 7236, 7239, 7243, 7800, 8080]
   alb_enabled                 = var.ingress.enabled
   alb_security_group_id       = module.edge.alb_security_group_id
   alb_target_ports            = [3000, 4100, 8080]
@@ -388,6 +388,8 @@ module "secrets" {
     provider-credentials = "Official provider credentials populated only after registration and activation"
     runtime-session      = "Web BFF session and CSRF key material"
     temporal-database    = "Temporal schema-specific PostgreSQL credentials"
+    temporal-auth        = "Temporal worker OAuth client credentials"
+    temporal-tls         = "Temporal server and ClinicOS worker mutual-TLS material"
   }
   tags = local.tags
 }
@@ -479,12 +481,14 @@ locals {
       },
     ]
   })
-  application_secret_arn = try(module.secrets[0].secret_arns["application-database"], null)
-  keycloak_secret_arn    = try(module.secrets[0].secret_arns["keycloak-database"], null)
-  provider_secret_arn    = try(module.secrets[0].secret_arns["provider-credentials"], null)
-  session_secret_arn     = try(module.secrets[0].secret_arns["runtime-session"], null)
-  temporal_secret_arn    = try(module.secrets[0].secret_arns["temporal-database"], null)
-  keycloak_bootstrap_arn = try(module.secrets[0].secret_arns["keycloak-bootstrap"], null)
+  application_secret_arn   = try(module.secrets[0].secret_arns["application-database"], null)
+  keycloak_secret_arn      = try(module.secrets[0].secret_arns["keycloak-database"], null)
+  provider_secret_arn      = try(module.secrets[0].secret_arns["provider-credentials"], null)
+  session_secret_arn       = try(module.secrets[0].secret_arns["runtime-session"], null)
+  temporal_secret_arn      = try(module.secrets[0].secret_arns["temporal-database"], null)
+  temporal_auth_secret_arn = try(module.secrets[0].secret_arns["temporal-auth"], null)
+  temporal_tls_secret_arn  = try(module.secrets[0].secret_arns["temporal-tls"], null)
+  keycloak_bootstrap_arn   = try(module.secrets[0].secret_arns["keycloak-bootstrap"], null)
   runtime_services = local.runtime_enabled ? {
     api = {
       image_uri      = var.runtime.images.api
@@ -566,18 +570,25 @@ locals {
       maximum_count  = var.runtime.capacity.worker.maximum_count
       command        = []
       environment = {
-        NODE_ENV           = "production"
-        CLINIC_OS_ENV      = var.environment
-        TEMPORAL_ADDRESS   = "temporal-frontend.${local.name_prefix}.internal:7233"
-        WORKER_HEALTH_PORT = "3001"
-        PAYMENT_PROVIDER   = "unconfigured"
+        NODE_ENV                 = "production"
+        CLINIC_OS_ENV            = var.environment
+        TEMPORAL_ADDRESS         = "temporal-frontend.${local.name_prefix}.internal:7233"
+        TEMPORAL_TLS_SERVER_NAME = "temporal.${local.name_prefix}.internal"
+        TEMPORAL_AUTH_TOKEN_URL  = "https://${var.ingress.auth_hostname}/realms/clinic-os/protocol/openid-connect/token"
+        TEMPORAL_AUTH_CLIENT_ID  = "clinic-os-temporal-worker"
+        WORKER_HEALTH_PORT       = "3001"
+        PAYMENT_PROVIDER         = "unconfigured"
       }
       secrets = {
         DATABASE_URL                      = "${local.application_secret_arn}:url::"
         WORKER_DATABASE_URL               = "${local.application_secret_arn}:worker_url::"
         CLINIC_OS_ABUSE_BUDGET_KEY_SECRET = "${local.session_secret_arn}:abuse_budget_key::"
+        TEMPORAL_TLS_CA_CERT              = "${local.temporal_tls_secret_arn}:server_ca_cert::"
+        TEMPORAL_TLS_CLIENT_CERT          = "${local.temporal_tls_secret_arn}:worker_client_cert::"
+        TEMPORAL_TLS_CLIENT_KEY           = "${local.temporal_tls_secret_arn}:worker_client_key::"
+        TEMPORAL_AUTH_CLIENT_SECRET       = "${local.temporal_auth_secret_arn}:client_secret::"
       }
-      execution_secret_arns        = [local.application_secret_arn, local.session_secret_arn]
+      execution_secret_arns        = [local.application_secret_arn, local.session_secret_arn, local.temporal_tls_secret_arn, local.temporal_auth_secret_arn]
       task_policy_json             = local.media_task_policy
       target_group_arn             = null
       additional_target_group_arns = []
@@ -601,6 +612,8 @@ locals {
         KC_CACHE                        = "ispn"
         KC_CACHE_STACK                  = "jdbc-ping"
         KC_DB                           = "postgres"
+        KC_DB_TLS_MODE                  = "verify-server"
+        KC_DB_TLS_TRUST_STORE_FILE      = "/opt/clinicos/trust/aws-rds-global-bundle.pem"
         KC_HEALTH_ENABLED               = "true"
         KC_HOSTNAME                     = "https://${var.ingress.auth_hostname}"
         KC_HOSTNAME_ADMIN               = "https://${coalesce(var.admin_ingress.hostname, "invalid")}"
@@ -636,7 +649,14 @@ locals {
       maximum_count  = 0
       command        = ["/opt/clinicos/bin/bootstrap-keycloak"]
       environment = {
-        KC_DB = "postgres"
+        KC_DB                         = "postgres"
+        KC_DB_TLS_MODE                = "verify-server"
+        KC_DB_TLS_TRUST_STORE_FILE    = "/opt/clinicos/trust/aws-rds-global-bundle.pem"
+        CLINIC_OS_REALM               = "clinic-os"
+        CLINIC_OS_WEB_ORIGIN          = "https://${coalesce(var.ingress.web_hostname, "invalid")}"
+        CLINIC_OS_WEB_CALLBACK_URI    = "https://${coalesce(var.ingress.web_hostname, "invalid")}/auth/callback"
+        CLINIC_OS_WEB_POST_LOGOUT_URI = "https://${coalesce(var.ingress.web_hostname, "invalid")}/auth/signed-out"
+        CLINIC_OS_MOBILE_REDIRECT_URI = "clinic-os://auth/callback"
       }
       secrets = {
         KC_DB_URL                   = "${local.keycloak_secret_arn}:url::"
@@ -654,10 +674,11 @@ locals {
       create_service               = false
       use_fargate_spot             = false
     }
-    temporal-frontend = local.temporal_services.frontend
-    temporal-history  = local.temporal_services.history
-    temporal-matching = local.temporal_services.matching
-    temporal-worker   = local.temporal_services.worker
+    temporal-frontend          = local.temporal_services.frontend
+    temporal-internal-frontend = local.temporal_services["internal-frontend"]
+    temporal-history           = local.temporal_services.history
+    temporal-matching          = local.temporal_services.matching
+    temporal-worker            = local.temporal_services.worker
     temporal-schema = {
       image_uri      = var.runtime.images.temporal
       user           = var.runtime.image_users.temporal
@@ -670,17 +691,22 @@ locals {
       maximum_count  = 0
       command        = ["/opt/clinicos/bin/migrate-temporal"]
       environment = {
-        DB                = "postgres12"
-        POSTGRES_SEEDS    = module.database[0].address
-        DB_PORT           = tostring(module.database[0].port)
-        DBNAME            = "temporal"
-        VISIBILITY_DBNAME = "temporal_visibility"
+        DB                    = "postgres12"
+        POSTGRES_SEEDS        = module.database[0].address
+        DB_PORT               = tostring(module.database[0].port)
+        DBNAME                = "temporal"
+        VISIBILITY_DBNAME     = "temporal_visibility"
+        SQL_TLS_ENABLED       = "true"
+        SQL_HOST_VERIFICATION = "true"
+        SQL_HOST_NAME         = module.database[0].address
       }
       secrets = {
-        POSTGRES_USER = "${coalesce(local.temporal_secret_arn, "placeholder")}:username::"
-        POSTGRES_PWD  = "${coalesce(local.temporal_secret_arn, "placeholder")}:password::"
+        MASTER_POSTGRES_USER   = "${nonsensitive(module.database[0].master_secret_arn)}:username::"
+        MASTER_POSTGRES_PWD    = "${nonsensitive(module.database[0].master_secret_arn)}:password::"
+        TEMPORAL_POSTGRES_USER = "${coalesce(local.temporal_secret_arn, "placeholder")}:username::"
+        TEMPORAL_POSTGRES_PWD  = "${coalesce(local.temporal_secret_arn, "placeholder")}:password::"
       }
-      execution_secret_arns        = [local.temporal_secret_arn]
+      execution_secret_arns        = [local.temporal_secret_arn, nonsensitive(module.database[0].master_secret_arn)]
       task_policy_json             = local.common_task_policy
       target_group_arn             = null
       additional_target_group_arns = []
@@ -691,7 +717,7 @@ locals {
     }
   } : {}
   temporal_services = {
-    for service, port in { frontend = 7233, history = 7234, matching = 7235, worker = 7239 } : service => {
+    for service, port in { frontend = 7233, "internal-frontend" = 7236, history = 7234, matching = 7235, worker = 7239 } : service => {
       image_uri                     = try(var.runtime.images.temporal, "")
       user                          = try(var.runtime.image_users.temporal, "1")
       cpu                           = try(var.runtime.capacity["temporal-${service}"].cpu, 512)
@@ -701,19 +727,48 @@ locals {
       desired_count                 = try(var.runtime.capacity["temporal-${service}"].desired_count, 0)
       minimum_count                 = try(var.runtime.capacity["temporal-${service}"].minimum_count, 0)
       maximum_count                 = try(var.runtime.capacity["temporal-${service}"].maximum_count, 0)
-      command                       = ["temporal-server", "start", "--service=${service}"]
+      command                       = ["/opt/clinicos/bin/start-temporal", "--service=${service}"]
       environment = {
-        DB                = "postgres12"
-        POSTGRES_SEEDS    = try(module.database[0].address, "")
-        DB_PORT           = tostring(try(module.database[0].port, 5432))
-        DBNAME            = "temporal"
-        VISIBILITY_DBNAME = "temporal_visibility"
+        DB                                               = "postgres12"
+        POSTGRES_SEEDS                                   = try(module.database[0].address, "")
+        DB_PORT                                          = tostring(try(module.database[0].port, 5432))
+        DBNAME                                           = "temporal"
+        VISIBILITY_DBNAME                                = "temporal_visibility"
+        DYNAMIC_CONFIG_FILE_PATH                         = "/etc/temporal/dynamicconfig/production.yaml"
+        TEMPORAL_SERVER_CONFIG_FILE_PATH                 = "/etc/temporal/config/production.yaml"
+        NUM_HISTORY_SHARDS                               = "512"
+        PROMETHEUS_ENDPOINT                              = "0.0.0.0:8000"
+        SQL_TLS_ENABLED                                  = "true"
+        SQL_CA                                           = "/etc/ssl/certs/aws-rds-global-bundle.pem"
+        SQL_HOST_VERIFICATION                            = "true"
+        SQL_HOST_NAME                                    = try(module.database[0].address, "")
+        TEMPORAL_TLS_REQUIRE_CLIENT_AUTH                 = "true"
+        TEMPORAL_TLS_INTERNODE_SERVER_NAME               = "temporal.${local.name_prefix}.internal"
+        TEMPORAL_TLS_FRONTEND_SERVER_NAME                = "temporal.${local.name_prefix}.internal"
+        TEMPORAL_TLS_INTERNODE_DISABLE_HOST_VERIFICATION = "false"
+        TEMPORAL_TLS_FRONTEND_DISABLE_HOST_VERIFICATION  = "false"
+        TEMPORAL_CLUSTER_METADATA_RPC_ADDRESS            = "temporal-frontend.${local.name_prefix}.internal:7233"
+        TEMPORAL_CLUSTER_METADATA_HTTP_ADDRESS           = "temporal-frontend.${local.name_prefix}.internal:7243"
+        USE_INTERNAL_FRONTEND                            = "true"
+        TEMPORAL_AUTH_AUTHORIZER                         = "default"
+        TEMPORAL_AUTH_CLAIM_MAPPER                       = "default"
+        TEMPORAL_JWT_KEY_SOURCE1                         = "https://${coalesce(var.ingress.auth_hostname, "invalid")}/realms/clinic-os/protocol/openid-connect/certs"
+        TEMPORAL_JWT_KEY_REFRESH                         = "1m"
+        TEMPORAL_JWT_PERMISSIONS_CLAIM                   = "permissions"
+        TEMPORAL_JWT_AUDIENCE                            = "clinic-os-temporal"
       }
       secrets = {
-        POSTGRES_USER = "${coalesce(local.temporal_secret_arn, "placeholder")}:username::"
-        POSTGRES_PWD  = "${coalesce(local.temporal_secret_arn, "placeholder")}:password::"
+        POSTGRES_USER                     = "${coalesce(local.temporal_secret_arn, "placeholder")}:username::"
+        POSTGRES_PWD                      = "${coalesce(local.temporal_secret_arn, "placeholder")}:password::"
+        TEMPORAL_TLS_SERVER_CA_CERT_DATA  = "${coalesce(local.temporal_tls_secret_arn, "placeholder")}:server_ca_cert::"
+        TEMPORAL_TLS_SERVER_CERT_DATA     = "${coalesce(local.temporal_tls_secret_arn, "placeholder")}:server_cert::"
+        TEMPORAL_TLS_SERVER_KEY_DATA      = "${coalesce(local.temporal_tls_secret_arn, "placeholder")}:server_key::"
+        TEMPORAL_TLS_FRONTEND_CERT_DATA   = "${coalesce(local.temporal_tls_secret_arn, "placeholder")}:server_cert::"
+        TEMPORAL_TLS_FRONTEND_KEY_DATA    = "${coalesce(local.temporal_tls_secret_arn, "placeholder")}:server_key::"
+        TEMPORAL_TLS_CLIENT1_CA_CERT_DATA = "${coalesce(local.temporal_tls_secret_arn, "placeholder")}:server_ca_cert::"
+        TEMPORAL_TLS_CLIENT2_CA_CERT_DATA = "${coalesce(local.temporal_tls_secret_arn, "placeholder")}:client_ca_cert::"
       }
-      execution_secret_arns        = compact([local.temporal_secret_arn])
+      execution_secret_arns        = compact([local.temporal_secret_arn, local.temporal_tls_secret_arn])
       task_policy_json             = local.common_task_policy
       target_group_arn             = null
       additional_target_group_arns = []

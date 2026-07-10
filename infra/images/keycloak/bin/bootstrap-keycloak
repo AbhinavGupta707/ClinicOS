@@ -1,0 +1,88 @@
+#!/bin/bash
+set -euo pipefail
+
+required=(
+  KC_DB_URL
+  KC_DB_USERNAME
+  KC_DB_PASSWORD
+  KC_BOOTSTRAP_ADMIN_USERNAME
+  KC_BOOTSTRAP_ADMIN_PASSWORD
+  CLINIC_OS_REALM
+  CLINIC_OS_WEB_ORIGIN
+  CLINIC_OS_WEB_CALLBACK_URI
+  CLINIC_OS_WEB_POST_LOGOUT_URI
+  CLINIC_OS_MOBILE_REDIRECT_URI
+)
+
+for name in "${required[@]}"; do
+  if [[ -z "${!name:-}" ]]; then
+    printf '%s is required\n' "$name" >&2
+    exit 64
+  fi
+done
+
+if [[ "${KC_DB_TLS_MODE:-}" != "verify-server" ]]; then
+  printf 'Keycloak bootstrap requires verified PostgreSQL TLS\n' >&2
+  exit 64
+fi
+
+if [[ ! "${CLINIC_OS_REALM}" =~ ^[a-z][a-z0-9-]{2,62}$ || "${CLINIC_OS_REALM}" == *--* ]]; then
+  printf 'Keycloak realm binding is invalid\n' >&2
+  exit 64
+fi
+if [[ ! "${CLINIC_OS_WEB_ORIGIN}" =~ ^https://[a-z0-9.-]+$ ]]; then
+  printf 'Keycloak web origin must be a canonical HTTPS origin\n' >&2
+  exit 64
+fi
+for endpoint in "${CLINIC_OS_WEB_CALLBACK_URI}" "${CLINIC_OS_WEB_POST_LOGOUT_URI}"; do
+  if [[ "${endpoint}" != "${CLINIC_OS_WEB_ORIGIN}/"* || "${endpoint}" == *[?#%\\\*]* ]]; then
+    printf 'Keycloak web redirect must be an exact path on the configured origin\n' >&2
+    exit 64
+  fi
+done
+if [[ "${CLINIC_OS_MOBILE_REDIRECT_URI}" != "clinic-os://auth/callback" ]]; then
+  printf 'Keycloak mobile redirect is not approved\n' >&2
+  exit 64
+fi
+
+rendered_realm="$(mktemp)"
+trap 'rm -f "${rendered_realm}"' EXIT
+chmod 0600 "${rendered_realm}"
+
+jq \
+  --arg realm "${CLINIC_OS_REALM}" \
+  --arg web_origin "${CLINIC_OS_WEB_ORIGIN}" \
+  --arg web_callback "${CLINIC_OS_WEB_CALLBACK_URI}" \
+  --arg web_logout "${CLINIC_OS_WEB_POST_LOGOUT_URI}" \
+  --arg mobile_redirect "${CLINIC_OS_MOBILE_REDIRECT_URI}" \
+  'walk(
+    if type == "string" then
+      if . == "${CLINIC_OS_REALM}" then $realm
+      elif . == "${CLINIC_OS_WEB_ORIGIN}" then $web_origin
+      elif . == "${CLINIC_OS_WEB_CALLBACK_URI}" then $web_callback
+      elif . == "${CLINIC_OS_WEB_POST_LOGOUT_URI}" then $web_logout
+      elif . == "${CLINIC_OS_MOBILE_REDIRECT_URI}" then $mobile_redirect
+      else .
+      end
+    else .
+    end
+  )' \
+  /opt/clinicos/keycloak/clinic-os-realm.template.json >"${rendered_realm}"
+
+# The unresolved template prefix must remain literal.
+# shellcheck disable=SC2016
+if grep -Fq '${CLINIC_OS_' "${rendered_realm}"; then
+  printf 'Keycloak realm contains unresolved runtime bindings\n' >&2
+  exit 64
+fi
+
+/opt/keycloak/bin/kc.sh import \
+  --optimized \
+  --file "${rendered_realm}" \
+  --override false
+
+/opt/keycloak/bin/kc.sh bootstrap-admin user \
+  --optimized \
+  --no-prompt \
+  --username:env KC_BOOTSTRAP_ADMIN_USERNAME \
+  --password:env KC_BOOTSTRAP_ADMIN_PASSWORD

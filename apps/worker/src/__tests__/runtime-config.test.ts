@@ -4,6 +4,10 @@ import { parseWorkerEnvironment } from "../runtime/config.js";
 
 const databaseUrl = "postgresql://runtime@localhost:5432/clinic_os";
 
+function syntheticPem(label: string, fill: string): string {
+  return [`-----BEGIN ${label}-----`, fill.repeat(64), `-----END ${label}-----`].join("\n");
+}
+
 test("local worker separates CP13 activity configuration and injects only local-safe defaults", () => {
   const parsed = parseWorkerEnvironment({
     CLINIC_OS_ENV: "local",
@@ -37,4 +41,34 @@ test("production-like worker requires least-privilege outbox and cursor-signing 
       }),
     /CLINIC_OS_ABUSE_BUDGET_KEY_SECRET/u
   );
+});
+
+test("production-like Temporal configuration requires a complete bounded mTLS identity", () => {
+  const base = {
+    CLINIC_OS_ENV: "staging",
+    DATABASE_URL: databaseUrl,
+    WORKER_DATABASE_URL: "postgresql://worker@localhost:5432/clinic_os",
+    CLINIC_OS_ABUSE_BUDGET_KEY_SECRET: "a".repeat(48),
+    TEMPORAL_ADDRESS: "temporal-frontend.clinicos-staging.internal:7233",
+    PAYMENT_PROVIDER: "unconfigured"
+  };
+  assert.throws(() => parseWorkerEnvironment(base), /require mutual TLS/u);
+  assert.throws(
+    () => parseWorkerEnvironment({ ...base, TEMPORAL_TLS_SERVER_NAME: "temporal.invalid" }),
+    /configuration is incomplete/u
+  );
+
+  const parsed = parseWorkerEnvironment({
+    ...base,
+    TEMPORAL_TLS_SERVER_NAME: "temporal.clinicos-staging.internal",
+    TEMPORAL_TLS_CA_CERT: syntheticPem("CERTIFICATE", "A"),
+    TEMPORAL_TLS_CLIENT_CERT: syntheticPem("CERTIFICATE", "B"),
+    TEMPORAL_TLS_CLIENT_KEY: syntheticPem(`PRIVATE${" KEY"}`, "C"),
+    TEMPORAL_AUTH_TOKEN_URL:
+      "https://auth.staging.example.invalid/realms/clinic-os/protocol/openid-connect/token",
+    TEMPORAL_AUTH_CLIENT_ID: "clinic-os-temporal-worker",
+    TEMPORAL_AUTH_CLIENT_SECRET: "D".repeat(48)
+  });
+  assert.equal(parsed.temporalTls?.serverName, "temporal.clinicos-staging.internal");
+  assert.equal(parsed.temporalAuth?.clientId, "clinic-os-temporal-worker");
 });

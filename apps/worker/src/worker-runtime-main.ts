@@ -21,6 +21,7 @@ import { createPostgresCp13ActivityPorts } from "./cp13/postgres-cp13-activity-p
 import type { OutboxEventHandler } from "./outbox/types.js";
 import { PostgresOutboxRepository } from "./postgres/postgres-outbox-repository.js";
 import { parseWorkerEnvironment } from "./runtime/config.js";
+import { TemporalOAuthTokenProvider } from "./runtime/temporal-oauth.js";
 import { createWorkerRuntime } from "./runtime/create-worker-runtime.js";
 
 export async function runWorker(
@@ -39,11 +40,27 @@ export async function runWorker(
     logger,
     monotonicNowMs: () => performance.now()
   });
+  const temporalTls = env.temporalTls
+    ? {
+        serverNameOverride: env.temporalTls.serverName,
+        serverRootCACertificate: Buffer.from(env.temporalTls.caCertificate),
+        clientCertPair: {
+          crt: Buffer.from(env.temporalTls.clientCertificate),
+          key: Buffer.from(env.temporalTls.clientKey)
+        }
+      }
+    : undefined;
+  const temporalOAuth = env.temporalAuth
+    ? new TemporalOAuthTokenProvider(env.temporalAuth)
+    : undefined;
+  if (temporalOAuth) await temporalOAuth.refresh();
   const repository = new PostgresOutboxRepository({ connectionString: env.databaseUrl });
   const temporalClient = env.temporalAddress
     ? await createTemporalClient({
         address: env.temporalAddress,
         namespace: env.temporalNamespace,
+        ...(temporalTls ? { tls: temporalTls } : {}),
+        ...(temporalOAuth ? { apiKey: () => temporalOAuth.currentToken } : {}),
         workflowInterceptors: [createTemporalWorkflowClientTraceInterceptor()]
       })
     : undefined;
@@ -77,6 +94,8 @@ export async function runWorker(
       address: env.temporalAddress,
       namespace: env.temporalNamespace,
       taskQueue: env.temporalTaskQueue,
+      ...(temporalTls ? { tls: temporalTls } : {}),
+      ...(temporalOAuth ? { apiKey: temporalOAuth.currentToken } : {}),
       activities: composition.activities,
       activityInterceptors: [createTemporalActivityTraceInterceptor(instrumentation)]
     });
@@ -156,6 +175,12 @@ export async function runWorker(
   });
 
   const abortController = new AbortController();
+  const temporalAuthRefresh =
+    temporalOAuth && temporalWorker
+      ? temporalOAuth.run(abortController.signal, async (token) => {
+          await temporalWorker.connection?.setApiKey(token);
+        })
+      : undefined;
   let stopPromise: Promise<void> | undefined;
   const stop = () => {
     stopPromise ??= (async () => {
@@ -198,7 +223,8 @@ export async function runWorker(
   try {
     await Promise.all([
       runtime.start(abortController.signal),
-      ...(temporalWorker ? [temporalWorker.run()] : [])
+      ...(temporalWorker ? [temporalWorker.run()] : []),
+      ...(temporalAuthRefresh ? [temporalAuthRefresh] : [])
     ]);
   } catch (error) {
     if (!abortController.signal.aborted) throw error;

@@ -141,3 +141,52 @@ jobs:
           exit-code: "1"
           format: table
           version: v0.70.0
+
+  platform-images:
+    name: ARM64 platform image ${{ matrix.service }}
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - service: keycloak
+            user: "1000"
+          - service: temporal
+            user: "1000:1000"
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Build immutable candidate
+        run: >-
+          docker build
+          --platform linux/arm64
+          --label org.opencontainers.image.revision=${{ github.sha }}
+          --file infra/images/${{ matrix.service }}/Dockerfile
+          --tag clinicos-${{ matrix.service }}:${{ github.sha }}
+          .
+
+      - name: Verify architecture and numeric non-root user
+        run: |
+          test "$(docker image inspect clinicos-${{ matrix.service }}:${{ github.sha }} --format '{{.Architecture}}')" = "arm64"
+          test "$(docker image inspect clinicos-${{ matrix.service }}:${{ github.sha }} --format '{{.Config.User}}')" = "${{ matrix.user }}"
+
+      - name: Exercise hardened Keycloak runtime
+        if: matrix.service == 'keycloak'
+        run: infra/images/keycloak/test-runtime.sh clinicos-keycloak:${{ github.sha }}
+
+      - name: Exercise authenticated Temporal runtime
+        if: matrix.service == 'temporal'
+        run: infra/images/temporal/test-runtime.sh clinicos-temporal:${{ github.sha }}
+
+      - name: Scan image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: clinicos-${{ matrix.service }}:${{ github.sha }}
+          scanners: vuln,secret
+          severity: HIGH,CRITICAL
+          exit-code: "1"
+          format: table
+          version: v0.70.0

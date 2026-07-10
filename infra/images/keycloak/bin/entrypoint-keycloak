@@ -1,0 +1,11 @@
+#!/bin/sh
+set -eu
+
+case "${1:-}" in
+  /*)
+    exec "$@"
+    ;;
+  *)
+    exec /opt/keycloak/bin/kc.sh "$@"
+    ;;
+esac

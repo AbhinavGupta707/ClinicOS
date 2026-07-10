@@ -76,12 +76,13 @@ export function validateRealm(realm, bindings) {
   });
 
   const clients = new Map((realm.clients ?? []).map((client) => [client.clientId, client]));
-  if (clients.size !== 3)
-    throw new Error("Promoted realm must define exactly three ClinicOS clients.");
+  if (clients.size !== 4)
+    throw new Error("Promoted realm must define exactly four ClinicOS clients.");
   const web = clients.get("clinic-os-web-bff");
   const mobile = clients.get("clinic-os-mobile");
   const api = clients.get("clinic-os-api");
-  if (!web || !mobile || !api)
+  const temporalWorker = clients.get("clinic-os-temporal-worker");
+  if (!web || !mobile || !api || !temporalWorker)
     throw new Error("Promoted realm is missing a required ClinicOS client.");
   assertInteractiveClient(web, false, bindings.CLINIC_OS_WEB_CALLBACK_URI);
   assertInteractiveClient(mobile, true, bindings.CLINIC_OS_MOBILE_REDIRECT_URI);
@@ -91,6 +92,28 @@ export function validateRealm(realm, bindings) {
     api.directAccessGrantsEnabled !== false
   ) {
     throw new Error("ClinicOS API client must remain bearer-only.");
+  }
+  const temporalPermissions = temporalWorker.protocolMappers?.find(
+    (mapper) => mapper.name === "temporal-worker-permissions"
+  );
+  const temporalAudience = temporalWorker.protocolMappers?.find(
+    (mapper) => mapper.name === "temporal-audience"
+  );
+  if (
+    temporalWorker.publicClient !== false ||
+    temporalWorker.standardFlowEnabled !== false ||
+    temporalWorker.implicitFlowEnabled !== false ||
+    temporalWorker.directAccessGrantsEnabled !== false ||
+    temporalWorker.serviceAccountsEnabled !== true ||
+    temporalWorker.fullScopeAllowed !== false ||
+    temporalPermissions?.protocolMapper !== "oidc-hardcoded-claim-mapper" ||
+    temporalPermissions.config?.["claim.name"] !== "permissions" ||
+    temporalPermissions.config?.["claim.value"] !== '["default:worker","default:write"]' ||
+    temporalPermissions.config?.["jsonType.label"] !== "JSON" ||
+    temporalAudience?.protocolMapper !== "oidc-audience-mapper" ||
+    temporalAudience.config?.["included.client.audience"] !== "clinic-os-temporal"
+  ) {
+    throw new Error("Temporal worker client must use exact service-account permissions.");
   }
   if (
     web.webOrigins?.length !== 1 ||

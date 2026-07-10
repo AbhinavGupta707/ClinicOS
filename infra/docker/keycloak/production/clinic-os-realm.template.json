@@ -19,8 +19,6 @@
   "minimumQuickLoginWaitSeconds": 60,
   "maxFailureWaitSeconds": 900,
   "maxDeltaTimeSeconds": 43200,
-  "loginTimeout": 300,
-  "loginActionTimeout": 300,
   "accessCodeLifespan": 60,
   "accessCodeLifespanLogin": 300,
   "accessCodeLifespanUserAction": 300,
@@ -198,6 +196,54 @@
       "webOrigins": [],
       "defaultClientScopes": [],
       "optionalClientScopes": []
+    },
+    {
+      "clientId": "clinic-os-temporal-worker",
+      "name": "ClinicOS Temporal Worker",
+      "enabled": true,
+      "publicClient": false,
+      "bearerOnly": false,
+      "clientAuthenticatorType": "client-secret",
+      "standardFlowEnabled": false,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": true,
+      "frontchannelLogout": false,
+      "fullScopeAllowed": false,
+      "redirectUris": [],
+      "webOrigins": [],
+      "defaultClientScopes": [],
+      "optionalClientScopes": [],
+      "protocolMappers": [
+        {
+          "name": "temporal-worker-permissions",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-hardcoded-claim-mapper",
+          "consentRequired": false,
+          "config": {
+            "claim.name": "permissions",
+            "claim.value": "[\"default:worker\",\"default:write\"]",
+            "jsonType.label": "JSON",
+            "access.token.claim": "true",
+            "id.token.claim": "false",
+            "userinfo.token.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        },
+        {
+          "name": "temporal-audience",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-audience-mapper",
+          "consentRequired": false,
+          "config": {
+            "included.client.audience": "clinic-os-temporal",
+            "id.token.claim": "false",
+            "access.token.claim": "true",
+            "lightweight.claim": "false",
+            "introspection.token.claim": "true"
+          }
+        }
+      ]
     }
   ],
   "requiredActions": [
