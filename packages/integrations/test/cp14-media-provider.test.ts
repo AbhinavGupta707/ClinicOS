@@ -38,11 +38,18 @@ test("CP14 reservation is short-lived, scope-bound, quarantined, and redacted", 
   assert.equal(reserved.upload.requiredHeaders["content-type"], "image/jpeg");
   assert.equal(reserved.upload.requiredHeaders["content-length"], String(jpeg.byteLength));
   assert.equal(reserved.upload.requiredHeaders["x-amz-tagging"], "clinicos_state=quarantine");
+  assert.equal(reserved.upload.requiredHeaders["x-amz-server-side-encryption"], "aws:kms");
+  assert.equal(
+    reserved.upload.requiredHeaders["x-amz-server-side-encryption-aws-kms-key-id"],
+    "kms-media-key-1"
+  );
   assert.deepEqual(Object.keys(reserved.upload.requiredHeaders).sort(), [
     "content-length",
     "content-type",
     "x-amz-checksum-sha256",
     "x-amz-meta-clinicos-binding",
+    "x-amz-server-side-encryption",
+    "x-amz-server-side-encryption-aws-kms-key-id",
     "x-amz-tagging"
   ]);
   assert.match(
@@ -921,6 +928,8 @@ test("CP14 signer headers are exact and reject metadata, tag, or authorization i
     ["metadata", { "x-amz-meta-attacker": "injected" }],
     ["extra tag", { "x-amz-tagging-extra": "unsafe=true" }],
     ["tag value", { "x-amz-tagging": "clinicos_state=quarantine&attacker=true" }],
+    ["SSE algorithm", { "x-amz-server-side-encryption": "AES256" }],
+    ["SSE KMS key", { "x-amz-server-side-encryption-aws-kms-key-id": "kms-attacker-key" }],
     ["authorization", { authorization: "Bearer unsafe" }]
   ] as const) {
     await t.test(`PUT ${name} header`, async () => {
@@ -1507,6 +1516,7 @@ class TestSigner implements S3PresigningTransport {
   readonly getUrl?: string;
   readonly putFailure?: unknown;
   readonly getFailure?: unknown;
+  readonly kmsKeyId: string;
 
   constructor(
     options: Readonly<{
@@ -1518,6 +1528,7 @@ class TestSigner implements S3PresigningTransport {
       getUrl?: string;
       putFailure?: unknown;
       getFailure?: unknown;
+      kmsKeyId?: string;
     }> = {}
   ) {
     this.forcedExpiry = options.forcedExpiry;
@@ -1528,6 +1539,7 @@ class TestSigner implements S3PresigningTransport {
     this.getUrl = options.getUrl;
     this.putFailure = options.putFailure;
     this.getFailure = options.getFailure;
+    this.kmsKeyId = options.kmsKeyId ?? "kms-media-key-1";
   }
 
   async signPutObject(input: Parameters<S3PresigningTransport["signPutObject"]>[0]) {
@@ -1541,6 +1553,8 @@ class TestSigner implements S3PresigningTransport {
         "content-length": String(input.contentLength),
         "x-amz-checksum-sha256": input.checksumSha256Base64,
         "x-amz-meta-clinicos-binding": input.metadata["clinicos-binding"] ?? "",
+        "x-amz-server-side-encryption": "aws:kms",
+        "x-amz-server-side-encryption-aws-kms-key-id": this.kmsKeyId,
         "x-amz-tagging": "clinicos_state=quarantine",
         ...this.extraPutHeaders
       }
