@@ -132,7 +132,7 @@ test("CP2 local fixture API supports lead to appointment to check-in workflow wi
 
     const patientResponse = await postJson(baseUrl, "/v1/patients", {
       fullName: "Rhea Synthetic",
-      phone: "+91 98765 43210",
+      phone: "+919876543210",
       source: "whatsapp",
       sourceDetail: { threadId: "synthetic-whatsapp-thread" }
     });
@@ -247,10 +247,18 @@ function assistantHeaders(extra = {}) {
   };
 }
 
+let postSequence = 1;
+
 function postJson(baseUrl, path, body, headers = {}) {
+  const bodyless = ["/confirm", "/check-in", "/mark-no-show", "/start", "/sign-note", "/sign", "/retention-delete"].some(
+    (suffix) => path.endsWith(suffix)
+  );
   return fetch(`${baseUrl}${path}`, {
     method: "POST",
-    headers: assistantHeaders(headers),
-    body: JSON.stringify(body)
+    headers: assistantHeaders({
+      "idempotency-key": `server-test-${postSequence++}`,
+      ...headers
+    }),
+    ...(bodyless ? {} : { body: JSON.stringify(body) })
   });
 }

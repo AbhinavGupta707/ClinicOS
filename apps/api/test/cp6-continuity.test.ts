@@ -141,6 +141,37 @@ test("CP6 continuity generation creates due recall post-op and payment follow-up
   assert.ok(auditSink.events.some((event) => event.action === "recall.sent"));
   assert.ok(repository.outboxEvents.some((event) => event.eventType === "recall.due"));
   assert.equal(repository.tasks.filter((task) => task.invoiceId === prepared.invoiceId).length, 1);
+
+  const recallTask = repository.tasks.find((task) => task.id === contacted.body.recall.taskId);
+  assert.ok(recallTask);
+  const openTaskVersion = recallTask.rowVersion;
+  const completed = await recordRecallAction(
+    receptionist,
+    dependencies,
+    contacted.body.recall.id,
+    {
+      actionType: "completed",
+      method: "phone",
+      notes: "Recall completed."
+    }
+  );
+  assert.equal(completed.body.recall.status, "completed");
+  assert.equal(recallTask.status, "done");
+  assert.equal(recallTask.rowVersion, openTaskVersion + 1);
+
+  const completedTaskVersion = recallTask.rowVersion;
+  const repeatedCompletion = await recordRecallAction(
+    receptionist,
+    dependencies,
+    contacted.body.recall.id,
+    {
+      actionType: "completed",
+      method: "phone",
+      notes: "Repeated provider confirmation."
+    }
+  );
+  assert.equal(repeatedCompletion.body.recall.status, "completed");
+  assert.equal(recallTask.rowVersion, completedTaskVersion);
 });
 
 test("CP6 SOP schedules generate retry-safe runs and complete checklist evidence", async () => {
