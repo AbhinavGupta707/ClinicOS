@@ -6,6 +6,9 @@ release remains NO-GO. See `docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECI
 
 **Candidate branch:** `codex/integration/checkpoint-14`
 
+**Owner-directed E3 promotion merge:**
+`c3ca186f97d1d6af901f919816aaf93cd9b2929a`
+
 **Current integrated implementation candidate:**
 `ba80612fd139bcf3fa3014823cbf0fb075eceac8`
 
@@ -40,7 +43,8 @@ release remains NO-GO. See `docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECI
 
 Final branch-tip CI at `ba80612` passes quality run `29132493510` and security run
 `29132493520`. These supersede the earlier candidate runs without changing their E3-only evidence
-tier.
+tier. After the owner-deferral documentation commit, local promotion merge `c3ca186f` passes
+`git diff --check` and `npm run check`; user-owned untracked research paths remain untouched.
 
 ## Security corrections found during integration
 

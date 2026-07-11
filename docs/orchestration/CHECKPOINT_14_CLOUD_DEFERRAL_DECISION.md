@@ -6,6 +6,8 @@
 
 **Implementation baseline:** `ba80612fd139bcf3fa3014823cbf0fb075eceac8`
 
+**Local promotion merge:** `c3ca186f97d1d6af901f919816aaf93cd9b2929a`
+
 **Release decision:** **NO-GO** for production, PHI, official provider traffic or clinical reliance
 
 ## Decision

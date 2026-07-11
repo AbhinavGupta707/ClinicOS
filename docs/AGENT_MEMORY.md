@@ -347,8 +347,9 @@ Update these during orchestration:
 - On 2026-07-11 the owner explicitly deferred all AWS/DNS activation and spending. Read
   `docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md` before later checkpoint work.
 - CP14 is implementation-complete at E3 on baseline `ba80612`; it is not E4/E5 complete. The
-  baseline may be promoted so CP15 and selected CP16 implementation can proceed against frozen,
-  fail-closed contracts. Every report remains NO-GO for production.
+  baseline was promoted locally to `main` by merge `c3ca186f` so CP15 and selected CP16
+  implementation can proceed against frozen, fail-closed contracts. Every report remains NO-GO
+  for production.
 - Do not run AWS plan/apply, DNS delegation, ECR publish, GuardDuty activation, live paging or
   cloud recovery until the owner separately reopens the activation gate.
 - CP15 may implement provider callbacks/adapters and deterministic reconciliation, but no official

@@ -1078,4 +1078,7 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   sequential CP15/selected CP16 implementation. It is not a waiver, accepted production risk or
   evidence-tier upgrade. The full decision and re-entry gate are recorded in
   `docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md`.
+- Local promotion merge `c3ca186f97d1d6af901f919816aaf93cd9b2929a` moves the CP14 E3
+  implementation baseline to `main`. Post-promotion `git diff --check` and `npm run check` pass.
+  This is an implementation-baseline promotion only; it does not close CP14 E4/E5.
 - User-owned `research/` and `scripts/research/` remain untracked and untouched.
