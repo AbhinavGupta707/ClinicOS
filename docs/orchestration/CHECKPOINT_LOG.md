@@ -1082,3 +1082,23 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   implementation baseline to `main`. Post-promotion `git diff --check` and `npm run check` pass.
   This is an implementation-baseline promotion only; it does not close CP14 E4/E5.
 - User-owned `research/` and `scripts/research/` remain untracked and untouched.
+
+## CP15 Local Implementation Launch - 2026-07-11
+
+- Launch base: local `main` at `87c1be0119aa1a3c93b6f27c3cebf27a716108c7`; integration branch:
+  `codex/integration/checkpoint-15`.
+- This wave follows `CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md`: it may implement deterministic,
+  fail-closed provider boundaries but cannot use AWS/DNS, provider dashboards, real credentials,
+  live payments/messages/calls, PHI or official-sandbox evidence.
+- Adaptive lane gate selected two genuinely path-disjoint provider lanes. Telephony did not launch
+  because no official provider is selected; the workflow remains wholly disabled.
+
+| Lane | Model / effort | Thread / worktree | Ownership | Dependency decision |
+| --- | --- | --- | --- | --- |
+| Meta WhatsApp Cloud | `gpt-5.6-sol` / `xhigh` | `019f4fab-23df-7f51-8772-a4a626182609`; `/Users/abhinavgupta/.codex/worktrees/0596/ClinicOS` | new `cp15/meta-whatsapp` integration/domain/API namespaces, focused tests, schema proposal and lane evidence | Independent official signature/event semantics; shared routes/config/migrations remain master-owned |
+| Razorpay | `gpt-5.6-sol` / `xhigh` | `019f4fab-23df-7f51-8772-a4cb2c968712`; `/Users/abhinavgupta/.codex/worktrees/9ca4/ClinicOS` | new `cp15/razorpay` integration/domain/API namespaces, focused tests, schema proposal and lane evidence | Independent money/signature/reconciliation semantics; shared routes/config/migrations remain master-owned |
+
+- Both lanes must use native worktree dependencies. If absent, they use a worktree-local
+  `npm ci --prefer-offline --no-audit`; resolving types from the primary checkout or creating a
+  temporary repository TypeScript project is forbidden. Workers commit clean handoffs and report
+  every master-owned integration need.
