@@ -353,6 +353,12 @@ Update these during orchestration:
 - Workspace-filtered production installs materially reduce image size and attack surface. Do not
   copy the monorepo-wide `node_modules` or nested workspace development dependencies into API or
   worker images.
+- Workspace-filtered npm installs can place a production dependency under the depended-on
+  workspace rather than the root `node_modules`. Container smoke must import the real entrypoint
+  after pruning; a successful TypeScript build and `npm ci` are insufficient packaging evidence.
+- AWS Lambda base images include npm/Corepack and the local Runtime Interface Emulator. If the
+  deployed handler does not need them, remove them from the final stage, smoke through an explicit
+  entrypoint and scan the final image rather than suppressing tool-only findings.
 - A clean CI runner lacks generated shared-package outputs that may exist locally. Build shared
   outputs before acceptance fixtures that import workspace package exports.
 - Self-hosted Temporal definitions are not deployable because ECS services and a schema task exist.

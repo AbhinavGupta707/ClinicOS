@@ -5,8 +5,8 @@ pilot-production do not exist.
 
 **Candidate branch:** `codex/integration/checkpoint-14`
 
-**Implementation candidate before evidence-only closeout:**
-`eae79c0d09c0170f28c3b27493705ad67abe499e`
+**Current integrated implementation candidate:**
+`8a8cfc2c05776d477da8b201fb04c8dfa023b470`
 
 **Platform-runtime hardening candidate:**
 `3ddf01a2`
@@ -19,7 +19,7 @@ pilot-production do not exist.
 | Canonical database migration gate              | Pass: 19 migrations, concurrent runner, checksum drift rejection and rollback                                                                 | Local PostgreSQL only                             |
 | API package                                    | Pass: 158 tests with socket execution and zero skips                                                                                          | Local E3                                          |
 | Database package                               | Pass: 104 tests                                                                                                                               | Local E3                                          |
-| Integrations / worker / workflow               | Pass: 101 / 26 / 12 tests, zero skips                                                                                                         | Local E1/E3                                       |
+| Integrations / worker / workflow               | Pass: 142 / 26 / 12 tests, zero skips                                                                                                         | Local E1/E3                                       |
 | CP14 telemetry and synthetic resilience suites | Pass, including deterministic dependency faults and synthetic recovery harnesses                                                              | Simulation only; not restore/failover evidence    |
 | Terraform verifier                             | Pass: all four roots validate/mock-test; staging 3/3, pilot 5/5; policy assertions pass                                                       | No plan/apply                                     |
 | Trivy IaC                                      | Pass: zero high/critical findings                                                                                                             | Static source scan                                |
@@ -33,6 +33,8 @@ pilot-production do not exist.
 | Temporal production image                      | Pass: ARM64 UID `1000:1000`; Temporal 1.31.2 server/schema tools; config/task-network startup smoke; zero high/critical image findings        | Local E3 image; not signed, pushed or deployed    |
 | Platform database trust                        | Pass: both images contain the digest-pinned official AWS RDS global CA bundle; Keycloak/Temporal require verified hostname TLS                | Static/runtime contract; no live RDS handshake    |
 | Keycloak realm/Temporal worker auth            | Pass: exact four-client realm; worker token has canonical issuer/client, `clinic-os-temporal` audience and worker/write permissions           | Clean local Keycloak/PostgreSQL only              |
+| GuardDuty media evidence boundary              | Pass: official S3 status mapping, exact-version double-read, asymmetric KMS signing, immutable Lambda alias, API Verify-only IAM and 142 integration tests | Local E1/E3; GuardDuty is not activated           |
+| Media scanner Lambda image                     | Pass: ARM64 UID/GID `10001`, fail-closed config smoke, complete production dependencies and zero high/critical Trivy vulnerability/secret findings | Local image only; not signed, pushed or deployed  |
 | AWS identity/region preflight                  | Approved IAM user resolves in account `222634407676`; Mumbai primary and Hyderabad enabled                                                    | Read-only inventory                               |
 
 ## Security corrections found during integration
@@ -56,6 +58,15 @@ pilot-production do not exist.
   granting workloads access to the operator-only Keycloak admin plane.
 - Added repeatable CI runtime gates for both platform images and pinned the official AWS RDS CA
   bundle by SHA-256 in both builds.
+- Replaced the production media registration-only gate with an official GuardDuty S3 transport and
+  isolated image-Lambda evidence signer. The API can invoke the immutable alias and perform KMS
+  Verify, but has no `kms:Sign` authority and cannot write the provider-owned verdict tag.
+- Reconciled the S3 policy so the API can read bounded exact-version bytes before scan for
+  magic-byte validation while patient/user access remains gated by durable verified signed
+  evidence rather than trusting a mutable bucket tag.
+- Found and fixed a container-only dependency layout failure (`file-type` was nested in the
+  integrations workspace), then removed unused npm/Corepack/local RIE base tooling and added a
+  repeatable fail-closed image smoke to the security workflow.
 
 ## Exit gates still open
 
@@ -74,8 +85,9 @@ pilot-production do not exist.
    hosted zone/nameservers, Porkbun NS delegation, ACM certificates, private admin zone, final
    hostnames or reviewed private/VPN/JIT administrator CIDRs exist yet.
 5. No real paging destination exists, so alarm delivery/escalation cannot be verified.
-6. No approved production malware scanner transport exists. Media remains fail-closed and cannot
-   receive E4 clean/quarantine evidence.
+6. The production GuardDuty transport, signer, Terraform module and image now pass local gates, but
+   GuardDuty Malware Protection has not been cost-approved, applied or exercised against the real
+   media bucket/KMS keys. Media therefore still lacks E4 clean/quarantine evidence.
 7. Images are not signed, attested or pushed to both regional ECR repositories because foundation
    infrastructure and GitHub deployment environments do not exist.
 8. No real cloud load/fault, alert injection, backup restore, Hyderabad failover/failback, deployed

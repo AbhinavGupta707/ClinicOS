@@ -324,7 +324,7 @@ Result candidate: `9116a8ea`; evidence: `docs/qa/checkpoint-13-evidence.md`; thr
 
 ### CP14 active-candidate status delta — 2026-07-10
 
-Candidate implementation: `3ddf01a2`; evidence: `docs/qa/checkpoint-14-evidence.md`; threat delta:
+Candidate implementation: `8a8cfc2c`; evidence: `docs/qa/checkpoint-14-evidence.md`; threat delta:
 `docs/security/checkpoint-14-threat-model-delta.md`.
 
 - PRR-018 now has passing CodeQL, repository/lockfile/secret/IaC scans, npm and Syft SBOMs, a
@@ -336,7 +336,9 @@ Candidate implementation: `3ddf01a2`; evidence: `docs/qa/checkpoint-14-evidence.
   exercises.
 - Integration review closed the local platform-image gap with hardened Keycloak/Temporal images,
   exact realm and worker OAuth, versioned schema/config, mTLS/JWT, ECS task membership, pinned RDS CA
-  trust and repeatable runtime/scan CI gates. Production media still lacks an approved scanner.
+  trust and repeatable runtime/scan CI gates. Production media now has an official GuardDuty S3
+  adapter and isolated signed-evidence Lambda with local image/contract evidence, but activation and
+  deployed bucket/KMS/quarantine evidence remain open.
   Applied certificate/secret rotation and multi-task runtime evidence remain hard E4 gates.
 - The release remains NO-GO. No Terraform apply, signed ECR artifact, deployed identity/media,
   paging delivery, real restore/failover or pilot-production evidence exists.

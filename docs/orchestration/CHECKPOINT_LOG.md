@@ -991,7 +991,7 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   database volume. No source, installed dependencies or ClinicOS volume was removed. Docker
   restarted successfully and host free space recovered to roughly 22 GB.
 - E4/E5 remains blocked by reviewed state-backend adoption/apply authority, domain/TLS/admin ingress
-  inputs, a paging destination, an approved malware scanner, signed exact-revision dual-region ECR
+  inputs, a paging destination, an activated malware scanner, signed exact-revision dual-region ECR
   artifacts, applied staging/pilot, alert/restore/failover evidence and promotion. See
   `docs/qa/checkpoint-14-evidence.md`.
 
@@ -1028,4 +1028,30 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   04:35 worktree-hello automation exists and is unrelated to checkpoint evidence.
 - CP14 still cannot close or promote: there is no authorized backend migration/apply, dual-region
   ECR signing/provenance, deployed RDS/ECS/Keycloak/Temporal/edge, DNS delegation/ACM, paging target,
-  approved malware scanner, or real E4/E5 load/alert/restore/failover evidence.
+  activated malware scanner, or real E4/E5 load/alert/restore/failover evidence.
+
+### CP14 Production Media Integration - 2026-07-11
+
+- Integrated implementation candidate `8a8cfc2c05776d477da8b201fb04c8dfa023b470` composes the
+  durable PostgreSQL/S3 media provider in the production API and adds the official GuardDuty S3
+  status attestor in an isolated Lambda image. The API can invoke an immutable alias and perform KMS
+  Verify; only the Lambda role can sign, and only the GuardDuty service role can write the managed
+  verdict tag.
+- The scanner binds tenant/clinic/media/upload authority, exact S3 version, ETag, checksum, KMS key,
+  content metadata and quarantine state. It double-reads object and tag state, rejects drift or
+  unknown provider statuses, and returns a bounded retryable `scan_pending` result without internal
+  polling when the official tag is absent.
+- Terraform now has opt-in GuardDuty plan, least-privilege roles, asymmetric `SIGN_VERIFY` KMS key,
+  encrypted signer logs, digest-pinned ARM64 Lambda, private Lambda endpoint and exact API runtime
+  environment. Activation requires a named authority and exact
+  `I_ACKNOWLEDGE_GUARDDUTY_S3_AND_TAGGING_COSTS`; disabled defaults create no scanner resources.
+- Final local signer image runs as `10001:10001`, loads its full production dependency graph, fails
+  closed without configuration and has zero high/critical Trivy vulnerability or secret findings.
+  A repeatable runtime smoke is now part of the GitHub security matrix.
+- Local gates pass: root workspace CI except the sandboxed registry hop (rerun externally and clean
+  at high/critical), 142 integration tests, all 14 scanner/staging/pilot Terraform tests, full
+  Terraform policy/IaC verification, 19 canonical migrations, 104/104 forced-RLS tables and the
+  exact durable quality workflow tests. User-owned `research/` and `scripts/research/` remain
+  untouched.
+- This is E1/E3 evidence only. No GuardDuty plan, S3/KMS resource, Lambda, image digest, secret,
+  endpoint or media workflow has been applied or activated in AWS, so PRR-009 and CP14 remain open.
