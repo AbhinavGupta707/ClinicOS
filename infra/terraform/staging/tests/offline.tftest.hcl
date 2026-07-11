@@ -85,13 +85,17 @@ run "full_runtime_and_edge_shape" {
     keycloak_admin_private_zone_id        = "Z00000000000000000000"
     keycloak_admin_certificate_arn        = "arn:aws:acm:ap-south-1:000000000000:certificate/11111111-1111-1111-1111-111111111111"
     keycloak_admin_allowed_operator_cidrs = ["10.200.0.0/16"]
+    enable_malware_scanner                = true
+    malware_scanner_authorized_by         = "ClinicOS Security Owner"
+    malware_scanner_spend_acknowledgement = "I_ACKNOWLEDGE_GUARDDUTY_S3_AND_TAGGING_COSTS"
     image_uris = {
-      adot     = "000000000000.dkr.ecr.ap-south-1.amazonaws.com/adot@sha256:1111111111111111111111111111111111111111111111111111111111111111"
-      api      = "000000000000.dkr.ecr.ap-south-1.amazonaws.com/api@sha256:2222222222222222222222222222222222222222222222222222222222222222"
-      keycloak = "000000000000.dkr.ecr.ap-south-1.amazonaws.com/keycloak@sha256:3333333333333333333333333333333333333333333333333333333333333333"
-      temporal = "000000000000.dkr.ecr.ap-south-1.amazonaws.com/temporal@sha256:4444444444444444444444444444444444444444444444444444444444444444"
-      web      = "000000000000.dkr.ecr.ap-south-1.amazonaws.com/web@sha256:5555555555555555555555555555555555555555555555555555555555555555"
-      worker   = "000000000000.dkr.ecr.ap-south-1.amazonaws.com/worker@sha256:6666666666666666666666666666666666666666666666666666666666666666"
+      adot          = "000000000000.dkr.ecr.ap-south-1.amazonaws.com/adot@sha256:1111111111111111111111111111111111111111111111111111111111111111"
+      api           = "000000000000.dkr.ecr.ap-south-1.amazonaws.com/api@sha256:2222222222222222222222222222222222222222222222222222222222222222"
+      keycloak      = "000000000000.dkr.ecr.ap-south-1.amazonaws.com/keycloak@sha256:3333333333333333333333333333333333333333333333333333333333333333"
+      media-scanner = "000000000000.dkr.ecr.ap-south-1.amazonaws.com/media-scanner@sha256:7777777777777777777777777777777777777777777777777777777777777777"
+      temporal      = "000000000000.dkr.ecr.ap-south-1.amazonaws.com/temporal@sha256:4444444444444444444444444444444444444444444444444444444444444444"
+      web           = "000000000000.dkr.ecr.ap-south-1.amazonaws.com/web@sha256:5555555555555555555555555555555555555555555555555555555555555555"
+      worker        = "000000000000.dkr.ecr.ap-south-1.amazonaws.com/worker@sha256:6666666666666666666666666666666666666666666666666666666666666666"
     }
     image_users = { adot = "10001", api = "10001", keycloak = "1000", temporal = "1000", web = "10001", worker = "10001" }
   }
@@ -99,6 +103,10 @@ run "full_runtime_and_edge_shape" {
   assert {
     condition     = output.edge.enabled && output.edge.tls_inputs_complete && !output.edge.applied_tls_verified
     error_message = "The edge plan must distinguish complete inputs from unverified applied TLS."
+  }
+  assert {
+    condition     = output.activation.interface_endpoint_count == 8
+    error_message = "Runtime media must add the exact Lambda interface endpoint."
   }
   assert {
     condition = (

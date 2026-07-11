@@ -12,6 +12,11 @@ variable "s3_bucket_arns" { type = set(string) }
 variable "ecr_repository_arns" { type = set(string) }
 variable "secret_arns" { type = set(string) }
 variable "kms_key_arns" { type = set(string) }
+variable "lambda_function_arns" {
+  type        = list(string)
+  default     = []
+  description = "Exact Lambda function/alias ARNs invokable from private workloads. Empty omits the paid interface endpoint."
+}
 variable "log_group_arns" { type = set(string) }
 variable "metric_namespace" { type = string }
 variable "tags" {

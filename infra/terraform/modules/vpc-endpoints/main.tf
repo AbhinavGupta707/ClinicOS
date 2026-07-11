@@ -26,7 +26,7 @@ locals {
       },
     ]
   })
-  interface_policies = {
+  interface_policies = merge({
     "ecr.api" = jsonencode({
       Version = "2012-10-17"
       Statement = [
@@ -40,7 +40,7 @@ locals {
     })
     kms = jsonencode({
       Version   = "2012-10-17"
-      Statement = [{ Effect = "Allow", Principal = "*", Action = ["kms:Decrypt", "kms:DescribeKey", "kms:Encrypt", "kms:GenerateDataKey*"], Resource = tolist(var.kms_key_arns), Condition = { StringEquals = { "aws:PrincipalAccount" = var.account_id } } }]
+      Statement = [{ Effect = "Allow", Principal = "*", Action = ["kms:Decrypt", "kms:DescribeKey", "kms:Encrypt", "kms:GenerateDataKey*", "kms:Verify"], Resource = tolist(var.kms_key_arns), Condition = { StringEquals = { "aws:PrincipalAccount" = var.account_id } } }]
     })
     logs = jsonencode({
       Version   = "2012-10-17"
@@ -58,7 +58,20 @@ locals {
       Version   = "2012-10-17"
       Statement = [{ Effect = "Allow", Principal = "*", Action = ["xray:PutTelemetryRecords", "xray:PutTraceSegments"], Resource = "*", Condition = { StringEquals = { "aws:PrincipalAccount" = var.account_id } } }]
     })
-  }
+    },
+    length(var.lambda_function_arns) > 0 ? {
+      lambda = jsonencode({
+        Version = "2012-10-17"
+        Statement = [{
+          Effect    = "Allow"
+          Principal = "*"
+          Action    = "lambda:InvokeFunction"
+          Resource  = tolist(var.lambda_function_arns)
+          Condition = { StringEquals = { "aws:PrincipalAccount" = var.account_id } }
+        }]
+      })
+    } : {}
+  )
 }
 
 resource "aws_vpc_endpoint" "s3" {

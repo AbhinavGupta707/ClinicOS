@@ -72,12 +72,12 @@ variable "activation_phase" {
 variable "image_uris" {
   type        = map(string)
   default     = {}
-  description = "Immutable image URIs keyed by adot, api, keycloak, temporal, web, and worker."
+  description = "Immutable image URIs keyed by adot, api, keycloak, media-scanner, temporal, web, and worker."
 }
 variable "image_users" {
   type        = map(string)
   default     = {}
-  description = "Image-owned numeric non-root UIDs keyed by adot, api, keycloak, temporal, web, worker."
+  description = "Image-owned numeric non-root UIDs keyed by ECS images only; the Lambda media-scanner user is image-enforced separately."
 }
 
 variable "certificate_arn" {
@@ -147,6 +147,22 @@ variable "enable_backup_vault_lock" {
   type        = bool
   default     = false
   description = "Irreversible after the change window; requires an explicitly authorized apply decision."
+}
+variable "enable_malware_scanner" {
+  type        = bool
+  default     = false
+  description = "Creates GuardDuty S3 scanning only after named authority and exact spend acknowledgement."
+}
+variable "malware_scanner_authorized_by" {
+  type     = string
+  default  = null
+  nullable = true
+}
+variable "malware_scanner_spend_acknowledgement" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Must equal I_ACKNOWLEDGE_GUARDDUTY_S3_AND_TAGGING_COSTS when enabled."
 }
 variable "audit_compliance_authorized_by" {
   type     = string

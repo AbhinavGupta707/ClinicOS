@@ -17,6 +17,10 @@ image_users      = {}
 
 # Runtime also requires keycloak_admin_hostname, keycloak_admin_private_zone_id,
 # keycloak_admin_certificate_arn, keycloak_admin_allowed_operator_cidrs, and auth_hostname.
+# GuardDuty scanning has usage/tagging cost and remains off until a reviewed plan and named approval.
+enable_malware_scanner                 = false
+malware_scanner_authorized_by          = null
+malware_scanner_spend_acknowledgement  = null
 
 enable_audit_compliance_lock   = false
 audit_compliance_authorized_by = null

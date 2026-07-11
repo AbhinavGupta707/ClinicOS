@@ -3,6 +3,7 @@ import { type IncomingMessage, type Server } from "node:http";
 import { pathToFileURL } from "node:url";
 import { safeParseClinicOsEnv, type ClinicOsConfig } from "@clinic-os/config";
 import {
+  createAwsPrivateMediaRuntime,
   createPaymentProvider,
   type AiGatewayProvider,
   type PaymentProvider,
@@ -224,6 +225,7 @@ import {
   type VerifiedRazorpayPaymentEventRequest
 } from "./features/treatment-billing/index.ts";
 import { PendingLocalClinicalMediaInspectionSimulator } from "./media-inspection.ts";
+import { createPostgresS3TransactionMediaProviderFactory } from "./providers/media/index.ts";
 
 interface AuditSink {
   appendAuditEvent(event: AuditEventRecord): Promise<void>;
@@ -709,19 +711,14 @@ function createRuntimeComposition(
     : createPostgresRepositorySet(parsed.data, runtimeBudgetKeySecret ?? undefined);
   if ("pool" in repositorySet) pool = repositorySet.pool;
   const port = parsePort(env.PORT ?? env.API_PORT);
-  const mediaStorage = createRuntimeMediaStorage(parsed.data, env);
-  const mediaInspection = createRuntimeMediaInspection(parsed.data, env);
-  if (parsed.data.isProductionLike && (!mediaStorage || !mediaInspection)) {
+  const runtimeMedia = createRuntimeMediaComposition(parsed.data, env, useFixtureRepository);
+  const { mediaStorage, mediaInspection, transactionMediaProvider } = runtimeMedia;
+  if (parsed.data.isProductionLike && !transactionMediaProvider) {
     throw new ApiError(
       503,
       "CONFIGURATION_ERROR",
       "Production private-media storage and scanner composition is not registered.",
-      {
-        missing: [
-          ...(!mediaStorage ? ["private_media_storage"] : []),
-          ...(!mediaInspection ? ["private_media_scanner"] : [])
-        ]
-      }
+      { missing: ["transaction_private_media_provider"] }
     );
   }
   const paymentProvider = createRuntimePaymentProvider(parsed.data);
@@ -788,7 +785,8 @@ function createRuntimeComposition(
     clinicalDental: {
       relationshipAuthority: createClinicalDentalRelationshipAuthority(),
       ...(mediaStorage ? { mediaStorage } : {}),
-      ...(mediaInspection ? { mediaInspection } : {})
+      ...(mediaInspection ? { mediaInspection } : {}),
+      ...(transactionMediaProvider ? { transactionMediaProvider } : {})
     }
   });
   if (!useFixtureRepository) {
@@ -1965,56 +1963,114 @@ function hasJwksKeys(value: unknown): value is { keys: unknown[] } {
   );
 }
 
-function createRuntimeMediaStorage(
+function createRuntimeMediaComposition(
   config: ClinicOsConfig,
-  env: NodeJS.ProcessEnv
-): MediaStorageProvider | undefined {
-  const provider =
-    env.CLINIC_OS_MEDIA_STORAGE_PROVIDER ?? (config.isProductionLike ? "" : "local_simulator");
+  env: NodeJS.ProcessEnv,
+  useFixtureRepository: boolean
+) {
+  const storageProvider = config.storage.mediaStorageProvider;
+  const inspectionProvider = config.storage.mediaInspectionProvider;
 
-  if (!provider) return undefined;
-
-  if (provider !== "local_simulator") {
-    throw new ApiError(503, "CONFIGURATION_ERROR", "Unsupported media storage provider.", {
-      provider
-    });
+  if (storageProvider === "local_simulator" && inspectionProvider === "local_pending_simulator") {
+    if (config.isProductionLike) {
+      throw new ApiError(
+        503,
+        "CONFIGURATION_ERROR",
+        "Local private-media simulators are forbidden outside local/dev environments."
+      );
+    }
+    return {
+      mediaStorage: new LocalMediaStorageSimulator({
+        environment: config.clinicOsEnv,
+        region: config.storage.region,
+        publicBaseUrl: env.CLINIC_OS_MEDIA_PUBLIC_BASE_URL,
+        uploadBasePath: "/v1/media/uploads"
+      }),
+      mediaInspection: new PendingLocalClinicalMediaInspectionSimulator()
+    };
   }
 
-  if (config.isProductionLike) {
+  if (storageProvider !== "aws_s3" || inspectionProvider !== "guardduty_s3") {
     throw new ApiError(
       503,
       "CONFIGURATION_ERROR",
-      "The local media storage simulator is forbidden outside local/dev environments."
+      "Private-media storage and inspection providers must be activated as one approved pair."
+    );
+  }
+  if (useFixtureRepository) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "AWS private media requires the durable PostgreSQL transaction repository."
     );
   }
 
-  return new LocalMediaStorageSimulator({
-    environment: config.clinicOsEnv,
-    region: config.storage.region,
-    publicBaseUrl: env.CLINIC_OS_MEDIA_PUBLIC_BASE_URL,
-    uploadBasePath: "/v1/media/uploads"
-  });
+  const objectKmsKeyId = requireMediaConfig(config.storage.mediaKmsKeyId);
+  const bindingSecret = requireMediaConfig(config.storage.mediaBindingSecret);
+  const scannerFunctionName = requireMediaConfig(config.storage.mediaScannerFunctionArn);
+  const scannerSigningKeyId = requireMediaConfig(config.storage.mediaScannerSigningKeyId);
+  const presignedEndpointOrigins = parseMediaEndpointOrigins(
+    requireMediaConfig(config.storage.mediaPresignedOrigins)
+  );
+  try {
+    const aws = createAwsPrivateMediaRuntime({
+      region: config.storage.region,
+      bucket: config.storage.bucket,
+      objectKmsKeyId,
+      scannerFunctionName,
+      scannerSigningKeyId,
+      presignedEndpointOrigins
+    });
+    return {
+      transactionMediaProvider: createPostgresS3TransactionMediaProviderFactory({
+        config: {
+          environment: config.clinicOsEnv,
+          bucket: config.storage.bucket,
+          region: config.storage.region,
+          kmsKeyId: objectKmsKeyId,
+          bindingSecret,
+          presignedEndpointAllowlist: presignedEndpointOrigins,
+          scannerSigningKeyIds: [scannerSigningKeyId]
+        },
+        ...aws
+      })
+    };
+  } catch {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "AWS private-media composition is invalid."
+    );
+  }
 }
 
-function createRuntimeMediaInspection(config: ClinicOsConfig, env: NodeJS.ProcessEnv) {
-  const provider =
-    env.CLINIC_OS_MEDIA_INSPECTION_PROVIDER ??
-    (config.isProductionLike ? "" : "local_pending_simulator");
-
-  if (!provider) return undefined;
-  if (provider !== "local_pending_simulator") {
-    throw new ApiError(503, "CONFIGURATION_ERROR", "Unsupported media inspection provider.", {
-      provider
-    });
+function requireMediaConfig(value: string | undefined): string {
+  if (!value) {
+    throw new ApiError(503, "CONFIGURATION_ERROR", "Private-media composition is incomplete.");
   }
-  if (config.isProductionLike) {
+  return value;
+}
+
+function parseMediaEndpointOrigins(value: string): readonly string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length === 0 ||
+      parsed.length > 8 ||
+      parsed.some((origin) => typeof origin !== "string") ||
+      new Set(parsed).size !== parsed.length
+    ) {
+      throw new Error("invalid");
+    }
+    return Object.freeze([...parsed] as string[]);
+  } catch {
     throw new ApiError(
       503,
       "CONFIGURATION_ERROR",
-      "The local pending media inspection simulator is forbidden outside local/dev environments."
+      "Private-media presigned origin allowlist is invalid."
     );
   }
-  return new PendingLocalClinicalMediaInspectionSimulator();
 }
 
 function createRuntimePaymentProvider(config: ClinicOsConfig): PaymentProvider {

@@ -55,6 +55,36 @@ variable "access_log_retention_days" {
   default     = 90
 }
 
+variable "media_malware_protection_role_arn" {
+  type        = string
+  default     = null
+  nullable    = true
+  description = "Exact GuardDuty Malware Protection role allowed to create its validation object and managed result tag."
+
+  validation {
+    condition = var.media_malware_protection_role_arn == null ? true : can(regex(
+      "^arn:aws:iam::[0-9]{12}:role/[A-Za-z0-9+=,.@_/-]{1,512}$",
+      var.media_malware_protection_role_arn
+    ))
+    error_message = "media_malware_protection_role_arn must be an exact IAM role ARN."
+  }
+}
+
+variable "media_quarantine_prefixes" {
+  type        = list(string)
+  default     = []
+  description = "Exact GuardDuty-managed media prefixes; empty disables scan-tag bucket-policy controls."
+
+  validation {
+    condition = (
+      length(var.media_quarantine_prefixes) <= 5 &&
+      length(distinct(var.media_quarantine_prefixes)) == length(var.media_quarantine_prefixes) &&
+      alltrue([for prefix in var.media_quarantine_prefixes : can(regex("^[a-z0-9][A-Za-z0-9._/-]{0,200}/tenants/$", prefix))])
+    )
+    error_message = "media_quarantine_prefixes must contain at most five unique prefixes ending in /tenants/."
+  }
+}
+
 variable "tags" {
   type        = map(string)
   description = "Additional tags."

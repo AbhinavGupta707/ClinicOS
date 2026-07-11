@@ -156,7 +156,7 @@ resource "aws_s3_bucket_policy" "protected" {
   bucket = each.value.id
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Sid       = "DenyInsecureTransport"
         Effect    = "Deny"
@@ -171,11 +171,12 @@ resource "aws_s3_bucket_policy" "protected" {
         Principal = "*"
         Action    = "s3:PutObject"
         Resource  = "${each.value.arn}/*"
-        Condition = {
-          StringNotEquals = {
-            "s3:x-amz-server-side-encryption" = "aws:kms"
-          }
-        }
+        Condition = merge(
+          { StringNotEquals = { "s3:x-amz-server-side-encryption" = "aws:kms" } },
+          each.key == "media" && var.media_malware_protection_role_arn != null ? {
+            ArnNotEquals = { "aws:PrincipalArn" = var.media_malware_protection_role_arn }
+          } : {}
+        )
       },
       {
         Sid       = "DenyWrongKmsKey"
@@ -183,13 +184,32 @@ resource "aws_s3_bucket_policy" "protected" {
         Principal = "*"
         Action    = "s3:PutObject"
         Resource  = "${each.value.arn}/*"
-        Condition = {
-          StringNotEquals = {
-            "s3:x-amz-server-side-encryption-aws-kms-key-id" = var.data_kms_key_arn
+        Condition = merge(
+          { StringNotEquals = { "s3:x-amz-server-side-encryption-aws-kms-key-id" = var.data_kms_key_arn } },
+          each.key == "media" && var.media_malware_protection_role_arn != null ? {
+            ArnNotEquals = { "aws:PrincipalArn" = var.media_malware_protection_role_arn }
+          } : {}
+        )
+      },
+      ],
+      each.key == "media" && var.media_malware_protection_role_arn != null && length(var.media_quarantine_prefixes) > 0 ? [
+        {
+          Sid       = "OnlyGuardDutyMayWriteManagedMalwareStatus"
+          Effect    = "Deny"
+          Principal = "*"
+          Action    = ["s3:PutObjectTagging", "s3:PutObjectVersionTagging"]
+          Resource  = [for prefix in var.media_quarantine_prefixes : "${each.value.arn}/${prefix}*"]
+          Condition = {
+            "ForAnyValue:StringEquals" = {
+              "s3:RequestObjectTagKeys" = "GuardDutyMalwareScanStatus"
+            }
+            ArnNotEquals = {
+              "aws:PrincipalArn" = var.media_malware_protection_role_arn
+            }
           }
         }
-      },
-    ]
+      ] : []
+    )
   })
 
   depends_on = [aws_s3_bucket_public_access_block.protected]

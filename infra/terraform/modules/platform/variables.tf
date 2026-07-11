@@ -120,6 +120,18 @@ variable "runtime" {
   })
 }
 
+variable "malware_scanner" {
+  type = object({
+    enabled                  = bool
+    activation_authorized_by = optional(string)
+    spend_acknowledgement    = optional(string)
+  })
+  description = "Explicit GuardDuty S3 activation authority; runtime phases require it enabled."
+  default = {
+    enabled = false
+  }
+}
+
 variable "backup" {
   type = object({
     daily_retention_days       = number

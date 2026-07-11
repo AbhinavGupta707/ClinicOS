@@ -9,7 +9,8 @@ terraform {
 locals {
   key_definitions = {
     data = {
-      description = "ClinicOS application, database, cache, registry, and object data"
+      description     = "ClinicOS application, database, cache, registry, and object data"
+      cloudwatch_logs = false
       services = [
         "ecr.amazonaws.com",
         "elasticache.amazonaws.com",
@@ -18,21 +19,23 @@ locals {
       ]
     }
     logs = {
-      description = "ClinicOS diagnostic logs and metrics"
+      description     = "ClinicOS diagnostic logs and metrics"
+      cloudwatch_logs = true
       services = [
-        "logs.${var.region}.amazonaws.com",
         "sns.amazonaws.com",
       ]
     }
     secrets = {
-      description = "ClinicOS Secrets Manager values and RDS-managed credentials"
+      description     = "ClinicOS Secrets Manager values and RDS-managed credentials"
+      cloudwatch_logs = false
       services = [
         "rds.amazonaws.com",
         "secretsmanager.amazonaws.com",
       ]
     }
     backup = {
-      description = "ClinicOS backup vaults and recovery copies"
+      description     = "ClinicOS backup vaults and recovery copies"
+      cloudwatch_logs = false
       services = [
         "backup.amazonaws.com",
         "s3.amazonaws.com",
@@ -52,7 +55,7 @@ resource "aws_kms_key" "this" {
 
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [
+    Statement = concat([
       {
         Sid       = "AccountRootAdministration"
         Effect    = "Allow"
@@ -81,7 +84,27 @@ resource "aws_kms_key" "this" {
           }
         }
       },
-    ]
+      ],
+      each.value.cloudwatch_logs ? [{
+        Sid       = "ClinicOsCloudWatchLogsUse"
+        Effect    = "Allow"
+        Principal = { Service = "logs.${var.region}.amazonaws.com" }
+        Action = [
+          "kms:Decrypt",
+          "kms:DescribeKey",
+          "kms:Encrypt",
+          "kms:GenerateDataKey*",
+          "kms:ReEncrypt*",
+        ]
+        Resource = "*"
+        Condition = {
+          StringEquals = { "kms:CallerAccount" = var.account_id }
+          ArnLike = {
+            "kms:EncryptionContext:aws:logs:arn" = "arn:aws:logs:${var.region}:${var.account_id}:log-group:/aws/*/${var.name_prefix}*"
+          }
+        }
+      }] : []
+    )
   })
 
   tags = merge(var.tags, {

@@ -112,7 +112,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        service: [api, web, worker]
+        service: [api, media-scanner, web, worker]
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -130,6 +130,10 @@ jobs:
         run: |
           test "$(docker image inspect clinicos-${{ matrix.service }}:${{ github.sha }} --format '{{.Architecture}}')" = "arm64"
           test "$(docker image inspect clinicos-${{ matrix.service }}:${{ github.sha }} --format '{{.Config.User}}')" = "10001:10001"
+
+      - name: Exercise fail-closed media scanner runtime
+        if: matrix.service == 'media-scanner'
+        run: infra/images/media-scanner/test-runtime.sh clinicos-media-scanner:${{ github.sha }}
 
       - name: Scan image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0

@@ -28,6 +28,11 @@ module "platform" {
   owner                          = var.owner
   activation_phase               = var.activation_phase
   audit_compliance_authorized_by = var.audit_compliance_authorized_by
+  malware_scanner = {
+    enabled                  = var.enable_malware_scanner
+    activation_authorized_by = var.malware_scanner_authorized_by
+    spend_acknowledgement    = var.malware_scanner_spend_acknowledgement
+  }
 
   primary_network = {
     vpc_cidr             = "10.20.0.0/16"

@@ -25,11 +25,12 @@ locals {
     try(var.ingress.api_hostname, null),
     try(var.ingress.auth_hostname, null),
   ])
-  required_images = toset(["adot", "api", "keycloak", "temporal", "web", "worker"])
-  phase_index     = index(["foundation", "data-plane", "runtime", "edge"], var.activation_phase)
-  data_enabled    = local.phase_index >= 1
-  runtime_enabled = local.phase_index >= 2
-  edge_enabled    = local.phase_index >= 3
+  required_images      = toset(["adot", "api", "keycloak", "media-scanner", "temporal", "web", "worker"])
+  required_image_users = toset(["adot", "api", "keycloak", "temporal", "web", "worker"])
+  phase_index          = index(["foundation", "data-plane", "runtime", "edge"], var.activation_phase)
+  data_enabled         = local.phase_index >= 1
+  runtime_enabled      = local.phase_index >= 2
+  edge_enabled         = local.phase_index >= 3
   admin_ingress_inputs_complete = (
     try(var.ingress.auth_hostname, null) != null &&
     try(var.admin_ingress.hostname, null) != null &&
@@ -41,7 +42,9 @@ locals {
     "api", "keycloak", "temporal-frontend", "temporal-internal-frontend", "temporal-history", "temporal-matching",
     "temporal-worker", "web", "worker",
   ])
-  repository_names = toset(["adot", "api", "keycloak", "temporal", "web", "worker"])
+  repository_names           = toset(["adot", "api", "keycloak", "media-scanner", "temporal", "web", "worker"])
+  malware_scanner_enabled    = local.runtime_enabled && var.malware_scanner.enabled
+  malware_guardduty_role_arn = local.malware_scanner_enabled ? "arn:aws:iam::${var.account_id}:role/${local.name_prefix}-guardduty-malware" : null
 }
 
 check "network_cardinality" {
@@ -80,10 +83,10 @@ check "runtime_inputs" {
     condition = !local.runtime_enabled || (
       var.runtime.temporal_mode == "self-hosted-ecs" &&
       length(setsubtract(local.required_images, toset(keys(var.runtime.images)))) == 0 &&
-      length(setsubtract(local.required_images, toset(keys(var.runtime.image_users)))) == 0 &&
+      length(setsubtract(local.required_image_users, toset(keys(var.runtime.image_users)))) == 0 &&
       length(setsubtract(local.required_capacity, toset(keys(var.runtime.capacity)))) == 0 &&
       alltrue([for key in local.required_images : can(regex("@sha256:[a-f0-9]{64}$", var.runtime.images[key]))]) &&
-      alltrue([for key in local.required_images : can(regex("^[1-9][0-9]{0,9}$", var.runtime.image_users[key]))]) &&
+      alltrue([for key in local.required_image_users : can(regex("^[1-9][0-9]{0,9}$", var.runtime.image_users[key]))]) &&
       alltrue([
         for capacity in values(var.runtime.capacity) :
         capacity.minimum_count >= 1 &&
@@ -92,6 +95,17 @@ check "runtime_inputs" {
       ])
     )
     error_message = "Runtime activation requires self-hosted ECS Temporal, every capacity key, immutable digest-pinned images, and explicit image-owned numeric non-root UIDs."
+  }
+}
+
+check "runtime_malware_scanner" {
+  assert {
+    condition = !local.runtime_enabled || (
+      var.malware_scanner.enabled &&
+      try(length(trimspace(var.malware_scanner.activation_authorized_by)) >= 3, false) &&
+      try(var.malware_scanner.spend_acknowledgement == "I_ACKNOWLEDGE_GUARDDUTY_S3_AND_TAGGING_COSTS", false)
+    )
+    error_message = "Runtime activation requires named GuardDuty Malware Protection authority and the exact spend acknowledgement."
   }
 }
 
@@ -158,6 +172,45 @@ module "kms_dr" {
   tags                    = local.tags
 }
 
+# Asymmetric KMS keys do not support automatic rotation. The immutable evidence key is isolated
+# from encryption keys and protected from Terraform destruction.
+#trivy:ignore:AWS-0065
+resource "aws_kms_key" "media_evidence_signing" {
+  count = local.malware_scanner_enabled ? 1 : 0
+
+  description                        = "ClinicOS ${var.environment} GuardDuty malware evidence signatures"
+  key_usage                          = "SIGN_VERIFY"
+  customer_master_key_spec           = "RSA_3072"
+  enable_key_rotation                = false
+  deletion_window_in_days            = 30
+  bypass_policy_lockout_safety_check = false
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Sid       = "AccountRootAdministration"
+      Effect    = "Allow"
+      Principal = { AWS = "arn:aws:iam::${var.account_id}:root" }
+      Action    = "kms:*"
+      Resource  = "*"
+    }]
+  })
+  tags = merge(local.tags, {
+    Name               = "${local.name_prefix}-media-evidence-signing"
+    DataClassification = "security-evidence-no-phi"
+  })
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+resource "aws_kms_alias" "media_evidence_signing" {
+  count = local.malware_scanner_enabled ? 1 : 0
+
+  name          = "alias/${local.name_prefix}-media-evidence-signing"
+  target_key_id = aws_kms_key.media_evidence_signing[0].key_id
+}
+
 module "network_primary" {
   source = "../network"
 
@@ -194,16 +247,41 @@ module "network_dr" {
 module "storage_primary" {
   source = "../storage"
 
-  name_prefix                    = local.name_prefix
-  account_id                     = var.account_id
-  data_kms_key_arn               = module.kms_primary.key_arns.data
-  is_replica                     = false
-  media_retention_days           = var.retention.media_lock_days
-  audit_retention_days           = var.retention.audit_lock_days
-  audit_lock_mode                = var.retention.audit_lock_mode
-  audit_compliance_authorized_by = var.audit_compliance_authorized_by
-  access_log_retention_days      = var.retention.access_log_days
-  tags                           = local.tags
+  name_prefix                       = local.name_prefix
+  account_id                        = var.account_id
+  data_kms_key_arn                  = module.kms_primary.key_arns.data
+  is_replica                        = false
+  media_retention_days              = var.retention.media_lock_days
+  audit_retention_days              = var.retention.audit_lock_days
+  audit_lock_mode                   = var.retention.audit_lock_mode
+  audit_compliance_authorized_by    = var.audit_compliance_authorized_by
+  access_log_retention_days         = var.retention.access_log_days
+  media_malware_protection_role_arn = local.malware_guardduty_role_arn
+  media_quarantine_prefixes         = local.malware_scanner_enabled ? ["${var.environment}/tenants/"] : []
+  tags                              = local.tags
+}
+
+module "malware_scanner" {
+  source = "../malware-scanner"
+
+  enabled                                 = local.malware_scanner_enabled
+  upstream_resources_managed_in_same_plan = true
+  activation_authorized_by                = try(var.malware_scanner.activation_authorized_by, null)
+  spend_acknowledgement                   = try(var.malware_scanner.spend_acknowledgement, null)
+  name_prefix                             = local.malware_scanner_enabled ? local.name_prefix : null
+  account_id                              = local.malware_scanner_enabled ? var.account_id : null
+  region                                  = local.malware_scanner_enabled ? var.primary_region : null
+  bucket_name                             = local.malware_scanner_enabled ? module.storage_primary.bucket_ids.media : null
+  bucket_arn                              = local.malware_scanner_enabled ? module.storage_primary.bucket_arns.media : null
+  object_kms_key_arn                      = local.malware_scanner_enabled ? module.kms_primary.key_arns.data : null
+  signing_key_arn                         = try(aws_kms_key.media_evidence_signing[0].arn, null)
+  logs_kms_key_arn                        = local.malware_scanner_enabled ? module.kms_primary.key_arns.logs : null
+  signing_algorithm                       = local.malware_scanner_enabled ? "RSASSA_PSS_SHA_256" : null
+  lambda_image_uri                        = local.malware_scanner_enabled ? try(var.runtime.images["media-scanner"], null) : null
+  quarantine_prefixes                     = local.malware_scanner_enabled ? ["${var.environment}/tenants/"] : []
+  lambda_reserved_concurrency             = 10
+  log_retention_days                      = var.retention.log_days
+  tags                                    = local.tags
 }
 
 module "storage_dr" {
@@ -411,7 +489,11 @@ module "vpc_endpoints" {
     values(module.secrets[0].secret_arns),
     [nonsensitive(module.cache[0].auth_secret_arn), nonsensitive(module.database[0].master_secret_arn)],
   )))
-  kms_key_arns = toset(values(module.kms_primary.key_arns))
+  kms_key_arns = toset(compact(concat(
+    values(module.kms_primary.key_arns),
+    [try(aws_kms_key.media_evidence_signing[0].arn, null)],
+  )))
+  lambda_function_arns = local.malware_scanner_enabled ? [module.malware_scanner.evidence_signer_alias_arn] : []
   log_group_arns = toset([
     module.network_primary.flow_log_group_arn,
     "arn:aws:logs:${var.primary_region}:${var.account_id}:log-group:/aws/ecs/${local.name_prefix}/*",
@@ -481,6 +563,21 @@ locals {
       },
     ]
   })
+  api_media_task_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = concat(jsondecode(local.media_task_policy).Statement, [
+      {
+        Effect   = "Allow"
+        Action   = ["kms:DescribeKey", "kms:Verify"]
+        Resource = try(aws_kms_key.media_evidence_signing[0].arn, "arn:aws:kms:${var.primary_region}:${var.account_id}:key/disabled")
+      },
+      {
+        Effect   = "Allow"
+        Action   = "lambda:InvokeFunction"
+        Resource = coalesce(module.malware_scanner.evidence_signer_alias_arn, "arn:aws:lambda:${var.primary_region}:${var.account_id}:function:disabled:active")
+      },
+    ])
+  })
   application_secret_arn   = try(module.secrets[0].secret_arns["application-database"], null)
   keycloak_secret_arn      = try(module.secrets[0].secret_arns["keycloak-database"], null)
   provider_secret_arn      = try(module.secrets[0].secret_arns["provider-credentials"], null)
@@ -502,33 +599,40 @@ locals {
       maximum_count  = var.runtime.capacity.api.maximum_count
       command        = []
       environment = {
-        NODE_ENV                  = "production"
-        CLINIC_OS_ENV             = var.environment
-        PORT                      = "4100"
-        REPOSITORY_MODE           = "postgres"
-        AUTH_MODE                 = "keycloak"
-        PILOT_SYNTHETIC_DATA_ONLY = "true"
-        TEMPORAL_ADDRESS          = "temporal-frontend.${local.name_prefix}.internal:7233"
-        KEYCLOAK_BASE_URL         = "https://${var.ingress.auth_hostname}"
-        KEYCLOAK_REALM            = "clinic-os"
-        KEYCLOAK_CLIENT_ID        = "clinic-os-web-bff"
-        S3_REGION                 = var.primary_region
-        S3_BUCKET                 = module.storage_primary.bucket_ids.media
-        WHATSAPP_PROVIDER         = "unconfigured"
-        PAYMENT_PROVIDER          = "unconfigured"
-        TELEPHONY_PROVIDER        = "unconfigured"
-        LLM_PROVIDER              = "unconfigured"
-        TRANSCRIPTION_PROVIDER    = "unconfigured"
-        ALERTING_PROVIDER         = "unconfigured"
+        NODE_ENV                               = "production"
+        CLINIC_OS_ENV                          = var.environment
+        PORT                                   = "4100"
+        REPOSITORY_MODE                        = "postgres"
+        AUTH_MODE                              = "keycloak"
+        PILOT_SYNTHETIC_DATA_ONLY              = "true"
+        TEMPORAL_ADDRESS                       = "temporal-frontend.${local.name_prefix}.internal:7233"
+        KEYCLOAK_BASE_URL                      = "https://${var.ingress.auth_hostname}"
+        KEYCLOAK_REALM                         = "clinic-os"
+        KEYCLOAK_CLIENT_ID                     = "clinic-os-web-bff"
+        S3_REGION                              = var.primary_region
+        S3_BUCKET                              = module.storage_primary.bucket_ids.media
+        CLINIC_OS_MEDIA_STORAGE_PROVIDER       = "aws_s3"
+        CLINIC_OS_MEDIA_INSPECTION_PROVIDER    = "guardduty_s3"
+        CLINIC_OS_MEDIA_KMS_KEY_ID             = module.kms_primary.key_arns.data
+        CLINIC_OS_MEDIA_SCANNER_FUNCTION_ARN   = module.malware_scanner.evidence_signer_alias_arn
+        CLINIC_OS_MEDIA_SCANNER_SIGNING_KEY_ID = aws_kms_key.media_evidence_signing[0].arn
+        CLINIC_OS_MEDIA_PRESIGNED_ORIGINS      = jsonencode(["https://${module.storage_primary.bucket_ids.media}.s3.${var.primary_region}.amazonaws.com"])
+        WHATSAPP_PROVIDER                      = "unconfigured"
+        PAYMENT_PROVIDER                       = "unconfigured"
+        TELEPHONY_PROVIDER                     = "unconfigured"
+        LLM_PROVIDER                           = "unconfigured"
+        TRANSCRIPTION_PROVIDER                 = "unconfigured"
+        ALERTING_PROVIDER                      = "unconfigured"
       }
       secrets = {
         DATABASE_URL                          = "${local.application_secret_arn}:url::"
         REDIS_URL                             = "${module.cache[0].auth_secret_arn}:url::"
         CLINIC_OS_ABUSE_BUDGET_KEY_SECRET     = "${local.session_secret_arn}:abuse_budget_key::"
         CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET = "${local.session_secret_arn}:token_revocation_key::"
+        CLINIC_OS_MEDIA_BINDING_SECRET        = "${local.session_secret_arn}:media_binding_secret::"
       }
       execution_secret_arns        = [local.application_secret_arn, module.cache[0].auth_secret_arn, local.session_secret_arn]
-      task_policy_json             = local.media_task_policy
+      task_policy_json             = local.api_media_task_policy
       target_group_arn             = try(module.edge.target_group_arns.api, null)
       additional_target_group_arns = []
       health_check_command         = ["CMD-SHELL", "wget -q -O - http://127.0.0.1:4100/health/ready || exit 1"]
@@ -784,17 +888,20 @@ module "compute" {
   count  = local.runtime_enabled ? 1 : 0
   source = "../compute"
 
-  name_prefix                 = local.name_prefix
-  region                      = var.primary_region
-  metric_namespace            = "ClinicOS/${var.environment}"
-  vpc_id                      = module.network_primary.vpc_id
-  vpc_cidr                    = module.network_primary.vpc_cidr
-  private_subnet_ids          = module.network_primary.private_subnet_ids
-  security_group_id           = module.workload_security.security_group_id
-  logs_kms_key_arn            = module.kms_primary.key_arns.logs
-  log_retention_days          = var.retention.log_days
-  ecr_repository_arns         = module.ecr_primary.repository_arns
-  kms_key_arns                = values(module.kms_primary.key_arns)
+  name_prefix         = local.name_prefix
+  region              = var.primary_region
+  metric_namespace    = "ClinicOS/${var.environment}"
+  vpc_id              = module.network_primary.vpc_id
+  vpc_cidr            = module.network_primary.vpc_cidr
+  private_subnet_ids  = module.network_primary.private_subnet_ids
+  security_group_id   = module.workload_security.security_group_id
+  logs_kms_key_arn    = module.kms_primary.key_arns.logs
+  log_retention_days  = var.retention.log_days
+  ecr_repository_arns = module.ecr_primary.repository_arns
+  kms_key_arns = compact(concat(
+    values(module.kms_primary.key_arns),
+    [try(aws_kms_key.media_evidence_signing[0].arn, null)],
+  ))
   adot_image_uri              = try(var.runtime.images.adot, null)
   adot_user                   = try(var.runtime.image_users.adot, null)
   service_discovery_namespace = "${local.name_prefix}.internal"

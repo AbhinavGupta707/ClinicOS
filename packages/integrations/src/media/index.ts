@@ -1,4 +1,6 @@
 export * from "./aws-kms-evidence-verifier.js";
+export * from "./aws-lambda-malware-scanner-transport.js";
+export * from "./aws-private-media-runtime.js";
 export * from "./aws-s3-presigning-transport.js";
 export * from "./aws-s3-private-object-transport.js";
 export * from "./errors.js";

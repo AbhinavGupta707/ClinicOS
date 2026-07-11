@@ -3,6 +3,23 @@ output "regions" { value = { primary = var.primary_region, dr = var.dr_region } 
 output "vpc_ids" { value = { primary = module.network_primary.vpc_id, dr = module.network_dr.vpc_id } }
 output "ecr_repository_urls" { value = { primary = module.ecr_primary.repository_urls, dr = module.ecr_dr.repository_urls } }
 output "media_bucket_ids" { value = { primary = module.storage_primary.bucket_ids.media, dr = module.storage_dr.bucket_ids.media } }
+output "media_evidence_signing_key_arn" {
+  value = try(aws_kms_key.media_evidence_signing[0].arn, null)
+}
+output "malware_scanner" {
+  description = "GuardDuty and isolated evidence-signer activation contract; null resources while disabled."
+  value = {
+    enabled                     = local.malware_scanner_enabled
+    guardduty_plan_id           = module.malware_scanner.guardduty_plan_id
+    guardduty_plan_status       = module.malware_scanner.guardduty_plan_status
+    guardduty_role_arn          = module.malware_scanner.guardduty_role_arn
+    evidence_signer_alias_arn   = module.malware_scanner.evidence_signer_alias_arn
+    evidence_signer_role_arn    = module.malware_scanner.evidence_signer_role_arn
+    external_bounded_retry      = local.malware_scanner_enabled
+    live_activation_verified    = false
+    evidence_signature_verified = false
+  }
+}
 output "audit_bucket_ids" { value = { primary = module.storage_primary.bucket_ids.audit, dr = module.storage_dr.bucket_ids.audit } }
 output "cloudtrail_s3_object_event_arns" {
   description = "Exact reviewed candidates for the singleton account-baseline; no remote-state coupling is created."
@@ -72,7 +89,7 @@ output "activation" {
     runtime                  = local.runtime_enabled
     edge                     = local.edge_enabled
     nat_gateway_count        = local.data_enabled ? var.primary_network.nat_gateway_count : 0
-    interface_endpoint_count = local.data_enabled ? 7 : 0
+    interface_endpoint_count = local.data_enabled ? 7 + (local.malware_scanner_enabled ? 1 : 0) : 0
     rds_instance_count       = local.data_enabled ? 1 : 0
     cache_cluster_node_count = local.data_enabled ? var.cache.node_count : 0
     keycloak_minimum_count   = local.runtime_enabled ? var.runtime.capacity.keycloak.minimum_count : 0
