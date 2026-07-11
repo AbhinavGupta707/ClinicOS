@@ -343,6 +343,21 @@ Candidate implementation: `8a8cfc2c`; evidence: `docs/qa/checkpoint-14-evidence.
 - The release remains NO-GO. No Terraform apply, signed ECR artifact, deployed identity/media,
   paging delivery, real restore/failover or pilot-production evidence exists.
 
+### CP14 owner-directed cloud deferral — 2026-07-11
+
+- The owner deferred all AWS/DNS activation and spending. This changes execution order, not finding
+  severity, evidence tier or production readiness.
+- Baseline `ba80612` is implementation-complete at E3 and may be promoted for CP15/selected CP16
+  implementation. PRR-006/007/009/013/015/016/017/018/019/020/024 remain open or partial exactly as
+  listed above until applied E4/E5 evidence exists.
+- CP15 provider code may advance only with fail-closed unconfigured states. PRR-008/026 cannot close
+  from simulators or local callbacks; official sandbox registration still needs a deployed signed
+  HTTPS edge.
+- CP17 PRR-030 and CP18 operational readiness remain blocked. The current release decision remains
+  NO-GO for production, PHI, live payments/messages/calls and clinical reliance.
+- Re-entry requirements are authoritative in
+  `docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md`.
+
 ## 5. Remediation Dependency Order
 
 ```text

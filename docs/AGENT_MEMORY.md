@@ -344,6 +344,17 @@ Update these during orchestration:
 
 ## CP14 Integration Memory
 
+- On 2026-07-11 the owner explicitly deferred all AWS/DNS activation and spending. Read
+  `docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md` before later checkpoint work.
+- CP14 is implementation-complete at E3 on baseline `ba80612`; it is not E4/E5 complete. The
+  baseline may be promoted so CP15 and selected CP16 implementation can proceed against frozen,
+  fail-closed contracts. Every report remains NO-GO for production.
+- Do not run AWS plan/apply, DNS delegation, ECR publish, GuardDuty activation, live paging or
+  cloud recovery until the owner separately reopens the activation gate.
+- CP15 may implement provider callbacks/adapters and deterministic reconciliation, but no official
+  sandbox success may be claimed without stable deployed HTTPS callbacks. CP17 and CP18 remain
+  blocked by the missing environment and observation evidence.
+
 - Mock Terraform runtime shape is not startup evidence. Reconcile every ECS port, production-like
   environment flag, required URL and secret JSON key against the actual API/worker parsers before a
   runtime plan.

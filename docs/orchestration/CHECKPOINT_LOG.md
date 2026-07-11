@@ -1026,8 +1026,9 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   AWS mutation.
 - The earlier orchestration heartbeat was deleted after it became obsolete. One separate one-shot
   04:35 worktree-hello automation exists and is unrelated to checkpoint evidence.
-- CP14 still cannot close or promote: there is no authorized backend migration/apply, dual-region
-  ECR signing/provenance, deployed RDS/ECS/Keycloak/Temporal/edge, DNS delegation/ACM, paging target,
+- At this point CP14 could not close or promote under the then-current sequencing rule: there was
+  no authorized backend migration/apply, dual-region ECR signing/provenance, deployed
+  RDS/ECS/Keycloak/Temporal/edge, DNS delegation/ACM, paging target,
   activated malware scanner, or real E4/E5 load/alert/restore/failover evidence.
 
 ### CP14 Production Media Integration - 2026-07-11
@@ -1058,3 +1059,23 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 - Exact evidence commit `c32dc53c` passes GitHub quality run `29132231714` and security run
   `29132231678`; security includes the new media-scanner build, fail-closed runtime smoke and clean
   high/critical scan alongside all existing repository, platform-image and supply-chain jobs.
+
+## CP14 Owner-Directed Cloud Deferral - 2026-07-11
+
+- The owner superseded the pending AWS activation path and directed that all AWS spending,
+  Terraform plan/apply, DNS/TLS delegation, ECR publishing, GuardDuty activation, live paging and
+  cloud restore/failover be deferred for later reconsideration.
+- Final CP14 branch-tip baseline `ba80612fd139bcf3fa3014823cbf0fb075eceac8` passes GitHub quality
+  run `29132493510` and security run `29132493520`, in addition to the recorded local E1/E3 gates.
+- CP14 is now classified **implementation-complete at E3; cloud E4/E5 deferred**. PRR-006/007/009/
+  013/015-020/024 remain open, and the release remains NO-GO for production, PHI, provider traffic
+  and clinical reliance.
+- Dependency review found that CP15 provider implementation and selected CP16 local boundaries can
+  safely consume the frozen CP14 contracts while failing closed without deployment inputs. Official
+  provider sandbox evidence cannot pass without deployed HTTPS callbacks; CP17 and CP18 cannot
+  complete without the deferred environment and observed operations.
+- The owner-authorized sequencing exception permits promotion of the CP14 E3 baseline and
+  sequential CP15/selected CP16 implementation. It is not a waiver, accepted production risk or
+  evidence-tier upgrade. The full decision and re-entry gate are recorded in
+  `docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md`.
+- User-owned `research/` and `scripts/research/` remain untracked and untouched.

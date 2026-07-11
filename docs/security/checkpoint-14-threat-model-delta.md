@@ -1,4 +1,4 @@
-# Checkpoint 14 Threat-Model Delta — Active Candidate
+# Checkpoint 14 Threat-Model Delta — E3 Implementation Baseline
 
 | Threat                              | Implemented control                                                                                              | Current evidence                                              | Remaining hard gate                                                           |
 | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
@@ -10,5 +10,6 @@
 | T16 recovery failure                | Versioned backup/failover procedures and deterministic synthetic harnesses                                       | Local simulations pass                                        | Timed restore and failover/failback from real environment backups             |
 | T12 audit/trace repudiation         | Transaction-bound trace correlation, PHI-safe telemetry and immutable resource identity                          | Local API/worker/DB tests pass                                | Deployed trace continuity, immutable export and privileged-query review       |
 
-No threat is production-closed by this delta. It records the controls present in the active candidate
-and preserves the E4/E5 boundary.
+No threat is production-closed by this delta. The owner deferred AWS/DNS activation on 2026-07-11;
+the controls may support later implementation checkpoints, but every listed E4/E5 gate remains
+open and the release remains NO-GO.

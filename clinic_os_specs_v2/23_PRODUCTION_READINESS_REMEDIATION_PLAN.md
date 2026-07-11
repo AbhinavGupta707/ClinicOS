@@ -195,6 +195,12 @@ Each slice includes Postgres persistence, RLS, audit/outbox, worker recovery, ge
 
 **Exit:** E4 staging and E5 pilot-prod exist, match Terraform, survive dependency fault and restore exercises, and meet approved security/SLO gates. No real PHI yet.
 
+**Owner-directed execution deferral (2026-07-11):** AWS/DNS activation and spending are deferred.
+This does not change the exit criterion or close CP14 findings. The verified E3 implementation
+baseline may be promoted so CP15 and selected CP16 implementation can continue against frozen,
+fail-closed contracts; deployed/provider evidence and CP17/CP18 remain blocked. See
+`../docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md`.
+
 ### CP15 — Official Messaging, Payments and Telephony
 
 **Goal:** activate only complete official provider workflows.

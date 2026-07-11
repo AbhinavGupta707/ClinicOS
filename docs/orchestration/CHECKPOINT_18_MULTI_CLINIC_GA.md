@@ -1,6 +1,6 @@
 # Checkpoint 18 — Multi-Clinic General Production Readiness
 
-**Status:** Planned; requires observed CP17 operations
+**Status:** Blocked; requires completed CP17 deployment and observed operations, which cannot exist while CP14 cloud activation is deferred
 **Evidence target:** E7 repeatable production operations
 **Workers:** provisionally two to three initial worktrees after CP17 observation gate; only observed workstreams launch
 

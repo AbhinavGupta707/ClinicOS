@@ -4,6 +4,11 @@
 **Status:** Current release summary
 **Decision:** **NO-GO** for pilot, production PHI and production provider traffic
 
+**Execution mode:** The owner deferred all AWS/DNS activation on 2026-07-11. The CP14 E3
+implementation baseline may be promoted and CP15/selected CP16 implementation may continue, but
+none of the cloud/provider/device/operational hard gates below is waived. See
+`docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md`.
+
 The authoritative item-level register is `docs/security/PRODUCTION_SECURITY_AND_READINESS_REMEDIATION_REGISTER.md`. This document is the release-facing summary; it must never diverge from that register.
 
 ## 1. Hard Production Blockers
@@ -57,11 +62,11 @@ Messaging and payment may be removed from an early controlled scope only if the 
 1. CP11 verification and durable data.
 2. CP12 modular validated API/contracts.
 3. CP13 durable clinic-day vertical slices.
-4. CP14 cloud/security/media/observability/recovery.
-5. CP15 official provider integrations.
-6. CP16 native mobile and selected AI/interoperability.
-7. CP17 controlled clinic validation.
-8. CP18 repeatable multi-clinic production.
+4. CP14 cloud/security/media/observability/recovery implementation at E3; AWS E4/E5 deferred.
+5. CP15 official-provider implementation; public callback registration/E4 deferred with AWS.
+6. CP16 selected local native/mobile/AI/interoperability implementation; close only achieved tiers.
+7. CP17 controlled clinic validation remains blocked by the deferred environment and external evidence.
+8. CP18 repeatable multi-clinic production remains blocked by CP17 observation.
 
 See `clinic_os_specs_v2/23_PRODUCTION_READINESS_REMEDIATION_PLAN.md` for detailed deliverables and dependency gates.
 

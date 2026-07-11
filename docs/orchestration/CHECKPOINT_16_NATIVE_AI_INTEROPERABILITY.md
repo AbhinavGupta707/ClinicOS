@@ -1,13 +1,13 @@
 # Checkpoint 16 — Native Mobile, AI/Scribe and Interoperability
 
-**Status:** Planned; devices and approved providers required
+**Status:** Selected local implementation may follow CP15 implementation; device/provider/validator evidence remains separately gated
 **Evidence target:** E4 physical-device/provider/validator
 **Workers:** provisionally two to three initial boundary worktrees; only activated, independently progressable boundaries launch
 **Primary findings:** PRR-004, 005, 021-023
 
 ## 1. Outcome
 
-Complete the selected native capture, AI/STT and FHIR/ABDM boundaries without exposing partial clinical behavior. Each boundary ships complete at E4 or remains disabled/unregistered.
+Complete the selected native capture, AI/STT and FHIR/ABDM boundaries without exposing partial clinical behavior. The CP14 cloud deferral does not block local mobile/offline, consent, AI safety or FHIR implementation, but it does block deployed telemetry/media paths and may block provider callbacks. Each boundary ships complete at E4 or remains disabled/unregistered.
 
 ## 2. Lanes
 
