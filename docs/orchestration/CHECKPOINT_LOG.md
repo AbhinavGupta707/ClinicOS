@@ -1055,3 +1055,6 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   untouched.
 - This is E1/E3 evidence only. No GuardDuty plan, S3/KMS resource, Lambda, image digest, secret,
   endpoint or media workflow has been applied or activated in AWS, so PRR-009 and CP14 remain open.
+- Exact evidence commit `c32dc53c` passes GitHub quality run `29132231714` and security run
+  `29132231678`; security includes the new media-scanner build, fail-closed runtime smoke and clean
+  high/critical scan alongside all existing repository, platform-image and supply-chain jobs.
