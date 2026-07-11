@@ -40,6 +40,8 @@ describe("parseClinicOsEnv", () => {
     expect(config.operations.backupRestore.drillMode).toBe("dry_run");
     expect(config.operations.backupRestore.rpoMinutes).toBe(60);
     expect(config.security.abuseBudgetKeySecret).toBeUndefined();
+    expect(config.storage.mediaStorageProvider).toBe("local_simulator");
+    expect(config.storage.mediaInspectionProvider).toBe("local_pending_simulator");
   });
 
   it("rejects simulator providers in production-like environments", () => {
@@ -71,7 +73,17 @@ describe("parseClinicOsEnv", () => {
       TELEPHONY_PROVIDER: "unconfigured",
       LLM_PROVIDER: "unconfigured",
       TRANSCRIPTION_PROVIDER: "unconfigured",
+      CLINIC_OS_MEDIA_STORAGE_PROVIDER: "aws_s3",
+      CLINIC_OS_MEDIA_INSPECTION_PROVIDER: "guardduty_s3",
+      CLINIC_OS_MEDIA_KMS_KEY_ID: "alias/clinicos-pilot-prod-data",
+      CLINIC_OS_MEDIA_BINDING_SECRET: "staging-media-binding-secret-000001",
+      CLINIC_OS_MEDIA_SCANNER_FUNCTION_ARN:
+        "arn:aws:lambda:ap-south-1:123456789012:function:clinicos-pilot-prod-media-scanner",
+      CLINIC_OS_MEDIA_SCANNER_SIGNING_KEY_ID:
+        "arn:aws:kms:ap-south-1:123456789012:key/11111111-1111-1111-1111-111111111111",
+      CLINIC_OS_MEDIA_PRESIGNED_ORIGINS: "https://clinic-os-local.s3.ap-south-1.amazonaws.com",
       CLINIC_OS_ABUSE_BUDGET_KEY_SECRET: "staging-abuse-budget-key-secret-0001",
+      CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET: "staging-token-revocation-key-secret-0001",
       AWS_ACCOUNT_ID: "123456789012",
       AWS_TERRAFORM_STATE_BUCKET: "clinic-os-terraform-state",
       AWS_TERRAFORM_LOCK_TABLE: "clinic-os-terraform-locks",
@@ -85,6 +97,11 @@ describe("parseClinicOsEnv", () => {
     expect(config.providers.payment.provider).toBe("manual_clinic_approved");
     expect(config.operations.alerting.provider).toBe("email");
     expect(config.security.abuseBudgetKeySecret).toBe("staging-abuse-budget-key-secret-0001");
+    expect(config.security.tokenRevocationKeySecret).toBe(
+      "staging-token-revocation-key-secret-0001"
+    );
+    expect(config.storage.mediaStorageProvider).toBe("aws_s3");
+    expect(config.storage.mediaInspectionProvider).toBe("guardduty_s3");
   });
 
   it("requires a strong abuse-budget key secret in production-like environments", () => {

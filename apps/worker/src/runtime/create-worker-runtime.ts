@@ -1,8 +1,13 @@
 import type { Client } from "@temporalio/client";
-import type { Logger, MetricRecorder } from "@clinic-os/observability";
+import type { Logger, MetricRecorder, ObservabilityRuntime } from "@clinic-os/observability";
 import { createWorkerHealthRegistry } from "../health/worker-health.js";
 import { OutboxProcessor } from "../outbox/processor.js";
 import type { OutboxEventHandler, OutboxRepository } from "../outbox/types.js";
+
+export interface WorkerBackpressurePort {
+  observe(): Promise<Readonly<{ ready: boolean; state: "healthy" | "degraded" | "unhealthy" }>>;
+  admitEventTypes(registeredEventTypes: readonly string[]): Promise<readonly string[]>;
+}
 
 export interface WorkerRuntimeOptions {
   readonly workerId: string;
@@ -10,6 +15,8 @@ export interface WorkerRuntimeOptions {
   readonly handlers: readonly OutboxEventHandler[];
   readonly logger: Logger;
   readonly metrics: MetricRecorder;
+  readonly observability?: ObservabilityRuntime;
+  readonly backpressure?: WorkerBackpressurePort;
   readonly temporalClient?: Client;
   readonly outboxBatchSize: number;
   readonly outboxPollIntervalMs: number;
@@ -31,14 +38,19 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): WorkerRuntim
     metrics: options.metrics,
     batchSize: options.outboxBatchSize,
     pollIntervalMs: options.outboxPollIntervalMs,
-    maxAttempts: options.outboxMaxAttempts
+    maxAttempts: options.outboxMaxAttempts,
+    ...(options.backpressure
+      ? { admitEventTypes: (eventTypes) => options.backpressure!.admitEventTypes(eventTypes) }
+      : {})
   });
 
   const healthRegistry = createWorkerHealthRegistry({
     service: "clinic-os-worker",
     repository: options.repository,
     processor,
-    ...(options.temporalClient ? { temporalClient: options.temporalClient } : {})
+    ...(options.temporalClient ? { temporalClient: options.temporalClient } : {}),
+    ...(options.observability ? { observability: options.observability } : {}),
+    ...(options.backpressure ? { backpressure: options.backpressure } : {})
   });
 
   return {

@@ -1,0 +1,16 @@
+{
+  "name": "@clinic-os/media-scanner",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Isolated GuardDuty S3 malware-evidence signing Lambda.",
+  "type": "module",
+  "main": "./dist/handler.js",
+  "scripts": {
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "lint": "tsc --noEmit -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json"
+  },
+  "dependencies": {
+    "@clinic-os/integrations": "0.0.0"
+  }
+}

@@ -1,3 +1,6 @@
+import { trace } from "@opentelemetry/api";
+import { allowlistDiagnosticFields, safeDiagnosticEventCode } from "./redaction.js";
+
 export type LogLevel = "debug" | "info" | "warn" | "error";
 
 export interface LogFields {
@@ -29,6 +32,7 @@ export interface LoggerOptions {
   readonly environment: string;
   readonly redact?: (value: unknown) => unknown;
   readonly sink?: (entry: LogEntry) => void;
+  readonly onPolicyViolation?: (codes: readonly string[]) => void;
 }
 
 export function createJsonLogger(options: LoggerOptions): Logger {
@@ -46,18 +50,27 @@ export function createJsonLogger(options: LoggerOptions): Logger {
     });
 
   const emit = (level: LogLevel, message: string, fields: Partial<LogFields> = {}) => {
-    const mergedFields: LogFields = {
+    const spanContext = trace.getActiveSpan()?.spanContext();
+    const mergedFields: Record<string, unknown> = {
       service: options.service,
       environment: options.environment,
-      ...fields
+      ...fields,
+      ...(spanContext?.traceId ? { traceId: spanContext.traceId } : {}),
+      ...(spanContext?.spanId ? { spanId: spanContext.spanId } : {})
     };
+    const allowed = allowlistDiagnosticFields(mergedFields);
+    if (allowed.violations.length > 0) options.onPolicyViolation?.(allowed.violations);
+    const eventCode = safeDiagnosticEventCode(fields.event);
 
     const entry: LogEntry = {
       timestamp: new Date().toISOString(),
       level,
-      message,
-      fields: (options.redact ? options.redact(mergedFields) : mergedFields) as LogFields
+      // Free-text messages are never emitted. The stable event code is the diagnostic message.
+      message: eventCode,
+      fields: (options.redact ? options.redact(allowed.fields) : allowed.fields) as LogFields
     };
+
+    void message;
 
     sink(entry);
   };

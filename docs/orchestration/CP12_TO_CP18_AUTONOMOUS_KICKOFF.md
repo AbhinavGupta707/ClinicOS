@@ -1,5 +1,10 @@
 # CP12-CP18 Autonomous Orchestration Kickoff
 
+> **Superseding execution direction (2026-07-11):** AWS/DNS spending and activation are deferred by
+> the owner. Follow `CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md`. The verified CP14 E3 implementation
+> baseline may be promoted and CP15/selected CP16 implementation may proceed, but CP14/CP15 live
+> evidence and CP17/CP18 remain open; the release stays NO-GO.
+
 Use this prompt in a new ClinicOS Codex task configured as `gpt-5.6-sol` with `xhigh` reasoning:
 
 ```text
@@ -110,5 +115,5 @@ Authority:
 - Do not push, create PRs, apply/destroy AWS resources, mutate DNS/provider dashboards, send real messages/payments/calls, distribute external builds, import PHI, or run destructive restore without explicit additional authority.
 - Complete all safe prerequisites first. If required E4-E7 evidence depends on missing authority, credentials, activation, device, clinic staff or elapsed production observation, keep the gate open and request the smallest action needed.
 
-Continue autonomously until CP18 genuinely completes or an external blocker prevents meaningful progress. Never convert a blocker into an accepted gap or fake evidence.
+Continue autonomously through all meaningful local implementation. Follow the recorded CP14 owner deferral for implementation-only sequencing, but never convert deferred cloud/provider/device/operational evidence into a completion claim or fake evidence.
 ```

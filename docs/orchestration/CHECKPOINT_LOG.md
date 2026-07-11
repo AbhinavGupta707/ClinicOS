@@ -894,3 +894,188 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
   worker patient/idempotency access and cross-tenant isolation.
 - CP13 is complete at E3. The release remains NO-GO, CP14 has not started, and orchestration is
   paused at the user's requested checkpoint boundary.
+
+## CP14 Preflight And Initial Launch - 2026-07-10
+
+- The user resumed orchestration after the CP13 pause and authorized the low-risk CP14 preflight:
+  local tooling installation, non-destructive Docker recovery and Hyderabad region enablement. AWS
+  apply, DNS/domain changes, paid-plan activation, cloud deletion/replacement and recovery/failover
+  remain exact-action approval gates.
+- Verified launch base: clean tracked `main` commit
+  `a27a6dfec75718ef9ba8e1db60f0df2a5302b860`; preserved user-owned untracked `research/` and
+  `scripts/research/` remain untouched. Integration branch:
+  `codex/integration/checkpoint-14`.
+- The existing `clinicos-cp12-18-orchestrator-heartbeat` was resumed and independently rechecked
+  `ACTIVE` with `FREQ=SECONDLY;INTERVAL=90` on the master thread.
+- AWS Free Plan and identity preflight:
+  - the configured `clinicos-human` login resolves to the expected account through temporary
+    login credentials; GitHub CLI authentication is valid with `repo` and `workflow` scopes;
+  - root MFA is enabled with no root access keys; the active IAM administrator has two MFA devices,
+    no access keys and direct `AdministratorAccess`;
+  - the account is standalone/no visible Organization. Do not join/create AWS Organizations or
+    Control Tower under the Free Plan because that upgrades the account and expires Free Plan
+    credits;
+  - the S3 Terraform state bucket is reachable, AES256 encrypted, versioned and fully public-blocked;
+    the DynamoDB lock table is active. No customer-managed KMS key or ClinicOS alias exists yet;
+  - Mumbai is the primary region. Hyderabad was enabled through the account API and rechecked
+    `ENABLED`; enabling the region created no resources or usage charges;
+  - no ClinicOS application VPC, ECS cluster, RDS instance/cluster, load balancer, ECR repository,
+    Secrets Manager secret, backup vault, CloudWatch alarm, Route53 zone or ACM certificate is
+    currently deployed. No Terraform apply has occurred.
+- Local CP14 tooling is now installed and verified: Terraform `1.15.8`, Trivy `0.72.0`, Syft
+  `1.46.0` and Cosign `3.1.1`. Existing Terraform fmt and validation-only profile checks pass.
+- Docker Desktop remains blocked after safe start/restart and graceful quit/reopen attempts. Its VM
+  logs show ext4 write failures and potential data loss, while the host has roughly 8.5 GiB free and
+  the sparse Docker disk consumes roughly 32 GiB. Docker was stopped gracefully. No process kill,
+  prune, reset, factory restore, disk deletion or user-data mutation was attempted. Terraform,
+  identity/security and media contract work may proceed; image/runtime evidence remains blocked
+  until a separately approved storage/backup/rebuild path exists.
+- Credit-safety policy: Terraform itself is free; applied eligible AWS service usage consumes Free
+  Plan credits. The master will not select Upgrade Plan, use paid-only/Marketplace/upfront products,
+  create an Organization, or apply infrastructure until a deterministic plan identifies every
+  resource, replacement/deletion and cost driver. Domain/TLS and operational alert recipients may
+  remain absent during implementation but block the corresponding E4/E5 exit evidence.
+
+### CP14 Initial Conflict And Dependency Matrix
+
+| Lane                                   | Model / effort                        | Exclusive writable ownership                                                                                                              | Launch decision                                                             |
+| -------------------------------------- | ------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| AWS Terraform Platform                 | `gpt-5.6-sol` / `xhigh`               | `infra/terraform/**` only                                                                                                                 | Launch: independent static/provider definitions; no secrets or apply        |
+| Identity, Session and Edge Security    | `gpt-5.6-sol` / `xhigh`               | `packages/auth/**`, `packages/security/**`, `infra/docker/keycloak/**`, new CP14 identity/session namespaces in API/web and focused tests | Launch: path-disjoint; deterministic tests while Docker is unavailable      |
+| Private Media and Data Protection      | `gpt-5.6-sol` / `xhigh`               | new integrations/API media-provider namespaces, focused tests and private-media runbooks                                                  | Launch: path-disjoint; master owns existing media composition and manifests |
+| Observability, Resilience and Recovery | `gpt-5.6-sol` / `xhigh` when launched | deferred until identity/media instrumentation hooks and Terraform outputs are frozen                                                      | Sequence: avoids shared runtime files and one applied environment           |
+
+- Initial worker records, all active from clean detached launch base `a27a6df`:
+  - AWS Terraform Platform: pending
+    `client-new-thread:c14a40fb-670f-44ad-a886-29786b97814a`, thread
+    `019f4cbd-c22f-7893-9799-c297361bcd86`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/ae3d/ClinicOS`;
+  - Identity, Session and Edge Security: pending
+    `client-new-thread:034eef88-2506-4da6-979b-c079e6dab302`, thread
+    `019f4cbd-c230-7f61-bd04-938e60564073`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/a148/ClinicOS`;
+  - Private Media and Data Protection: pending
+    `client-new-thread:7a2de015-65b1-4174-b790-f71fa2382d99`, thread
+    `019f4cbd-c22f-7893-9799-c2bb46f85072`, worktree
+    `/Users/abhinavgupta/.codex/worktrees/8be6/ClinicOS`.
+- Master-only integration surfaces: root/app/package manifests and lockfile, `.github/**`, env/config
+  schema, existing API/web bootstrap and shared route/navigation/media composition, Docker
+  composition, all secrets/authenticated sessions, live AWS/DNS/provider operations, aggregate
+  evidence and release/remediation/memory/checkpoint truth. Workers must commit clean handoffs and
+  cannot merge, push, apply infrastructure or claim CP14 completion.
+
+## CP14 Active Integration Candidate - 2026-07-10
+
+- CP14 remains active on `codex/integration/checkpoint-14`; `main` remains the verified CP13 base.
+  The implementation candidate before evidence-only closeout is `eae79c0d`. No Terraform apply,
+  staging/pilot environment, ECR publish, signing, DNS, provider activation, alert delivery or
+  recovery mutation has occurred.
+- Integrated Terraform, identity/session/edge, private-media, observability/recovery and master
+  runtime wiring pass focused suites plus the root check/typecheck/lint/test/build gates. Canonical
+  migration 0019 and local database, API socket, worker, workflow, telemetry, fault and synthetic
+  recovery evidence pass without skips.
+- Master security integration added immutable action pins, CodeQL, Trivy repository/IaC/image
+  gates, npm/Syft SBOMs, a governed license gate and Dependabot. At exact candidate `eae79c0d`,
+  GitHub quality run `29125220038` and security run `29125220024` both pass; the latter covers
+  CodeQL, SCA/IaC/secrets/SBOM/license and all three ARM64 application images.
+- API, web and worker images use a digest-pinned Node 22.22.2 Alpine base, patched OpenSSL, no
+  runtime npm/corepack/yarn, UID/GID 10001 and immutable source-revision labels. Final local scans
+  report zero high/critical findings and zero embedded secrets; the web image also passes a
+  read-only-root localhost smoke.
+- Integration corrected missing ECS environment truth, API listener and worker health ports,
+  API/worker database URLs, cursor/abuse and revocation signing keys, and a clean-runner CI ordering
+  defect.
+- During image export, host free space fell below 3 GiB and Docker surfaced its prior ext4 write
+  failure. Only disposable/user-retired material was removed: the 15 GB npm download cache, unused
+  Docker build cache, retired Interview Gym/OpenClaw containers/images and the retired Interview Gym
+  database volume. No source, installed dependencies or ClinicOS volume was removed. Docker
+  restarted successfully and host free space recovered to roughly 22 GB.
+- E4/E5 remains blocked by reviewed state-backend adoption/apply authority, domain/TLS/admin ingress
+  inputs, a paging destination, an activated malware scanner, signed exact-revision dual-region ECR
+  artifacts, applied staging/pilot, alert/restore/failover evidence and promotion. See
+  `docs/qa/checkpoint-14-evidence.md`.
+
+### CP14 Platform Runtime Hardening - 2026-07-11
+
+- Implementation commit `3ddf01a2` replaces the prior incomplete platform-image gate. Hardened
+  ARM64 Keycloak 26.7.0 and Temporal 1.31.2 images now pass repeatable runtime smokes and report zero
+  high/critical Trivy vulnerability or embedded-secret findings.
+- Keycloak imports the exact secret-free four-client realm on clean PostgreSQL, reaches full
+  readiness, exposes the canonical issuer, and issues a Temporal service-account token with exact
+  client, audience and worker/write permissions. Bootstrap remains a separate one-shot command and
+  the long-lived image has no bootstrap credential.
+- Temporal now has exact versioned server/schema binaries, a fail-closed schema task, validated
+  dynamic/production config, SQL hostname verification, mTLS frontend/internode material, JWT/JWKS
+  authorization, a distinct internal frontend, routable ECS task membership, non-loopback cluster
+  metadata and bounded worker token refresh. OAuth/JWKS uses the auth hostname, not the private
+  operator-only admin plane.
+- Both platform images pin the official AWS RDS global CA bundle digest. Final image architecture is
+  ARM64 with numeric users `1000:0` and `1000:1000`; local image/runtime checks and all Terraform
+  roots/policy/IaC gates pass. Root `npm run ci` passes with 12 governed moderate advisories and no
+  high/critical audit finding.
+- Docker storage is no longer a blocker. Disposable smoke containers/databases were removed; no
+  shared ClinicOS volumes or user source were changed.
+- Domain discovery is now partially resolved: `alventis.co.uk` is clinic-owned and
+  `clinicos.alventis.co.uk` was confirmed free at Porkbun while apex/`www` remained untouched. The
+  Route53 zone does not yet exist, so no nameserver delegation, certificates or ClinicOS record was
+  created.
+- Read-only AWS recheck at account `222634407676` found no ClinicOS Route53 zone, ACM certificate,
+  KMS alias or ECR repository. The existing SSE-S3 state bucket is versioned/public-blocked but has
+  no objects, historical versions or delete markers; the lock table has PITR disabled. There is no
+  state payload to migrate, but backend creation/legacy-resource disposition remains an authorized
+  AWS mutation.
+- The earlier orchestration heartbeat was deleted after it became obsolete. One separate one-shot
+  04:35 worktree-hello automation exists and is unrelated to checkpoint evidence.
+- At this point CP14 could not close or promote under the then-current sequencing rule: there was
+  no authorized backend migration/apply, dual-region ECR signing/provenance, deployed
+  RDS/ECS/Keycloak/Temporal/edge, DNS delegation/ACM, paging target,
+  activated malware scanner, or real E4/E5 load/alert/restore/failover evidence.
+
+### CP14 Production Media Integration - 2026-07-11
+
+- Integrated implementation candidate `8a8cfc2c05776d477da8b201fb04c8dfa023b470` composes the
+  durable PostgreSQL/S3 media provider in the production API and adds the official GuardDuty S3
+  status attestor in an isolated Lambda image. The API can invoke an immutable alias and perform KMS
+  Verify; only the Lambda role can sign, and only the GuardDuty service role can write the managed
+  verdict tag.
+- The scanner binds tenant/clinic/media/upload authority, exact S3 version, ETag, checksum, KMS key,
+  content metadata and quarantine state. It double-reads object and tag state, rejects drift or
+  unknown provider statuses, and returns a bounded retryable `scan_pending` result without internal
+  polling when the official tag is absent.
+- Terraform now has opt-in GuardDuty plan, least-privilege roles, asymmetric `SIGN_VERIFY` KMS key,
+  encrypted signer logs, digest-pinned ARM64 Lambda, private Lambda endpoint and exact API runtime
+  environment. Activation requires a named authority and exact
+  `I_ACKNOWLEDGE_GUARDDUTY_S3_AND_TAGGING_COSTS`; disabled defaults create no scanner resources.
+- Final local signer image runs as `10001:10001`, loads its full production dependency graph, fails
+  closed without configuration and has zero high/critical Trivy vulnerability or secret findings.
+  A repeatable runtime smoke is now part of the GitHub security matrix.
+- Local gates pass: root workspace CI except the sandboxed registry hop (rerun externally and clean
+  at high/critical), 142 integration tests, all 14 scanner/staging/pilot Terraform tests, full
+  Terraform policy/IaC verification, 19 canonical migrations, 104/104 forced-RLS tables and the
+  exact durable quality workflow tests. User-owned `research/` and `scripts/research/` remain
+  untouched.
+- This is E1/E3 evidence only. No GuardDuty plan, S3/KMS resource, Lambda, image digest, secret,
+  endpoint or media workflow has been applied or activated in AWS, so PRR-009 and CP14 remain open.
+- Exact evidence commit `c32dc53c` passes GitHub quality run `29132231714` and security run
+  `29132231678`; security includes the new media-scanner build, fail-closed runtime smoke and clean
+  high/critical scan alongside all existing repository, platform-image and supply-chain jobs.
+
+## CP14 Owner-Directed Cloud Deferral - 2026-07-11
+
+- The owner superseded the pending AWS activation path and directed that all AWS spending,
+  Terraform plan/apply, DNS/TLS delegation, ECR publishing, GuardDuty activation, live paging and
+  cloud restore/failover be deferred for later reconsideration.
+- Final CP14 branch-tip baseline `ba80612fd139bcf3fa3014823cbf0fb075eceac8` passes GitHub quality
+  run `29132493510` and security run `29132493520`, in addition to the recorded local E1/E3 gates.
+- CP14 is now classified **implementation-complete at E3; cloud E4/E5 deferred**. PRR-006/007/009/
+  013/015-020/024 remain open, and the release remains NO-GO for production, PHI, provider traffic
+  and clinical reliance.
+- Dependency review found that CP15 provider implementation and selected CP16 local boundaries can
+  safely consume the frozen CP14 contracts while failing closed without deployment inputs. Official
+  provider sandbox evidence cannot pass without deployed HTTPS callbacks; CP17 and CP18 cannot
+  complete without the deferred environment and observed operations.
+- The owner-authorized sequencing exception permits promotion of the CP14 E3 baseline and
+  sequential CP15/selected CP16 implementation. It is not a waiver, accepted production risk or
+  evidence-tier upgrade. The full decision and re-entry gate are recorded in
+  `docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md`.
+- User-owned `research/` and `scripts/research/` remain untracked and untouched.

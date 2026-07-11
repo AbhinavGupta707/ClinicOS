@@ -1,0 +1,108 @@
+# Checkpoint 14 Evidence — E3 Implementation Baseline
+
+**Status:** Implementation-complete at E3; local and CI controls do not satisfy E4/E5. The owner
+deferred all AWS/DNS activation on 2026-07-11, so staging and pilot-production do not exist and the
+release remains NO-GO. See `docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md`.
+
+**Candidate branch:** `codex/integration/checkpoint-14`
+
+**Current integrated implementation candidate:**
+`ba80612fd139bcf3fa3014823cbf0fb075eceac8`
+
+**Platform-runtime hardening candidate:**
+`3ddf01a2`
+
+## Implemented and verified
+
+| Evidence                                       | Result                                                                                                                                        | Boundary                                          |
+| ---------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------- |
+| Root check, typecheck, lint, test and build    | Pass on the integrated CP14 candidate                                                                                                         | Local E1/E3; no deployed claim                    |
+| Canonical database migration gate              | Pass: 19 migrations, concurrent runner, checksum drift rejection and rollback                                                                 | Local PostgreSQL only                             |
+| API package                                    | Pass: 158 tests with socket execution and zero skips                                                                                          | Local E3                                          |
+| Database package                               | Pass: 104 tests                                                                                                                               | Local E3                                          |
+| Integrations / worker / workflow               | Pass: 142 / 26 / 12 tests, zero skips                                                                                                         | Local E1/E3                                       |
+| CP14 telemetry and synthetic resilience suites | Pass, including deterministic dependency faults and synthetic recovery harnesses                                                              | Simulation only; not restore/failover evidence    |
+| Terraform verifier                             | Pass: all four roots validate/mock-test; staging 3/3, pilot 5/5; policy assertions pass                                                       | No plan/apply                                     |
+| Trivy IaC                                      | Pass: zero high/critical findings                                                                                                             | Static source scan                                |
+| Repository SCA                                 | Pass: zero high/critical; 12 moderate advisories remain in governed transitive paths                                                          | No force fix or risk acceptance                   |
+| CycloneDX production SBOM                      | Pass: 824 components; license gate passes with three pinned metadata exceptions                                                               | Unsigned local artifact                           |
+| GitHub quality workflow                        | Pass in run `29132231714` at `c32dc53c`: clean-runner checks, durable DB/worker/readiness tests, lint, tests, builds, audit and secret scan    | CI E3; no deployed claim                          |
+| GitHub security workflow                       | Pass in run `29132231678` at `c32dc53c`: CodeQL, repository/IaC scans, SBOM/license and all four application plus both platform ARM64 image jobs | CI artifact evidence; not ECR promotion           |
+| API / web / worker images                      | Pass: ARM64, numeric UID/GID `10001`, digest-pinned Node base, zero Trivy high/critical findings or embedded secrets                          | Local/CI images only; not signed or pushed to ECR |
+| Web image runtime                              | Pass under read-only root filesystem with localhost HTTP smoke                                                                                | Local container only                              |
+| Keycloak production image                      | Pass: ARM64 UID `1000:0`; Keycloak 26.7.0; exact realm import/readiness/OIDC/client-credentials smoke; zero high/critical image findings      | Local E3 image; not signed, pushed or deployed    |
+| Temporal production image                      | Pass: ARM64 UID `1000:1000`; Temporal 1.31.2 server/schema tools; config/task-network startup smoke; zero high/critical image findings        | Local E3 image; not signed, pushed or deployed    |
+| Platform database trust                        | Pass: both images contain the digest-pinned official AWS RDS global CA bundle; Keycloak/Temporal require verified hostname TLS                | Static/runtime contract; no live RDS handshake    |
+| Keycloak realm/Temporal worker auth            | Pass: exact four-client realm; worker token has canonical issuer/client, `clinic-os-temporal` audience and worker/write permissions           | Clean local Keycloak/PostgreSQL only              |
+| GuardDuty media evidence boundary              | Pass: official S3 status mapping, exact-version double-read, asymmetric KMS signing, immutable Lambda alias, API Verify-only IAM and 142 integration tests | Local E1/E3; GuardDuty is not activated           |
+| Media scanner Lambda image                     | Pass: ARM64 UID/GID `10001`, fail-closed config smoke, complete production dependencies and zero high/critical Trivy vulnerability/secret findings | Local image only; not signed, pushed or deployed  |
+| AWS identity/region preflight                  | Approved IAM user resolves in account `222634407676`; Mumbai primary and Hyderabad enabled                                                    | Read-only inventory                               |
+
+Final branch-tip CI at `ba80612` passes quality run `29132493510` and security run
+`29132493520`. These supersede the earlier candidate runs without changing their E3-only evidence
+tier.
+
+## Security corrections found during integration
+
+- Removed two unowned wall-clock reads and pinned Temporal SDK packages to `1.20.2`.
+- Added pre-import API/worker OpenTelemetry bootstraps, bounded telemetry, durable outbox trace
+  correlation, readiness/backpressure controls and AWS dashboard/alarm definitions.
+- Corrected ECS environment truth, API/worker database and signing-key secret mappings, API port
+  `4100`, and worker health port `3001`.
+- Added immutable GitHub action pins, CodeQL, Trivy, Syft/npm SBOM, license policy and weekly
+  dependency/action updates.
+- Removed vulnerable runtime npm/corepack/yarn surfaces and pinned patched Alpine OpenSSL packages;
+  final application image scans are clean at high/critical severity.
+- Corrected clean-runner CI ordering so branded cross-package type tests build their shared package
+  outputs before execution.
+- Built hardened Keycloak and Temporal images from digest/source-pinned inputs. Keycloak imports the
+  exact secret-free realm and fails closed around one-shot bootstrap. Temporal uses a versioned
+  schema task, authenticated JWT audience/permission mapping, mTLS, a distinct internal frontend,
+  verified SQL TLS, routable ECS task identity and non-loopback cluster metadata.
+- Corrected Temporal OAuth/JWKS traffic to use the canonical authentication hostname rather than
+  granting workloads access to the operator-only Keycloak admin plane.
+- Added repeatable CI runtime gates for both platform images and pinned the official AWS RDS CA
+  bundle by SHA-256 in both builds.
+- Replaced the production media registration-only gate with an official GuardDuty S3 transport and
+  isolated image-Lambda evidence signer. The API can invoke the immutable alias and perform KMS
+  Verify, but has no `kms:Sign` authority and cannot write the provider-owned verdict tag.
+- Reconciled the S3 policy so the API can read bounded exact-version bytes before scan for
+  magic-byte validation while patient/user access remains gated by durable verified signed
+  evidence rather than trusting a mutable bucket tag.
+- Found and fixed a container-only dependency layout failure (`file-type` was nested in the
+  integrations workspace), then removed unused npm/Corepack/local RIE base tooling and added a
+  repeatable fail-closed image smoke to the security workflow.
+
+## Exit gates still open
+
+These are explicit deferred hard gates, not accepted production risks and not evidence of
+completion. They must be rerun against the exact future deployed revision when AWS activation is
+reopened.
+
+1. Read-only inventory confirms the existing Terraform bucket is SSE-S3, versioned and public-
+   blocked but contains no current objects, historical versions or delete markers; its lock table
+   has PITR disabled. There is no state payload to migrate, but creating the dedicated CMK/PITR
+   backend and retiring or retaining the empty legacy resources still requires a reviewed plan and
+   exact authorization.
+2. No staging or pilot-prod Terraform apply has occurred. There is no deployed VPC, ECR, RDS,
+   cache, ECS, Keycloak, Temporal, ALB/WAF, telemetry backend, backup or recovery target.
+3. The Keycloak and Temporal image contracts now pass local build, runtime and scan gates, but no
+   exact-commit images have been signed, attested, pushed to dual-region ECR or exercised against
+   live RDS, ECS, ACM and Keycloak/Temporal secrets.
+4. The clinic-owned `alventis.co.uk` domain exists and the isolated `clinicos.alventis.co.uk`
+   namespace was confirmed unused without changing the existing apex/`www` site. No Route53 public
+   hosted zone/nameservers, Porkbun NS delegation, ACM certificates, private admin zone, final
+   hostnames or reviewed private/VPN/JIT administrator CIDRs exist yet.
+5. No real paging destination exists, so alarm delivery/escalation cannot be verified.
+6. The production GuardDuty transport, signer, Terraform module and image now pass local gates, but
+   GuardDuty Malware Protection has not been cost-approved, applied or exercised against the real
+   media bucket/KMS keys. Media therefore still lacks E4 clean/quarantine evidence.
+7. Images are not signed, attested or pushed to both regional ECR repositories because foundation
+   infrastructure and GitHub deployment environments do not exist.
+8. No real cloud load/fault, alert injection, backup restore, Hyderabad failover/failback, deployed
+   browser/API/worker, or synthetic pilot evidence exists.
+
+CP14 remains **NO-GO** for production and has not passed its checkpoint exit contract. Under the
+owner-directed deferral, this verified E3 implementation baseline may nevertheless be promoted to
+`main` and followed by CP15/selected CP16 implementation. That sequencing exception does not close
+any hard gate above or authorize live traffic.

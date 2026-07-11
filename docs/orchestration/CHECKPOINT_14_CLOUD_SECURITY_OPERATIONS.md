@@ -1,15 +1,15 @@
 # Checkpoint 14 — Cloud, Security Operations, Media and Recovery
 
-**Status:** Planned; E4/E5 external authority required
+**Status:** Implementation-complete at E3 on `ba80612`; owner deferred all AWS/DNS activation, so E4/E5 and production closure remain open
 **Evidence target:** E4 staging and E5 pilot-production synthetic
-**Workers:** provisionally three to four initial worktrees after path and environment exclusivity review
+**Workers:** three initial path-disjoint worktrees; observability/recovery is sequenced after interface freeze
 **Primary findings:** PRR-006, 007, 009, 013, 015-020, 024; remaining PRR-001/003/010
 
 ## 1. Outcome
 
 Replace the validation-only cloud posture with deployable, policy-checked AWS infrastructure and a production-equivalent ClinicOS environment with identity/session security, private media, telemetry/alerts, supply-chain controls, backup/restore/failover and resilience evidence.
 
-CP14 cannot close from Terraform text, console loggers or dry-run restore scripts. E4/E5 requires applied infrastructure and real environment evidence. The master must obtain explicit apply/DNS/recovery authority before mutations.
+CP14 cannot close from Terraform text, console loggers or dry-run restore scripts. E4/E5 requires applied infrastructure and real environment evidence. On 2026-07-11 the owner explicitly deferred every AWS/DNS mutation; see `CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md`. The verified E3 implementation baseline may advance into CP15/selected CP16 implementation, but CP14 remains open for cloud evidence and the release remains NO-GO.
 
 ## 2. Activation Preflight
 
@@ -22,7 +22,7 @@ Before worker launch, diagnose in order:
 5. production identity/session and Keycloak deployment ownership.
 6. paging/escalation target and recovery window.
 
-Workers may implement local definitions while approval is pending, but the checkpoint remains open and CP15 does not launch without the required E4 public edge/secrets/telemetry.
+Local implementation is complete. CP15 implementation may now launch under the owner-directed exception, consuming the frozen edge/secrets/telemetry contracts and retaining fail-closed unavailable behavior. Official callback registration and CP15 E4 evidence still require the deferred deployed public edge.
 
 ## 3. Lanes
 

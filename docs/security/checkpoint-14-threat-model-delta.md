@@ -1,0 +1,15 @@
+# Checkpoint 14 Threat-Model Delta — E3 Implementation Baseline
+
+| Threat                              | Implemented control                                                                                              | Current evidence                                              | Remaining hard gate                                                           |
+| ----------------------------------- | ---------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------- | ----------------------------------------------------------------------------- |
+| T19 supply-chain compromise         | Immutable action/base pins, lockfile, CodeQL, Trivy, SBOM/license gates, numeric non-root ARM64 images           | GitHub security workflow and local image scans pass           | Sign/attest exact ECR digests and verify deployment provenance                |
+| T18 dependency/workflow outage      | Sticky readiness, backpressure, Temporal mTLS/JWT, internal frontend and routable task membership                | Local fault suites plus pinned image config/start smoke pass  | Deployed load/fault/alert, JWKS recovery and multi-task evidence              |
+| T04/T05 identity/session compromise | Hardened Keycloak image, exact realm import, BFF/session/PKCE/revocation edges, separate admin hostname topology | Local real-Keycloak realm/token smoke and contract tests pass | Deployed realm, MFA, revocation, rotation and administrator-boundary evidence |
+| T09 malicious media                 | Version-bound private S3/KMS adapters, GuardDuty status attestation, isolated KMS signer, quarantine, validation, evidence verification and lifecycle controls | 142 integration tests plus fail-closed/scanned ARM64 signer image pass | Cost-approved GuardDuty apply plus deployed S3/KMS tenant/quarantine tests    |
+| T14/T15 infrastructure compromise   | Private data subnets, least IAM, KMS, secret containers, WAF/TLS definitions and policy assertions               | Terraform tests and Trivy IaC pass                            | Reviewed plan, apply, live reachability and drift evidence                    |
+| T16 recovery failure                | Versioned backup/failover procedures and deterministic synthetic harnesses                                       | Local simulations pass                                        | Timed restore and failover/failback from real environment backups             |
+| T12 audit/trace repudiation         | Transaction-bound trace correlation, PHI-safe telemetry and immutable resource identity                          | Local API/worker/DB tests pass                                | Deployed trace continuity, immutable export and privileged-query review       |
+
+No threat is production-closed by this delta. The owner deferred AWS/DNS activation on 2026-07-11;
+the controls may support later implementation checkpoints, but every listed E4/E5 gate remains
+open and the release remains NO-GO.

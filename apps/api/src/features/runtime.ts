@@ -45,6 +45,7 @@ export async function runClinicFeatureOperation(input: {
       repository: input.transaction.repository,
       auditSink: input.transaction.auditSink,
       requestGuards: input.transaction.requestGuards,
+      ...(input.transaction.sqlClient ? { sqlClient: input.transaction.sqlClient } : {}),
       scope
     },
     (context) => input.handler(request, { ...context, clock: input.clock })

@@ -22,6 +22,9 @@ export interface OutboxProcessorOptions {
   readonly maxRetryDelayMs?: number;
   readonly now?: () => Date;
   readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+  readonly admitEventTypes?: (
+    registeredEventTypes: readonly string[]
+  ) => Promise<readonly string[]>;
 }
 
 export interface OutboxPollResult {
@@ -63,6 +66,8 @@ export class OutboxProcessor {
   readonly #maxRetryDelayMs: number;
   readonly #now: () => Date;
   readonly #sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
+  readonly #admitEventTypes:
+    ((registeredEventTypes: readonly string[]) => Promise<readonly string[]>) | undefined;
 
   constructor(options: OutboxProcessorOptions) {
     this.#workerId = options.workerId;
@@ -78,6 +83,7 @@ export class OutboxProcessor {
     this.#maxRetryDelayMs = options.maxRetryDelayMs ?? 300000;
     this.#now = options.now ?? (() => new Date());
     this.#sleep = options.sleep ?? defaultSleep;
+    this.#admitEventTypes = options.admitEventTypes;
   }
 
   registeredEventTypes(): readonly string[] {
@@ -86,12 +92,19 @@ export class OutboxProcessor {
 
   async pollOnce(): Promise<OutboxPollResult> {
     const startedAt = this.#now();
+    const registeredEventTypes = this.#registry.eventTypes();
+    const admittedEventTypes = this.#admitEventTypes
+      ? await this.#admitEventTypes(registeredEventTypes)
+      : registeredEventTypes;
+    if (this.#admitEventTypes && admittedEventTypes.length === 0) {
+      return { claimed: 0, processed: 0, retried: 0, deadLettered: 0 };
+    }
     const events = await this.#repository.claimDueEvents({
       workerId: this.#workerId,
       batchSize: this.#batchSize,
       leaseUntil: new Date(startedAt.getTime() + this.#leaseMs).toISOString(),
       now: startedAt.toISOString(),
-      eventTypes: this.#registry.eventTypes()
+      eventTypes: admittedEventTypes
     });
 
     const result = {
@@ -129,9 +142,7 @@ export class OutboxProcessor {
     }
   }
 
-  async #processEvent(
-    event: OutboxEventRecord
-  ): Promise<{
+  async #processEvent(event: OutboxEventRecord): Promise<{
     readonly processed: number;
     readonly retried: number;
     readonly deadLettered: number;

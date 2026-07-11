@@ -8,7 +8,7 @@
     ".": "./src/index.ts"
   },
   "scripts": {
-    "dev": "npm run build --workspace @clinic-os/config --if-present && node src/server.ts",
+    "dev": "npm run build --workspace @clinic-os/config --if-present && npm run build --workspace @clinic-os/observability --if-present && node src/main.ts",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "find src test -name '*.ts' -exec node --check {} \\;",
     "test": "node --test test/*.test.ts",
@@ -21,6 +21,7 @@
     "@clinic-os/db": "0.0.0",
     "@clinic-os/domain": "0.0.0",
     "@clinic-os/integrations": "0.0.0",
+    "@clinic-os/observability": "0.0.0",
     "@clinic-os/security": "0.0.0",
     "@nestjs/common": "11.1.28",
     "@nestjs/core": "11.1.28",

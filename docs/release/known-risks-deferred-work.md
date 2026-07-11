@@ -1,28 +1,33 @@
 # Known Risks and Deferred Work
 
-**Date:** 2026-07-09
+**Date:** 2026-07-11
 **Status:** Current release summary
 **Decision:** **NO-GO** for pilot, production PHI and production provider traffic
+
+**Execution mode:** The owner deferred all AWS/DNS activation on 2026-07-11. The CP14 E3
+implementation baseline may be promoted and CP15/selected CP16 implementation may continue, but
+none of the cloud/provider/device/operational hard gates below is waived. See
+`docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md`.
 
 The authoritative item-level register is `docs/security/PRODUCTION_SECURITY_AND_READINESS_REMEDIATION_REGISTER.md`. This document is the release-facing summary; it must never diverge from that register.
 
 ## 1. Hard Production Blockers
 
-| Area                     | Current truth                                                                                                                                                              | Owning checkpoint |
-| ------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- |
-| Verification integrity   | Current test suite has date/clock failures; CP10 live smoke mixes fixture/runtime clinic IDs; some TypeScript “typechecks” are syntax-only.                                | CP11              |
-| Durable data             | Ten migrations exist but are not wired into startup/deploy; audited local Postgres had zero public tables; durable RLS/outbox behavior is not end-to-end evidenced.        | CP11/CP13         |
-| Readiness                | `/health/ready` reports configuration without probing required dependencies.                                                                                               | CP11              |
-| API boundary             | Large hand-routed API and handwritten contract notes make validation/auth/idempotency drift difficult to prove.                                                            | CP12              |
-| Durable clinic day       | Browser workflow evidence is fixture-based; canonical full workflow is not proven against Postgres/Keycloak/Temporal/outbox.                                               | CP13              |
-| Cloud                    | Pilot-prod Terraform is posture-only and intentionally declares no providers/resources.                                                                                    | CP14              |
-| Media                    | Runtime supports only a local simulator, which production-like config forbids.                                                                                             | CP14              |
-| Auth/security operations | No deployed Keycloak/session/MFA/revocation, edge security headers, comprehensive abuse controls, security toolchain, immutable audit operation or key lifecycle evidence. | CP14              |
-| Observability/resilience | Telemetry defaults to console; no deployed backend, paging, SLO, live restore/failover, capacity or fault evidence.                                                        | CP14              |
-| Providers                | Meta inbound and telephony callbacks are absent; Razorpay public URL/registration is absent; official retry/reconciliation evidence is absent.                             | CP15              |
-| Native mobile            | Camera/audio are unavailable, capture cache is memory-only, and no physical-device signed distribution evidence exists.                                                    | CP16              |
-| AI/interoperability      | AI/STT lacks an approved live data path/evals; FHIR is a projection foundation; ABDM is unactivated. Must stay disabled unless completed.                                  | CP16              |
-| Human/clinic governance  | No real-data authorization, configured clinic sign-off, training completion, production support exercise or cross-functional go-live approval.                             | CP17              |
+| Area                     | Current truth                                                                                                                                                            | Owning checkpoint |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------- |
+| Verification integrity   | CP11-CP13 deterministic/type/durable-local gates pass; exact CP14 cloud revision still lacks applied E4/E5 and independent operational review.                           | CP14/CP17         |
+| Durable data             | Nineteen migrations, forced RLS, transaction-bound audit/outbox and durable clinic-day recovery pass at E3; staging migration/restore and live failover remain unproven. | CP14              |
+| Readiness                | Local Postgres/Keycloak/Redis/worker readiness and recovery pass; deployed ALB/ECS dependency-removal and paging evidence do not exist.                                  | CP14              |
+| API boundary             | The strict 128-operation contract/policy pipeline, durable idempotency and conditional versions pass E3; deployed WAF/load/abuse evidence remains open.                  | CP14              |
+| Durable clinic day       | Canonical runtime-ID clinic day and browser workflows pass twice at E3; the same revision has not run against applied staging infrastructure.                            | CP14              |
+| Cloud                    | Deployable version-pinned Terraform validates/mock-plans cleanly, but no backend migration, saved live plan, apply, drift inventory or cloud environment exists.         | CP14              |
+| Media                    | Private S3/KMS/quarantine/lifecycle adapters and durable tests pass locally; no approved production malware scanner or deployed tenant/quarantine evidence exists.       | CP14              |
+| Auth/security operations | Hardened Keycloak/Temporal images and BFF/session/revocation contracts pass local runtime/scan gates; no deployed HA/MFA/rotation/admin-boundary evidence exists.        | CP14              |
+| Observability/resilience | OTel/backpressure/SLO/alarm/backup definitions and synthetic harnesses exist; no real paging, load, restore, failover/failback or deployed trace evidence exists.        | CP14              |
+| Providers                | Provider contracts exist, but no live public callbacks/registrations, approved credentials or official retry/reconciliation evidence exist.                              | CP15              |
+| Native mobile            | Camera/audio are unavailable, capture cache is memory-only, and no physical-device signed distribution evidence exists.                                                  | CP16              |
+| AI/interoperability      | AI/STT lacks an approved live data path/evals; FHIR is a projection foundation; ABDM is unactivated. Must stay disabled unless completed.                                | CP16              |
+| Human/clinic governance  | No real-data authorization, configured clinic sign-off, training completion, production support exercise or cross-functional go-live approval.                           | CP17              |
 
 ## 2. Optional Workflows That May Remain Deferred Whole
 
@@ -57,11 +62,11 @@ Messaging and payment may be removed from an early controlled scope only if the 
 1. CP11 verification and durable data.
 2. CP12 modular validated API/contracts.
 3. CP13 durable clinic-day vertical slices.
-4. CP14 cloud/security/media/observability/recovery.
-5. CP15 official provider integrations.
-6. CP16 native mobile and selected AI/interoperability.
-7. CP17 controlled clinic validation.
-8. CP18 repeatable multi-clinic production.
+4. CP14 cloud/security/media/observability/recovery implementation at E3; AWS E4/E5 deferred.
+5. CP15 official-provider implementation; public callback registration/E4 deferred with AWS.
+6. CP16 selected local native/mobile/AI/interoperability implementation; close only achieved tiers.
+7. CP17 controlled clinic validation remains blocked by the deferred environment and external evidence.
+8. CP18 repeatable multi-clinic production remains blocked by CP17 observation.
 
 See `clinic_os_specs_v2/23_PRODUCTION_READINESS_REMEDIATION_PLAN.md` for detailed deliverables and dependency gates.
 

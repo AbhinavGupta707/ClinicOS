@@ -1,0 +1,20 @@
+aws_account_id                 = "000000000000"
+security_log_bucket_name       = "clinicos-000000000000-account-security-logs"
+terraform_state_bucket         = "replace-with-dedicated-kms-state-bucket"
+terraform_lock_table           = "clinicos-terraform-locks"
+terraform_state_kms_key_arn    = "arn:aws:kms:ap-south-1:000000000000:key/REPLACE_WITH_DEDICATED_STATE_KEY"
+offline_validation_mode        = true
+
+# Every control is an explicit, named, cost-reviewed activation.
+activation = {
+  cloudtrail                   = false
+  cloudtrail_s3_data_events    = false
+  config                       = false
+  guardduty                    = false
+  security_hub                 = false
+  ci_permissions_boundary      = false
+}
+activation_authorized_by = null
+
+# Populate manually from reviewed environment cloudtrail_s3_object_event_arns outputs.
+cloudtrail_s3_object_arns = []

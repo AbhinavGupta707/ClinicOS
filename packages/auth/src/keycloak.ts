@@ -6,6 +6,13 @@ export interface KeycloakAccessTokenClaims {
   exp: number;
   nbf?: number;
   iat?: number;
+  jti?: string;
+  sid?: string;
+  session_state?: string;
+  typ?: string;
+  auth_time?: number;
+  acr?: string;
+  amr?: string[];
   email?: string;
   email_verified?: boolean;
   name?: string;
@@ -42,12 +49,18 @@ export class AuthenticationError extends Error {
   }
 }
 
-function hasAcceptedAudience(claims: KeycloakAccessTokenClaims, acceptedAudiences: readonly string[]): boolean {
+function hasAcceptedAudience(
+  claims: KeycloakAccessTokenClaims,
+  acceptedAudiences: readonly string[]
+): boolean {
   const audiences = Array.isArray(claims.aud) ? claims.aud : claims.aud ? [claims.aud] : [];
   return audiences.some((audience) => acceptedAudiences.includes(audience));
 }
 
-function hasAcceptedClient(claims: KeycloakAccessTokenClaims, acceptedClientIds: readonly string[]): boolean {
+function hasAcceptedClient(
+  claims: KeycloakAccessTokenClaims,
+  acceptedClientIds: readonly string[]
+): boolean {
   return Boolean(claims.azp && acceptedClientIds.includes(claims.azp));
 }
 
@@ -59,8 +72,10 @@ export function principalFromVerifiedKeycloakClaims(
   const clockSkewSeconds = options.clockSkewSeconds ?? 60;
 
   if (!claims.sub) throw new AuthenticationError("Keycloak token is missing subject.");
-  if (claims.iss !== options.expectedIssuer) throw new AuthenticationError("Keycloak issuer is not accepted.");
-  if (claims.exp + clockSkewSeconds < nowSeconds) throw new AuthenticationError("Keycloak token is expired.");
+  if (claims.iss !== options.expectedIssuer)
+    throw new AuthenticationError("Keycloak issuer is not accepted.");
+  if (claims.exp + clockSkewSeconds < nowSeconds)
+    throw new AuthenticationError("Keycloak token is expired.");
   if (claims.nbf && claims.nbf - clockSkewSeconds > nowSeconds) {
     throw new AuthenticationError("Keycloak token is not valid yet.");
   }
@@ -74,7 +89,9 @@ export function principalFromVerifiedKeycloakClaims(
     throw new AuthenticationError("Keycloak token audience is not accepted.");
   }
 
-  const resourceRoles = Object.values(claims.resource_access ?? {}).flatMap((resource) => resource.roles ?? []);
+  const resourceRoles = Object.values(claims.resource_access ?? {}).flatMap(
+    (resource) => resource.roles ?? []
+  );
   const realmRoles = claims.realm_access?.roles ?? [];
   const keycloakRoles = [...new Set([...realmRoles, ...resourceRoles])].sort();
 

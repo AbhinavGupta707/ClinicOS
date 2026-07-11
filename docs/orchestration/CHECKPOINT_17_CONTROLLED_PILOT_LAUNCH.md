@@ -1,6 +1,6 @@
 # Checkpoint 17 — Pilot-Production Validation and Controlled Launch
 
-**Status:** Planned; clinic and real-data authority required
+**Status:** Blocked until deferred CP14 E4/E5 infrastructure and downstream provider/device evidence exist
 **Evidence target:** E5 synthetic pilot-production, then authorized E6 real-clinic validation
 **Workers:** provisionally two to three initial evidence worktrees; shared-environment execution remains serialized
 **Primary findings:** PRR-030 and final in-scope P1/P2 confirmation

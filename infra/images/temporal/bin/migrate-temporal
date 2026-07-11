@@ -1,0 +1,73 @@
+#!/bin/sh
+set -eu
+
+required() {
+  name="$1"
+  eval "value=\${$name:-}"
+  if [ -z "$value" ]; then
+    echo "$name is required" >&2
+    exit 64
+  fi
+}
+
+for name in POSTGRES_SEEDS DB_PORT MASTER_POSTGRES_USER MASTER_POSTGRES_PWD TEMPORAL_POSTGRES_USER TEMPORAL_POSTGRES_PWD DBNAME VISIBILITY_DBNAME; do
+  required "$name"
+done
+
+if [ "${SQL_TLS_ENABLED:-}" != "true" ] || [ "${SQL_HOST_VERIFICATION:-}" != "true" ]; then
+  echo "Temporal schema migration requires verified PostgreSQL TLS" >&2
+  exit 64
+fi
+
+export SQL_HOST="$POSTGRES_SEEDS"
+export SQL_PORT="$DB_PORT"
+export SQL_USER="$TEMPORAL_POSTGRES_USER"
+export SQL_PASSWORD="$TEMPORAL_POSTGRES_PWD"
+export SQL_PLUGIN="${DB:-postgres12}"
+export SQL_TLS=true
+export SQL_TLS_SERVER_NAME="${SQL_HOST_NAME:-$POSTGRES_SEEDS}"
+
+export PGPASSWORD="$MASTER_POSTGRES_PWD"
+psql_uri="host=$POSTGRES_SEEDS port=$DB_PORT dbname=postgres user=$MASTER_POSTGRES_USER sslmode=verify-full sslrootcert=/etc/ssl/certs/aws-rds-global-bundle.pem"
+
+psql "$psql_uri" -v ON_ERROR_STOP=1 \
+  -v temporal_user="$TEMPORAL_POSTGRES_USER" \
+  -v temporal_password="$TEMPORAL_POSTGRES_PWD" <<'SQL'
+SELECT format('CREATE ROLE %I LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION', :'temporal_user', :'temporal_password')
+WHERE NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = :'temporal_user')
+\gexec
+SELECT format('ALTER ROLE %I WITH LOGIN PASSWORD %L NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION', :'temporal_user', :'temporal_password')
+\gexec
+SQL
+
+ensure_database() {
+  database="$1"
+  psql "$psql_uri" -v ON_ERROR_STOP=1 -v database="$database" -v temporal_user="$TEMPORAL_POSTGRES_USER" <<'SQL'
+SELECT format('CREATE DATABASE %I OWNER %I', :'database', :'temporal_user')
+WHERE NOT EXISTS (SELECT 1 FROM pg_database WHERE datname = :'database')
+\gexec
+SQL
+  owner="$(psql "$psql_uri" -At -v ON_ERROR_STOP=1 -v database="$database" <<'SQL'
+SELECT pg_get_userbyid(datdba) FROM pg_database WHERE datname = :'database';
+SQL
+)"
+  if [ "$owner" != "$TEMPORAL_POSTGRES_USER" ]; then
+    echo "$database must be owned by the dedicated Temporal role" >&2
+    exit 65
+  fi
+}
+
+ensure_database "$DBNAME"
+ensure_database "$VISIBILITY_DBNAME"
+unset PGPASSWORD MASTER_POSTGRES_PWD
+
+migrate() {
+  database="$1"
+  schema="$2"
+  export SQL_DATABASE="$database"
+  temporal-sql-tool --quiet setup-schema -v 0.0
+  temporal-sql-tool update-schema -d "$schema"
+}
+
+migrate "$DBNAME" /etc/temporal/schema/postgresql/v12/temporal/versioned
+migrate "$VISIBILITY_DBNAME" /etc/temporal/schema/postgresql/v12/visibility/versioned

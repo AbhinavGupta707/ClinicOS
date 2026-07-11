@@ -21,6 +21,7 @@ export interface PostgresOutboxRepositoryOptions {
 }
 
 export class PostgresOutboxRepository implements OutboxRepository {
+  readonly durability = "durable" as const;
   readonly #pool: PoolLike;
   readonly #ownsPool: boolean;
 
@@ -38,6 +39,20 @@ export class PostgresOutboxRepository implements OutboxRepository {
 
   async close(): Promise<void> {
     if (this.#ownsPool) await this.#pool.end();
+  }
+
+  async loadForEvent(eventId: string): Promise<Readonly<{ traceparent: string }> | undefined> {
+    if (!UUID.test(eventId)) throw new Error("OUTBOX_EVENT_ID_INVALID");
+    const result = await this.#pool.query<{ traceparent: string }>(
+      `select traceparent
+       from outbox_trace_contexts
+       where event_id = $1::uuid`,
+      [eventId]
+    );
+    const traceparent = result.rows[0]?.traceparent;
+    if (!traceparent) return undefined;
+    if (!TRACEPARENT.test(traceparent)) throw new Error("OUTBOX_TRACE_CONTEXT_INVALID");
+    return { traceparent };
   }
 
   async claimDueEvents(request: OutboxClaimRequest): Promise<readonly OutboxEventRecord[]> {
@@ -325,6 +340,9 @@ export class PostgresOutboxRepository implements OutboxRepository {
     await this.#pool.query("SELECT 1");
   }
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu;
+const TRACEPARENT = /^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/u;
 
 function mapOutboxEventRow(row: Record<string, unknown>): OutboxEventRecord {
   return {

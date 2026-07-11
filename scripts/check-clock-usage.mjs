@@ -55,6 +55,18 @@ const ownedUsages = new Map(
       2,
       "provider adapters expose injected now with system default"
     ],
+    "packages/integrations/src/media/aws-private-media-runtime.ts": [
+      1,
+      "AWS composition boundary exposes injected now and owns the production system-clock default"
+    ],
+    "packages/integrations/src/media/guardduty-s3-malware-scanner.ts": [
+      1,
+      "isolated provider attestation boundary exposes injected now and owns the Lambda system-clock default"
+    ],
+    "packages/integrations/src/media/s3-private-media-provider.ts": [
+      1,
+      "private media provider exposes an injected now with a system-clock boundary default"
+    ],
     "packages/integrations/src/messaging-provider.ts": [
       2,
       "provider adapter default plus unavailable adapter due CP15"

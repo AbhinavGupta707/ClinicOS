@@ -517,11 +517,14 @@ export interface PostgresClinicUnitOfWorkContext {
   repository: PostgresClinicOperationsRepository;
   auditSink: PostgresAuditEventSink;
   requestGuards: ScopedApiRequestGuardsPort;
+  /** Caller-transaction SQL seam for narrowly scoped production adapters. */
+  sqlClient: SqlQueryClient;
 }
 
 export interface PostgresClinicRepositoryOptions {
   readonly clock?: Clock;
   readonly dueGenerationCursorSecret?: string;
+  readonly traceContextProvider?: () => string | undefined;
 }
 
 export function buildPaymentRequestIntentDigest(
@@ -558,11 +561,13 @@ export class PostgresClinicUnitOfWork {
   readonly #client: SqlConnectionFactory;
   readonly #clock: Clock;
   readonly #dueGenerationCursorSecret: string | undefined;
+  readonly #traceContextProvider: (() => string | undefined) | undefined;
 
   constructor(client: SqlConnectionFactory, options: PostgresClinicRepositoryOptions = {}) {
     this.#client = client;
     this.#clock = options.clock ?? systemClock;
     this.#dueGenerationCursorSecret = options.dueGenerationCursorSecret;
+    this.#traceContextProvider = options.traceContextProvider;
   }
 
   async run<T>(callback: (context: PostgresClinicUnitOfWorkContext) => Promise<T>): Promise<T> {
@@ -570,15 +575,23 @@ export class PostgresClinicUnitOfWork {
       const transactionClient = new TransactionBoundSqlClient(client);
       const requestGuardLease = createRepositoryPortTransactionLease();
       try {
+        const traceparent = validatedTraceparent(this.#traceContextProvider?.());
+        if (traceparent) {
+          await transactionClient.query("select set_config('app.traceparent', $1, true)", [
+            traceparent
+          ]);
+        }
         const result = await callback({
           repository: new PostgresClinicOperationsRepository(transactionClient, {
             clock: this.#clock,
             dueGenerationCursorSecret: this.#dueGenerationCursorSecret
           }),
           auditSink: new PostgresAuditEventSink(transactionClient),
-          requestGuards: createScopedPostgresApiRequestGuards(transactionClient, requestGuardLease)
+          requestGuards: createScopedPostgresApiRequestGuards(transactionClient, requestGuardLease),
+          sqlClient: transactionClient
         });
         await requestGuardLease.close();
+        transactionClient.close();
         return result;
       } catch (error) {
         try {
@@ -586,6 +599,7 @@ export class PostgresClinicUnitOfWork {
         } catch {
           // Preserve the first domain/database error while still draining transaction-bound work.
         }
+        transactionClient.close();
         throw error;
       }
     });
@@ -11974,6 +11988,7 @@ async function withTransaction<T>(
 class TransactionBoundSqlClient implements SqlConnectionFactory {
   readonly inTransaction = true;
   readonly #client: SqlQueryClient;
+  #open = true;
 
   constructor(client: SqlQueryClient) {
     this.#client = client;
@@ -11983,7 +11998,14 @@ class TransactionBoundSqlClient implements SqlConnectionFactory {
     sql: string,
     values?: readonly unknown[]
   ): Promise<SqlQueryResult<T>> {
+    if (!this.#open) {
+      throw new Error("Transaction-bound SQL client used outside its unit-of-work lease.");
+    }
     return this.#client.query<T>(sql, values);
+  }
+
+  close(): void {
+    this.#open = false;
   }
 }
 
@@ -15965,4 +15987,8 @@ function positiveRowVersion(value: number | string): number {
 function isoDateOnly(value: Date | string): string {
   if (value instanceof Date) return value.toISOString().slice(0, 10);
   return value.slice(0, 10);
+}
+
+function validatedTraceparent(value: string | undefined): string | undefined {
+  return value && /^00-[0-9a-f]{32}-[0-9a-f]{16}-0[01]$/u.test(value) ? value : undefined;
 }

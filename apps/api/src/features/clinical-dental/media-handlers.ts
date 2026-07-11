@@ -81,7 +81,7 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
       context: ClinicFeatureExecutionContext
     ) => {
       const input = parsedBody<RequestMediaUploadBody>(request);
-      const storage = mediaStorage(dependencies);
+      const storage = mediaStorage(dependencies, request, context);
       if (!isMediaType(input.mediaType)) {
         throw validation("Unsupported clinical media type.", { field: "mediaType" });
       }
@@ -194,7 +194,7 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
     ) => {
       const uploadId = parsedPathId(request, "uploadId");
       const body = parsedBinaryBody(request);
-      const storage = mediaStorage(dependencies);
+      const storage = mediaStorage(dependencies, request, context);
       const reservation =
         await context.repositories.clinicalMedia.findMediaUploadReservationById(uploadId);
       if (!reservation) {
@@ -269,8 +269,9 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
     ) => {
       const uploadId = parsedPathId(request, "uploadId");
       const input = parsedBody<CompleteMediaUploadBody>(request);
-      const storage = mediaStorage(dependencies);
-      const inspection = mediaInspection(dependencies);
+      const transactionMedia = dependencies.transactionMediaProvider?.(request, context);
+      const storage = transactionMedia ?? mediaStorage(dependencies, request, context);
+      const inspection = transactionMedia ?? mediaInspection(dependencies, request, context);
       const reservation =
         await context.repositories.clinicalMedia.findMediaUploadReservationById(uploadId);
       if (!reservation) {
@@ -363,7 +364,7 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
     ) => {
       const mediaAssetId = parsedPathId(request, "mediaAssetId");
       const input = parsedBody<SignedMediaAccessBody>(request);
-      const storage = mediaStorage(dependencies);
+      const storage = mediaStorage(dependencies, request, context);
       const asset = await context.repositories.clinicalMedia.findMediaAssetById(mediaAssetId);
       if (!asset) throw notFound("Media asset not found.", { media_asset_id: mediaAssetId });
       assertStorageMatches(storage.providerKey, asset);
@@ -410,7 +411,13 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
   } as const;
 }
 
-function mediaStorage(dependencies: ClinicalDentalHandlerDependencies) {
+function mediaStorage(
+  dependencies: ClinicalDentalHandlerDependencies,
+  request: ClinicalDentalRequest<ClinicalDentalRequestOperationId>,
+  context: ClinicFeatureExecutionContext
+) {
+  const transactionMedia = dependencies.transactionMediaProvider?.(request, context);
+  if (transactionMedia) return transactionMedia;
   if (!dependencies.mediaStorage) {
     throw configuration("Media storage provider is not configured for this ClinicOS runtime.");
   }
@@ -418,8 +425,12 @@ function mediaStorage(dependencies: ClinicalDentalHandlerDependencies) {
 }
 
 function mediaInspection(
-  dependencies: ClinicalDentalHandlerDependencies
+  dependencies: ClinicalDentalHandlerDependencies,
+  request: ClinicalDentalRequest<ClinicalDentalRequestOperationId>,
+  context: ClinicFeatureExecutionContext
 ): ClinicalMediaInspectionProvider {
+  const transactionMedia = dependencies.transactionMediaProvider?.(request, context);
+  if (transactionMedia) return transactionMedia;
   if (!dependencies.mediaInspection) {
     throw configuration(
       "Media inspection and quarantine provider is not configured for this ClinicOS runtime."
@@ -427,6 +438,10 @@ function mediaInspection(
   }
   return dependencies.mediaInspection;
 }
+
+type ClinicalDentalRequestOperationId = Parameters<
+  NonNullable<ClinicalDentalHandlerDependencies["transactionMediaProvider"]>
+>[0]["operationId"];
 
 async function assertEncounterPatient(
   context: ClinicFeatureExecutionContext,

@@ -1,13 +1,16 @@
 # Checkpoint 15 — Official Messaging, Payments and Telephony
 
-**Status:** Planned; official accounts and external registration required
+**Status:** Local implementation may start from the CP14 E3 baseline; deployed callbacks and official sandbox evidence remain deferred
 **Evidence target:** E4 official sandbox, production activation still gated
 **Workers:** provisionally two to three initial provider worktrees; count follows official activation state
 **Primary findings:** PRR-008 and PRR-026
 
 ## 1. Outcome
 
-Activate complete official sandbox workflows for Meta WhatsApp, Razorpay and the selected telephony provider through the deployed CP14 edge. Provider credentials, adapters or simulator tests alone do not satisfy this checkpoint.
+Build complete official-provider workflows for Meta WhatsApp, Razorpay and the selected telephony provider against the frozen CP14 callback/security contracts. The owner-directed CP14 cloud deferral means the public edge is not deployed: local implementation, deterministic contract tests and honest unavailable states may proceed, but provider credentials, adapters or simulator tests alone do not satisfy this checkpoint.
+
+No lane may require or assume AWS, DNS, public callback registration, live provider traffic or
+provider-dashboard mutation during this implementation wave. Those remain external E4 gates.
 
 Every provider lane owns a separate namespace. The master owns the shared provider registry, public route aggregation, environment schema, secret wiring, root lockfile and provider-dashboard mutation authorization.
 
@@ -49,15 +52,23 @@ Every provider lane owns a separate namespace. The master owns the shared provid
 
 ## 3. External Registration
 
-After code and staging callback endpoints pass local/deployed tests, the master requests explicit authority and uses official provider dashboards/APIs to register callbacks and events. Chrome may be used for the user’s authenticated dashboard state; this is an activation procedure, never a product dependency or scraping integration.
+After the owner reopens cloud activation and code plus staging callback endpoints pass local/deployed tests, the master requests explicit provider authority and uses official provider dashboards/APIs to register callbacks and events. Chrome may be used for the user’s authenticated dashboard state; this is an activation procedure, never a product dependency or scraping integration.
 
 Record provider-side registration, account/mode, callback URL, event subscriptions, credential rotation owner and verification time without secrets. Run invalid signature, duplicate, delayed, out-of-order, retry, outage and reconciliation cases in official sandboxes.
 
 ## 4. Merge and Exit
 
-Launch Meta and Razorpay only when their official sandbox paths can make material progress. Launch telephony only after the official provider is selected and registered; do not create an idle telephony worker to satisfy a count. Provider namespaces may merge in any dependency-safe order. The master then freezes shared contracts and either launches the optional operations/UI/QA second wave or owns it directly. Master assembles the registry/routes/env/secrets, reconciles lockfile and runs cross-provider rate/cost/DLQ/health evidence.
+The local implementation wave may launch Meta and Razorpay when their official API/signature
+contracts are stable enough for meaningful deterministic work. The later activation wave waits
+until their official sandboxes can make material progress. Launch telephony only after the official
+provider is selected; otherwise preserve the entire workflow as disabled and do not create an idle
+worker to satisfy a count. Provider namespaces may merge in any dependency-safe order. The master
+then freezes shared contracts and either launches the optional operations/UI/QA second wave or owns
+it directly. Master assembles the registry/routes/env/secrets, reconciles the lockfile and runs every
+available cross-provider rate/cost/DLQ/health check without inventing external evidence.
 
-Exit requires:
+Implementation promotion may occur after all executable local/durable/security/browser gates pass
+and the external evidence gap is recorded. Full CP15 exit still requires:
 
 - Meta and Razorpay official sandbox callback/send/payment evidence;
 - telephony official sandbox evidence, or the workflow remains open/disabled and CP15 cannot be called fully complete for blue-sky scope;

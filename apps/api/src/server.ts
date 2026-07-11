@@ -3,6 +3,7 @@ import { type IncomingMessage, type Server } from "node:http";
 import { pathToFileURL } from "node:url";
 import { safeParseClinicOsEnv, type ClinicOsConfig } from "@clinic-os/config";
 import {
+  createAwsPrivateMediaRuntime,
   createPaymentProvider,
   type AiGatewayProvider,
   type PaymentProvider,
@@ -27,6 +28,7 @@ import {
   type IdentityRepository,
   type PaymentProviderEventRecord,
   type RepositoryScope,
+  type SqlConnectionFactory,
   type ScopedApiRequestGuardsPort
 } from "@clinic-os/db";
 import {
@@ -42,6 +44,13 @@ import {
   type AtomicBudgetStore,
   type AuditEventRecord
 } from "@clinic-os/security";
+import {
+  InstrumentationHooks,
+  createJsonLogger,
+  injectW3cTraceContext,
+  redactForLogs,
+  type ObservabilityRuntime
+} from "@clinic-os/observability";
 import { Pool } from "pg";
 import { ApiError, toApiErrorBody } from "./errors.ts";
 import { ApiHealthMonitor, type ApiDependencyProbe, type ApiRepositoryMode } from "./health.ts";
@@ -203,6 +212,11 @@ import type { ClinicFeatureHandlerMap } from "./features/contracts.ts";
 import { createCp13ClinicFeatureHandlerMap } from "./features/cp13-composition.ts";
 import type { Cp13ClinicFeatureOperationId } from "./features/cp13-operation-ownership.ts";
 import { createClinicalDentalRelationshipAuthority } from "./features/clinical-dental/index.ts";
+import {
+  IdentitySessionEdgeGuard,
+  PostgresIdentitySecurityAuditOutbox,
+  RedisTokenRevocationStore
+} from "./features/identity-session-edge/index.ts";
 import { runClinicFeatureOperation } from "./features/runtime.ts";
 import {
   createTreatmentBillingProviderOperationService,
@@ -211,6 +225,7 @@ import {
   type VerifiedRazorpayPaymentEventRequest
 } from "./features/treatment-billing/index.ts";
 import { PendingLocalClinicalMediaInspectionSimulator } from "./media-inspection.ts";
+import { createPostgresS3TransactionMediaProviderFactory } from "./providers/media/index.ts";
 
 interface AuditSink {
   appendAuditEvent(event: AuditEventRecord): Promise<void>;
@@ -228,6 +243,7 @@ interface OperationsUnitOfWork {
       repository: ClinicOperationsRepository;
       auditSink: AuditSink;
       requestGuards: ScopedApiRequestGuardsPort;
+      sqlClient?: import("@clinic-os/db").SqlQueryClient;
     }) => Promise<T>
   ): Promise<T>;
 }
@@ -251,6 +267,8 @@ export interface ClinicOsApiServerOptions {
   budgetKeySecret?: string;
   mutationCoordinator?: AtomicMutationCoordinator;
   featureHandlers?: ClinicFeatureHandlerMap;
+  identityEdgeGuard?: IdentitySessionEdgeGuard;
+  observabilityRuntime?: ObservabilityRuntime;
 }
 
 interface RuntimeOptions {
@@ -315,6 +333,20 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
       "Non-fixture ClinicOS runtime requires durable transactional mutation coordination."
     );
   }
+  if (options.config.isProductionLike && !options.identityEdgeGuard) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Production identity-session edge dependencies are not configured."
+    );
+  }
+  if (options.config.isProductionLike && !options.observabilityRuntime) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Production observability runtime is not configured."
+    );
+  }
   const budgetStoreWithReadiness = budgetStore as AtomicBudgetStore & {
     readiness?: () => Promise<void>;
   };
@@ -323,6 +355,24 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
     authMode: options.useLocalAuthFixture ? "local_synthetic_fixture" : "keycloak_jwks",
     probes: [
       ...(options.dependencyProbes ?? []),
+      ...(options.identityEdgeGuard
+        ? [
+            {
+              name: "identity_session_edge",
+              required: true,
+              check: () => options.identityEdgeGuard!.readiness()
+            }
+          ]
+        : []),
+      ...(options.observabilityRuntime
+        ? [
+            {
+              name: "telemetry_export",
+              required: options.config.isProductionLike,
+              check: () => options.observabilityRuntime!.readiness()
+            }
+          ]
+        : []),
       {
         name: "redis_abuse_budget",
         required: true,
@@ -335,6 +385,18 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
       }
     ]
   });
+  const instrumentation = options.observabilityRuntime
+    ? new InstrumentationHooks({
+        tracer: options.observabilityRuntime.tracer,
+        metrics: options.observabilityRuntime.metrics,
+        logger: createJsonLogger({
+          service: "clinic-os-api",
+          environment: options.config.clinicOsEnv,
+          redact: redactForLogs
+        }),
+        monotonicNowMs: () => performance.now()
+      })
+    : undefined;
 
   const dispatchLegacyOperation: ClinicOsNestRuntime["handleLegacyOperation"] = async (
     request,
@@ -386,6 +448,7 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
     repositoryMode,
     useLocalAuthFixture: options.useLocalAuthFixture ?? false,
     identityRepository: options.identityRepository,
+    instrumentation,
     async health(kind, requestId) {
       if (kind === "liveness") {
         return {
@@ -410,7 +473,9 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
         expectedIssuer,
         acceptedAudience,
         config: options.config,
-        identityRepository: options.identityRepository
+        identityRepository: options.identityRepository,
+        identityEdgeGuard: options.identityEdgeGuard,
+        clock: options.clock ?? systemClock
       }),
     async handleIdentity(request, requestId, access) {
       if (options.auditSink) {
@@ -547,8 +612,9 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
           "ClinicOS feature transaction dependencies are not configured."
         );
       }
-      return options.operationsUnitOfWork.run(({ repository, auditSink, requestGuards }) =>
-        execute({ repository, auditSink, requestGuards })
+      return options.operationsUnitOfWork.run(
+        ({ repository, auditSink, requestGuards, sqlClient }) =>
+          execute({ repository, auditSink, requestGuards, ...(sqlClient ? { sqlClient } : {}) })
       );
     },
     handleLegacyOperation: dispatchLegacyOperation
@@ -574,9 +640,10 @@ export function createRuntimeApiServer(env: NodeJS.ProcessEnv = process.env): Ru
 }
 
 export async function createRuntimeApiNestApplication(
-  env: NodeJS.ProcessEnv = process.env
+  env: NodeJS.ProcessEnv = process.env,
+  observabilityRuntime?: ObservabilityRuntime
 ): Promise<RuntimeNestOptions> {
-  const composition = createRuntimeComposition(env);
+  const composition = createRuntimeComposition(env, observabilityRuntime);
   try {
     const { app } = await createClinicOsApiNestApplication(composition.serverOptions);
     app.getHttpServer().once("close", () => {
@@ -589,7 +656,10 @@ export async function createRuntimeApiNestApplication(
   }
 }
 
-function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
+function createRuntimeComposition(
+  env: NodeJS.ProcessEnv = process.env,
+  observabilityRuntime?: ObservabilityRuntime
+): {
   serverOptions: ClinicOsApiServerOptions;
   port: number;
   close(): Promise<void>;
@@ -631,6 +701,7 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
 
   let pool: Pool | undefined;
   let redisBudgetStore: RedisAtomicBudgetStore | undefined;
+  let tokenRevocationStore: RedisTokenRevocationStore | undefined;
   const repositorySet = useFixtureRepository
     ? {
         identityRepository: new LocalFixtureIdentityRepository(),
@@ -640,9 +711,55 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
     : createPostgresRepositorySet(parsed.data, runtimeBudgetKeySecret ?? undefined);
   if ("pool" in repositorySet) pool = repositorySet.pool;
   const port = parsePort(env.PORT ?? env.API_PORT);
-  const mediaStorage = createRuntimeMediaStorage(parsed.data, env);
-  const mediaInspection = createRuntimeMediaInspection(parsed.data, env);
+  const runtimeMedia = createRuntimeMediaComposition(parsed.data, env, useFixtureRepository);
+  const { mediaStorage, mediaInspection, transactionMediaProvider } = runtimeMedia;
+  if (parsed.data.isProductionLike && !transactionMediaProvider) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "Production private-media storage and scanner composition is not registered.",
+      { missing: ["transaction_private_media_provider"] }
+    );
+  }
   const paymentProvider = createRuntimePaymentProvider(parsed.data);
+  const tokenRevocationKeySecret =
+    parsed.data.security.tokenRevocationKeySecret ??
+    (parsed.data.isProductionLike
+      ? null
+      : "clinicos-local-synthetic-token-revocation-key-000000000000");
+  const identityEdgeGuard =
+    pool && !useLocalAuthFixture && tokenRevocationKeySecret
+      ? (() => {
+          tokenRevocationStore = new RedisTokenRevocationStore({
+            redisUrl: parsed.data.services.redisUrl,
+            keyHmacSecret: Buffer.from(tokenRevocationKeySecret, "utf8"),
+            now: () => systemClock.now()
+          });
+          return new IdentitySessionEdgeGuard({
+            configuration: {
+              productionLike: parsed.data.isProductionLike,
+              expectedIssuer: buildExpectedIssuer(parsed.data),
+              mfaAssurancePolicy: {
+                policyId: "clinicos-amr-two-factor-v1",
+                reviewedRealmEvidenceId: null,
+                acceptedAcrValues: [],
+                primaryFactorAmrValues: ["pwd"],
+                secondaryFactorAmrValues: ["otp", "totp", "webauthn"],
+                phishingResistantAmrValues: []
+              },
+              requiredAudience: DEFAULT_API_AUDIENCE,
+              acceptedAuthorizedParties: [parsed.data.auth.keycloakClientId, "clinic-os-mobile"],
+              maximumAccessTokenLifetimeSeconds: 300,
+              browserSessionCookieName: "__Host-clinicos_session"
+            },
+            revocations: tokenRevocationStore,
+            securityAuditOutbox: new PostgresIdentitySecurityAuditOutbox(
+              pool as unknown as SqlConnectionFactory,
+              { traceContextProvider: () => injectW3cTraceContext().traceparent }
+            )
+          });
+        })()
+      : undefined;
 
   const serverOptions: ClinicOsApiServerOptions = {
     config: parsed.data,
@@ -653,6 +770,8 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
     paymentProvider,
     useLocalAuthFixture,
     repositoryMode: useFixtureRepository ? "fixture" : "postgres",
+    identityEdgeGuard,
+    observabilityRuntime,
     dependencyProbes: pool
       ? createRuntimeDependencyProbes({
           pool,
@@ -666,7 +785,8 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
     clinicalDental: {
       relationshipAuthority: createClinicalDentalRelationshipAuthority(),
       ...(mediaStorage ? { mediaStorage } : {}),
-      ...(mediaInspection ? { mediaInspection } : {})
+      ...(mediaInspection ? { mediaInspection } : {}),
+      ...(transactionMediaProvider ? { transactionMediaProvider } : {})
     }
   });
   if (!useFixtureRepository) {
@@ -693,7 +813,9 @@ function createRuntimeComposition(env: NodeJS.ProcessEnv = process.env): {
     close() {
       closePromise ??= Promise.all([
         ...(pool ? [pool.end()] : []),
-        ...(redisBudgetStore ? [redisBudgetStore.close()] : [])
+        ...(redisBudgetStore ? [redisBudgetStore.close()] : []),
+        ...(tokenRevocationStore ? [tokenRevocationStore.close()] : []),
+        ...(observabilityRuntime ? [observabilityRuntime.shutdown()] : [])
       ]).then(() => undefined);
       return closePromise;
     }
@@ -1679,6 +1801,8 @@ async function resolveAccessContext(input: {
   acceptedAudience: string;
   config: ClinicOsConfig;
   identityRepository: IdentityRepository;
+  identityEdgeGuard?: IdentitySessionEdgeGuard;
+  clock?: Clock;
 }): Promise<{ context: AccessContext; clinics: Clinic[] }> {
   const verifiedKeycloakClaims = await resolveClaims({
     request: input.request,
@@ -1706,17 +1830,26 @@ async function resolveAccessContext(input: {
     );
   }
 
-  return {
-    context: buildAccessContext({
-      principal,
-      tenant: snapshot.tenant,
-      user: snapshot.user,
-      memberships: snapshot.memberships,
-      clinicAssignments: snapshot.clinicAssignments,
-      roleAssignments: snapshot.roleAssignments
-    }),
-    clinics: snapshot.clinics
-  };
+  const context = buildAccessContext({
+    principal,
+    tenant: snapshot.tenant,
+    user: snapshot.user,
+    memberships: snapshot.memberships,
+    clinicAssignments: snapshot.clinicAssignments,
+    roleAssignments: snapshot.roleAssignments
+  });
+  if (input.identityEdgeGuard) {
+    const selectedClinic = headerValue(input.request, "x-clinic-id");
+    await input.identityEdgeGuard.verify({
+      claims: verifiedKeycloakClaims,
+      accessContext: context,
+      clinics: snapshot.clinics,
+      ...(selectedClinic ? { selectedClinicId: pathUuid(selectedClinic, "x-clinic-id") } : {}),
+      cookieHeader: input.request.headers.cookie,
+      now: (input.clock ?? systemClock).now()
+    });
+  }
+  return { context, clinics: snapshot.clinics };
 }
 
 function resolveClinicId(request: IncomingMessage, context: AccessContext): UUID {
@@ -1748,7 +1881,8 @@ function createPostgresRepositorySet(
   });
   const operationsUnitOfWork = new PostgresClinicUnitOfWork(pool, {
     clock: systemClock,
-    dueGenerationCursorSecret
+    dueGenerationCursorSecret,
+    traceContextProvider: () => injectW3cTraceContext().traceparent
   });
   pool.on("error", (error) => {
     const code = "code" in error && typeof error.code === "string" ? error.code : "unknown";
@@ -1829,56 +1963,114 @@ function hasJwksKeys(value: unknown): value is { keys: unknown[] } {
   );
 }
 
-function createRuntimeMediaStorage(
+function createRuntimeMediaComposition(
   config: ClinicOsConfig,
-  env: NodeJS.ProcessEnv
-): MediaStorageProvider | undefined {
-  const provider =
-    env.CLINIC_OS_MEDIA_STORAGE_PROVIDER ?? (config.isProductionLike ? "" : "local_simulator");
+  env: NodeJS.ProcessEnv,
+  useFixtureRepository: boolean
+) {
+  const storageProvider = config.storage.mediaStorageProvider;
+  const inspectionProvider = config.storage.mediaInspectionProvider;
 
-  if (!provider) return undefined;
-
-  if (provider !== "local_simulator") {
-    throw new ApiError(503, "CONFIGURATION_ERROR", "Unsupported media storage provider.", {
-      provider
-    });
+  if (storageProvider === "local_simulator" && inspectionProvider === "local_pending_simulator") {
+    if (config.isProductionLike) {
+      throw new ApiError(
+        503,
+        "CONFIGURATION_ERROR",
+        "Local private-media simulators are forbidden outside local/dev environments."
+      );
+    }
+    return {
+      mediaStorage: new LocalMediaStorageSimulator({
+        environment: config.clinicOsEnv,
+        region: config.storage.region,
+        publicBaseUrl: env.CLINIC_OS_MEDIA_PUBLIC_BASE_URL,
+        uploadBasePath: "/v1/media/uploads"
+      }),
+      mediaInspection: new PendingLocalClinicalMediaInspectionSimulator()
+    };
   }
 
-  if (config.isProductionLike) {
+  if (storageProvider !== "aws_s3" || inspectionProvider !== "guardduty_s3") {
     throw new ApiError(
       503,
       "CONFIGURATION_ERROR",
-      "The local media storage simulator is forbidden outside local/dev environments."
+      "Private-media storage and inspection providers must be activated as one approved pair."
+    );
+  }
+  if (useFixtureRepository) {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "AWS private media requires the durable PostgreSQL transaction repository."
     );
   }
 
-  return new LocalMediaStorageSimulator({
-    environment: config.clinicOsEnv,
-    region: config.storage.region,
-    publicBaseUrl: env.CLINIC_OS_MEDIA_PUBLIC_BASE_URL,
-    uploadBasePath: "/v1/media/uploads"
-  });
+  const objectKmsKeyId = requireMediaConfig(config.storage.mediaKmsKeyId);
+  const bindingSecret = requireMediaConfig(config.storage.mediaBindingSecret);
+  const scannerFunctionName = requireMediaConfig(config.storage.mediaScannerFunctionArn);
+  const scannerSigningKeyId = requireMediaConfig(config.storage.mediaScannerSigningKeyId);
+  const presignedEndpointOrigins = parseMediaEndpointOrigins(
+    requireMediaConfig(config.storage.mediaPresignedOrigins)
+  );
+  try {
+    const aws = createAwsPrivateMediaRuntime({
+      region: config.storage.region,
+      bucket: config.storage.bucket,
+      objectKmsKeyId,
+      scannerFunctionName,
+      scannerSigningKeyId,
+      presignedEndpointOrigins
+    });
+    return {
+      transactionMediaProvider: createPostgresS3TransactionMediaProviderFactory({
+        config: {
+          environment: config.clinicOsEnv,
+          bucket: config.storage.bucket,
+          region: config.storage.region,
+          kmsKeyId: objectKmsKeyId,
+          bindingSecret,
+          presignedEndpointAllowlist: presignedEndpointOrigins,
+          scannerSigningKeyIds: [scannerSigningKeyId]
+        },
+        ...aws
+      })
+    };
+  } catch {
+    throw new ApiError(
+      503,
+      "CONFIGURATION_ERROR",
+      "AWS private-media composition is invalid."
+    );
+  }
 }
 
-function createRuntimeMediaInspection(config: ClinicOsConfig, env: NodeJS.ProcessEnv) {
-  const provider =
-    env.CLINIC_OS_MEDIA_INSPECTION_PROVIDER ??
-    (config.isProductionLike ? "" : "local_pending_simulator");
-
-  if (!provider) return undefined;
-  if (provider !== "local_pending_simulator") {
-    throw new ApiError(503, "CONFIGURATION_ERROR", "Unsupported media inspection provider.", {
-      provider
-    });
+function requireMediaConfig(value: string | undefined): string {
+  if (!value) {
+    throw new ApiError(503, "CONFIGURATION_ERROR", "Private-media composition is incomplete.");
   }
-  if (config.isProductionLike) {
+  return value;
+}
+
+function parseMediaEndpointOrigins(value: string): readonly string[] {
+  try {
+    const parsed: unknown = JSON.parse(value);
+    if (
+      !Array.isArray(parsed) ||
+      parsed.length === 0 ||
+      parsed.length > 8 ||
+      parsed.some((origin) => typeof origin !== "string") ||
+      new Set(parsed).size !== parsed.length
+    ) {
+      throw new Error("invalid");
+    }
+    return Object.freeze([...parsed] as string[]);
+  } catch {
     throw new ApiError(
       503,
       "CONFIGURATION_ERROR",
-      "The local pending media inspection simulator is forbidden outside local/dev environments."
+      "Private-media presigned origin allowlist is invalid."
     );
   }
-  return new PendingLocalClinicalMediaInspectionSimulator();
 }
 
 function createRuntimePaymentProvider(config: ClinicOsConfig): PaymentProvider {

@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "algorithm": "RS256",
+  "rotationCadenceDays": 90,
+  "emergencyRotation": true,
+  "maximumAccessTokenLifetimeSeconds": 300,
+  "phases": [
+    {
+      "name": "introduce-new-key",
+      "requirements": ["new-key-active", "previous-key-passive", "jwks-publishes-both"]
+    },
+    {
+      "name": "verify-consumers",
+      "requirements": ["api-refreshes-jwks-on-unknown-kid", "old-and-new-token-contract-tests"]
+    },
+    {
+      "name": "retire-previous-key",
+      "minimumWaitSeconds": 420,
+      "requirements": ["maximum-token-lifetime-plus-clock-skew-elapsed", "no-old-kid-traffic"]
+    },
+    {
+      "name": "complete",
+      "requirements": [
+        "admin-audit-exported",
+        "rotation-evidence-reviewed",
+        "rollback-material-restricted"
+      ]
+    }
+  ]
+}

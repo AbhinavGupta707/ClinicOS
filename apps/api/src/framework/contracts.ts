@@ -5,11 +5,13 @@ import type {
   ClinicOperationsRepository,
   IdentityRepository,
   OptimisticConcurrencyOperationId,
+  SqlQueryClient,
   ScopedApiRequestGuardsPort
 } from "@clinic-os/db";
 import type { Clinic, Clock, UUID } from "@clinic-os/domain";
 import type { AtomicBudgetStore } from "@clinic-os/security";
 import type { AuditEventRecord } from "@clinic-os/security";
+import type { InstrumentationHooks } from "@clinic-os/observability";
 
 export interface ApiResponse {
   status: number;
@@ -21,6 +23,8 @@ export interface ApiTransactionContext {
   repository: ClinicOperationsRepository;
   auditSink: AuditSink;
   requestGuards: ScopedApiRequestGuardsPort;
+  /** Internal transaction seam; absent from fixtures and unavailable after the callback returns. */
+  sqlClient?: SqlQueryClient;
 }
 
 export interface AuditSink {
@@ -96,6 +100,7 @@ export interface ClinicOsNestRuntime {
   repositoryMode: "postgres" | "fixture" | "injected";
   useLocalAuthFixture: boolean;
   identityRepository: IdentityRepository;
+  instrumentation?: Pick<InstrumentationHooks, "run">;
   health(kind: "liveness" | "readiness" | "startup", requestId: string): Promise<ApiResponse>;
   admitTraffic(): Promise<boolean>;
   resolveAccess(request: IncomingMessage): Promise<ResolvedAccessContext>;

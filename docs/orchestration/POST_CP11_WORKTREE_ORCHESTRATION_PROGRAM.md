@@ -234,7 +234,7 @@ The master may implement and test local foundations autonomously. It must reques
 - publishing signed mobile builds to external distribution;
 - pushing or opening a pull request unless the kickoff authorizes it.
 
-If a checkpoint’s required E4-E7 evidence depends on missing authority, credentials, provider approval, installed/activated tooling, a physical device, clinic personnel or elapsed production observation, the master must not mark it complete or launch the next checkpoint. Finish every safe prerequisite, record the exact blocker and ask for the smallest action required.
+If a checkpoint’s required E4-E7 evidence depends on missing authority, credentials, provider approval, installed/activated tooling, a physical device, clinic personnel or elapsed production observation, the master must not mark it complete. Normally it also does not launch the next checkpoint. The explicit owner decision in `CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md` is the sole current sequencing exception: promote the verified CP14 E3 implementation baseline truthfully and allow CP15/selected CP16 implementation waves, while keeping CP14/CP15 live evidence, CP17/CP18 and the production release decision open. This exception does not permit fake evidence or provider/cloud claims.
 
 CP18 cannot honestly complete immediately after CP17: E7 requires observed multi-clinic or time-bounded production operations. The automation may monitor that external state only through an authorized integration; it cannot manufacture operational evidence.
 
@@ -254,4 +254,4 @@ These are provisional ranges, not launch instructions. The master records the ac
 
 ## 13. Completion Contract
 
-The autonomous orchestration run is complete only when CP18 E7 evidence is real, all in-scope hard findings are closed, the exact revision/environment is signed, and the heartbeat is disabled. If external reality prevents that outcome, the correct terminal state is a precise blocked handoff—not a weakened scope, fake success, or endless unchanged polling.
+The autonomous orchestration run is complete only when CP18 E7 evidence is real, all in-scope hard findings are closed, the exact revision/environment is signed, and the heartbeat is disabled. Implementation may advance under the recorded CP14 owner deferral, but the orchestration goal remains incomplete until the deferred evidence is later supplied. If external reality prevents that outcome, the correct release state is a precise deferred/blocked handoff—not fake success or endless unchanged polling.

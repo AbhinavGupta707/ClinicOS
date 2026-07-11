@@ -42,6 +42,12 @@ export type LlmProvider = (typeof llmProviders)[number];
 export const transcriptionProviders = ["simulator", "unconfigured", "openai", "deepgram"] as const;
 export type TranscriptionProvider = (typeof transcriptionProviders)[number];
 
+export const mediaStorageProviders = ["local_simulator", "aws_s3"] as const;
+export type MediaStorageProvider = (typeof mediaStorageProviders)[number];
+
+export const mediaInspectionProviders = ["local_pending_simulator", "guardduty_s3"] as const;
+export type MediaInspectionProvider = (typeof mediaInspectionProviders)[number];
+
 export const alertingProviders = ["unconfigured", "email", "slack", "sentry"] as const;
 export type AlertingProvider = (typeof alertingProviders)[number];
 
@@ -96,6 +102,7 @@ const runtimeEnvSchema = z
       "REDIS_URL must use redis:// or rediss://"
     ),
     CLINIC_OS_ABUSE_BUDGET_KEY_SECRET: optionalString,
+    CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET: optionalString,
     TEMPORAL_ADDRESS: requiredString.default("localhost:7233"),
 
     KEYCLOAK_BASE_URL: requiredUrl,
@@ -104,6 +111,15 @@ const runtimeEnvSchema = z
 
     S3_REGION: requiredString.default("ap-south-1"),
     S3_BUCKET: requiredString,
+    CLINIC_OS_MEDIA_STORAGE_PROVIDER: z.enum(mediaStorageProviders).default("local_simulator"),
+    CLINIC_OS_MEDIA_INSPECTION_PROVIDER: z
+      .enum(mediaInspectionProviders)
+      .default("local_pending_simulator"),
+    CLINIC_OS_MEDIA_KMS_KEY_ID: optionalString,
+    CLINIC_OS_MEDIA_BINDING_SECRET: optionalString,
+    CLINIC_OS_MEDIA_SCANNER_FUNCTION_ARN: optionalString,
+    CLINIC_OS_MEDIA_SCANNER_SIGNING_KEY_ID: optionalString,
+    CLINIC_OS_MEDIA_PRESIGNED_ORIGINS: optionalString,
 
     WHATSAPP_PROVIDER: z.enum(whatsappProviders).default("simulator"),
     WHATSAPP_ACCESS_TOKEN: optionalString,
@@ -198,6 +214,17 @@ const runtimeEnvSchema = z
             "Production-like API runtime requires CLINIC_OS_ABUSE_BUDGET_KEY_SECRET with at least 32 UTF-8 bytes."
         });
       }
+      if (
+        !env.CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET ||
+        Buffer.byteLength(env.CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET, "utf8") < 32
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET"],
+          message:
+            "Production-like identity runtime requires CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET with at least 32 UTF-8 bytes."
+        });
+      }
 
       const simulatorFields = [
         "WHATSAPP_PROVIDER",
@@ -215,6 +242,45 @@ const runtimeEnvSchema = z
             message: `${field}=simulator is allowed only for local/dev test surfaces, not ${env.CLINIC_OS_ENV}. Use an official provider or unconfigured unavailable state.`
           });
         }
+      }
+
+      if (env.CLINIC_OS_MEDIA_STORAGE_PROVIDER !== "aws_s3") {
+        context.addIssue({
+          code: "custom",
+          path: ["CLINIC_OS_MEDIA_STORAGE_PROVIDER"],
+          message: "Production-like private media requires the aws_s3 storage provider."
+        });
+      }
+      if (env.CLINIC_OS_MEDIA_INSPECTION_PROVIDER !== "guardduty_s3") {
+        context.addIssue({
+          code: "custom",
+          path: ["CLINIC_OS_MEDIA_INSPECTION_PROVIDER"],
+          message: "Production-like private media requires the guardduty_s3 inspection provider."
+        });
+      }
+      requireFields(
+        context,
+        env,
+        true,
+        [
+          "CLINIC_OS_MEDIA_KMS_KEY_ID",
+          "CLINIC_OS_MEDIA_BINDING_SECRET",
+          "CLINIC_OS_MEDIA_SCANNER_FUNCTION_ARN",
+          "CLINIC_OS_MEDIA_SCANNER_SIGNING_KEY_ID",
+          "CLINIC_OS_MEDIA_PRESIGNED_ORIGINS"
+        ],
+        "Production-like private media requires exact S3/KMS/scanner composition inputs."
+      );
+      if (
+        env.CLINIC_OS_MEDIA_BINDING_SECRET &&
+        Buffer.byteLength(env.CLINIC_OS_MEDIA_BINDING_SECRET, "utf8") < 32
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["CLINIC_OS_MEDIA_BINDING_SECRET"],
+          message:
+            "Production-like private media requires CLINIC_OS_MEDIA_BINDING_SECRET with at least 32 UTF-8 bytes."
+        });
       }
     }
 
@@ -422,6 +488,7 @@ export type ClinicOsConfig = {
   };
   security: {
     abuseBudgetKeySecret?: string | undefined;
+    tokenRevocationKeySecret?: string | undefined;
   };
   auth: {
     keycloakBaseUrl: string;
@@ -431,6 +498,13 @@ export type ClinicOsConfig = {
   storage: {
     region: string;
     bucket: string;
+    mediaStorageProvider: MediaStorageProvider;
+    mediaInspectionProvider: MediaInspectionProvider;
+    mediaKmsKeyId?: string | undefined;
+    mediaBindingSecret?: string | undefined;
+    mediaScannerFunctionArn?: string | undefined;
+    mediaScannerSigningKeyId?: string | undefined;
+    mediaPresignedOrigins?: string | undefined;
   };
   providers: {
     whatsapp: {
@@ -541,7 +615,8 @@ function toConfig(env: RuntimeEnv): ClinicOsConfig {
       temporalAddress: env.TEMPORAL_ADDRESS
     },
     security: {
-      abuseBudgetKeySecret: env.CLINIC_OS_ABUSE_BUDGET_KEY_SECRET
+      abuseBudgetKeySecret: env.CLINIC_OS_ABUSE_BUDGET_KEY_SECRET,
+      tokenRevocationKeySecret: env.CLINIC_OS_TOKEN_REVOCATION_KEY_SECRET
     },
     auth: {
       keycloakBaseUrl: env.KEYCLOAK_BASE_URL,
@@ -550,7 +625,14 @@ function toConfig(env: RuntimeEnv): ClinicOsConfig {
     },
     storage: {
       region: env.S3_REGION,
-      bucket: env.S3_BUCKET
+      bucket: env.S3_BUCKET,
+      mediaStorageProvider: env.CLINIC_OS_MEDIA_STORAGE_PROVIDER,
+      mediaInspectionProvider: env.CLINIC_OS_MEDIA_INSPECTION_PROVIDER,
+      mediaKmsKeyId: env.CLINIC_OS_MEDIA_KMS_KEY_ID,
+      mediaBindingSecret: env.CLINIC_OS_MEDIA_BINDING_SECRET,
+      mediaScannerFunctionArn: env.CLINIC_OS_MEDIA_SCANNER_FUNCTION_ARN,
+      mediaScannerSigningKeyId: env.CLINIC_OS_MEDIA_SCANNER_SIGNING_KEY_ID,
+      mediaPresignedOrigins: env.CLINIC_OS_MEDIA_PRESIGNED_ORIGINS
     },
     providers: {
       whatsapp: {

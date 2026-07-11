@@ -1,0 +1,27 @@
+aws_account_id                   = "000000000000"
+terraform_state_bucket           = "replace-with-dedicated-kms-state-bucket"
+terraform_lock_table             = "clinicos-terraform-locks"
+terraform_state_kms_key_arn      = "arn:aws:kms:ap-south-1:000000000000:key/REPLACE_WITH_DEDICATED_STATE_KEY"
+offline_validation_mode          = true
+
+github_repository                = "AbhinavGupta707/ClinicOS"
+github_subject_claims            = ["repo:AbhinavGupta707/ClinicOS:environment:staging"]
+create_github_oidc_provider      = false
+github_oidc_provider_arn         = "arn:aws:iam::000000000000:oidc-provider/token.actions.githubusercontent.com"
+permissions_boundary_arn         = "arn:aws:iam::000000000000:policy/clinicos/baseline/clinicos-terraform-ci-boundary"
+
+# Target subject only: the master must first create and protect the exact GitHub environment.
+# Foundation excludes NAT, endpoints, RDS, cache, backup plan, ECS services, and ALB/WAF.
+activation_phase = "foundation"
+image_uris       = {}
+image_users      = {}
+
+# Runtime also requires keycloak_admin_hostname, keycloak_admin_private_zone_id,
+# keycloak_admin_certificate_arn, keycloak_admin_allowed_operator_cidrs, and auth_hostname.
+# GuardDuty scanning has usage/tagging cost and remains off until a reviewed plan and named approval.
+enable_malware_scanner                 = false
+malware_scanner_authorized_by          = null
+malware_scanner_spend_acknowledgement  = null
+
+additional_alarm_action_arns = []
+enable_backup_vault_lock     = false

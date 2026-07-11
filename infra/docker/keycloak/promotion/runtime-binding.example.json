@@ -1,0 +1,7 @@
+{
+  "CLINIC_OS_REALM": "clinic-os-staging",
+  "CLINIC_OS_WEB_ORIGIN": "https://app.staging.example.invalid",
+  "CLINIC_OS_WEB_CALLBACK_URI": "https://app.staging.example.invalid/auth/callback",
+  "CLINIC_OS_WEB_POST_LOGOUT_URI": "https://app.staging.example.invalid/auth/signed-out",
+  "CLINIC_OS_MOBILE_REDIRECT_URI": "https://mobile.staging.example.invalid/auth/callback"
+}
