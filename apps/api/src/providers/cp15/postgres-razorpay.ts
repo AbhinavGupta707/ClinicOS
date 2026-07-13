@@ -87,7 +87,8 @@ export class PostgresRazorpayUnitOfWork implements RazorpayUnitOfWorkPort {
     execute: (transaction: RazorpayTransactionalPort) => Promise<T>
   ): Promise<T> {
     return this.#unitOfWork.run(async ({ sqlClient }) => {
-      if (!sqlClient) throw new Error("Razorpay processing requires a transaction-bound SQL client.");
+      if (!sqlClient)
+        throw new Error("Razorpay processing requires a transaction-bound SQL client.");
       await setScope(sqlClient, account.tenantId as UUID, account.clinicId as UUID);
       return execute(new PostgresRazorpayTransaction(sqlClient, account));
     });
@@ -122,12 +123,7 @@ class PostgresRazorpayTransaction implements RazorpayTransactionalPort {
         where tenant_id = $1 and clinic_id = $2 and external_account_id = $3
           and provider_key = 'razorpay'
         returning id`,
-      [
-        this.#account.tenantId,
-        this.#account.clinicId,
-        this.#account.externalAccountId,
-        receivedAt
-      ]
+      [this.#account.tenantId, this.#account.clinicId, this.#account.externalAccountId, receivedAt]
     );
     if (updated.rows.length !== 1) {
       throw new Error("Verified Razorpay callback has no unique durable provider registration.");
@@ -205,8 +201,8 @@ class PostgresRazorpayTransaction implements RazorpayTransactionalPort {
          evidence_state, lease_owner, lease_expires_at, attempt_count,
          verified_secret_version, verified_with_previous_secret, raw_body_length
        ) values (
-         $1,$2,'razorpay',$3,$4,$5,$5,'verified','processing',null,$6,$7::timestamptz,$4,
-         $6,$8,$9,$10::jsonb,'verified',$11,$12::timestamptz,1,$13,$14,$15
+         $1,$2,'razorpay',$3,$4,$5,$5,'verified','processing',null,$6::text,$7::timestamptz,$4,
+         $6::char(64),$8::char(64),$9::char(64),$10::jsonb,'verified',$11,$12::timestamptz,1,$13,$14,$15
        ) returning id`,
       [
         this.#account.tenantId,
@@ -266,12 +262,7 @@ class PostgresRazorpayTransaction implements RazorpayTransactionalPort {
           and (($3::text is not null and provider_reference_id = $3)
             or ($3::text is null and $4::uuid is not null and invoice_id = $4))
         order by created_at desc limit 1 for update`,
-      [
-        this.#account.tenantId,
-        this.#account.clinicId,
-        input.providerRequestId,
-        input.invoiceId
-      ]
+      [this.#account.tenantId, this.#account.clinicId, input.providerRequestId, input.invoiceId]
     );
     const row = result.rows[0];
     if (!row) return null;
@@ -293,8 +284,8 @@ class PostgresRazorpayTransaction implements RazorpayTransactionalPort {
   ): Promise<RazorpayPaymentEffectSnapshot | null> {
     if (!providerPaymentId) return null;
     const result = await this.#client.query<PaymentEffectRow>(
-      `select provider_payment_id, coalesce(pt.invoice_id, ri.invoice_id) as invoice_id,
-              max(case when effect_kind = 'payment_capture' then rbe.amount_minor else 0 end) as amount_minor,
+      `select rbe.provider_payment_id, coalesce(pt.invoice_id, ri.invoice_id) as invoice_id,
+              max(case when rbe.effect_kind = 'payment_capture' then rbe.amount_minor else 0 end) as amount_minor,
               max(rbe.cumulative_refunded_amount_minor) as cumulative_refunded_amount_minor,
               max(rbe.event_rank) as event_rank
          from razorpay_business_effects rbe
@@ -306,7 +297,7 @@ class PostgresRazorpayTransaction implements RazorpayTransactionalPort {
           and ri.id = rbe.payment_reconciliation_item_id
         where rbe.tenant_id = $1 and rbe.clinic_id = $2
           and rbe.external_account_id = $3 and rbe.provider_payment_id = $4
-        group by provider_payment_id, coalesce(pt.invoice_id, ri.invoice_id)`,
+        group by rbe.provider_payment_id, coalesce(pt.invoice_id, ri.invoice_id)`,
       [
         this.#account.tenantId,
         this.#account.clinicId,
@@ -334,12 +325,7 @@ class PostgresRazorpayTransaction implements RazorpayTransactionalPort {
       `select id from razorpay_business_effects
         where tenant_id = $1 and clinic_id = $2 and external_account_id = $3
           and business_key = $4`,
-      [
-        this.#account.tenantId,
-        this.#account.clinicId,
-        this.#account.externalAccountId,
-        businessKey
-      ]
+      [this.#account.tenantId, this.#account.clinicId, this.#account.externalAccountId, businessKey]
     );
     return existing.rows[0] ? "duplicate" : "claimed";
   }
@@ -453,7 +439,12 @@ class PostgresRazorpayTransaction implements RazorpayTransactionalPort {
     readonly event: NormalizedRazorpayEvent;
     readonly decision: Extract<RazorpayEventDecision, { kind: "record_refund" }>;
   }): Promise<{ readonly effectRecordId: string }> {
-    const capture = await this.#client.query<{ id: string; invoice_id: string; patient_id: string; amount_minor: string | number }>(
+    const capture = await this.#client.query<{
+      id: string;
+      invoice_id: string;
+      patient_id: string;
+      amount_minor: string | number;
+    }>(
       `select id, invoice_id, patient_id, amount_minor from payment_transactions
         where tenant_id = $1 and clinic_id = $2 and provider = 'razorpay'
           and provider_payment_id = $3 and status in ('succeeded','refunded')
@@ -560,7 +551,9 @@ class PostgresRazorpayTransaction implements RazorpayTransactionalPort {
     return { effectRecordId: requestId };
   }
 
-  async createReconciliation(input: Parameters<RazorpayTransactionalPort["createReconciliation"]>[0]) {
+  async createReconciliation(
+    input: Parameters<RazorpayTransactionalPort["createReconciliation"]>[0]
+  ) {
     const invoice = input.invoiceId
       ? await requiredInvoice(this.#client, this.#account, input.invoiceId)
       : null;
@@ -815,7 +808,10 @@ async function updateInvoiceSettlement(
   );
 }
 
-function razorpayEvidenceMatches(row: RawEventRow, evidence: RazorpayVerifiedEventEvidence): boolean {
+function razorpayEvidenceMatches(
+  row: RawEventRow,
+  evidence: RazorpayVerifiedEventEvidence
+): boolean {
   return (
     row.raw_body_sha256 === evidence.rawBodySha256 &&
     row.signature_sha256 === evidence.signatureSha256 &&
@@ -843,9 +839,7 @@ function parseStoredResult(value: unknown): RazorpayWebhookProcessingResult | nu
 }
 
 function paymentRequestStatus(value: string): RazorpayPaymentRequestBinding["status"] {
-  if (
-    ["partially_paid", "paid", "cancelled", "expired", "closed"].includes(value)
-  ) {
+  if (["partially_paid", "paid", "cancelled", "expired", "closed"].includes(value)) {
     return value as RazorpayPaymentRequestBinding["status"];
   }
   return "created";
@@ -853,7 +847,8 @@ function paymentRequestStatus(value: string): RazorpayPaymentRequestBinding["sta
 
 function minor(value: string | number): number {
   const parsed = typeof value === "number" ? value : Number(value);
-  if (!Number.isSafeInteger(parsed) || parsed < 0) throw new Error("Financial minor amount is invalid.");
+  if (!Number.isSafeInteger(parsed) || parsed < 0)
+    throw new Error("Financial minor amount is invalid.");
   return parsed;
 }
 

@@ -128,6 +128,7 @@ create table provider_callback_registrations (
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
   unique (tenant_id, id),
+  unique (tenant_id, clinic_id, id),
   unique (tenant_id, clinic_id, external_account_id, provider_key),
   constraint provider_callback_registrations_clinic_fk
     foreign key (tenant_id, clinic_id) references clinics(tenant_id, id) on delete restrict,
@@ -135,10 +136,34 @@ create table provider_callback_registrations (
     foreign key (tenant_id, clinic_id, external_account_id)
     references external_accounts(tenant_id, clinic_id, id) on delete restrict,
   constraint provider_callback_registrations_secret_refs_check check (
-    (api_credential_ref is null or api_credential_ref ~ '^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]{1,512}$')
-    and (webhook_secret_ref is null or webhook_secret_ref ~ '^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]{1,512}$')
-    and (previous_webhook_secret_ref is null or previous_webhook_secret_ref ~ '^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]{1,512}$')
-    and (verification_token_ref is null or verification_token_ref ~ '^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]{1,512}$')
+    (
+      api_credential_ref is null
+      or (
+        length(api_credential_ref) between 20 and 2048
+        and api_credential_ref ~ '^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$'
+      )
+    )
+    and (
+      webhook_secret_ref is null
+      or (
+        length(webhook_secret_ref) between 20 and 2048
+        and webhook_secret_ref ~ '^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$'
+      )
+    )
+    and (
+      previous_webhook_secret_ref is null
+      or (
+        length(previous_webhook_secret_ref) between 20 and 2048
+        and previous_webhook_secret_ref ~ '^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$'
+      )
+    )
+    and (
+      verification_token_ref is null
+      or (
+        length(verification_token_ref) between 20 and 2048
+        and verification_token_ref ~ '^arn:(aws|aws-cn|aws-us-gov):secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:[A-Za-z0-9/_+=.@-]+$'
+      )
+    )
   ),
   constraint provider_callback_registrations_provider_shape_check check (
     (
@@ -210,6 +235,83 @@ create trigger provider_callback_registrations_set_updated_at
 before update on provider_callback_registrations
 for each row execute function clinic_os.set_updated_at();
 
+create table provider_callback_routes (
+  callback_key_digest char(64) primary key check (callback_key_digest ~ '^[0-9a-f]{64}$'),
+  provider_key text not null check (provider_key in ('meta_whatsapp_cloud', 'razorpay')),
+  tenant_id uuid not null,
+  clinic_id uuid not null,
+  registration_id uuid not null unique,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now(),
+  constraint provider_callback_routes_registration_fk
+    foreign key (tenant_id, clinic_id, registration_id)
+    references provider_callback_registrations(tenant_id, clinic_id, id) on delete cascade
+);
+
+create trigger provider_callback_routes_set_updated_at
+before update on provider_callback_routes
+for each row execute function clinic_os.set_updated_at();
+
+alter table provider_callback_routes enable row level security;
+alter table provider_callback_routes force row level security;
+create policy provider_callback_routes_opaque_key_scope on provider_callback_routes
+  using (
+    callback_key_digest = nullif(
+      current_setting('app.provider_callback_key_digest', true),
+      ''
+    )::char(64)
+  )
+  with check (
+    callback_key_digest = nullif(
+      current_setting('app.provider_callback_key_digest', true),
+      ''
+    )::char(64)
+  );
+
+revoke all on provider_callback_routes from public;
+
+create or replace function clinic_os.sync_provider_callback_route()
+returns trigger
+language plpgsql
+security definer
+set search_path = pg_catalog, public, clinic_os
+as $$
+begin
+  if tg_op = 'DELETE' then
+    perform set_config('app.provider_callback_key_digest', old.callback_key_digest::text, true);
+    delete from public.provider_callback_routes route
+      where route.callback_key_digest = old.callback_key_digest;
+    return old;
+  end if;
+
+  if tg_op = 'UPDATE' and old.callback_key_digest <> new.callback_key_digest then
+    perform set_config('app.provider_callback_key_digest', old.callback_key_digest::text, true);
+    delete from public.provider_callback_routes route
+      where route.callback_key_digest = old.callback_key_digest;
+  end if;
+
+  perform set_config('app.provider_callback_key_digest', new.callback_key_digest::text, true);
+  insert into public.provider_callback_routes (
+    callback_key_digest, provider_key, tenant_id, clinic_id, registration_id
+  ) values (
+    new.callback_key_digest, new.provider_key, new.tenant_id, new.clinic_id, new.id
+  )
+  on conflict (callback_key_digest) do update
+    set provider_key = excluded.provider_key,
+        tenant_id = excluded.tenant_id,
+        clinic_id = excluded.clinic_id,
+        registration_id = excluded.registration_id;
+  return new;
+end
+$$;
+
+revoke all on function clinic_os.sync_provider_callback_route() from public;
+
+create trigger provider_callback_registrations_sync_route
+after insert or update of callback_key_digest, provider_key, tenant_id, clinic_id
+or delete on provider_callback_registrations
+for each row execute function clinic_os.sync_provider_callback_route();
+
 create or replace function clinic_os.resolve_provider_callback_registration(
   requested_provider_key text,
   requested_callback_key_digest char(64)
@@ -233,33 +335,58 @@ returns table (
   previous_secret_accept_until timestamptz,
   verification_token_ref text
 )
-language sql
+language plpgsql
 security definer
-stable
 set search_path = pg_catalog, public, clinic_os
 as $$
-  select
-    registration.id,
-    registration.tenant_id,
-    registration.clinic_id,
-    registration.external_account_id,
-    registration.provider_key,
-    registration.activation_state,
-    registration.provider_mode,
-    registration.provider_account_id,
-    registration.provider_endpoint_id,
-    registration.api_version,
-    registration.api_credential_ref,
-    registration.webhook_secret_ref,
-    registration.webhook_secret_version,
-    registration.previous_webhook_secret_ref,
-    registration.previous_webhook_secret_version,
-    registration.previous_secret_accept_until,
-    registration.verification_token_ref
-  from public.provider_callback_registrations registration
-  where registration.provider_key = requested_provider_key
-    and registration.callback_key_digest = requested_callback_key_digest
-  limit 1
+declare
+  resolved_route record;
+begin
+  if requested_provider_key not in ('meta_whatsapp_cloud', 'razorpay') then
+    return;
+  end if;
+  perform set_config(
+    'app.provider_callback_key_digest',
+    requested_callback_key_digest::text,
+    true
+  );
+  select route.tenant_id, route.clinic_id, route.registration_id
+    into resolved_route
+    from public.provider_callback_routes route
+   where route.callback_key_digest = requested_callback_key_digest
+     and route.provider_key = requested_provider_key
+   limit 1;
+  if not found then
+    return;
+  end if;
+  perform set_config('app.tenant_id', resolved_route.tenant_id::text, true);
+  perform set_config('app.clinic_id', resolved_route.clinic_id::text, true);
+  return query
+    select
+      registration.id,
+      registration.tenant_id,
+      registration.clinic_id,
+      registration.external_account_id,
+      registration.provider_key,
+      registration.activation_state,
+      registration.provider_mode,
+      registration.provider_account_id,
+      registration.provider_endpoint_id,
+      registration.api_version,
+      registration.api_credential_ref,
+      registration.webhook_secret_ref,
+      registration.webhook_secret_version,
+      registration.previous_webhook_secret_ref,
+      registration.previous_webhook_secret_version,
+      registration.previous_secret_accept_until,
+      registration.verification_token_ref
+    from public.provider_callback_registrations registration
+   where registration.tenant_id = resolved_route.tenant_id
+     and registration.clinic_id = resolved_route.clinic_id
+     and registration.id = resolved_route.registration_id
+     and registration.provider_key = requested_provider_key
+   limit 1;
+end
 $$;
 
 revoke all on function clinic_os.resolve_provider_callback_registration(text, char(64)) from public;
@@ -834,6 +961,7 @@ $$;
 do $$
 begin
   if exists (select 1 from pg_roles where rolname = 'clinic_os_runtime') then
+    grant usage on schema clinic_os to clinic_os_runtime;
     grant execute on function clinic_os.resolve_provider_callback_registration(text, char(64))
       to clinic_os_runtime;
     grant select, insert, update on
@@ -850,6 +978,7 @@ begin
       to clinic_os_runtime;
   end if;
   if exists (select 1 from pg_roles where rolname = 'clinic_os_worker') then
+    grant usage on schema clinic_os to clinic_os_worker;
     grant select, insert, update on
       provider_callback_registrations,
       meta_whatsapp_event_receipts,

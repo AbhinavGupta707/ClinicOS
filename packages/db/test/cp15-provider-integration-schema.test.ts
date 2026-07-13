@@ -11,10 +11,20 @@ const migration = readFileSync(
 test("CP15 schema registers only secret references behind a forced-RLS callback resolver", () => {
   assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "020");
   assert.match(migration, /create table provider_callback_registrations/u);
+  assert.match(migration, /create table provider_callback_routes/u);
   assert.match(migration, /callback_key_digest char\(64\) not null unique/u);
   assert.match(migration, /security definer/u);
-  assert.match(migration, /revoke all on function clinic_os\.resolve_provider_callback_registration/u);
+  assert.match(
+    migration,
+    /revoke all on function clinic_os\.resolve_provider_callback_registration/u
+  );
+  assert.match(migration, /grant usage on schema clinic_os to clinic_os_runtime/u);
+  assert.match(migration, /grant usage on schema clinic_os to clinic_os_worker/u);
   assert.match(migration, /provider_callback_registrations force row level security/u);
+  assert.match(migration, /provider_callback_routes force row level security/u);
+  assert.match(migration, /provider_callback_routes_opaque_key_scope/u);
+  assert.match(migration, /revoke all on provider_callback_routes from public/u);
+  assert.match(migration, /sync_provider_callback_route/u);
   assert.match(migration, /provider_callback_registrations_secret_refs_check/u);
   assert.match(migration, /arn:\(aws\|aws-cn\|aws-us-gov\):secretsmanager/u);
   assert.match(migration, /last_failure_code is null or last_failure_code ~ '\^\[a-z\]/u);

@@ -51,7 +51,8 @@ export class PostgresMetaWebhookPersistence implements MetaWebhookPersistence {
 
   async persistVerified(input: MetaPersistVerifiedInput): Promise<MetaPersistVerifiedResult> {
     return this.#unitOfWork.run(async ({ sqlClient }) => {
-      if (!sqlClient) throw new Error("Meta webhook persistence requires a transaction-bound SQL client.");
+      if (!sqlClient)
+        throw new Error("Meta webhook persistence requires a transaction-bound SQL client.");
       await setScope(sqlClient, input.tenantId as UUID, input.clinicId as UUID);
       const existing = await sqlClient.query<RawEventRow>(
         `select id, raw_body_sha256, signature_sha256, normalized_event_sha256,
@@ -89,9 +90,9 @@ export class PostgresMetaWebhookPersistence implements MetaWebhookPersistence {
            verified_with_previous_secret, raw_body_length
          ) values (
            $1, $2, 'meta_whatsapp_cloud', $3, 'webhook_batch',
-           $4, $4, 'verified', 'processing',
-           $5::jsonb, $6, $7::timestamptz, null,
-           'webhook_batch', $6, $8, $9,
+           $4, $4, 'verified', 'verified',
+           $5::jsonb, $6::text, $7::timestamptz, null,
+           'webhook_batch', $6::char(64), $8::char(64), $9::char(64),
            $10::jsonb, 'verified', $11, $12, $13
          ) returning id`,
         [
@@ -463,10 +464,8 @@ async function recordConsentCommand(
   const patientId = patients.rows.length === 1 ? patients.rows[0]!.patient_id : null;
   let affectedConsentId: string | null = null;
   let outcome:
-    | "consent_revoked"
-    | "already_revoked"
-    | "no_active_consent"
-    | "manual_review_required" = "manual_review_required";
+    "consent_revoked" | "already_revoked" | "no_active_consent" | "manual_review_required" =
+    "manual_review_required";
   if (input.command === "opt_out" && patientId) {
     const active = await client.query<IdRow>(
       `select id from consents
@@ -482,7 +481,13 @@ async function recordConsentCommand(
              revoked_by_actor_type = 'integration', revoked_by_actor_id = $5,
              revocation_reason = 'signed_meta_whatsapp_opt_out'
           where tenant_id = $1 and clinic_id = $2 and id = $3`,
-        [input.tenantId, input.clinicId, affectedConsentId, input.occurredAt, input.externalAccountId]
+        [
+          input.tenantId,
+          input.clinicId,
+          affectedConsentId,
+          input.occurredAt,
+          input.externalAccountId
+        ]
       );
       outcome = "consent_revoked";
     } else {

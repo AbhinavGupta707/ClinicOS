@@ -40,6 +40,7 @@
     "worker:test:persistence": "npm --workspace @clinic-os/worker run build && node scripts/test-worker-persistence.mjs",
     "cp13:test:workflow-recovery": "npm run build:shared && npm run build --workspace @clinic-os/worker && node scripts/test-cp13-workflow-recovery.mjs",
     "cp13:smoke:api": "node scripts/cp13-runtime-smoke.mjs",
+    "cp15:test:provider-persistence": "npm run build:shared && node scripts/test-cp15-provider-persistence.mjs",
     "api:test:readiness": "node scripts/test-api-readiness.mjs",
     "cp11:smoke:api": "node scripts/cp10-contract-smoke.mjs",
     "cp11:baseline:api": "node scripts/cp11-performance-baseline.mjs",
