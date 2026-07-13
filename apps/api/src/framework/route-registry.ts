@@ -14,6 +14,8 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Objec
   healthReady: [],
   healthStartup: [],
   getCurrentIdentity: [],
+  verifyMetaWhatsAppCallback: [],
+  receiveMetaWhatsAppWebhook: [],
   receiveRazorpayPaymentWebhook: [],
   listPatients: ["patient.read"],
   createPatient: ["patient.write"],
@@ -239,10 +241,17 @@ function createPolicy(operation: HttpOperationContract): RouteSecurityPolicy {
         ? ({ mode: "public_health", healthKind: "readiness" } as const)
         : operation.operationId === "healthStartup"
           ? ({ mode: "public_health", healthKind: "startup" } as const)
-          : operation.auth === "razorpay_signature"
+          : operation.auth === "meta_challenge"
+            ? ({
+                mode: "provider_challenge",
+                provider: "meta_whatsapp_cloud",
+                verification: "constant_time_registered_token"
+              } as const)
+            : operation.auth === "meta_signature" || operation.auth === "razorpay_signature"
             ? ({
                 mode: "verified_webhook",
-                provider: "razorpay",
+                provider:
+                  operation.auth === "meta_signature" ? "meta_whatsapp_cloud" : "razorpay",
                 signatureVerification: "raw_body_before_parse",
                 replayProtection: "required"
               } as const)
@@ -306,7 +315,7 @@ function createPolicy(operation: HttpOperationContract): RouteSecurityPolicy {
       path: Object.keys(operation.request.path.properties ?? {}).length > 0 ? "strict" : "none",
       query: queryPropertyCount > 0 ? "strict" : "none",
       body:
-        operation.auth === "razorpay_signature"
+        operation.auth === "meta_signature" || operation.auth === "razorpay_signature"
           ? "verified_raw_body"
           : operation.request.body
             ? "strict"
@@ -319,9 +328,9 @@ function createPolicy(operation: HttpOperationContract): RouteSecurityPolicy {
 }
 
 function assertApplicationRouteRegistry(): void {
-  if (ACTIVE_NATIVE_HTTP_OPERATIONS.length !== 128) {
+  if (ACTIVE_NATIVE_HTTP_OPERATIONS.length !== 130) {
     throw new Error(
-      `ClinicOS application route registry expected exactly 128 operations; received ${ACTIVE_NATIVE_HTTP_OPERATIONS.length}.`
+      `ClinicOS application route registry expected exactly 130 operations; received ${ACTIVE_NATIVE_HTTP_OPERATIONS.length}.`
     );
   }
   const operationIds = new Set(ACTIVE_NATIVE_HTTP_OPERATIONS.map(({ operationId }) => operationId));

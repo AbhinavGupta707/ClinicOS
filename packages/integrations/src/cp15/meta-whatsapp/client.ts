@@ -224,7 +224,7 @@ export class MetaWhatsAppClient {
     }
 
     if (response.body.byteLength > 256 * 1024) {
-      throw new MetaWhatsAppError({ code: "provider_response_invalid", message: "Meta response exceeded the configured limit.", httpStatus: 502, retryable: true });
+      return ambiguousDispatch(messageRequestId, idempotencyKey, correlationId);
     }
     if (response.status < 200 || response.status >= 300) {
       const isAmbiguous = response.status === 408 || response.status === 429 || response.status >= 500;
@@ -253,7 +253,14 @@ export class MetaWhatsAppClient {
       };
     }
 
-    const providerMessageId = parseProviderMessageId(response.body);
+    let providerMessageId: string;
+    try {
+      providerMessageId = parseProviderMessageId(response.body);
+    } catch {
+      // A 2xx response proves that dispatch reached Meta even when its response is malformed.
+      // Automatic retry could duplicate a patient message, so reconciliation is mandatory.
+      return ambiguousDispatch(messageRequestId, idempotencyKey, correlationId);
+    }
     return {
       outcome: "accepted_by_provider",
       providerMessageId,
@@ -264,6 +271,23 @@ export class MetaWhatsAppClient {
       reconciliationRequired: false
     };
   }
+}
+
+function ambiguousDispatch(
+  messageRequestId: string,
+  idempotencyKey: string,
+  correlationId: string
+): Extract<MetaTemplateSendResult, { outcome: "dispatch_ambiguous" }> {
+  return {
+    outcome: "dispatch_ambiguous",
+    providerMessageId: null,
+    messageRequestId,
+    idempotencyKey,
+    correlationId,
+    deliveryState: null,
+    reconciliationRequired: true,
+    retryAutomatically: false
+  };
 }
 
 export function evaluateMetaTemplateSendPolicy(input: MetaTemplateSendPolicy): MetaPolicyDecision {

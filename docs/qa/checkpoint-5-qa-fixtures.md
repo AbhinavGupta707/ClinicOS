@@ -89,7 +89,7 @@ POST /v1/encounters/{encounterId}/procedures
 POST /v1/invoices
 GET /v1/invoices/{invoiceId}
 POST /v1/invoices/{invoiceId}/payment-requests
-POST /v1/payment-webhooks/razorpay
+POST /v1/provider-callbacks/razorpay/cp5_registration_key_01
 POST /v1/invoices/{invoiceId}/manual-payments
 POST /v1/invoices/{invoiceId}/receipts
 POST /v1/encounters/{encounterId}/prescriptions

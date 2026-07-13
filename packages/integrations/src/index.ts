@@ -3,4 +3,7 @@ export * from "./media/index.js";
 export * from "./messaging-provider.js";
 export * from "./payment-provider.js";
 export * from "./provider-contracts.js";
+export * from "./provider-secret-resolver.js";
 export * from "./telephony-provider.js";
+export * from "./cp15/meta-whatsapp/index.js";
+export * from "./cp15/razorpay/index.js";

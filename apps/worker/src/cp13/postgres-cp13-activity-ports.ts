@@ -8,6 +8,7 @@ import {
 import { systemClock, type DomainEventType, type UUID } from "@clinic-os/domain";
 import {
   PaymentProviderError,
+  RazorpayBoundaryError,
   type PaymentProvider,
   type PaymentProviderRequestResult
 } from "@clinic-os/integrations";
@@ -27,6 +28,8 @@ import type {
   Cp13ProviderPaymentRequestRecoveryRequest,
   Cp13ProviderPaymentRequestRecoveryResult
 } from "@clinic-os/workflow";
+import type { ScopedPaymentProviderResolver } from "../cp15/scoped-razorpay-payment-provider.js";
+import type { MetaInstructionSenderPort } from "../cp15/scoped-meta-instruction-sender.js";
 
 interface ActivityScope {
   readonly tenantId: UUID;
@@ -37,6 +40,8 @@ interface ActivityScope {
 export interface PostgresCp13ActivityPortsOptions {
   readonly pool: Pool;
   readonly paymentProvider: PaymentProvider;
+  readonly scopedPaymentProviderResolver?: ScopedPaymentProviderResolver;
+  readonly metaInstructionSender?: MetaInstructionSenderPort;
   readonly workerId: string;
   readonly dueGenerationCursorSecret?: string;
   readonly now?: () => Date;
@@ -231,7 +236,26 @@ export function createPostgresCp13ActivityPorts(
   const createOrRecoverProviderPaymentRequest = async (
     request: Cp13ProviderPaymentRequestRecoveryRequest
   ): Promise<Cp13ProviderPaymentRequestRecoveryResult> => {
-    if (options.paymentProvider.providerKey !== request.providerKey) {
+    let paymentProvider: PaymentProvider;
+    try {
+      paymentProvider = options.scopedPaymentProviderResolver
+        ? await options.scopedPaymentProviderResolver.resolve({
+            tenantId: request.tenantId,
+            clinicId: request.clinicId,
+            actorUserId: request.actorUserId
+          })
+        : options.paymentProvider;
+    } catch (error) {
+      if (error instanceof PaymentProviderError && error.status === "not_configured") {
+        return {
+          outcome: "permanent_failure",
+          failureCode: "PAYMENT_PROVIDER_NOT_CONFIGURED",
+          providerEvidenceId: request.durableIntentId
+        };
+      }
+      throw error;
+    }
+    if (paymentProvider.providerKey !== request.providerKey) {
       return {
         outcome: "ambiguous",
         reasonCode: "PAYMENT_PROVIDER_RUNTIME_MISMATCH",
@@ -255,9 +279,16 @@ export function createPostgresCp13ActivityPorts(
       };
       result =
         request.requestType === "invoice_qr"
-          ? await options.paymentProvider.createInvoiceQr(providerInput)
-          : await options.paymentProvider.createPaymentLink(providerInput);
+          ? await paymentProvider.createInvoiceQr(providerInput)
+          : await paymentProvider.createPaymentLink(providerInput);
     } catch (error) {
+      if (error instanceof RazorpayBoundaryError && error.outcomeUnknown) {
+        return {
+          outcome: "ambiguous",
+          reasonCode: "PAYMENT_PROVIDER_CREATION_OUTCOME_UNKNOWN",
+          providerEvidenceId: request.durableIntentId
+        };
+      }
       if (
         error instanceof PaymentProviderError &&
         ["not_configured", "verification_failed"].includes(error.status)
@@ -265,6 +296,13 @@ export function createPostgresCp13ActivityPorts(
         return {
           outcome: "permanent_failure",
           failureCode: "PAYMENT_PROVIDER_NOT_CONFIGURED",
+          providerEvidenceId: request.durableIntentId
+        };
+      }
+      if (error instanceof RazorpayBoundaryError && !error.retryable) {
+        return {
+          outcome: "permanent_failure",
+          failureCode: "PAYMENT_PROVIDER_REQUEST_REJECTED",
           providerEvidenceId: request.durableIntentId
         };
       }
@@ -420,6 +458,29 @@ export function createPostgresCp13ActivityPorts(
         });
       } else if (request.resolution.status === "reconciliation_required") {
         result = paymentReconciliationResult(request, request.resolution.reasonCode, evidenceId);
+        if (
+          existing.providerKey === "razorpay" &&
+          request.resolution.reasonCode === "PAYMENT_PROVIDER_CREATION_OUTCOME_UNKNOWN"
+        ) {
+          if (!context.sqlClient) {
+            throw new Error("Razorpay reconciliation requires transaction-bound SQL.");
+          }
+          await context.sqlClient.query(
+            `insert into razorpay_reconciliation_jobs (
+               tenant_id, clinic_id, external_account_id, invoice_id,
+               provider_request_reference, reason, status, attempt_count, next_attempt_at
+             ) values ($1, $2, $3, $4, $5, 'creation_outcome_unknown', 'pending', 0, $6)
+             on conflict do nothing`,
+            [
+              request.tenantId,
+              request.clinicId,
+              existing.externalAccountId,
+              existing.invoiceId,
+              existing.id,
+              now().toISOString()
+            ]
+          );
+        }
         await appendPaymentTerminalAudit(
           context,
           request,
@@ -495,7 +556,9 @@ export function createPostgresCp13ActivityPorts(
     },
     patientInstruction: {
       requestPatientInstructionSend: (request) =>
-        recordUnavailableInstruction(contextRunner(run), request),
+        options.metaInstructionSender
+          ? options.metaInstructionSender.send(request)
+          : recordUnavailableInstruction(contextRunner(run), request),
       recordPatientInstructionSendTerminal: (result) =>
         run(scopeFrom(result), async (context) => {
           await appendAudit(context, result, {

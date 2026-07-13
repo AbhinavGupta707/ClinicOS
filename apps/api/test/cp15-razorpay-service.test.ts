@@ -82,11 +82,13 @@ test("partial captured callback commits payment, request state, audit and outbox
   assert.equal(harness.requestStates.at(-1)?.status, "partially_paid");
   assert.equal(harness.audits.at(-1)?.action, "payment.succeeded");
   assert.equal(harness.outbox.length, 1);
+  assert.deepEqual(harness.verifiedCallbackTimes, [metadata().receivedAt]);
 
   const duplicate = await process(harness, body);
   assert.equal(duplicate.status, "duplicate");
   assert.equal(duplicate.replayed, true);
   assert.equal(harness.effects.filter((effect) => effect.kind === "payment").length, 1);
+  assert.deepEqual(harness.verifiedCallbackTimes, [metadata().receivedAt, metadata().receivedAt]);
 });
 
 test("distinct provider events for one payment share a business key and cannot double-settle", async () => {
@@ -178,6 +180,7 @@ test("official API reconciliation is variance evidence and never direct settleme
 
 class DurableHarness implements RazorpayUnitOfWorkPort, RazorpayTransactionalPort {
   transactionCount = 0;
+  readonly verifiedCallbackTimes: string[] = [];
   readonly effects: Array<{ kind: string; amountMinor: number }> = [];
   readonly requestStates: Array<{ providerRequestId: string; status: string }> = [];
   readonly reconciliations: Array<{
@@ -211,6 +214,10 @@ class DurableHarness implements RazorpayUnitOfWorkPort, RazorpayTransactionalPor
   ): Promise<T> {
     this.transactionCount += 1;
     return execute(this);
+  }
+
+  async recordVerifiedCallback(receivedAt: string): Promise<void> {
+    this.verifiedCallbackTimes.push(receivedAt);
   }
 
   async claimProviderEvent(

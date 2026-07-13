@@ -58,6 +58,12 @@ export function generateNativeOpenApiDocument(): NativeOpenApiDocument {
           in: "header",
           name: "x-razorpay-signature",
           description: "Razorpay HMAC signature over the bounded raw request body."
+        },
+        metaSignature: {
+          type: "apiKey",
+          in: "header",
+          name: "x-hub-signature-256",
+          description: "Meta HMAC signature over the bounded raw request body."
         }
       }
     },
@@ -127,7 +133,12 @@ function openApiOperation(operation: HttpOperationContract): Record<string, unkn
     ...schemaParameters(
       operation.request.headers,
       "header",
-      new Set(["authorization", "content-type", "x-razorpay-signature"])
+      new Set([
+        "authorization",
+        "content-type",
+        "x-hub-signature-256",
+        "x-razorpay-signature"
+      ])
     )
   ];
   const responses = Object.fromEntries(
@@ -150,7 +161,7 @@ function openApiOperation(operation: HttpOperationContract): Record<string, unkn
               }
             ])
           ),
-          content: { "application/json": { schema: toOpenApiSchema(response.schema) } }
+          content: { [response.contentType]: { schema: toOpenApiSchema(response.schema) } }
         }
       ])
   );
@@ -162,6 +173,8 @@ function openApiOperation(operation: HttpOperationContract): Record<string, unkn
     security:
       operation.auth === "bearer"
         ? [{ bearerAuth: [] }]
+        : operation.auth === "meta_signature"
+          ? [{ metaSignature: [] }]
         : operation.auth === "razorpay_signature"
           ? [{ razorpaySignature: [] }]
           : [],
@@ -483,7 +496,12 @@ interface GeneratedRequestInput {
 interface ExecuteInput {
   readonly method: "GET" | "PATCH" | "POST" | "PUT";
   readonly pathTemplate: string;
-  readonly auth: "bearer" | "none" | "razorpay_signature";
+  readonly auth:
+    | "bearer"
+    | "none"
+    | "meta_challenge"
+    | "meta_signature"
+    | "razorpay_signature";
   readonly contentType: "application/json" | "application/octet-stream" | null;
   readonly bodyEncoding: "json" | "raw";
   readonly successStatuses: readonly number[];

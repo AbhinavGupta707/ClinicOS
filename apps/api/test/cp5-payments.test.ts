@@ -239,7 +239,7 @@ test("CP5 provider overpayment is capped and creates reconciliation without infl
   assert.equal(result.body.reconciliationItem?.reason, "overpayment");
 });
 
-test("CP5 local HTTP webhook route uses raw body signature verification", async (t) => {
+test("CP15 removes the legacy global Razorpay webhook alias", async (t) => {
   const repository = new LocalFixtureClinicOperationsRepository();
   const dependencies: OperationsDependencies = { repository };
   const invoice = await prepareIssuedInvoice(repository, dependencies);
@@ -296,8 +296,8 @@ test("CP5 local HTTP webhook route uses raw body signature verification", async 
     });
 
     const responseBody = await response.json();
-    assert.equal(response.status, 200, JSON.stringify(responseBody));
-    assert.equal(responseBody.invoice.paidMinor, 2_000);
+    assert.equal(response.status, 404, JSON.stringify(responseBody));
+    assert.equal(responseBody.error.code, "NOT_FOUND");
   } finally {
     await new Promise<void>((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve()));

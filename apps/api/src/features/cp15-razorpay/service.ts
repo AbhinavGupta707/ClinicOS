@@ -4,7 +4,7 @@ import {
   type NormalizedRazorpayEvent,
   type RazorpayAccountScope,
   type RazorpayEventDecision
-} from "../../../../../packages/domain/src/cp15/razorpay/index.ts";
+} from "@clinic-os/domain";
 import type {
   RazorpayAuditRecord,
   RazorpayProcessingMetadata,
@@ -48,6 +48,8 @@ export async function processRawRazorpayWebhook(input: {
   };
   const now = validNow(input.now).toISOString();
   return input.unitOfWork.transaction(account, async (transaction) => {
+    const receivedAt = validIso(input.metadata.receivedAt, "metadata.receivedAt");
+    await transaction.recordVerifiedCallback(receivedAt);
     const claim = await transaction.claimProviderEvent({
       account,
       providerEventId: event.providerEventId,
@@ -55,7 +57,7 @@ export async function processRawRazorpayWebhook(input: {
       evidence,
       leaseOwner: requiredToken(input.metadata.requestId, "requestId"),
       leaseExpiresAt: new Date(Date.parse(now) + 30_000).toISOString(),
-      receivedAt: validIso(input.metadata.receivedAt, "metadata.receivedAt")
+      receivedAt
     });
     if (claim.outcome === "duplicate") {
       if (!evidenceEqual(claim.storedEvidence, evidence)) {

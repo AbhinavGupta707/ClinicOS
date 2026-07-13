@@ -23,9 +23,9 @@ const nestApplicationSource = await readFile(
 
 test("CP12 inventory covers every current Nest and strangler operation registration", async () => {
   assert.equal(CURRENT_ROUTE_CONTROL_INVENTORY.length, CURRENT_ROUTE_COUNT);
-  assert.equal(CURRENT_ROUTE_COUNT, 128);
+  assert.equal(CURRENT_ROUTE_COUNT, 130);
   const extracted = await assertNativeRouterInventoryCoverage();
-  assert.equal(extracted.actual.length, 128);
+  assert.equal(extracted.actual.length, 130);
   assert.deepEqual(extracted.actual, extracted.contracted);
 
   const keys = CURRENT_ROUTE_CONTROL_INVENTORY.map(
@@ -47,7 +47,18 @@ test("CP12 inventory covers every current Nest and strangler operation registrat
   assert.equal(registeredHandlers.length, CURRENT_OPERATION_ROUTE_COUNT);
   assert.deepEqual(inventoriedHandlers.toSorted(), registeredHandlers.toSorted());
   assert.match(nestApplicationSource, /Get\("v1\/me"\)/);
-  assert.match(nestApplicationSource, /Post\("v1\/payment-webhooks\/razorpay"\)/);
+  assert.match(
+    nestApplicationSource,
+    /Get\("v1\/provider-callbacks\/meta-whatsapp\/:registrationKey"\)/
+  );
+  assert.match(
+    nestApplicationSource,
+    /Post\("v1\/provider-callbacks\/meta-whatsapp\/:registrationKey"\)/
+  );
+  assert.match(
+    nestApplicationSource,
+    /Post\("v1\/provider-callbacks\/razorpay\/:registrationKey"\)/
+  );
   for (const healthKind of ["live", "ready", "startup"]) {
     assert.match(nestApplicationSource, new RegExp(`Get\\("health\\/${healthKind}"\\)`));
   }
@@ -116,13 +127,25 @@ test("integrated inventory proves uniform CP12 controls without route-level gaps
     )
   );
 
-  const webhook = CURRENT_ROUTE_CONTROL_INVENTORY.find(
+  const webhooks = CURRENT_ROUTE_CONTROL_INVENTORY.filter(
     (route) => route.routeClass === "verified_provider_webhook"
   );
-  assert.ok(webhook);
-  assert.equal(webhook.currentControls.requestBody, "verified_raw_bytes_before_parse");
-  assert.equal(webhook.currentControls.bodyOversizeStatus, 413);
-  assert.equal(webhook.currentControls.rateBudget, "atomic_distributed_store");
+  assert.equal(webhooks.length, 2);
+  assert.ok(
+    webhooks.every(
+      (webhook) => webhook.currentControls.requestBody === "verified_raw_bytes_before_parse"
+    )
+  );
+  assert.ok(webhooks.every((webhook) => webhook.currentControls.bodyOversizeStatus === 413));
+  assert.ok(
+    webhooks.every((webhook) => webhook.currentControls.rateBudget === "atomic_distributed_store")
+  );
+  const challenge = CURRENT_ROUTE_CONTROL_INVENTORY.find(
+    (route) => route.routeClass === "verified_provider_challenge"
+  );
+  assert.ok(challenge);
+  assert.equal(challenge.currentControls.requestBody, "none");
+  assert.equal(challenge.currentControls.rateBudget, "atomic_distributed_store");
 
   const operations = CURRENT_ROUTE_CONTROL_INVENTORY.filter(
     (route) => route.routeClass === "authenticated_clinic_operation"

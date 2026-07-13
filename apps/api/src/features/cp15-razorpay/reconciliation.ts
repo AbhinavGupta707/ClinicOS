@@ -1,4 +1,4 @@
-import type { RazorpayPaymentSnapshot } from "../../../../../packages/integrations/src/cp15/razorpay/client.ts";
+import type { RazorpayPaymentSnapshot } from "@clinic-os/integrations";
 
 export interface RazorpayLocalPaymentProjection {
   readonly providerPaymentId: string;

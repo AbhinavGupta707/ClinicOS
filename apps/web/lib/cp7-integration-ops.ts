@@ -2,6 +2,14 @@ export type Cp7IntegrationOpsSource = "api" | "cp7_fixture";
 
 export type ProviderHealthStatus = "available" | "degraded" | "not_configured" | "unavailable";
 export type CapabilityStatus = "available" | "degraded" | "unavailable";
+export type ProviderActivationState =
+  | "absent"
+  | "registered"
+  | "configured"
+  | "sandbox_verified"
+  | "production_verified"
+  | "degraded"
+  | "disabled";
 
 export type Cp7ProviderKey =
   | "exotel"
@@ -18,6 +26,7 @@ export interface ProviderCapability {
 }
 
 export interface ProviderHealthCard {
+  activationState?: ProviderActivationState;
   activationChecks: string[];
   capabilities: ProviderCapability[];
   category: "messaging" | "migration" | "payments" | "source" | "telephony";
@@ -25,9 +34,14 @@ export interface ProviderHealthCard {
   evidence: string;
   id: string;
   label: string;
+  lastFailureCode?: string | null;
+  lastReconciledAt?: string | null;
+  lastVerifiedCallbackAt?: string | null;
   mode: string;
+  productionVerifiedAt?: string | null;
   providerKey: Cp7ProviderKey;
   status: ProviderHealthStatus;
+  sandboxVerifiedAt?: string | null;
 }
 
 export type DeadLetterStatus = "blocked" | "ignored" | "replayed" | "replay_requested" | "unreviewed";
@@ -194,6 +208,16 @@ export const PROVIDER_STATUS_LABELS: Record<ProviderHealthStatus, string> = {
   degraded: "Degraded",
   not_configured: "Not configured",
   unavailable: "Unavailable"
+};
+
+export const PROVIDER_ACTIVATION_LABELS: Record<ProviderActivationState, string> = {
+  absent: "Absent",
+  registered: "Registered",
+  configured: "Configured",
+  sandbox_verified: "Sandbox verified",
+  production_verified: "Production verified",
+  degraded: "Degraded",
+  disabled: "Disabled"
 };
 
 export const CAPABILITY_STATUS_LABELS: Record<CapabilityStatus, string> = {
@@ -1164,8 +1188,30 @@ function isProviderHealthCard(value: unknown): value is ProviderHealthCard {
     typeof value.label === "string" &&
     isCp7ProviderKey(value.providerKey) &&
     isProviderHealthStatus(value.status) &&
+    (value.activationState === undefined || isProviderActivationState(value.activationState)) &&
+    optionalNullableString(value.lastFailureCode) &&
+    optionalNullableString(value.lastReconciledAt) &&
+    optionalNullableString(value.lastVerifiedCallbackAt) &&
+    optionalNullableString(value.productionVerifiedAt) &&
+    optionalNullableString(value.sandboxVerifiedAt) &&
     Array.isArray(value.capabilities)
   );
+}
+
+function isProviderActivationState(value: unknown): value is ProviderActivationState {
+  return (
+    value === "absent" ||
+    value === "registered" ||
+    value === "configured" ||
+    value === "sandbox_verified" ||
+    value === "production_verified" ||
+    value === "degraded" ||
+    value === "disabled"
+  );
+}
+
+function optionalNullableString(value: unknown): boolean {
+  return value === undefined || value === null || typeof value === "string";
 }
 
 function isDeadLetterEvent(value: unknown): value is DeadLetterEvent {

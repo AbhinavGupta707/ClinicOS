@@ -200,7 +200,10 @@ export function createFixtureCp10PilotReadinessPlan(
       externalBlocker: true,
       id: "provider-razorpay",
       label: "Razorpay payment activation",
-      routeContracts: ["POST /v1/payment-webhooks/razorpay", "GET /v1/provider-health"],
+      routeContracts: [
+        "POST /v1/provider-callbacks/razorpay/{registrationKey}",
+        "GET /v1/provider-health"
+      ],
       status: "blocked"
     }),
     item({

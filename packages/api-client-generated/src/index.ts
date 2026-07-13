@@ -72,7 +72,12 @@ interface GeneratedRequestInput {
 interface ExecuteInput {
   readonly method: "GET" | "PATCH" | "POST" | "PUT";
   readonly pathTemplate: string;
-  readonly auth: "bearer" | "none" | "razorpay_signature";
+  readonly auth:
+    | "bearer"
+    | "none"
+    | "meta_challenge"
+    | "meta_signature"
+    | "razorpay_signature";
   readonly contentType: "application/json" | "application/octet-stream" | null;
   readonly bodyEncoding: "json" | "raw";
   readonly successStatuses: readonly number[];
@@ -148,8 +153,12 @@ export type HealthStartupRequest = Readonly<Record<string, never>>;
 export type HealthStartupResponse = { readonly status: "ready" | "unavailable"; readonly service: "clinic-os-api"; readonly repository_mode: "postgres" | "fixture" | "injected"; readonly auth_mode: "keycloak_jwks" | "local_synthetic_fixture"; readonly evidence_tier: "E2_fixture" | "E3_durable" | "unverified_injected"; readonly dependencies: readonly (PublicJsonObject)[]; readonly request_id: string };
 export type GetCurrentIdentityRequest = Readonly<Record<string, never>>;
 export type GetCurrentIdentityResponse = { readonly user: PublicJsonObject; readonly tenant: PublicJsonObject; readonly clinics: readonly (PublicJsonObject)[]; readonly permissions: readonly (string)[]; readonly keycloak: { readonly subject: string; readonly issuer: string; readonly roles: readonly (string)[] } };
-export type ReceiveRazorpayPaymentWebhookRequest = { readonly headers: { readonly "x-razorpay-signature": string }; readonly body: Uint8Array };
-export type ReceiveRazorpayPaymentWebhookResponse = { readonly status: string; readonly replayed: boolean; readonly invoice: PublicJsonObject | null; readonly transaction: PublicJsonObject | null; readonly reconciliationItem: PublicJsonObject | null; readonly providerEvent: PublicJsonObject };
+export type VerifyMetaWhatsAppCallbackRequest = { readonly path: { readonly registrationKey: string }; readonly query?: { readonly "hub.mode"?: "subscribe"; readonly "hub.verify_token"?: string; readonly "hub.challenge"?: string } };
+export type VerifyMetaWhatsAppCallbackResponse = string;
+export type ReceiveMetaWhatsAppWebhookRequest = { readonly path: { readonly registrationKey: string }; readonly headers: { readonly "x-hub-signature-256": string }; readonly body: Uint8Array };
+export type ReceiveMetaWhatsAppWebhookResponse = { readonly accepted: true };
+export type ReceiveRazorpayPaymentWebhookRequest = { readonly path: { readonly registrationKey: string }; readonly headers: { readonly "x-razorpay-signature": string; readonly "x-razorpay-event-id": string }; readonly body: Uint8Array };
+export type ReceiveRazorpayPaymentWebhookResponse = { readonly accepted: true };
 export type ListPatientsRequest = { readonly query?: { readonly query?: string; readonly phone?: string; readonly source?: "manual" | "whatsapp" | "phone" | "call" | "walkin" | "practo" | "google" | "website" | "instagram" | "referral" | "recall_campaign" | "imported" | "external_system"; readonly limit?: number } };
 export type ListPatientsResponse = { readonly patients: readonly (VersionedPublicResource)[] };
 export type CreatePatientRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly fullName: string; readonly phone: string; readonly email?: string | null; readonly dateOfBirth?: string | null; readonly gender?: "female" | "male" | "other" | "unknown"; readonly source: "manual" | "whatsapp" | "phone" | "call" | "walkin" | "practo" | "google" | "website" | "instagram" | "referral" | "recall_campaign" | "imported" | "external_system"; readonly sourceDetail?: WritableJsonObject; readonly leadId?: string | null } };
@@ -402,6 +411,8 @@ export interface ClinicOsNativeOperationMap {
   readonly healthReady: { readonly request: HealthReadyRequest; readonly response: HealthReadyResponse };
   readonly healthStartup: { readonly request: HealthStartupRequest; readonly response: HealthStartupResponse };
   readonly getCurrentIdentity: { readonly request: GetCurrentIdentityRequest; readonly response: GetCurrentIdentityResponse };
+  readonly verifyMetaWhatsAppCallback: { readonly request: VerifyMetaWhatsAppCallbackRequest; readonly response: VerifyMetaWhatsAppCallbackResponse };
+  readonly receiveMetaWhatsAppWebhook: { readonly request: ReceiveMetaWhatsAppWebhookRequest; readonly response: ReceiveMetaWhatsAppWebhookResponse };
   readonly receiveRazorpayPaymentWebhook: { readonly request: ReceiveRazorpayPaymentWebhookRequest; readonly response: ReceiveRazorpayPaymentWebhookResponse };
   readonly listPatients: { readonly request: ListPatientsRequest; readonly response: ListPatientsResponse };
   readonly createPatient: { readonly request: CreatePatientRequest; readonly response: CreatePatientResponse };
@@ -672,10 +683,58 @@ export class ClinicOsApiClient {
     });
   }
 
+  async verifyMetaWhatsAppCallback(input: VerifyMetaWhatsAppCallbackRequest): Promise<VerifyMetaWhatsAppCallbackResponse> {
+    return this.execute<VerifyMetaWhatsAppCallbackResponse>({
+      method: "GET",
+      pathTemplate: "/v1/provider-callbacks/meta-whatsapp/{registrationKey}",
+      auth: "meta_challenge",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async verifyMetaWhatsAppCallbackWithMetadata(input: VerifyMetaWhatsAppCallbackRequest): Promise<ClinicOsApiResponse<VerifyMetaWhatsAppCallbackResponse>> {
+    return this.executeWithMetadata<VerifyMetaWhatsAppCallbackResponse>({
+      method: "GET",
+      pathTemplate: "/v1/provider-callbacks/meta-whatsapp/{registrationKey}",
+      auth: "meta_challenge",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async receiveMetaWhatsAppWebhook(input: ReceiveMetaWhatsAppWebhookRequest): Promise<ReceiveMetaWhatsAppWebhookResponse> {
+    return this.execute<ReceiveMetaWhatsAppWebhookResponse>({
+      method: "POST",
+      pathTemplate: "/v1/provider-callbacks/meta-whatsapp/{registrationKey}",
+      auth: "meta_signature",
+      contentType: "application/json",
+      bodyEncoding: "raw",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async receiveMetaWhatsAppWebhookWithMetadata(input: ReceiveMetaWhatsAppWebhookRequest): Promise<ClinicOsApiResponse<ReceiveMetaWhatsAppWebhookResponse>> {
+    return this.executeWithMetadata<ReceiveMetaWhatsAppWebhookResponse>({
+      method: "POST",
+      pathTemplate: "/v1/provider-callbacks/meta-whatsapp/{registrationKey}",
+      auth: "meta_signature",
+      contentType: "application/json",
+      bodyEncoding: "raw",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
   async receiveRazorpayPaymentWebhook(input: ReceiveRazorpayPaymentWebhookRequest): Promise<ReceiveRazorpayPaymentWebhookResponse> {
     return this.execute<ReceiveRazorpayPaymentWebhookResponse>({
       method: "POST",
-      pathTemplate: "/v1/payment-webhooks/razorpay",
+      pathTemplate: "/v1/provider-callbacks/razorpay/{registrationKey}",
       auth: "razorpay_signature",
       contentType: "application/json",
       bodyEncoding: "raw",
@@ -687,7 +746,7 @@ export class ClinicOsApiClient {
   async receiveRazorpayPaymentWebhookWithMetadata(input: ReceiveRazorpayPaymentWebhookRequest): Promise<ClinicOsApiResponse<ReceiveRazorpayPaymentWebhookResponse>> {
     return this.executeWithMetadata<ReceiveRazorpayPaymentWebhookResponse>({
       method: "POST",
-      pathTemplate: "/v1/payment-webhooks/razorpay",
+      pathTemplate: "/v1/provider-callbacks/razorpay/{registrationKey}",
       auth: "razorpay_signature",
       contentType: "application/json",
       bodyEncoding: "raw",

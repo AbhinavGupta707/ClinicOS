@@ -6,7 +6,7 @@ import type {
   RazorpayPaymentEffectSnapshot,
   RazorpayPaymentRequestBinding,
   RazorpayReconciliationReason
-} from "../../../../../packages/domain/src/cp15/razorpay/index.ts";
+} from "@clinic-os/domain";
 
 export interface RazorpayVerifiedEventEvidence {
   readonly rawBodySha256: string;
@@ -40,6 +40,7 @@ export type RazorpayEventClaim =
   | { readonly outcome: "evidence_conflict"; readonly eventRecordId: string };
 
 export interface RazorpayTransactionalPort {
+  recordVerifiedCallback(receivedAt: string): Promise<void>;
   claimProviderEvent(input: {
     readonly account: RazorpayAccountScope;
     readonly providerEventId: string;

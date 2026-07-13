@@ -110,7 +110,7 @@ test("CP15 Meta API route returns retryable 503 without internal detail when com
 });
 
 function createRoutes(persistence: MetaWebhookPersistence = defaultPersistence()) {
-  const boundary = new MetaWebhookBoundary({ appSecret: SECRET, verifyToken: VERIFY_TOKEN });
+  const boundary = new MetaWebhookBoundary({ appSecret: SECRET, appSecretVersion: "v1", verifyToken: VERIFY_TOKEN });
   const rawBodyStore: MetaEncryptedRawBodyStore = {
     async put(input) { return { ciphertextRef: `restricted://${input.rawEventId}` }; },
     async deleteUncommitted() {}

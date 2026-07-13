@@ -237,6 +237,43 @@ describe("parseClinicOsEnv", () => {
     expect(config.providers.payment.razorpayWebhookUrl).toBeUndefined();
   });
 
+  it("fails closed when official callback storage or endpoint binding is incomplete", () => {
+    const result = safeParseClinicOsEnv({
+      ...baseEnv,
+      CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED: "true",
+      CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET: "too-short"
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.map((issue) => issue.path.join("."))).toEqual(
+      expect.arrayContaining([
+        "CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET",
+        "CLINIC_OS_PROVIDER_RAW_WEBHOOK_BUCKET",
+        "CLINIC_OS_PROVIDER_RAW_WEBHOOK_KMS_KEY_ID"
+      ])
+    );
+  });
+
+  it("parses a complete official callback envelope without putting provider secrets in config", () => {
+    const config = parseClinicOsEnv({
+      ...baseEnv,
+      CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED: "true",
+      CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET: "endpoint-binding-secret-value-00001",
+      CLINIC_OS_PROVIDER_RAW_WEBHOOK_BUCKET: "clinic-os-restricted-callbacks",
+      CLINIC_OS_PROVIDER_RAW_WEBHOOK_PREFIX: "restricted/provider-webhooks/meta-whatsapp",
+      CLINIC_OS_PROVIDER_RAW_WEBHOOK_KMS_KEY_ID: "alias/clinic-os-provider-callbacks"
+    });
+
+    expect(config.providerCallbacks).toEqual({
+      enabled: true,
+      endpointHmacSecret: "endpoint-binding-secret-value-00001",
+      rawWebhookBucket: "clinic-os-restricted-callbacks",
+      rawWebhookPrefix: "restricted/provider-webhooks/meta-whatsapp",
+      rawWebhookKmsKeyId: "alias/clinic-os-provider-callbacks"
+    });
+  });
+
   it("parses Meta WhatsApp and Razorpay sandbox credentials when supplied", () => {
     const config = parseClinicOsEnv({
       ...baseEnv,

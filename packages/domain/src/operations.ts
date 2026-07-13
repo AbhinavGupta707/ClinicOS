@@ -565,7 +565,10 @@ export interface CorrectiveActionView extends CorrectiveActionRecord {
 
 const CP10_PROVIDER_ROUTE_CONTRACTS = {
   whatsapp: ["POST /v1/webhooks/whatsapp/{accountId}", "GET /v1/provider-health"],
-  payment: ["POST /v1/payment-webhooks/razorpay", "GET /v1/provider-health"],
+  payment: [
+    "POST /v1/provider-callbacks/razorpay/{registrationKey}",
+    "GET /v1/provider-health"
+  ],
   telephony: ["Provider-signed telephony callback route", "GET /v1/provider-health"],
   ai: [
     "POST /v1/encounters/{encounterId}/ai-scribe/sessions",

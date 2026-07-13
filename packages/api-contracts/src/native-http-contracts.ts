@@ -46,6 +46,11 @@ const entity = PUBLIC_RECORD_SCHEMA;
 const entities = PUBLIC_RECORD_ARRAY_SCHEMA;
 const versionedEntity = VERSIONED_PUBLIC_RESOURCE_SCHEMA;
 const versionedEntities = VERSIONED_PUBLIC_RESOURCE_ARRAY_SCHEMA;
+const providerRegistrationKey = schema.string({
+  minLength: 16,
+  maxLength: 128,
+  pattern: "^[A-Za-z0-9_-]{16,128}$"
+});
 
 const patientSources = [
   "manual",
@@ -181,6 +186,7 @@ interface NativeOperationInput {
   readonly bodyContentType?: "application/json" | "application/octet-stream";
   readonly maximumBodyBytes?: number;
   readonly success: Readonly<Record<number, RuntimeSchema>>;
+  readonly successContentTypes?: Readonly<Record<number, "application/json" | "text/plain">>;
   readonly mutation?: boolean;
   readonly optimisticConcurrency?: boolean;
   readonly paginated?: boolean;
@@ -229,7 +235,11 @@ function operation(input: NativeOperationInput): HttpOperationContract {
       ...Object.fromEntries(
         Object.entries(input.success).map(([status, successSchema]) => [
           Number(status),
-          { description: "Successful response.", schema: successSchema }
+          {
+            description: "Successful response.",
+            schema: successSchema,
+            contentType: input.successContentTypes?.[Number(status)] ?? "application/json"
+          }
         ])
       )
     },
@@ -375,28 +385,71 @@ export const ACTIVE_NATIVE_HTTP_OPERATIONS: readonly HttpOperationContract[] = [
     nativeRuntimeEnforcement: "route-parity"
   }),
   operation({
-    operationId: "receiveRazorpayPaymentWebhook",
-    checkpoint: "CP5",
+    operationId: "verifyMetaWhatsAppCallback",
+    checkpoint: "CP15",
+    method: "GET",
+    path: "/v1/provider-callbacks/meta-whatsapp/{registrationKey}",
+    summary: "Verify a registered Meta WhatsApp callback challenge",
+    tags: ["Messaging", "Webhooks"],
+    auth: "meta_challenge",
+    pathProperties: { registrationKey: providerRegistrationKey },
+    queryProperties: {
+      "hub.mode": schema.enum(["subscribe"]),
+      "hub.verify_token": schema.string({ minLength: 16, maxLength: 512 }),
+      "hub.challenge": schema.string({ minLength: 1, maxLength: 1024 })
+    },
+    mutation: false,
+    success: { 200: schema.string({ minLength: 1, maxLength: 1024 }) },
+    successContentTypes: { 200: "text/plain" },
+    nativeRuntimeEnforcement: "route-parity",
+    requiredMasterWiring: [
+      "Resolve the opaque registration key without exposing provider or tenant secrets.",
+      "Compare the registered verification token in constant time and return only the bounded challenge as text/plain.",
+      "Keep callback traffic disabled until the registration has an allowed activation state."
+    ]
+  }),
+  operation({
+    operationId: "receiveMetaWhatsAppWebhook",
+    checkpoint: "CP15",
     method: "POST",
-    path: "/v1/payment-webhooks/razorpay",
-    summary: "Verify and apply a Razorpay webhook",
-    tags: ["Payments", "Webhooks"],
-    auth: "razorpay_signature",
+    path: "/v1/provider-callbacks/meta-whatsapp/{registrationKey}",
+    summary: "Verify and durably apply a Meta WhatsApp webhook",
+    tags: ["Messaging", "Webhooks"],
+    auth: "meta_signature",
+    phi: "write",
+    pathProperties: { registrationKey: providerRegistrationKey },
     body: schema.string({ format: "binary", minLength: 1, maxLength: 1024 * 1024 }),
     bodyContentType: "application/json",
     maximumBodyBytes: 1024 * 1024,
     success: {
-      200: responseSchema({
-        status: shortText,
-        replayed: schema.boolean(),
-        invoice: schema.nullable(entity),
-        transaction: schema.nullable(entity),
-        reconciliationItem: schema.nullable(entity),
-        providerEvent: entity
-      })
+      200: responseSchema({ accepted: schema.enum([true]) })
     },
     providerEventIdempotency: true,
-    nativeRuntimeEnforcement: "partial",
+    nativeRuntimeEnforcement: "route-parity",
+    requiredMasterWiring: [
+      "Verify x-hub-signature-256 against the exact bounded raw bytes before content parsing.",
+      "Persist raw ciphertext reference, normalized events, audit and outbox atomically under the registered account scope.",
+      "Deduplicate signed provider events and preserve monotonic message truth without inventing delivery states."
+    ]
+  }),
+  operation({
+    operationId: "receiveRazorpayPaymentWebhook",
+    checkpoint: "CP15",
+    method: "POST",
+    path: "/v1/provider-callbacks/razorpay/{registrationKey}",
+    summary: "Verify and apply a Razorpay webhook",
+    tags: ["Payments", "Webhooks"],
+    auth: "razorpay_signature",
+    phi: "write",
+    pathProperties: { registrationKey: providerRegistrationKey },
+    body: schema.string({ format: "binary", minLength: 1, maxLength: 256 * 1024 }),
+    bodyContentType: "application/json",
+    maximumBodyBytes: 256 * 1024,
+    success: {
+      200: responseSchema({ accepted: schema.enum([true]) })
+    },
+    providerEventIdempotency: true,
+    nativeRuntimeEnforcement: "route-parity",
     requiredMasterWiring: [
       "Accept provider application/json while preserving the exact bounded raw bytes for signature verification before parsing or business effects.",
       "Persist provider event IDs and reject duplicate/out-of-order effects atomically.",
@@ -3496,7 +3549,7 @@ export function assertNativeHttpContractRegistry(): void {
     }
     if (candidate.request.body?.contentType === "application/json") {
       const rawJsonWebhook =
-        candidate.auth === "razorpay_signature" &&
+        ["meta_signature", "razorpay_signature"].includes(candidate.auth) &&
         candidate.request.body.schema.format === "binary";
       if (!rawJsonWebhook && candidate.request.body.schema.type !== "object") {
         throw new Error(`JSON body must be an object for ${candidate.operationId}`);

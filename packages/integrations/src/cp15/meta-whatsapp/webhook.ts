@@ -21,6 +21,10 @@ const MAX_IDENTIFIER_LENGTH = 512;
 
 export interface MetaWebhookBoundaryOptions {
   readonly appSecret: string;
+  readonly appSecretVersion: string;
+  readonly previousAppSecret?: string;
+  readonly previousAppSecretVersion?: string;
+  readonly previousAppSecretAcceptUntil?: string;
   readonly verifyToken: string;
   readonly maxBodyBytes?: number;
 }
@@ -28,11 +32,51 @@ export interface MetaWebhookBoundaryOptions {
 export class MetaWebhookBoundary {
   readonly #appSecret: string;
   readonly #verifyToken: string;
+  readonly #appSecretVersion: string;
+  readonly #previousAppSecret:
+    | Readonly<{ secret: string; version: string; acceptUntil: number }>
+    | undefined;
   readonly #maxBodyBytes: number;
 
   constructor(options: MetaWebhookBoundaryOptions) {
     this.#appSecret = requiredSecret(options.appSecret, "Meta app secret");
+    this.#appSecretVersion = boundedString(
+      options.appSecretVersion,
+      "Meta app secret version",
+      64
+    );
     this.#verifyToken = requiredSecret(options.verifyToken, "Meta webhook verify token");
+    const previousValues = [
+      options.previousAppSecret,
+      options.previousAppSecretVersion,
+      options.previousAppSecretAcceptUntil
+    ];
+    if (previousValues.some((value) => value !== undefined)) {
+      if (previousValues.some((value) => value === undefined)) {
+        throw new MetaWhatsAppError({
+          code: "not_configured",
+          message: "Meta previous app secret rotation configuration is incomplete.",
+          httpStatus: 503
+        });
+      }
+      const acceptUntil = Date.parse(options.previousAppSecretAcceptUntil!);
+      if (!Number.isFinite(acceptUntil)) {
+        throw new MetaWhatsAppError({
+          code: "not_configured",
+          message: "Meta previous app secret rotation deadline is invalid.",
+          httpStatus: 503
+        });
+      }
+      this.#previousAppSecret = Object.freeze({
+        secret: requiredSecret(options.previousAppSecret!, "Meta previous app secret"),
+        version: boundedString(
+          options.previousAppSecretVersion!,
+          "Meta previous app secret version",
+          64
+        ),
+        acceptUntil
+      });
+    }
     this.#maxBodyBytes = options.maxBodyBytes ?? DEFAULT_MAX_BODY_BYTES;
     if (!Number.isSafeInteger(this.#maxBodyBytes) || this.#maxBodyBytes < 1024) {
       throw new MetaWhatsAppError({ code: "not_configured", message: "Meta webhook body limit is invalid.", httpStatus: 503 });
@@ -65,8 +109,22 @@ export class MetaWebhookBoundary {
       throw new MetaWhatsAppError({ code: "invalid_signature", message: "Meta webhook signature is invalid.", httpStatus: 401 });
     }
     const receivedMac = Buffer.from(signature.slice(7), "hex");
-    const expectedMac = createHmac("sha256", this.#appSecret).update(bytes).digest();
-    if (receivedMac.byteLength !== expectedMac.byteLength || !timingSafeEqual(receivedMac, expectedMac)) {
+    const currentMac = createHmac("sha256", this.#appSecret).update(bytes).digest();
+    const currentMatches =
+      receivedMac.byteLength === currentMac.byteLength && timingSafeEqual(receivedMac, currentMac);
+    const previousMac = this.#previousAppSecret
+      ? createHmac("sha256", this.#previousAppSecret.secret).update(bytes).digest()
+      : null;
+    const previousMatches =
+      previousMac !== null &&
+      receivedMac.byteLength === previousMac.byteLength &&
+      timingSafeEqual(receivedMac, previousMac);
+    const receivedAt = validIso(input.receivedAt, "receivedAt");
+    const previousAllowed =
+      previousMatches &&
+      this.#previousAppSecret !== undefined &&
+      Date.parse(receivedAt) <= this.#previousAppSecret.acceptUntil;
+    if (!currentMatches && !previousAllowed) {
       throw new MetaWhatsAppError({ code: "invalid_signature", message: "Meta webhook signature is invalid.", httpStatus: 401 });
     }
 
@@ -78,12 +136,22 @@ export class MetaWebhookBoundary {
     const rawBodySha256 = sha256(bytes);
     const payload = parseObject(bytes);
     const events = normalizePayload(payload, rawBodySha256, input.receivedAt);
+    const signatureSha256 = sha256(Buffer.from(signature, "utf8"));
+    const normalizedEventSha256 = sha256(
+      Buffer.from(canonicalJson(events), "utf8")
+    );
     return Object.freeze({
       provider: "meta_whatsapp_cloud",
       verification: "x_hub_signature_256",
       rawBodySha256,
+      signatureSha256,
+      normalizedEventSha256,
+      verifiedSecretVersion: currentMatches
+        ? this.#appSecretVersion
+        : this.#previousAppSecret!.version,
+      verifiedWithPreviousSecret: !currentMatches,
       byteLength: bytes.byteLength,
-      receivedAt: validIso(input.receivedAt, "receivedAt"),
+      receivedAt,
       correlationId: boundedString(input.correlationId, "correlationId", 256),
       events: Object.freeze(events)
     });
@@ -445,4 +513,13 @@ function constantTimeEqualUtf8(expected: string, received: string): boolean {
 
 function sha256(value: Uint8Array): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  return `{${Object.entries(value as Record<string, unknown>)
+    .sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, nested]) => `${JSON.stringify(key)}:${canonicalJson(nested)}`)
+    .join(",")}}`;
 }

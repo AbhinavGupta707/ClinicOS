@@ -77,6 +77,20 @@ test("CP15 Meta ambiguous dispatch is never automatically retried or called deli
   }
 });
 
+test("CP15 Meta treats a malformed 2xx response as ambiguous instead of retry-safe", async () => {
+  const client = createClient({
+    async post() {
+      return { status: 200, headers: {}, body: Buffer.from('{"messages":[]}', "utf8") };
+    }
+  });
+  const result = await client.sendApprovedTemplate(BASE_INPUT);
+  assert.equal(result.outcome, "dispatch_ambiguous");
+  if (result.outcome === "dispatch_ambiguous") {
+    assert.equal(result.retryAutomatically, false);
+    assert.equal(result.reconciliationRequired, true);
+  }
+});
+
 test("CP15 Meta retries only a transport-confirmed not-dispatched request", async () => {
   const client = createClient({ async post() { throw new MetaTransportError("connection refused", false); } });
   const result = await client.sendApprovedTemplate(BASE_INPUT);

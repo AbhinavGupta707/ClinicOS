@@ -104,7 +104,7 @@ Workers should converge on these route families unless a better contract is docu
 - `GET /v1/invoices/:invoiceId`
 - `POST /v1/invoices/:invoiceId/payment-requests`
 - `POST /v1/invoices/:invoiceId/manual-payments`
-- `POST /v1/payment-webhooks/razorpay`
+- `POST /v1/payment-webhooks/razorpay` (historical CP5 simulator route; superseded and intentionally unavailable after CP15 by the registration-scoped official callback family)
 - `POST /v1/invoices/:invoiceId/receipts`
 - `POST /v1/encounters/:encounterId/prescriptions`
 - `POST /v1/prescriptions/:prescriptionId/sign`

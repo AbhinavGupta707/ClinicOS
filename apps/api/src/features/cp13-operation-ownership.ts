@@ -52,9 +52,9 @@ export const CP13_CLINICAL_DENTAL_OPERATION_IDS = Object.freeze([
   "createSignedMediaAccess"
 ] as const);
 
-export const CP13_TREATMENT_BILLING_PROVIDER_OPERATION_IDS = Object.freeze([
-  "receiveRazorpayPaymentWebhook"
-] as const);
+// CP15 supersedes the legacy account-in-body webhook with the opaque,
+// registration-scoped official callback runtime.
+export const CP13_TREATMENT_BILLING_PROVIDER_OPERATION_IDS = Object.freeze([] as const);
 
 export const CP13_TREATMENT_BILLING_CLINIC_OPERATION_IDS = Object.freeze([
   "listPricebookProcedures",

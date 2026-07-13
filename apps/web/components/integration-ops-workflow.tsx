@@ -24,6 +24,7 @@ import {
   getUnresolvedMigrationConflictCount,
   loadCp7IntegrationOps,
   MIGRATION_BATCH_STATUS_LABELS,
+  PROVIDER_ACTIVATION_LABELS,
   PROVIDER_STATUS_LABELS,
   replayLiveDeadLetterEvent,
   resolveLiveMigrationConflict,
@@ -396,11 +397,32 @@ function ProviderCard({ provider }: { provider: ProviderHealthCard }) {
         <div>
           <strong>{provider.label}</strong>
           <span>{provider.evidence}</span>
+          {provider.activationState ? (
+            <span data-testid={`cp15-provider-activation-${provider.id}`}>
+              Activation: {PROVIDER_ACTIVATION_LABELS[provider.activationState]}
+            </span>
+          ) : null}
         </div>
         <span className={`state-pill cp7-status cp7-status--${provider.status}`}>
           {PROVIDER_STATUS_LABELS[provider.status]}
         </span>
       </div>
+      {provider.activationState ? (
+        <div className="detail-strip detail-strip--three" aria-label="Official provider evidence">
+          <div>
+            <span>Last verified callback</span>
+            <strong>{provider.lastVerifiedCallbackAt ?? "Not verified"}</strong>
+          </div>
+          <div>
+            <span>Last reconciled</span>
+            <strong>{provider.lastReconciledAt ?? "Not reconciled"}</strong>
+          </div>
+          <div>
+            <span>Failure code</span>
+            <strong>{provider.lastFailureCode ?? "None recorded"}</strong>
+          </div>
+        </div>
+      ) : null}
       <div className="detail-strip detail-strip--three">
         <div>
           <span>Mode</span>

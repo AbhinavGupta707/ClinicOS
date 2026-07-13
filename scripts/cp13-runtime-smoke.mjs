@@ -1,7 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
-import { SimulatorPaymentProvider } from "@clinic-os/integrations";
 import { Client } from "pg";
 import { runCp11RuntimeSmoke } from "./cp11-runtime-smoke.mjs";
 
@@ -239,48 +238,16 @@ assert.equal(paymentIntent.body.paymentIntent.status, "pending_provider_request"
 const recoveredPaymentRequest = await waitForProviderPaymentRequest(smoke, invoiceId);
 assert.equal(recoveredPaymentRequest.provider, "simulator");
 assert.equal(recoveredPaymentRequest.status, "provider_created");
-const providerEventId = `evt-cp13-${runId}`;
-const capturedAmountMinor = invoiceCreated.body.invoice.balanceMinor + 1000;
-const signedProviderEvent = new SimulatorPaymentProvider().buildSignedWebhook({
-  tenantId: identities.accountant.tenant.id,
-  clinicId: clinic.id,
-  patientId,
-  invoiceId,
-  providerPaymentId: `pay-cp13-${runId}`,
-  providerPaymentRequestId: recoveredPaymentRequest.id,
-  amountPaise: capturedAmountMinor,
-  currency: "INR",
-  method: "upi",
-  providerEventId
-});
-const providerHeaders = {
-  "content-type": "application/json",
-  ...signedProviderEvent.headers
-};
-const providerApplied = await fetch(new URL("/v1/payment-webhooks/razorpay", baseUrl), {
+// CP15 superseded the CP13 simulator callback with a registration-scoped official provider
+// boundary. Keep this older runtime smoke focused on its durable outbound recovery and prove
+// that the unsafe global callback alias cannot be revived accidentally. CP15 owns the signed
+// inbound, replay and reconciliation evidence on the canonical callback family.
+const legacyGlobalCallback = await fetch(new URL("/v1/payment-webhooks/razorpay", baseUrl), {
   method: "POST",
-  headers: providerHeaders,
-  body: signedProviderEvent.rawBody
+  headers: { "content-type": "application/json" },
+  body: JSON.stringify({ event: "synthetic_legacy_callback_must_not_route" })
 });
-const providerAppliedBody = await parseBody(providerApplied);
-assert.equal(providerApplied.status, 200, JSON.stringify(providerAppliedBody));
-assert.equal(providerAppliedBody.status, "reconciliation_required");
-assert.equal(providerAppliedBody.transaction.verificationStatus, "verified");
-assert.equal(providerAppliedBody.transaction.amountMinor, invoiceCreated.body.invoice.balanceMinor);
-assert.equal(providerAppliedBody.reconciliationItem.unallocatedAmountMinor, 1000);
-const providerReplay = await fetch(new URL("/v1/payment-webhooks/razorpay", baseUrl), {
-  method: "POST",
-  headers: providerHeaders,
-  body: signedProviderEvent.rawBody
-});
-assert.equal(providerReplay.status, 200);
-assert.equal((await providerReplay.json()).replayed, true);
-const badProviderSignature = await fetch(new URL("/v1/payment-webhooks/razorpay", baseUrl), {
-  method: "POST",
-  headers: { ...providerHeaders, "x-clinic-os-simulator-signature": "0".repeat(64) },
-  body: signedProviderEvent.rawBody
-});
-assert.equal(badProviderSignature.status, 403);
+assert.equal(legacyGlobalCallback.status, 404);
 await smoke.request("assistant", "POST", "/v1/recall-rules", {
   expectedStatus: 201,
   idempotencyKey: key("recall-rule"),
@@ -534,14 +501,10 @@ const durableEvidence = await readCp13DurableEvidence(process.env.DATABASE_URL, 
   mediaUploadId,
   paymentIntentId: paymentIntent.body.paymentIntent.id,
   paymentRequestId: recoveredPaymentRequest.id,
-  prescriptionId,
-  providerEventId
+  prescriptionId
 });
 assert.deepEqual(durableEvidence, {
   mediaReceiptCount: 1,
-  paymentReconciliationCount: 1,
-  providerAuditCount: 1,
-  providerOutboxCount: 1,
   prescriptionOutboxCount: 1,
   paymentRecoveryCount: 1,
   continuityRecoveryCount: 1
@@ -579,11 +542,9 @@ console.log(
       assistantPrescriptionSignatureDenied: true,
       revokedTreatmentConsentDenied: true
     },
-    signedProviderFoundation: {
-      invalidSignatureDenied: true,
-      duplicateReplayed: true,
-      overpaymentReconciled: true,
-      providerEventId
+    providerBoundaryTransition: {
+      legacyGlobalAliasDenied: true,
+      officialInboundEvidenceOwnedBy: "CP15"
     },
     durableEvidence,
     fixtureFallback: false
@@ -637,28 +598,10 @@ async function readCp13DurableEvidence(databaseUrl, input) {
       `select
          (select count(*)::integer from clinical_media_receipts
            where tenant_id = $1 and clinic_id = $2 and upload_id = $3) as media_receipt_count,
-         (select count(*)::integer
-            from payment_reconciliation_items item
-            join raw_webhook_events event
-              on event.tenant_id = item.tenant_id
-             and event.clinic_id = item.clinic_id
-             and event.id = item.raw_webhook_event_id
-           where item.tenant_id = $1 and item.clinic_id = $2
-             and event.provider_event_id = $4
-             and item.reason = 'overpayment'
-             and item.unallocated_amount_minor = 1000) as payment_reconciliation_count,
-         (select count(*)::integer from audit_events
-           where tenant_id = $1 and clinic_id = $2
-             and action = 'payment.reconciliation_required'
-             and metadata ->> 'providerEventId' = $4) as provider_audit_count,
-         (select count(*)::integer from outbox_events
-           where tenant_id = $1 and clinic_id = $2
-             and event_type = 'payment.reconciliation_required'
-             and payload ->> 'providerEventId' = $4) as provider_outbox_count,
          (select count(*)::integer from outbox_events
            where tenant_id = $1 and clinic_id = $2
              and event_type = 'prescription.signed'
-             and aggregate_id = $5) as prescription_outbox_count,
+             and aggregate_id = $4) as prescription_outbox_count,
          (select count(*)::integer
             from payment_provider_request_intents intent
             join payment_requests request
@@ -666,8 +609,8 @@ async function readCp13DurableEvidence(databaseUrl, input) {
              and request.clinic_id = intent.clinic_id
              and request.id = intent.payment_request_id
            where intent.tenant_id = $1 and intent.clinic_id = $2
-             and intent.id = $6 and intent.status = 'completed'
-             and request.id = $7
+             and intent.id = $5 and intent.status = 'completed'
+             and request.id = $6
              and exists (
                select 1 from outbox_events event
                where event.tenant_id = intent.tenant_id
@@ -680,12 +623,11 @@ async function readCp13DurableEvidence(databaseUrl, input) {
            where tenant_id = $1 and clinic_id = $2
              and event_type = 'workflow.cp13.continuity_due_generation.requested'
              and status = 'processed'
-             and payload ->> 'asOf' = $8) as continuity_recovery_count`,
+             and payload ->> 'asOf' = $7) as continuity_recovery_count`,
       [
         input.tenantId,
         input.clinicId,
         input.mediaUploadId,
-        input.providerEventId,
         input.prescriptionId,
         input.paymentIntentId,
         input.paymentRequestId,
@@ -694,9 +636,6 @@ async function readCp13DurableEvidence(databaseUrl, input) {
     );
     return {
       mediaReceiptCount: result.rows[0].media_receipt_count,
-      paymentReconciliationCount: result.rows[0].payment_reconciliation_count,
-      providerAuditCount: result.rows[0].provider_audit_count,
-      providerOutboxCount: result.rows[0].provider_outbox_count,
       prescriptionOutboxCount: result.rows[0].prescription_outbox_count,
       paymentRecoveryCount: result.rows[0].payment_recovery_count,
       continuityRecoveryCount: result.rows[0].continuity_recovery_count

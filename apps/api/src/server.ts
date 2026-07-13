@@ -1,14 +1,13 @@
-import { createHash } from "node:crypto";
 import { type IncomingMessage, type Server } from "node:http";
 import { pathToFileURL } from "node:url";
 import { safeParseClinicOsEnv, type ClinicOsConfig } from "@clinic-os/config";
 import {
+  createAwsProviderSecretResolver,
   createAwsPrivateMediaRuntime,
   createPaymentProvider,
+  createS3MetaEncryptedRawBodyStore,
   type AiGatewayProvider,
-  type PaymentProvider,
-  type PaymentProviderWebhookEvent,
-  type RawPaymentWebhook
+  type PaymentProvider
 } from "@clinic-os/integrations";
 import {
   buildAccessContext,
@@ -22,12 +21,12 @@ import {
   PostgresClinicOperationsRepository,
   PostgresClinicUnitOfWork,
   PostgresIdentityRepository,
+  PostgresProviderCallbackRegistrationResolver,
+  PostgresProviderOperationsRegistry,
   LATEST_DATABASE_SCHEMA_VERSION,
   type ClinicOperationsRepository,
-  type DurableIntegrityRepository,
   type IdentityRepository,
-  type PaymentProviderEventRecord,
-  type RepositoryScope,
+  type ProviderOperationsRegistryPort,
   type SqlConnectionFactory,
   type ScopedApiRequestGuardsPort
 } from "@clinic-os/db";
@@ -174,7 +173,6 @@ import {
   startEncounter,
   submitPatientIntakeForm,
   recordRecallAction,
-  processPaymentWebhook,
   updateCorrectiveAction,
   updateDentalFinding,
   updateAppointment,
@@ -208,6 +206,7 @@ import {
 } from "./framework/nest-application.ts";
 import { RedisAtomicBudgetStore } from "./framework/redis-budget-store.ts";
 import { PostgresAtomicMutationCoordinator } from "./framework/postgres-mutation-coordinator.ts";
+import { PostgresOfficialProviderCallbackRuntime } from "./providers/cp15/official-provider-callback-runtime.ts";
 import type { ClinicFeatureHandlerMap } from "./features/contracts.ts";
 import { createCp13ClinicFeatureHandlerMap } from "./features/cp13-composition.ts";
 import type { Cp13ClinicFeatureOperationId } from "./features/cp13-operation-ownership.ts";
@@ -218,12 +217,6 @@ import {
   RedisTokenRevocationStore
 } from "./features/identity-session-edge/index.ts";
 import { runClinicFeatureOperation } from "./features/runtime.ts";
-import {
-  createTreatmentBillingProviderOperationService,
-  type DurablePaymentProviderEventResultProjection,
-  type PaymentProviderEventEvidenceProjection,
-  type VerifiedRazorpayPaymentEventRequest
-} from "./features/treatment-billing/index.ts";
 import { PendingLocalClinicalMediaInspectionSimulator } from "./media-inspection.ts";
 import { createPostgresS3TransactionMediaProviderFactory } from "./providers/media/index.ts";
 
@@ -248,6 +241,29 @@ interface OperationsUnitOfWork {
   ): Promise<T>;
 }
 
+export interface OfficialProviderCallbackRuntime {
+  verifyMetaChallenge(input: {
+    readonly registrationKey: string;
+    readonly mode: string;
+    readonly verifyToken: string;
+    readonly challenge: string;
+  }): Promise<string>;
+  receiveMetaWebhook(input: {
+    readonly registrationKey: string;
+    readonly headers: Readonly<Record<string, string | readonly string[] | undefined>>;
+    readonly rawBody: Uint8Array;
+    readonly receivedAt: string;
+    readonly correlationId: string;
+  }): Promise<void>;
+  receiveRazorpayWebhook(input: {
+    readonly registrationKey: string;
+    readonly headers: Readonly<Record<string, string | readonly string[] | undefined>>;
+    readonly rawBody: Uint8Array;
+    readonly receivedAt: string;
+    readonly correlationId: string;
+  }): Promise<void>;
+}
+
 export interface ClinicOsApiServerOptions {
   config: ClinicOsConfig;
   identityRepository: IdentityRepository;
@@ -269,6 +285,8 @@ export interface ClinicOsApiServerOptions {
   featureHandlers?: ClinicFeatureHandlerMap;
   identityEdgeGuard?: IdentitySessionEdgeGuard;
   observabilityRuntime?: ObservabilityRuntime;
+  providerCallbacks?: OfficialProviderCallbackRuntime;
+  providerOperationsRegistry?: ProviderOperationsRegistryPort;
 }
 
 interface RuntimeOptions {
@@ -283,8 +301,6 @@ interface RuntimeNestOptions {
 
 const DEFAULT_PORT = 4000;
 const DEFAULT_API_AUDIENCE = "clinic-os-api";
-const SYSTEM_INTEGRATION_ACTOR_USER_ID = "00000000-0000-4000-8000-000000000000" as UUID;
-
 export function createClinicOsApiServer(options: ClinicOsApiServerOptions): Server {
   return createClinicOsNestCompatibilityServer(createClinicOsNestRuntime(options));
 }
@@ -420,6 +436,7 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
       mediaStorage: options.mediaStorage,
       paymentProvider: options.paymentProvider ?? createRuntimePaymentProvider(options.config),
       aiGatewayProvider: options.aiGatewayProvider,
+      providerOperationsRegistry: options.providerOperationsRegistry,
       useLocalAuthFixture: options.useLocalAuthFixture ?? false,
       fixtureSubject: options.fixtureSubject,
       clock: options.clock,
@@ -495,79 +512,55 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
       }
       return { status: 200, body: buildMeResponse(access.context, access.clinics) };
     },
-    async handleWebhook(request, requestId, rawBody, transaction) {
-      const repository = transaction?.repository ?? options.operationsRepository;
-      const auditSink = transaction?.auditSink ?? options.auditSink;
-      if (!repository || !auditSink) throw missingOperationsRepository();
-      const provider = options.paymentProvider ?? createRuntimePaymentProvider(options.config);
-      const receivedAt = (options.clock ?? systemClock).now();
-      if (fixtureMode) {
-        return processPaymentWebhook(
-          {
-            repository,
-            auditSink,
-            paymentProvider: provider,
-            paymentRepository: paymentRepositoryFromOperationsRepository(repository)
-          },
-          {
-            requestId,
-            providerKey: provider.providerKey,
-            rawBody: rawBody.toString("utf8"),
-            receivedAt: receivedAt.toISOString(),
-            headers: allowlistedWebhookHeaders(request, options.useLocalAuthFixture ?? false),
-            ipAddress: request.socket.remoteAddress ?? null,
-            userAgent: headerValue(request, "user-agent") ?? null
-          }
-        );
+    async handleProviderChallenge(_request, operationId, _requestId, parsedRequest) {
+      if (operationId !== "verifyMetaWhatsAppCallback" || !options.providerCallbacks) {
+        throw new ApiError(404, "NOT_FOUND", "Provider callback registration was not found.");
       }
-      const raw: RawPaymentWebhook = {
-        providerKey: provider.providerKey,
-        rawBody: rawBody.toString("utf8"),
-        receivedAt: receivedAt.toISOString(),
-        headers: allowlistedWebhookHeaders(request, options.useLocalAuthFixture ?? false)
-      };
-      const verification = await provider.verifyWebhook(raw);
-      if (verification.status !== "verified" || !verification.signatureHeader?.trim()) {
-        throw new ApiError(
-          verification.status === "invalid_signature" ? 403 : 400,
-          verification.status === "invalid_signature" ? "PERMISSION_DENIED" : "VALIDATION_ERROR",
-          verification.message,
-          {
-            verification_status: verification.status,
-            provider_event_id: verification.providerEventId ?? null
-          }
-        );
-      }
-      const event = await provider.parseWebhook(raw);
-      const scope = verifiedPaymentProviderScope(event);
-      const providerKey = verifiedCp13PaymentProviderKey(event.providerKey);
-      const signatureSha256 = sha256Text(verification.signatureHeader);
-      const execute = (activeRepository: ClinicOperationsRepository, activeAudit: AuditSink) =>
-        executeVerifiedPaymentProviderEvent({
-          repository: activeRepository,
-          auditSink: activeAudit,
-          scope,
-          providerKey,
-          requestId,
-          event,
-          signatureSha256,
-          receivedAt,
-          ipAddress: request.socket.remoteAddress ?? null,
-          userAgent: headerValue(request, "user-agent") ?? null,
-          clock: options.clock ?? systemClock
+      const path = parsedRequest.path as Record<string, unknown>;
+      const query = parsedRequest.query as Record<string, unknown>;
+      let challenge: string;
+      try {
+        challenge = await options.providerCallbacks.verifyMetaChallenge({
+          registrationKey: requiredParsedString(path.registrationKey),
+          mode: requiredParsedString(query["hub.mode"]),
+          verifyToken: requiredParsedString(query["hub.verify_token"]),
+          challenge: requiredParsedString(query["hub.challenge"])
         });
-      if (transaction) return execute(repository, auditSink);
-      if (!options.operationsUnitOfWork) {
-        throw new ApiError(
-          503,
-          "CONFIGURATION_ERROR",
-          "Durable payment provider transaction dependencies are not configured."
-        );
+      } catch (error) {
+        throw mapOfficialProviderCallbackError(error);
       }
-      return options.operationsUnitOfWork.run(
-        ({ repository: activeRepository, auditSink: activeAudit }) =>
-          execute(activeRepository, activeAudit)
-      );
+      return {
+        status: 200,
+        body: challenge,
+        headers: { "content-type": "text/plain; charset=utf-8" }
+      };
+    },
+    async handleWebhook(request, requestId, rawBody, transaction) {
+      const providerCallback = providerCallbackPath(request.url ?? "");
+      if (providerCallback) {
+        if (!options.providerCallbacks) {
+          throw new ApiError(404, "NOT_FOUND", "Provider callback registration was not found.");
+        }
+        const receivedAt = (options.clock ?? systemClock).now().toISOString();
+        const callbackInput = {
+          registrationKey: providerCallback.registrationKey,
+          headers: request.headers,
+          rawBody,
+          receivedAt,
+          correlationId: requestId
+        };
+        try {
+          if (providerCallback.provider === "meta-whatsapp") {
+            await options.providerCallbacks.receiveMetaWebhook(callbackInput);
+          } else {
+            await options.providerCallbacks.receiveRazorpayWebhook(callbackInput);
+          }
+        } catch (error) {
+          throw mapOfficialProviderCallbackError(error);
+        }
+        return { status: 200, body: { accepted: true } };
+      }
+      throw new ApiError(404, "NOT_FOUND", "Provider callback registration was not found.");
     },
     async handleClinicOperation(
       request,
@@ -800,6 +793,34 @@ function createRuntimeComposition(
       unitOfWork: repositorySet.operationsUnitOfWork,
       readinessProbe: () => repositorySet.pool.query("select 1")
     });
+    serverOptions.providerOperationsRegistry = new PostgresProviderOperationsRegistry(
+      repositorySet.pool
+    );
+    if (parsed.data.providerCallbacks.enabled) {
+      const endpointHmacSecret = parsed.data.providerCallbacks.endpointHmacSecret;
+      const rawWebhookBucket = parsed.data.providerCallbacks.rawWebhookBucket;
+      const rawWebhookKmsKeyId = parsed.data.providerCallbacks.rawWebhookKmsKeyId;
+      if (!endpointHmacSecret || !rawWebhookBucket || !rawWebhookKmsKeyId) {
+        throw new ApiError(
+          503,
+          "CONFIGURATION_ERROR",
+          "Official provider callback storage and binding settings are incomplete."
+        );
+      }
+      serverOptions.providerCallbacks = new PostgresOfficialProviderCallbackRuntime({
+        registrations: new PostgresProviderCallbackRegistrationResolver(repositorySet.pool),
+        secrets: createAwsProviderSecretResolver({ region: parsed.data.storage.region }),
+        rawBodyStore: createS3MetaEncryptedRawBodyStore({
+          aws: { region: parsed.data.storage.region },
+          bucket: rawWebhookBucket,
+          prefix: parsed.data.providerCallbacks.rawWebhookPrefix,
+          kmsKeyId: rawWebhookKmsKeyId
+        }),
+        unitOfWork: repositorySet.operationsUnitOfWork,
+        endpointHmacSecret: Buffer.from(endpointHmacSecret, "utf8"),
+        now: () => systemClock.now()
+      });
+    }
   }
 
   if (env.CLINIC_OS_API_DEV_SUBJECT) {
@@ -835,6 +856,7 @@ async function routeOperationsRequest(input: {
   mediaStorage?: MediaStorageProvider;
   paymentProvider?: PaymentProvider;
   aiGatewayProvider?: AiGatewayProvider;
+  providerOperationsRegistry?: ProviderOperationsRegistryPort;
   useLocalAuthFixture: boolean;
   fixtureSubject?: string | undefined;
   clock?: Clock | undefined;
@@ -872,6 +894,7 @@ async function routeOperationsRequest(input: {
     mediaStorage: input.mediaStorage,
     paymentProvider: input.paymentProvider,
     aiGatewayProvider: input.aiGatewayProvider,
+    providerOperationsRegistry: input.providerOperationsRegistry,
     paymentRepository: paymentRepositoryFromOperationsRepository(input.repository),
     runtimeConfig: input.config
   };
@@ -2051,6 +2074,94 @@ function requireMediaConfig(value: string | undefined): string {
   return value;
 }
 
+function requiredParsedString(value: unknown): string {
+  if (typeof value !== "string" || value.length === 0) {
+    throw new ApiError(422, "VALIDATION_ERROR", "Provider callback input is invalid.");
+  }
+  return value;
+}
+
+function providerCallbackPath(rawUrl: string): {
+  readonly provider: "meta-whatsapp" | "razorpay";
+  readonly registrationKey: string;
+} | null {
+  const pathname = new URL(rawUrl, "http://clinic-os.local").pathname;
+  const match =
+    /^\/v1\/provider-callbacks\/(meta-whatsapp|razorpay)\/([A-Za-z0-9_-]{16,128})$/u.exec(
+      pathname
+    );
+  return match
+    ? {
+        provider: match[1] as "meta-whatsapp" | "razorpay",
+        registrationKey: match[2]!
+      }
+    : null;
+}
+
+function mapOfficialProviderCallbackError(error: unknown): ApiError {
+  if (error instanceof ApiError) return error;
+  const candidate =
+    error && typeof error === "object"
+      ? (error as {
+          readonly name?: unknown;
+          readonly code?: unknown;
+          readonly httpStatus?: unknown;
+          readonly retryable?: unknown;
+        })
+      : {};
+  if (candidate.name === "ProviderCallbackRegistrationNotFoundError") {
+    return new ApiError(404, "NOT_FOUND", "Provider callback registration was not found.");
+  }
+  if (candidate.name === "ProviderCallbackUnavailableError") {
+    return new ApiError(
+      503,
+      "DEPENDENCY_UNAVAILABLE",
+      "Provider callback registration is unavailable."
+    );
+  }
+  const code = typeof candidate.code === "string" ? candidate.code : "";
+  if (["BODY_TOO_LARGE", "body_too_large"].includes(code)) {
+    return new ApiError(413, "PAYLOAD_TOO_LARGE", "Provider callback body is too large.");
+  }
+  if (
+    [
+      "INVALID_SIGNATURE",
+      "MISSING_SIGNATURE",
+      "ACCOUNT_MISMATCH",
+      "invalid_signature",
+      "missing_signature",
+      "invalid_challenge",
+      "account_mismatch"
+    ].includes(code)
+  ) {
+    return new ApiError(403, "PERMISSION_DENIED", "Provider callback verification failed.");
+  }
+  if (["NOT_CONFIGURED", "PROVIDER_UNAVAILABLE", "not_configured", "persistence_failed", "EVENT_IN_PROGRESS"].includes(code)) {
+    return new ApiError(
+      503,
+      "DEPENDENCY_UNAVAILABLE",
+      "Provider callback dependency is unavailable."
+    );
+  }
+  if (
+    [
+      "MISSING_EVENT_ID",
+      "INVALID_JSON",
+      "INVALID_PAYLOAD",
+      "UNSUPPORTED_EVENT",
+      "invalid_content_type",
+      "invalid_payload",
+      "unsupported_payload"
+    ].includes(code)
+  ) {
+    return new ApiError(400, "BAD_REQUEST", "Provider callback payload is invalid.");
+  }
+  if (code === "DURABLE_EVIDENCE_CONFLICT") {
+    return new ApiError(409, "CONFLICT", "Provider callback evidence conflicts with durable state.");
+  }
+  return new ApiError(500, "INTERNAL_ERROR", "Provider callback processing failed.");
+}
+
 function parseMediaEndpointOrigins(value: string): readonly string[] {
   try {
     const parsed: unknown = JSON.parse(value);
@@ -2084,356 +2195,12 @@ function createRuntimePaymentProvider(config: ClinicOsConfig): PaymentProvider {
   });
 }
 
-async function executeVerifiedPaymentProviderEvent(input: {
-  repository: ClinicOperationsRepository;
-  auditSink: AuditSink;
-  scope: RepositoryScope;
-  providerKey: "razorpay" | "simulator";
-  requestId: string;
-  event: PaymentProviderWebhookEvent;
-  signatureSha256: string;
-  receivedAt: Date;
-  ipAddress: string | null;
-  userAgent: string | null;
-  clock: Clock;
-}) {
-  const durable = durableIntegrityRepositoryFrom(input.repository);
-  const account = await durable.findActivePaymentProviderAccount(input.scope, {
-    providerKey: input.providerKey,
-    requiredCapability: "VERIFY_WEBHOOKS"
-  });
-  if (account.outcome !== "resolved") {
-    throw new ApiError(
-      503,
-      "DEPENDENCY_UNAVAILABLE",
-      "The clinic payment webhook account is not available.",
-      {
-        provider_key: input.providerKey,
-        provider_account_state: account.outcome,
-        required_capability: "VERIFY_WEBHOOKS"
-      }
-    );
-  }
-
-  const request: VerifiedRazorpayPaymentEventRequest = {
-    operationId: "receiveRazorpayPaymentWebhook",
-    accountScope: {
-      tenantId: input.scope.tenantId,
-      clinicId: input.scope.clinicId,
-      providerAccountKey: account.account.externalAccountId
-    },
-    verification: {
-      status: "verified",
-      providerKey: input.providerKey,
-      rawBodySha256: input.event.rawBodySha256,
-      signatureSha256: input.signatureSha256
-    },
-    event: input.event,
-    metadata: {
-      requestId: input.requestId,
-      receivedAt: input.receivedAt,
-      ipAddress: input.ipAddress,
-      userAgent: input.userAgent
-    }
-  };
-  const providerEvents = createDurablePaymentProviderEventAdapter({
-    durable,
-    scope: input.scope,
-    providerKey: input.providerKey,
-    externalAccountId: account.account.externalAccountId,
-    leaseOwner: input.requestId,
-    now: () => input.clock.now()
-  });
-  const service = createTreatmentBillingProviderOperationService();
-  return service.receiveRazorpayPaymentWebhook(request, {
-    billing: {
-      listPricebookProcedures: () => input.repository.listPricebookProcedures(input.scope),
-      findPricebookProcedureById: (procedureId) =>
-        input.repository.findPricebookProcedureById(input.scope, procedureId),
-      createInvoice: (invoice) => input.repository.createInvoice(input.scope, invoice),
-      findInvoiceById: (invoiceId) => input.repository.findInvoiceById(input.scope, invoiceId),
-      createPaymentRequest: (paymentRequest) =>
-        input.repository.createPaymentRequest(input.scope, paymentRequest),
-      recordPaymentTransaction: (payment) =>
-        input.repository.recordPaymentTransaction(input.scope, payment),
-      createReceipt: (invoiceId, receipt) =>
-        input.repository.createReceipt(input.scope, invoiceId, receipt)
-    },
-    providerEvents,
-    evidence: {
-      appendIntegrationAudit: (event) =>
-        input.auditSink.appendAuditEvent(
-          createAuditEvent({
-            tenantId: input.scope.tenantId,
-            clinicId: input.scope.clinicId,
-            actor: { type: "integration", id: account.account.externalAccountId },
-            action: event.action,
-            patientId: event.patientId,
-            resourceType: event.resourceType,
-            resourceId: event.resourceId,
-            metadata: event.metadata,
-            ipAddress: event.ipAddress,
-            userAgent: event.userAgent,
-            correlationId: event.correlationId,
-            occurredAt: new Date(event.occurredAt)
-          })
-        ),
-      async appendOutboxEvent(event) {
-        const appended = await durable.appendPaymentProviderIntegrationOutboxEvent(input.scope, {
-          ...event,
-          externalAccountId: account.account.externalAccountId,
-          providerKey: input.providerKey,
-          requiredCapability: "VERIFY_WEBHOOKS"
-        });
-        if (appended.outcome !== "appended" && appended.outcome !== "replayed") {
-          throw new ApiError(
-            appended.outcome === "account_unavailable" ? 503 : 409,
-            appended.outcome === "account_unavailable" ? "DEPENDENCY_UNAVAILABLE" : "CONFLICT",
-            "Payment provider evidence outbox could not be committed under integration authority.",
-            { provider_outbox_outcome: appended.outcome }
-          );
-        }
-      }
-    },
-    now: () => input.clock.now()
-  });
-}
-
-function createDurablePaymentProviderEventAdapter(input: {
-  durable: DurableIntegrityRepository;
-  scope: RepositoryScope;
-  providerKey: "razorpay" | "simulator";
-  externalAccountId: UUID;
-  leaseOwner: string;
-  now: () => Date;
-}) {
-  return {
-    async claimVerifiedEvent(claim: {
-      providerKey: "razorpay" | "simulator";
-      providerAccountKey: string;
-      providerEventId: string;
-      idempotencyKey: string;
-      eventName: string;
-      eventKind: string;
-      rawBodySha256: string;
-      signatureSha256: string;
-      normalizedEvent: Record<string, unknown>;
-      receivedAt: string;
-      leaseOwner: string;
-      leaseExpiresAt: string;
-    }) {
-      if (
-        claim.providerKey !== input.providerKey ||
-        claim.providerAccountKey !== input.externalAccountId ||
-        claim.leaseOwner !== input.leaseOwner
-      ) {
-        throw new ApiError(
-          409,
-          "CONFLICT",
-          "Verified provider event scope changed before its durable claim."
-        );
-      }
-      const result = await input.durable.claimVerifiedPaymentProviderEvent(input.scope, {
-        providerKey: input.providerKey,
-        externalAccountId: input.externalAccountId,
-        providerEventId: claim.providerEventId,
-        idempotencyKey: claim.idempotencyKey,
-        eventName: claim.eventName,
-        eventKind: claim.eventKind,
-        rawBodySha256: claim.rawBodySha256,
-        signatureSha256: claim.signatureSha256,
-        normalizedEventSha256: sha256StableJson(claim.normalizedEvent),
-        normalizedEvent: claim.normalizedEvent,
-        receivedAt: claim.receivedAt,
-        leaseOwner: claim.leaseOwner,
-        leaseExpiresAt: claim.leaseExpiresAt
-      });
-      if (result.outcome === "claimed" || result.outcome === "recovered") {
-        return { outcome: "claimed" as const, eventId: result.event.id };
-      }
-      if (result.outcome === "in_progress") {
-        return { outcome: "in_progress" as const, eventId: result.event.id };
-      }
-      if (result.outcome === "duplicate") {
-        return duplicateProviderEventProjection(result.event);
-      }
-      if (result.outcome === "evidence_mismatch") {
-        throw new ApiError(
-          409,
-          "CONFLICT",
-          "A duplicate provider event does not match stored verified evidence.",
-          { reason: "provider_event_evidence_mismatch", reconciliation_required: true }
-        );
-      }
-      throw new ApiError(
-        503,
-        "DEPENDENCY_UNAVAILABLE",
-        "The clinic payment webhook account became unavailable."
-      );
-    },
-    async createReconciliation(reconciliation: {
-      providerEventRecordId: UUID;
-      invoiceId: UUID | null;
-      patientId: UUID | null;
-      reason:
-        | "overpayment"
-        | "missing_invoice_reference"
-        | "currency_mismatch"
-        | "invalid_provider_amount"
-        | "scope_mismatch"
-        | "manual_review_required";
-      capturedAmountMinor: number;
-      appliedAmountMinor: number;
-      unallocatedAmountMinor: number;
-      currency: string | null;
-      evidence: Record<string, unknown>;
-    }) {
-      const record = await input.durable.createPaymentReconciliation(input.scope, {
-        ...reconciliation,
-        createdAt: input.now().toISOString()
-      });
-      return {
-        id: record.id,
-        reason: record.reason,
-        invoiceId: record.invoiceId,
-        patientId: record.patientId,
-        capturedAmountMinor: record.capturedAmountMinor,
-        appliedAmountMinor: record.appliedAmountMinor,
-        unallocatedAmountMinor: record.unallocatedAmountMinor,
-        currency: record.currency,
-        status: "open" as const
-      };
-    },
-    async completeEvent(completion: {
-      providerEventRecordId: UUID;
-      processingStatus: "applied" | "ignored" | "reconciliation_required" | "failed";
-      processedAt: string;
-      result: DurablePaymentProviderEventResultProjection;
-    }) {
-      const completed = await input.durable.completePaymentProviderEvent(input.scope, {
-        providerEventRecordId: completion.providerEventRecordId,
-        leaseOwner: input.leaseOwner,
-        processingStatus: completion.processingStatus,
-        resultDigest: sha256StableJson(completion.result),
-        resultProjection: completion.result as unknown as Record<string, unknown>,
-        processedAt: completion.processedAt
-      });
-      if (completed.outcome !== "completed" && completed.outcome !== "replayed") {
-        throw new ApiError(
-          completed.outcome === "lost_lease" ? 503 : 409,
-          completed.outcome === "lost_lease" ? "DEPENDENCY_UNAVAILABLE" : "CONFLICT",
-          "Verified provider event could not be completed under its durable claim.",
-          { provider_event_completion: completed.outcome }
-        );
-      }
-    }
-  };
-}
-
-function duplicateProviderEventProjection(event: PaymentProviderEventRecord) {
-  if (!event.resultProjection) {
-    throw new ApiError(
-      503,
-      "DEPENDENCY_UNAVAILABLE",
-      "A completed provider event is missing its durable result projection."
-    );
-  }
-  const result = event.resultProjection as unknown as DurablePaymentProviderEventResultProjection;
-  const storedEvidence: PaymentProviderEventEvidenceProjection = {
-    rawBodySha256: event.rawBodySha256,
-    signatureSha256: event.signatureSha256,
-    normalizedEvent: event.normalizedEvent
-  };
-  return { outcome: "duplicate" as const, eventId: event.id, storedEvidence, result };
-}
-
-function durableIntegrityRepositoryFrom(
-  repository: ClinicOperationsRepository
-): DurableIntegrityRepository {
-  const candidate = repository as ClinicOperationsRepository & Partial<DurableIntegrityRepository>;
-  const required = [
-    "findActivePaymentProviderAccount",
-    "appendPaymentProviderIntegrationOutboxEvent",
-    "claimVerifiedPaymentProviderEvent",
-    "createPaymentReconciliation",
-    "completePaymentProviderEvent"
-  ] as const;
-  if (required.every((operation) => typeof candidate[operation] === "function")) {
-    return candidate as ClinicOperationsRepository & DurableIntegrityRepository;
-  }
-  throw new ApiError(
-    503,
-    "CONFIGURATION_ERROR",
-    "Durable payment provider event persistence is not configured."
-  );
-}
-
-function verifiedPaymentProviderScope(event: PaymentProviderWebhookEvent): RepositoryScope {
-  if (!event.tenantId || !event.clinicId || !isUuid(event.tenantId) || !isUuid(event.clinicId)) {
-    throw new ApiError(
-      400,
-      "VALIDATION_ERROR",
-      "Verified payment provider event scope is missing or invalid.",
-      { reason: "provider_event_scope_missing" }
-    );
-  }
-  return {
-    tenantId: event.tenantId,
-    clinicId: event.clinicId,
-    actorUserId: SYSTEM_INTEGRATION_ACTOR_USER_ID
-  };
-}
-
-function verifiedCp13PaymentProviderKey(value: string): "razorpay" | "simulator" {
-  if (value === "razorpay" || value === "simulator") return value;
-  throw new ApiError(
-    503,
-    "CONFIGURATION_ERROR",
-    "The configured payment provider cannot process CP13 signed webhook events."
-  );
-}
-
-function sha256Text(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
-
-function sha256StableJson(value: unknown): string {
-  return sha256Text(JSON.stringify(stableJsonValue(value)));
-}
-
-function stableJsonValue(value: unknown): unknown {
-  if (Array.isArray(value)) return value.map(stableJsonValue);
-  if (value && typeof value === "object") {
-    return Object.fromEntries(
-      Object.entries(value as Record<string, unknown>)
-        .filter(([, entry]) => entry !== undefined)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, entry]) => [key, stableJsonValue(entry)])
-    );
-  }
-  return value;
-}
-
 function missingOperationsRepository(): ApiError {
   return new ApiError(
     503,
     "CONFIGURATION_ERROR",
     "ClinicOS operations repository is not configured."
   );
-}
-
-function allowlistedWebhookHeaders(
-  request: IncomingMessage,
-  useLocalAuthFixture: boolean
-): Record<string, string | undefined> {
-  return {
-    "x-razorpay-signature": headerValue(request, "x-razorpay-signature"),
-    ...(useLocalAuthFixture
-      ? {
-          "x-clinic-os-simulator-signature": headerValue(request, "x-clinic-os-simulator-signature")
-        }
-      : {})
-  };
 }
 
 function paymentRepositoryFromOperationsRepository(

@@ -1,5 +1,5 @@
 import { Pool } from "pg";
-import { createPaymentProvider } from "@clinic-os/integrations";
+import { createAwsProviderSecretResolver, createPaymentProvider } from "@clinic-os/integrations";
 import { systemClock, type Clock } from "@clinic-os/domain";
 import { createClinicTemporalWorker, createTemporalClient } from "@clinic-os/workflow";
 import {
@@ -23,6 +23,8 @@ import { PostgresOutboxRepository } from "./postgres/postgres-outbox-repository.
 import { parseWorkerEnvironment } from "./runtime/config.js";
 import { TemporalOAuthTokenProvider } from "./runtime/temporal-oauth.js";
 import { createWorkerRuntime } from "./runtime/create-worker-runtime.js";
+import { createScopedRazorpayPaymentProviderResolver } from "./cp15/scoped-razorpay-payment-provider.js";
+import { createScopedMetaInstructionSender } from "./cp15/scoped-meta-instruction-sender.js";
 
 export async function runWorker(
   observability: ObservabilityRuntime,
@@ -79,11 +81,31 @@ export async function runWorker(
       razorpayWebhookSecret: env.razorpayWebhookSecret,
       razorpayWebhookUrl: env.razorpayWebhookUrl
     });
+    const providerSecrets = env.officialProviderCallbacksEnabled
+      ? createAwsProviderSecretResolver({ region: env.awsRegion })
+      : undefined;
     const composition = createCp13WorkerComposition({
       temporalClient,
       cp13ActivityPorts: createPostgresCp13ActivityPorts({
         pool: activityPool,
         paymentProvider,
+        ...(env.officialProviderCallbacksEnabled
+          ? {
+              scopedPaymentProviderResolver: createScopedRazorpayPaymentProviderResolver({
+                pool: activityPool,
+                secrets: providerSecrets!
+              })
+            }
+          : {}),
+        ...(env.officialProviderCallbacksEnabled && env.providerEndpointHmacSecret
+          ? {
+              metaInstructionSender: createScopedMetaInstructionSender({
+                pool: activityPool,
+                secrets: providerSecrets!,
+                endpointHmacSecret: Buffer.from(env.providerEndpointHmacSecret, "utf8")
+              })
+            }
+          : {}),
         workerId: env.workerId,
         dueGenerationCursorSecret: env.dueGenerationCursorSecret
       }),

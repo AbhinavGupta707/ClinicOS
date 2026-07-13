@@ -151,6 +151,42 @@ test("CP15 Meta signs UTF-8 bytes rather than reconstructed JSON text", () => {
   assert.throws(() => boundary.verifyAndNormalize(rawInput(spaced, signMetaWebhookBytes(compact, APP_SECRET))), errorCode("invalid_signature"));
 });
 
+test("CP15 Meta accepts a bounded previous signing secret only inside its rotation window", () => {
+  const previousSecret = "previous-test-app-secret-at-least-sixteen";
+  const bytes = Buffer.from('{"object":"whatsapp_business_account","entry":[]}', "utf8");
+  const boundary = new MetaWebhookBoundary({
+    appSecret: APP_SECRET,
+    appSecretVersion: "v2",
+    previousAppSecret: previousSecret,
+    previousAppSecretVersion: "v1",
+    previousAppSecretAcceptUntil: "2026-07-11T10:02:00.000Z",
+    verifyToken: VERIFY_TOKEN
+  });
+  const current = boundary.verifyAndNormalize(
+    rawInput(bytes, signMetaWebhookBytes(bytes, APP_SECRET))
+  );
+  assert.equal(current.verifiedSecretVersion, "v2");
+  assert.equal(current.verifiedWithPreviousSecret, false);
+  const previous = boundary.verifyAndNormalize(
+    rawInput(bytes, signMetaWebhookBytes(bytes, previousSecret))
+  );
+  assert.equal(previous.verifiedSecretVersion, "v1");
+  assert.equal(previous.verifiedWithPreviousSecret, true);
+
+  const expired = new MetaWebhookBoundary({
+    appSecret: APP_SECRET,
+    appSecretVersion: "v2",
+    previousAppSecret: previousSecret,
+    previousAppSecretVersion: "v1",
+    previousAppSecretAcceptUntil: "2026-07-11T10:00:00.000Z",
+    verifyToken: VERIFY_TOKEN
+  });
+  assert.throws(
+    () => expired.verifyAndNormalize(rawInput(bytes, signMetaWebhookBytes(bytes, previousSecret))),
+    errorCode("invalid_signature")
+  );
+});
+
 test("CP15 service commits verified event, audit, and outbox through one persistence call", async () => {
   const bytes = Buffer.from(JSON.stringify(webhookFixture()), "utf8");
   const writes: MetaPersistVerifiedInput[] = [];
@@ -168,6 +204,7 @@ test("CP15 service commits verified event, audit, and outbox through one persist
   assert.equal(writes[0]?.audit.action, "meta_whatsapp.webhook_verified");
   assert.equal(writes[0]?.outbox.topic, "provider.meta_whatsapp.webhook_verified");
   assert.equal(writes[0]?.rawBodySha256, createHash("sha256").update(bytes).digest("hex"));
+  assert.equal(writes[0]?.verifiedWithPreviousSecret, false);
   assert.equal(store.deletes.length, 0);
 });
 
@@ -207,7 +244,7 @@ test("CP15 service requests orphan cleanup and returns retryable safe error afte
 });
 
 function createBoundary(maxBodyBytes?: number): MetaWebhookBoundary {
-  return new MetaWebhookBoundary({ appSecret: APP_SECRET, verifyToken: VERIFY_TOKEN, ...(maxBodyBytes ? { maxBodyBytes } : {}) });
+  return new MetaWebhookBoundary({ appSecret: APP_SECRET, appSecretVersion: "v1", verifyToken: VERIFY_TOKEN, ...(maxBodyBytes ? { maxBodyBytes } : {}) });
 }
 
 function rawInput(bytes: Uint8Array, signature: string) {

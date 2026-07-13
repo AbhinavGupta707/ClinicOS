@@ -13,6 +13,8 @@ const SECURITY_HEADER_NAMES = new Set([
   "x-clinic-id",
   "x-clinic-os-dev-subject",
   "x-clinicos-dev-subject",
+  "x-hub-signature-256",
+  "x-razorpay-event-id",
   "x-razorpay-signature"
 ]);
 

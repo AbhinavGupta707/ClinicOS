@@ -97,9 +97,33 @@
       "phi": "read"
     },
     {
-      "auth": "razorpay_signature",
+      "auth": "meta_challenge",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP15",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "route-parity",
+      "operationId": "verifyMetaWhatsAppCallback",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/provider-callbacks/meta-whatsapp/{registrationKey}",
+      "phi": "none"
+    },
+    {
+      "auth": "meta_signature",
       "bodyMaximumBytes": 1048576,
-      "checkpoint": "CP5",
+      "checkpoint": "CP15",
       "concurrency": {
         "mode": "none",
         "required": false,
@@ -111,14 +135,38 @@
         "required": true
       },
       "method": "POST",
-      "nativeRuntimeEnforcement": "partial",
+      "nativeRuntimeEnforcement": "route-parity",
+      "operationId": "receiveMetaWhatsAppWebhook",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/provider-callbacks/meta-whatsapp/{registrationKey}",
+      "phi": "write"
+    },
+    {
+      "auth": "razorpay_signature",
+      "bodyMaximumBytes": 262144,
+      "checkpoint": "CP15",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "provider_event",
+        "replaySemantics": "The verified provider event identifier is the replay key; duplicate effects are forbidden.",
+        "required": true
+      },
+      "method": "POST",
+      "nativeRuntimeEnforcement": "route-parity",
       "operationId": "receiveRazorpayPaymentWebhook",
       "pagination": {
         "cursor": false,
         "mode": "none"
       },
-      "path": "/v1/payment-webhooks/razorpay",
-      "phi": "none"
+      "path": "/v1/provider-callbacks/razorpay/{registrationKey}",
+      "phi": "write"
     },
     {
       "auth": "bearer",
@@ -3239,7 +3287,7 @@
       "phi": "none"
     }
   ],
-  "activeOperationCount": 128,
+  "activeOperationCount": 130,
   "deferred": [
     {
       "activationGate": "Register a complete messaging request workflow with provider state, audit, outbox and parity tests, or keep it absent.",

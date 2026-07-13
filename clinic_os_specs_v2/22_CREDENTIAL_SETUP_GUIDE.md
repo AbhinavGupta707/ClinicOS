@@ -206,7 +206,7 @@ Current local status:
 
 ## 6. Webhook Registration Readiness
 
-The provider dashboards must not be connected until CP15 exposes deployed HTTPS callbacks with production-grade verification. The current API includes `POST /v1/payment-webhooks/razorpay`; it is not deployed or registered. There is no current Meta WhatsApp inbound route or telephony callback. CP15 must choose one canonical generated-OpenAPI route family and update provider dashboards, adapters, tests, clients and runbooks together; do not add weak aliases for older route examples.
+Provider dashboards must not be connected until the CP15 callback boundary is deployed over HTTPS and the specific registration has passed sandbox verification. The canonical generated-OpenAPI callback family is `GET|POST /v1/provider-callbacks/meta-whatsapp/{registrationKey}` and `POST /v1/provider-callbacks/razorpay/{registrationKey}`. Registration keys are opaque, endpoint-scoped identifiers; provider secrets remain referenced through the approved secret store. The older global Razorpay webhook path is intentionally unavailable. Telephony remains disabled until one provider is selected and its official callback contract is implemented and verified; do not add weak aliases for older route examples.
 
 Required before dashboard registration:
 

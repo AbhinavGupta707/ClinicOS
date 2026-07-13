@@ -476,16 +476,28 @@ const identityRoute = Object.freeze({
   handler: "getMe"
 });
 
-const paymentWebhookRoute = Object.freeze({
-  method: "POST",
-  pathTemplate: "/v1/payment-webhooks/razorpay",
-  handler: "processPaymentWebhook"
-});
+const providerCallbackRoutes = Object.freeze([
+  Object.freeze({
+    method: "GET",
+    pathTemplate: "/v1/provider-callbacks/meta-whatsapp/{registrationKey}",
+    handler: "metaChallenge"
+  }),
+  Object.freeze({
+    method: "POST",
+    pathTemplate: "/v1/provider-callbacks/meta-whatsapp/{registrationKey}",
+    handler: "metaWebhook"
+  }),
+  Object.freeze({
+    method: "POST",
+    pathTemplate: "/v1/provider-callbacks/razorpay/{registrationKey}",
+    handler: "razorpay"
+  })
+]);
 
 const handlerInventory = Object.freeze([
   ...publicHealthRoutes,
   identityRoute,
-  paymentWebhookRoute,
+  ...providerCallbackRoutes,
   ...operationRoutes
 ]);
 
@@ -511,6 +523,8 @@ export const CURRENT_ROUTE_CONTROL_INVENTORY = Object.freeze(
     const routeClass =
       policy.access.mode === "public_health"
         ? "public_health"
+        : policy.access.mode === "provider_challenge"
+          ? "verified_provider_challenge"
         : policy.access.mode === "verified_webhook"
           ? "verified_provider_webhook"
           : activeOperation.operationId === "getCurrentIdentity"
@@ -519,12 +533,16 @@ export const CURRENT_ROUTE_CONTROL_INVENTORY = Object.freeze(
     const authentication =
       policy.access.mode === "public_health"
         ? "intentionally_public"
+        : policy.access.mode === "provider_challenge"
+          ? "constant_time_registered_provider_challenge"
         : policy.access.mode === "verified_webhook"
           ? "provider_signature_over_raw_body_before_parse"
           : "verified_keycloak_or_local_only_fixture";
     const authorization =
       policy.access.mode === "public_health"
         ? "explicit_public_health_exception"
+        : policy.access.mode === "provider_challenge"
+          ? "registered_provider_challenge_only"
         : policy.access.mode === "verified_webhook"
           ? "provider_signature_and_verified_event_scope"
           : activeOperation.operationId === "getCurrentIdentity"
@@ -544,6 +562,8 @@ export const CURRENT_ROUTE_CONTROL_INVENTORY = Object.freeze(
         tenantAuthority:
           policy.access.mode === "public_health"
             ? "not_applicable"
+            : policy.access.mode === "provider_challenge"
+              ? "registered_provider_scope_after_token_verification"
             : policy.access.mode === "verified_webhook"
               ? "verified_provider_event_after_signature"
               : "verified_identity_repository",

@@ -86,6 +86,10 @@ export interface VerifiedMetaWebhook {
   readonly provider: "meta_whatsapp_cloud";
   readonly verification: "x_hub_signature_256";
   readonly rawBodySha256: string;
+  readonly signatureSha256: string;
+  readonly normalizedEventSha256: string;
+  readonly verifiedSecretVersion: string;
+  readonly verifiedWithPreviousSecret: boolean;
   readonly byteLength: number;
   readonly receivedAt: string;
   readonly correlationId: string;
@@ -105,6 +109,11 @@ export interface MetaPersistVerifiedInput {
   readonly externalAccountId: string;
   readonly rawEventId: string;
   readonly rawBodySha256: string;
+  readonly signatureSha256: string;
+  readonly normalizedEventSha256: string;
+  readonly verifiedSecretVersion: string;
+  readonly verifiedWithPreviousSecret: boolean;
+  readonly rawBodyByteLength: number;
   readonly rawBodyCiphertextRef: string;
   readonly receivedAt: string;
   readonly correlationId: string;

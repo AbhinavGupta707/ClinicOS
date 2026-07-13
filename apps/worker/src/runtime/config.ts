@@ -31,6 +31,9 @@ export interface WorkerEnvironment {
   readonly razorpayKeySecret?: string;
   readonly razorpayWebhookSecret?: string;
   readonly razorpayWebhookUrl?: string;
+  readonly officialProviderCallbacksEnabled: boolean;
+  readonly awsRegion: string;
+  readonly providerEndpointHmacSecret?: string;
 }
 
 export function parseWorkerEnvironment(env: NodeJS.ProcessEnv): WorkerEnvironment {
@@ -48,6 +51,22 @@ export function parseWorkerEnvironment(env: NodeJS.ProcessEnv): WorkerEnvironmen
   }
   const temporalTls = parseTemporalTls(env);
   const temporalAuth = parseTemporalAuth(env);
+  const officialProviderCallbacksEnabled = parseBoolean(
+    env.CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED
+  );
+  const awsRegion = env.S3_REGION ?? "ap-south-1";
+  if (!/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/u.test(awsRegion)) {
+    throw new Error("S3_REGION must be a canonical AWS region for official provider secrets");
+  }
+  const providerEndpointHmacSecret = env.CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET;
+  if (
+    officialProviderCallbacksEnabled &&
+    (!providerEndpointHmacSecret || Buffer.byteLength(providerEndpointHmacSecret, "utf8") < 32)
+  ) {
+    throw new Error(
+      "CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET is required for official provider activities"
+    );
+  }
   if (productionLike && env.TEMPORAL_ADDRESS && !temporalTls) {
     throw new Error("Production-like Temporal connections require mutual TLS");
   }
@@ -72,12 +91,21 @@ export function parseWorkerEnvironment(env: NodeJS.ProcessEnv): WorkerEnvironmen
     outboxMaxAttempts: parsePositiveInteger(env.OUTBOX_MAX_ATTEMPTS, 8),
     ...(dueGenerationCursorSecret ? { dueGenerationCursorSecret } : {}),
     paymentProvider,
+    officialProviderCallbacksEnabled,
+    awsRegion,
+    ...(providerEndpointHmacSecret ? { providerEndpointHmacSecret } : {}),
     paymentQrMode: env.PAYMENT_QR_MODE === "razorpay_qr" ? "razorpay_qr" : "payment_link_qr",
     ...(env.RAZORPAY_KEY_ID ? { razorpayKeyId: env.RAZORPAY_KEY_ID } : {}),
     ...(env.RAZORPAY_KEY_SECRET ? { razorpayKeySecret: env.RAZORPAY_KEY_SECRET } : {}),
     ...(env.RAZORPAY_WEBHOOK_SECRET ? { razorpayWebhookSecret: env.RAZORPAY_WEBHOOK_SECRET } : {}),
     ...(env.RAZORPAY_WEBHOOK_URL ? { razorpayWebhookUrl: env.RAZORPAY_WEBHOOK_URL } : {})
   };
+}
+
+function parseBoolean(value: string | undefined): boolean {
+  if (value === undefined || value === "false") return false;
+  if (value === "true") return true;
+  throw new Error("CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED must be true or false");
 }
 
 function parseTemporalAuth(env: NodeJS.ProcessEnv): WorkerEnvironment["temporalAuth"] {
