@@ -341,6 +341,22 @@ describe("parseClinicOsEnv", () => {
     expect(config.providers.ai.activation.killSwitch).toBe(true);
   });
 
+  it("does not treat a legacy raw Fireworks key as production credential wiring", () => {
+    const result = safeParseClinicOsEnv({
+      ...baseEnv,
+      LLM_PROVIDER: "fireworks",
+      TRANSCRIPTION_PROVIDER: "fireworks",
+      FIREWORKS_API_KEY: "must-not-be-consumed",
+      FIREWORKS_SERVICE_ACCOUNT_ID: "clinicos-staging-inference"
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.map((issue) => issue.path.join("."))).toContain(
+      "FIREWORKS_API_KEY_SECRET_REF"
+    );
+  });
+
   it("rejects live Fireworks activation without every approval, kill-switch and budget gate", () => {
     const result = safeParseClinicOsEnv({
       ...baseEnv,
