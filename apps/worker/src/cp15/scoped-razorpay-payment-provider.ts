@@ -1,5 +1,8 @@
 import type { Pool } from "pg";
-import { PostgresOfficialProviderAccountResolver, type ProviderCallbackRegistration } from "@clinic-os/db";
+import {
+  PostgresOfficialProviderAccountResolver,
+  type ProviderCallbackRegistration
+} from "@clinic-os/db";
 import {
   PaymentProviderError,
   RazorpayApiClient,
@@ -14,7 +17,7 @@ import {
   type ProviderSecretResolver,
   type RawPaymentWebhook
 } from "@clinic-os/integrations";
-import type { UUID } from "@clinic-os/domain";
+import { systemClock, type UUID } from "@clinic-os/domain";
 
 const CAPABILITIES = [
   "CREATE_PAYMENT_QR",
@@ -82,7 +85,7 @@ class ScopedRazorpayPaymentProvider implements PaymentProvider {
   }) {
     this.#registration = input.registration;
     this.#client = input.client;
-    this.#now = input.now ?? (() => new Date());
+    this.#now = input.now ?? (() => systemClock.now());
   }
 
   capabilities(): readonly AdapterCapability[] {
@@ -136,7 +139,9 @@ class ScopedRazorpayPaymentProvider implements PaymentProvider {
   }
 
   async verifyWebhook(_raw: RawPaymentWebhook): Promise<PaymentWebhookVerificationResult> {
-    throw unavailable("Razorpay inbound verification is available only on the CP15 callback runtime.");
+    throw unavailable(
+      "Razorpay inbound verification is available only on the CP15 callback runtime."
+    );
   }
 
   async parseWebhook(_raw: RawPaymentWebhook): Promise<PaymentProviderWebhookEvent> {

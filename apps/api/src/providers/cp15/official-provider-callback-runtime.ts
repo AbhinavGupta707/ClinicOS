@@ -3,6 +3,7 @@ import type {
   PostgresProviderCallbackRegistrationResolver,
   ProviderCallbackRegistration
 } from "@clinic-os/db";
+import { systemClock } from "@clinic-os/domain";
 import {
   MetaWebhookBoundary,
   MetaWebhookService,
@@ -19,7 +20,11 @@ import { PostgresMetaWebhookPersistence } from "./postgres-meta-whatsapp.ts";
 import { PostgresRazorpayUnitOfWork } from "./postgres-razorpay.ts";
 
 interface ProviderUnitOfWork {
-  run<T>(callback: (context: { readonly sqlClient?: import("@clinic-os/db").SqlQueryClient }) => Promise<T>): Promise<T>;
+  run<T>(
+    callback: (context: {
+      readonly sqlClient?: import("@clinic-os/db").SqlQueryClient;
+    }) => Promise<T>
+  ): Promise<T>;
 }
 
 export class ProviderCallbackRegistrationNotFoundError extends Error {
@@ -36,9 +41,7 @@ export class ProviderCallbackUnavailableError extends Error {
   }
 }
 
-export class PostgresOfficialProviderCallbackRuntime
-  implements OfficialProviderCallbackRuntime
-{
+export class PostgresOfficialProviderCallbackRuntime implements OfficialProviderCallbackRuntime {
   readonly #registrations: PostgresProviderCallbackRegistrationResolver;
   readonly #secrets: ProviderSecretResolver;
   readonly #rawBodyStore: MetaEncryptedRawBodyStore;
@@ -62,7 +65,7 @@ export class PostgresOfficialProviderCallbackRuntime
     this.#rawBodyStore = input.rawBodyStore;
     this.#unitOfWork = input.unitOfWork;
     this.#endpointHmacSecret = input.endpointHmacSecret;
-    this.#now = input.now ?? (() => new Date());
+    this.#now = input.now ?? (() => systemClock.now());
   }
 
   async verifyMetaChallenge(input: {
@@ -168,7 +171,8 @@ export class PostgresOfficialProviderCallbackRuntime
       externalAccountId: registration.externalAccountId,
       razorpayAccountId: registration.providerAccountId,
       mode: registration.providerMode,
-      activationState: registration.activationState as RazorpayWebhookRouteBinding["activationState"],
+      activationState:
+        registration.activationState as RazorpayWebhookRouteBinding["activationState"],
       secrets: [
         {
           role: "current",
@@ -204,10 +208,7 @@ export class PostgresOfficialProviderCallbackRuntime
     registrationKey: string,
     challenge: boolean
   ): Promise<ProviderCallbackRegistration> {
-    const registration = await this.#registrations.resolve(
-      "meta_whatsapp_cloud",
-      registrationKey
-    );
+    const registration = await this.#registrations.resolve("meta_whatsapp_cloud", registrationKey);
     if (!registration || ["absent", "disabled"].includes(registration.activationState)) {
       throw new ProviderCallbackRegistrationNotFoundError();
     }
@@ -225,11 +226,11 @@ export class PostgresOfficialProviderCallbackRuntime
     if (!registration || ["absent", "disabled"].includes(registration.activationState)) {
       throw new ProviderCallbackRegistrationNotFoundError();
     }
-    if (![
-      "configured",
-      "sandbox_verified",
-      "production_verified"
-    ].includes(registration.activationState)) {
+    if (
+      !["configured", "sandbox_verified", "production_verified"].includes(
+        registration.activationState
+      )
+    ) {
       throw new ProviderCallbackUnavailableError();
     }
     return registration;

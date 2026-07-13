@@ -1,7 +1,10 @@
 import { createHmac, randomUUID } from "node:crypto";
 import type { Pool } from "pg";
-import { createPostgresClinicModuleUnitOfWork, type ClinicModuleTransactionContext } from "@clinic-os/db";
-import type { UUID } from "@clinic-os/domain";
+import {
+  createPostgresClinicModuleUnitOfWork,
+  type ClinicModuleTransactionContext
+} from "@clinic-os/db";
+import { systemClock, type UUID } from "@clinic-os/domain";
 import {
   MetaWhatsAppClient,
   MetaWhatsAppError,
@@ -60,18 +63,22 @@ export function createScopedMetaInstructionSender(input: {
   readonly secrets: ProviderSecretResolver;
   readonly endpointHmacSecret: Uint8Array;
   readonly now?: () => Date;
-  readonly clientFactory?: (options: ConstructorParameters<typeof MetaWhatsAppClient>[0]) => Pick<MetaWhatsAppClient, "sendApprovedTemplate">;
+  readonly clientFactory?: (
+    options: ConstructorParameters<typeof MetaWhatsAppClient>[0]
+  ) => Pick<MetaWhatsAppClient, "sendApprovedTemplate">;
 }): MetaInstructionSenderPort {
   if (input.endpointHmacSecret.byteLength < 32) {
     throw new Error("Meta instruction endpoint HMAC secret must contain at least 32 bytes.");
   }
-  const now = input.now ?? (() => new Date());
+  const now = input.now ?? (() => systemClock.now());
   const unitOfWork = createPostgresClinicModuleUnitOfWork<ActivityScope>({
     client: input.pool,
     resolveScope: (scope) => scope
   });
-  const run = <T>(request: Cp13PatientInstructionSendActivityRequest, callback: (context: ClinicModuleTransactionContext) => Promise<T>) =>
-    unitOfWork.run(scopeFrom(request), callback);
+  const run = <T>(
+    request: Cp13PatientInstructionSendActivityRequest,
+    callback: (context: ClinicModuleTransactionContext) => Promise<T>
+  ) => unitOfWork.run(scopeFrom(request), callback);
 
   return {
     async send(request) {
@@ -120,7 +127,8 @@ export function createScopedMetaInstructionSender(input: {
           phoneNumberId: claim.phoneNumberId,
           accessToken
         } as const;
-        const client = input.clientFactory?.(clientOptions) ?? new MetaWhatsAppClient(clientOptions);
+        const client =
+          input.clientFactory?.(clientOptions) ?? new MetaWhatsAppClient(clientOptions);
         result = await client.sendApprovedTemplate({
           messageRequestId: request.instructionId,
           idempotencyKey: request.idempotencyKey,
@@ -147,10 +155,16 @@ export function createScopedMetaInstructionSender(input: {
       } catch (error) {
         const policyBlocked = error instanceof MetaWhatsAppError && error.code === "policy_blocked";
         const finalized = await run(request, (context) =>
-          finalizeDispatch(context, request, claim, {
-            outcome: policyBlocked ? "rejected_by_provider" : "not_dispatched",
-            safeFailureCode: policyBlocked ? "policy_blocked" : "provider_unavailable"
-          }, now())
+          finalizeDispatch(
+            context,
+            request,
+            claim,
+            {
+              outcome: policyBlocked ? "rejected_by_provider" : "not_dispatched",
+              safeFailureCode: policyBlocked ? "policy_blocked" : "provider_unavailable"
+            },
+            now()
+          )
         );
         if (policyBlocked) {
           return {
@@ -475,7 +489,8 @@ async function finalizeDispatch(
   request: Cp13PatientInstructionSendActivityRequest,
   claim: DispatchClaim,
   result: {
-    readonly outcome: "accepted_by_provider" | "not_dispatched" | "dispatch_ambiguous" | "rejected_by_provider";
+    readonly outcome:
+      "accepted_by_provider" | "not_dispatched" | "dispatch_ambiguous" | "rejected_by_provider";
     readonly providerMessageId?: string;
     readonly safeFailureCode?: string;
   },
@@ -484,7 +499,12 @@ async function finalizeDispatch(
   const sql = requiredSql(context);
   const evidenceId = randomUUID();
   const outcome = result.outcome === "rejected_by_provider" ? "rejected" : result.outcome;
-  const state = result.outcome === "accepted_by_provider" ? "accepted_by_provider" : result.outcome === "rejected_by_provider" ? "failed" : "send_requested";
+  const state =
+    result.outcome === "accepted_by_provider"
+      ? "accepted_by_provider"
+      : result.outcome === "rejected_by_provider"
+        ? "failed"
+        : "send_requested";
   const updated = await sql.query<{ id: UUID }>(
     `update meta_whatsapp_outbound_messages
      set state = $6,
@@ -586,10 +606,18 @@ async function markAmbiguousAfterLeaseLoss(
      where tenant_id = $1 and clinic_id = $2 and id = $3 and dispatch_outcome = 'pending'`,
     [request.tenantId, request.clinicId, outboundMessageId, claim.leaseOwner]
   );
-  return (await finalizeDispatch(context, request, claim, {
-    outcome: "dispatch_ambiguous",
-    safeFailureCode: "dispatch_lease_expired"
-  }, now)).evidenceId;
+  return (
+    await finalizeDispatch(
+      context,
+      request,
+      claim,
+      {
+        outcome: "dispatch_ambiguous",
+        safeFailureCode: "dispatch_lease_expired"
+      },
+      now
+    )
+  ).evidenceId;
 }
 
 function providerOutcome(result: MetaTemplateSendResult) {
@@ -597,7 +625,10 @@ function providerOutcome(result: MetaTemplateSendResult) {
     return { outcome: result.outcome, providerMessageId: result.providerMessageId } as const;
   }
   if (result.outcome === "rejected_by_provider") {
-    return { outcome: result.outcome, safeFailureCode: `provider_http_${result.providerHttpStatus}` } as const;
+    return {
+      outcome: result.outcome,
+      safeFailureCode: `provider_http_${result.providerHttpStatus}`
+    } as const;
   }
   return { outcome: result.outcome, safeFailureCode: result.outcome } as const;
 }
