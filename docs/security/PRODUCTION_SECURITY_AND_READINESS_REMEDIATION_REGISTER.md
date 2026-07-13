@@ -83,7 +83,7 @@ A finding closes only when all of the following exist:
 
 ### PRR-008 — Official provider activation is incomplete (P1)
 
-- **Evidence:** Razorpay has a raw-body route (`apps/api/src/server.ts:261-289`) but no registered public webhook URL; Meta signature/provider adapters exist without a registered inbound WhatsApp route; no telephony callback route was found. Credential presence is partial and does not prove provider registration, approval, or traffic.
+- **Evidence:** CP15 now has three opaque registration-scoped raw-body Meta/Razorpay callback operations, forced-RLS activation truth and durable reconciliation at local E3. No public HTTPS callback is deployed or registered in either provider dashboard, no official sandbox traffic exists, and no telephony provider/route is selected. Local credentials or tests do not prove activation, approval or traffic.
 - **Risk:** messages, delivery states, missed calls, and payments cannot reliably enter the source of truth; spoofing and lost callbacks are possible if activation is improvised.
 - **Remediation:** CP15 implements official HTTPS callback routes, provider dashboard registration, challenge/verification flows, signed raw-body verification before parsing, replay windows, event deduplication, state machines, retries/DLQ/replay, IP/rate controls where officially supported, and provider health.
 - **Closure evidence:** official sandbox events for success, invalid signature, duplicate, out-of-order, retry, outage, and replay; provider dashboard screenshots/exports with secrets redacted.
@@ -209,7 +209,7 @@ A finding closes only when all of the following exist:
 
 ### PRR-026 — Dependency/runtime activation state is not consistently represented (P2)
 
-- **Evidence:** simulator, unconfigured, registered-unavailable, and live states appear across providers and UI but are not governed by one deploy-time capability registry with authoritative health and activation evidence.
+- **Evidence:** CP15 locally governs provider states through the forced-RLS registry and exposes bounded health/UI truth for `absent`, `registered`, `configured`, `sandbox_verified`, `production_verified`, `degraded` and `disabled`. Provider-side E4 truth is still absent, and telephony remains disabled because no official provider is selected.
 - **Risk:** configured credentials may be mistaken for a usable integration; missing registration may be debugged as permissions/runtime.
 - **Remediation:** provider/capability registry with states `absent`, `registered`, `configured`, `sandbox_verified`, `production_verified`, `degraded`, `disabled`; activation prerequisites; last verified time; owner; health; UI/API exposure rules. Diagnose registration/discovery first, then permissions/runtime.
 - **Closure evidence:** automated state-transition tests and operations surface matching provider-side truth.
@@ -253,7 +253,7 @@ A finding closes only when all of the following exist:
 | PRR-005 encrypted durable mobile cache       | P1       | CP16          | Open                                                                        | Hard if mobile enabled     |
 | PRR-006 deployable cloud                     | P1       | CP14          | Open                                                                        | Hard                       |
 | PRR-007 telemetry/alerts                     | P1       | CP14          | Open                                                                        | Hard                       |
-| PRR-008 official provider activation         | P1       | CP15          | Open                                                                        | Hard for enabled provider  |
+| PRR-008 official provider activation         | P1       | CP15          | Partial: local E3 boundaries/reconciliation complete; official E4 open      | Hard for enabled provider  |
 | PRR-009 production media                     | P1       | CP14          | Open                                                                        | Hard for media workflow    |
 | PRR-010 truthful readiness                   | P1       | CP11          | Partial: local dependencies closed; deployed admission open                 | Hard                       |
 | PRR-011 real TypeScript checking             | P2       | CP11          | Closed at E3                                                                | Hard                       |
@@ -271,7 +271,7 @@ A finding closes only when all of the following exist:
 | PRR-023 mobile release/device controls       | P1       | CP16          | Open                                                                        | Hard if mobile enabled     |
 | PRR-024 SLO/capacity/resilience/incident ops | P1       | CP14/CP17     | Open                                                                        | Hard                       |
 | PRR-025 accurate readiness governance        | P1       | Docs/CP11     | Partial: CP10 corrected; production approvals open                          | Hard                       |
-| PRR-026 capability activation registry       | P2       | CP11/CP15     | Partial: repository/auth modes truthful; provider registry open             | Hard for enabled providers |
+| PRR-026 capability activation registry       | P2       | CP11/CP15     | Partial: local registry/health complete; provider E4 and telephony open     | Hard for enabled providers |
 | PRR-027 outbox/Temporal durability           | P1       | CP11/CP13     | Closed at E3; deployed failover/queue SLO evidence remains CP14/CP17        | Hard                       |
 | PRR-028 runtime validation/mass assignment   | P2       | CP12          | Closed at E3                                                                | Hard                       |
 | PRR-029 release-check scope hygiene          | P3       | CP11          | Closed at E3                                                                | Check reproducibility      |
@@ -357,6 +357,22 @@ Candidate implementation: `8a8cfc2c`; evidence: `docs/qa/checkpoint-14-evidence.
   NO-GO for production, PHI, live payments/messages/calls and clinical reliance.
 - Re-entry requirements are authoritative in
   `docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md`.
+
+### CP15 local E3 status delta — 2026-07-13
+
+Implementation candidate: `f1cfe7bb`; evidence: `docs/qa/checkpoint-15-evidence.md`; threat delta:
+`docs/security/checkpoint-15-threat-model-delta.md`.
+
+- PRR-008 is partial, not closed. Opaque Meta/Razorpay routes, raw signature-before-parse controls,
+  replay/business idempotency, durable worker reconciliation and local PostgreSQL evidence pass.
+  Deployed public callbacks and official provider sandbox evidence do not exist.
+- PRR-026 is locally implemented for Meta/Razorpay activation and health truth. Configured is never
+  presented as verified; provider secrets remain references; telephony is disabled whole.
+- The exact candidate passes complete local CI, 21-migration concurrency/checksum/rollback checks,
+  worker-role forced-RLS reconciliation and desktop/390px browser gates. Twelve moderate transitive
+  advisories remain; the high-severity audit and secret scan pass.
+- The release remains NO-GO. No AWS/DNS/provider dashboard, live credential, real message/payment/
+  call, PHI, official sandbox or deployed alert/recovery evidence was created.
 
 ## 5. Remediation Dependency Order
 

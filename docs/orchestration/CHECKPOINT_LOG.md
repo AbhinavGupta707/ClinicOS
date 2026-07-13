@@ -1117,3 +1117,28 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 - The follow-up lane owns only new reconciliation processor/client/test files. Shared migration,
   runtime composition, configuration, contracts, evidence and release truth remain master-owned.
   It cannot use credentials or mutate AWS, DNS or provider dashboards.
+
+### CP15 Local E3 Integration Result - 2026-07-13
+
+- The reconciliation lane delivered `19921c04` and, after master security/concurrency review,
+  corrective commit `f934c6af`. Master merged the corrected lane as `8acd82e0`.
+- Master added the forced-RLS provider scope queue and worker scheduler, production composition,
+  health/metrics/configuration, server-derived operations UI, threat delta, activation runbook,
+  Playwright coverage and a real PostgreSQL worker-role proof. Integrated implementation candidate:
+  `f1cfe7bb`.
+- `npm run ci` passes: API 172/172, integrations 186/186, worker 56/56 and web 100/100, with zero
+  CP15 skips. The high-severity npm audit and release-scope secret scan pass; 12 moderate transitive
+  advisories remain recorded.
+- `npm run db:test:migrations` passes concurrent runner, checksum-drift and rollback gates across 21
+  canonical migrations. `npm run cp15:test:provider-persistence` passes callback signatures/replay,
+  route-index denial, worker-role forced RLS, scope scheduling, atomic reconciliation/health and
+  stored-secret negatives.
+- CP15 Playwright passes desktop/390px provider truth with no horizontal overflow or secret-shaped
+  output. The in-app Browser passes the production build's honest unavailable state with reachable
+  retry, zero overflow and no console errors when `/v1/me` is absent.
+- Evidence: `docs/qa/checkpoint-15-evidence.md`; final report:
+  `docs/orchestration/CHECKPOINT_15_FINAL_REPORT.md`; threat delta:
+  `docs/security/checkpoint-15-threat-model-delta.md`.
+- Local E3 implementation is eligible for promotion under the owner deferral. CP15 E4/full exit,
+  Meta/Razorpay official sandbox activation and telephony remain open. The release remains NO-GO;
+  user-owned `research/` and `scripts/research/` remain untouched.
