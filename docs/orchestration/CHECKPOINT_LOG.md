@@ -1158,6 +1158,17 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 - Three path-disjoint `gpt-5.6-sol` / `xhigh` candidates are authorized: native mobile capture,
   Fireworks AI/STT and FHIR/interoperability. Shared manifests/lockfile/config/migrations/contracts,
   API composition, evidence and release truth remain master-owned.
+- Visible project-scoped worktree tasks launched from integration commit `c4fd166f`:
+
+| Lane | Thread | Worktree | Owned boundary |
+| --- | --- | --- | --- |
+| Native mobile | `019f5dce-976f-7492-8303-7cc7b840001f` | `/Users/abhinavgupta/.codex/worktrees/8f66/ClinicOS` | `apps/mobile/**` |
+| Fireworks AI/STT | `019f5dce-9786-72e2-ac35-088116ecdf64` | `/Users/abhinavgupta/.codex/worktrees/6766/ClinicOS` | namespaced AI/STT domain, integration, API and eval paths |
+| FHIR/ABDM | `019f5dce-977e-7232-9b9c-1ed8c629315c` | `/Users/abhinavgupta/.codex/worktrees/5a2f/ClinicOS` | `packages/fhir/**` and namespaced interoperability API paths |
+
+- Each lane uses native worktree dependencies, commits only its owned boundary and hands shared
+  changes back to the master. Workers cannot merge, push, use provider credentials, mutate external
+  systems or claim checkpoint completion.
 - Physical-device, signed distribution, live-provider, official FHIR validator and ABDM sandbox
   evidence remain external E4 gates and cannot be replaced by simulator or fixture claims. The
   release remains NO-GO.
