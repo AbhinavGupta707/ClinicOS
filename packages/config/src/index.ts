@@ -39,8 +39,25 @@ export type TelephonyProvider = (typeof telephonyProviders)[number];
 export const llmProviders = ["simulator", "unconfigured", "fireworks", "openai"] as const;
 export type LlmProvider = (typeof llmProviders)[number];
 
-export const transcriptionProviders = ["simulator", "unconfigured", "openai", "deepgram"] as const;
+export const transcriptionProviders = [
+  "simulator",
+  "unconfigured",
+  "fireworks",
+  "openai",
+  "deepgram"
+] as const;
 export type TranscriptionProvider = (typeof transcriptionProviders)[number];
+
+export const fireworksModelDefaults = {
+  clinicalStructuredDraft: "accounts/fireworks/models/deepseek-v4-pro",
+  clinicalSafetyReview: "accounts/fireworks/models/glm-5p2",
+  boundedExtraction: "accounts/fireworks/models/deepseek-v4-flash",
+  longContextSummary: "accounts/fireworks/models/kimi-k2p6",
+  retrievalEmbedding: "fireworks/qwen3-embedding-8b",
+  retrievalRerank: "fireworks/qwen3-reranker-8b",
+  speechQuality: "whisper-v3",
+  speechLowLatency: "whisper-v3-turbo"
+} as const;
 
 export const mediaStorageProviders = ["local_simulator", "aws_s3"] as const;
 export type MediaStorageProvider = (typeof mediaStorageProviders)[number];
@@ -87,6 +104,17 @@ const nonNegativeIntegerFromEnv = (defaultValue: number) =>
     if (!/^\d+$/.test(normalized)) return value;
     return Number(normalized);
   }, z.number().int().nonnegative());
+
+const positiveIntegerFromEnv = (defaultValue: number) =>
+  z.preprocess((value) => {
+    if (value === undefined || value === "") return defaultValue;
+    if (typeof value === "number") return value;
+    if (typeof value !== "string") return value;
+
+    const normalized = value.trim();
+    if (!/^\d+$/u.test(normalized)) return value;
+    return Number(normalized);
+  }, z.number().int().positive());
 
 const runtimeEnvSchema = z
   .object({
@@ -158,12 +186,60 @@ const runtimeEnvSchema = z
     LLM_BASE_URL: optionalUrl,
     LLM_MODEL_PRIMARY: optionalString,
     FIREWORKS_API_KEY: optionalString,
+    FIREWORKS_SERVICE_ACCOUNT_ID: optionalString,
+    FIREWORKS_CHAT_COMPLETIONS_URL: requiredUrl.default(
+      "https://api.fireworks.ai/inference/v1/chat/completions"
+    ),
+    FIREWORKS_AUDIO_QUALITY_URL: requiredUrl.default(
+      "https://audio-prod.api.fireworks.ai/v1/audio/transcriptions"
+    ),
+    FIREWORKS_AUDIO_TURBO_URL: requiredUrl.default(
+      "https://audio-turbo.api.fireworks.ai/v1/audio/transcriptions"
+    ),
+    FIREWORKS_MODEL_CLINICAL_DRAFT: requiredString.default(
+      fireworksModelDefaults.clinicalStructuredDraft
+    ),
+    FIREWORKS_MODEL_SAFETY_REVIEW: requiredString.default(
+      fireworksModelDefaults.clinicalSafetyReview
+    ),
+    FIREWORKS_MODEL_BOUNDED_EXTRACTION: requiredString.default(
+      fireworksModelDefaults.boundedExtraction
+    ),
+    FIREWORKS_MODEL_LONG_CONTEXT_SUMMARY: requiredString.default(
+      fireworksModelDefaults.longContextSummary
+    ),
+    FIREWORKS_MODEL_RETRIEVAL_EMBEDDING: requiredString.default(
+      fireworksModelDefaults.retrievalEmbedding
+    ),
+    FIREWORKS_MODEL_RETRIEVAL_RERANK: requiredString.default(
+      fireworksModelDefaults.retrievalRerank
+    ),
+    FIREWORKS_TRANSCRIPTION_MODEL_QUALITY: requiredString.default(
+      fireworksModelDefaults.speechQuality
+    ),
+    FIREWORKS_TRANSCRIPTION_MODEL_LOW_LATENCY: requiredString.default(
+      fireworksModelDefaults.speechLowLatency
+    ),
     OPENAI_API_KEY: optionalString,
 
     TRANSCRIPTION_PROVIDER: z.enum(transcriptionProviders).default("simulator"),
     TRANSCRIPTION_MODEL: optionalString,
     DEEPGRAM_API_KEY: optionalString,
     AI_DATA_RESIDENCY_NOTES: optionalString,
+    CLINIC_OS_AI_LIVE_CALLS_ENABLED: booleanFromEnv.default(false),
+    CLINIC_OS_AI_KILL_SWITCH: booleanFromEnv.default(true),
+    CLINIC_OS_AI_PROVIDER_CONTRACT_APPROVED: booleanFromEnv.default(false),
+    CLINIC_OS_AI_NO_TRAINING_APPROVED: booleanFromEnv.default(false),
+    CLINIC_OS_AI_ZERO_RETENTION_APPROVED: booleanFromEnv.default(false),
+    CLINIC_OS_AI_DATA_RESIDENCY_APPROVED: booleanFromEnv.default(false),
+    CLINIC_OS_AI_CLINICAL_EVAL_APPROVED: booleanFromEnv.default(false),
+    CLINIC_OS_AI_MAX_INPUT_TOKENS: positiveIntegerFromEnv(32768),
+    CLINIC_OS_AI_MAX_OUTPUT_TOKENS: positiveIntegerFromEnv(4096),
+    CLINIC_OS_AI_MAX_AUDIO_BYTES: positiveIntegerFromEnv(26214400),
+    CLINIC_OS_AI_MAX_AUDIO_DURATION_SECONDS: positiveIntegerFromEnv(7200),
+    CLINIC_OS_AI_MAX_ATTEMPTS: positiveIntegerFromEnv(3),
+    CLINIC_OS_AI_MONTHLY_BUDGET_CENTS: nonNegativeIntegerFromEnv(0),
+    CLINIC_OS_AI_PER_CLINIC_DAILY_BUDGET_CENTS: nonNegativeIntegerFromEnv(0),
 
     AWS_PROFILE: optionalString,
     AWS_REGION: requiredString.default("ap-south-1"),
@@ -476,8 +552,16 @@ const runtimeEnvSchema = z
       context,
       env,
       env.LLM_PROVIDER === "fireworks",
-      ["LLM_BASE_URL", "LLM_MODEL_PRIMARY", "FIREWORKS_API_KEY"],
-      "Fireworks is selected but required LLM settings are missing."
+      ["FIREWORKS_API_KEY", "FIREWORKS_SERVICE_ACCOUNT_ID"],
+      "Fireworks is selected but its service-account credential settings are missing."
+    );
+
+    requireFields(
+      context,
+      env,
+      env.TRANSCRIPTION_PROVIDER === "fireworks",
+      ["FIREWORKS_API_KEY", "FIREWORKS_SERVICE_ACCOUNT_ID"],
+      "Fireworks transcription is selected but its service-account credential settings are missing."
     );
 
     requireFields(
@@ -503,6 +587,75 @@ const runtimeEnvSchema = z
       ["TRANSCRIPTION_MODEL", "DEEPGRAM_API_KEY"],
       "Deepgram transcription is selected but required transcription settings are missing."
     );
+
+    if (env.LLM_PROVIDER === "fireworks" || env.TRANSCRIPTION_PROVIDER === "fireworks") {
+      assertExactFireworksUrl(
+        context,
+        "FIREWORKS_CHAT_COMPLETIONS_URL",
+        env.FIREWORKS_CHAT_COMPLETIONS_URL,
+        "https://api.fireworks.ai/inference/v1/chat/completions"
+      );
+      assertExactFireworksUrl(
+        context,
+        "FIREWORKS_AUDIO_QUALITY_URL",
+        env.FIREWORKS_AUDIO_QUALITY_URL,
+        "https://audio-prod.api.fireworks.ai/v1/audio/transcriptions"
+      );
+      assertExactFireworksUrl(
+        context,
+        "FIREWORKS_AUDIO_TURBO_URL",
+        env.FIREWORKS_AUDIO_TURBO_URL,
+        "https://audio-turbo.api.fireworks.ai/v1/audio/transcriptions"
+      );
+    }
+
+    if (env.CLINIC_OS_AI_LIVE_CALLS_ENABLED) {
+      if (env.LLM_PROVIDER !== "fireworks" || env.TRANSCRIPTION_PROVIDER !== "fireworks") {
+        context.addIssue({
+          code: "custom",
+          path: ["CLINIC_OS_AI_LIVE_CALLS_ENABLED"],
+          message:
+            "The CP16 live AI path requires both LLM_PROVIDER=fireworks and TRANSCRIPTION_PROVIDER=fireworks."
+        });
+      }
+
+      const approvals = [
+        "CLINIC_OS_AI_PROVIDER_CONTRACT_APPROVED",
+        "CLINIC_OS_AI_NO_TRAINING_APPROVED",
+        "CLINIC_OS_AI_ZERO_RETENTION_APPROVED",
+        "CLINIC_OS_AI_DATA_RESIDENCY_APPROVED",
+        "CLINIC_OS_AI_CLINICAL_EVAL_APPROVED"
+      ] as const;
+      for (const approval of approvals) {
+        if (!env[approval]) {
+          context.addIssue({
+            code: "custom",
+            path: [approval],
+            message: `${approval}=true is required before live AI/STT calls can be enabled.`
+          });
+        }
+      }
+
+      if (env.CLINIC_OS_AI_KILL_SWITCH) {
+        context.addIssue({
+          code: "custom",
+          path: ["CLINIC_OS_AI_KILL_SWITCH"],
+          message:
+            "Live AI/STT activation requires an explicit CLINIC_OS_AI_KILL_SWITCH=false decision."
+        });
+      }
+      if (
+        env.CLINIC_OS_AI_MONTHLY_BUDGET_CENTS === 0 ||
+        env.CLINIC_OS_AI_PER_CLINIC_DAILY_BUDGET_CENTS === 0
+      ) {
+        context.addIssue({
+          code: "custom",
+          path: ["CLINIC_OS_AI_MONTHLY_BUDGET_CENTS"],
+          message:
+            "Live AI/STT activation requires non-zero account and per-clinic budget ceilings."
+        });
+      }
+    }
   });
 
 type RuntimeEnv = z.infer<typeof runtimeEnvSchema>;
@@ -580,11 +733,45 @@ export type ClinicOsConfig = {
       llmBaseUrl?: string | undefined;
       llmModelPrimary?: string | undefined;
       fireworksApiKey?: string | undefined;
+      fireworksServiceAccountId?: string | undefined;
+      fireworks: {
+        chatCompletionsUrl: string;
+        audioQualityUrl: string;
+        audioTurboUrl: string;
+        models: {
+          clinicalStructuredDraft: string;
+          clinicalSafetyReview: string;
+          boundedExtraction: string;
+          longContextSummary: string;
+          retrievalEmbedding: string;
+          retrievalRerank: string;
+          speechQuality: string;
+          speechLowLatency: string;
+        };
+      };
       openaiApiKey?: string | undefined;
       transcriptionProvider: TranscriptionProvider;
       transcriptionModel?: string | undefined;
       deepgramApiKey?: string | undefined;
       dataResidencyNotes?: string | undefined;
+      activation: {
+        liveCallsEnabled: boolean;
+        killSwitch: boolean;
+        providerContractApproved: boolean;
+        noTrainingApproved: boolean;
+        zeroRetentionApproved: boolean;
+        dataResidencyApproved: boolean;
+        clinicalEvalApproved: boolean;
+      };
+      limits: {
+        maxInputTokens: number;
+        maxOutputTokens: number;
+        maxAudioBytes: number;
+        maxAudioDurationSeconds: number;
+        maxAttempts: number;
+        monthlyBudgetCents: number;
+        perClinicDailyBudgetCents: number;
+      };
     };
   };
   operations: {
@@ -715,11 +902,45 @@ function toConfig(env: RuntimeEnv): ClinicOsConfig {
         llmBaseUrl: env.LLM_BASE_URL,
         llmModelPrimary: env.LLM_MODEL_PRIMARY,
         fireworksApiKey: env.FIREWORKS_API_KEY,
+        fireworksServiceAccountId: env.FIREWORKS_SERVICE_ACCOUNT_ID,
+        fireworks: {
+          chatCompletionsUrl: env.FIREWORKS_CHAT_COMPLETIONS_URL,
+          audioQualityUrl: env.FIREWORKS_AUDIO_QUALITY_URL,
+          audioTurboUrl: env.FIREWORKS_AUDIO_TURBO_URL,
+          models: {
+            clinicalStructuredDraft: env.FIREWORKS_MODEL_CLINICAL_DRAFT,
+            clinicalSafetyReview: env.FIREWORKS_MODEL_SAFETY_REVIEW,
+            boundedExtraction: env.FIREWORKS_MODEL_BOUNDED_EXTRACTION,
+            longContextSummary: env.FIREWORKS_MODEL_LONG_CONTEXT_SUMMARY,
+            retrievalEmbedding: env.FIREWORKS_MODEL_RETRIEVAL_EMBEDDING,
+            retrievalRerank: env.FIREWORKS_MODEL_RETRIEVAL_RERANK,
+            speechQuality: env.FIREWORKS_TRANSCRIPTION_MODEL_QUALITY,
+            speechLowLatency: env.FIREWORKS_TRANSCRIPTION_MODEL_LOW_LATENCY
+          }
+        },
         openaiApiKey: env.OPENAI_API_KEY,
         transcriptionProvider: env.TRANSCRIPTION_PROVIDER,
         transcriptionModel: env.TRANSCRIPTION_MODEL,
         deepgramApiKey: env.DEEPGRAM_API_KEY,
-        dataResidencyNotes: env.AI_DATA_RESIDENCY_NOTES
+        dataResidencyNotes: env.AI_DATA_RESIDENCY_NOTES,
+        activation: {
+          liveCallsEnabled: env.CLINIC_OS_AI_LIVE_CALLS_ENABLED,
+          killSwitch: env.CLINIC_OS_AI_KILL_SWITCH,
+          providerContractApproved: env.CLINIC_OS_AI_PROVIDER_CONTRACT_APPROVED,
+          noTrainingApproved: env.CLINIC_OS_AI_NO_TRAINING_APPROVED,
+          zeroRetentionApproved: env.CLINIC_OS_AI_ZERO_RETENTION_APPROVED,
+          dataResidencyApproved: env.CLINIC_OS_AI_DATA_RESIDENCY_APPROVED,
+          clinicalEvalApproved: env.CLINIC_OS_AI_CLINICAL_EVAL_APPROVED
+        },
+        limits: {
+          maxInputTokens: env.CLINIC_OS_AI_MAX_INPUT_TOKENS,
+          maxOutputTokens: env.CLINIC_OS_AI_MAX_OUTPUT_TOKENS,
+          maxAudioBytes: env.CLINIC_OS_AI_MAX_AUDIO_BYTES,
+          maxAudioDurationSeconds: env.CLINIC_OS_AI_MAX_AUDIO_DURATION_SECONDS,
+          maxAttempts: env.CLINIC_OS_AI_MAX_ATTEMPTS,
+          monthlyBudgetCents: env.CLINIC_OS_AI_MONTHLY_BUDGET_CENTS,
+          perClinicDailyBudgetCents: env.CLINIC_OS_AI_PER_CLINIC_DAILY_BUDGET_CENTS
+        }
       }
     },
     operations: {
@@ -755,6 +976,20 @@ function toConfig(env: RuntimeEnv): ClinicOsConfig {
       xraySampleDir: env.PILOT_XRAY_SAMPLE_DIR
     }
   };
+}
+
+function assertExactFireworksUrl(
+  context: z.RefinementCtx,
+  field: RuntimeEnvKey,
+  actual: string,
+  expected: string
+): void {
+  if (actual === expected) return;
+  context.addIssue({
+    code: "custom",
+    path: [field],
+    message: `${field} must use the reviewed official Fireworks endpoint ${expected}.`
+  });
 }
 
 function requireFields(
