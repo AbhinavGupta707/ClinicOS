@@ -42,8 +42,8 @@ function collectVersionedResponsePaths(definition: RuntimeSchema, path = ""): st
   );
 }
 
-test("active native registry covers identity/health and every CP2-CP10 checkpoint", () => {
-  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 128);
+test("active native registry covers identity/health and every implemented checkpoint", () => {
+  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 130);
   const checkpoints = new Set(
     ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.checkpoint)
   );
@@ -57,7 +57,8 @@ test("active native registry covers identity/health and every CP2-CP10 checkpoin
     "CP7",
     "CP8",
     "CP9",
-    "CP10"
+    "CP10",
+    "CP15"
   ]) {
     assert.ok(checkpoints.has(checkpoint as never), `missing ${checkpoint}`);
   }
@@ -67,7 +68,7 @@ test("active native registry covers identity/health and every CP2-CP10 checkpoin
   assert.equal(new Set(routeKeys).size, routeKeys.length);
   assert.equal(
     new Set(ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.operationId)).size,
-    128
+    130
   );
 });
 
@@ -427,8 +428,10 @@ test("Razorpay uses JSON transport while preserving bounded raw bytes before par
   const valid = parseNativeOperationRequest("receiveRazorpayPaymentWebhook", {
     headers: {
       "x-razorpay-signature": "synthetic-signature-value",
+      "x-razorpay-event-id": "synthetic-event-id-0001",
       "content-type": "application/json"
     },
+    path: { registrationKey: "synthetic_registration_key_0001" },
     body: rawBody
   });
   assert.equal(valid.success, true);
@@ -437,8 +440,10 @@ test("Razorpay uses JSON transport while preserving bounded raw bytes before par
     const invalid = parseNativeOperationRequest("receiveRazorpayPaymentWebhook", {
       headers: {
         "x-razorpay-signature": "synthetic-signature-value",
+        "x-razorpay-event-id": "synthetic-event-id-0001",
         "content-type": contentType
       },
+      path: { registrationKey: "synthetic_registration_key_0001" },
       body: rawBody
     });
     assert.equal(invalid.success, false, contentType);
@@ -447,8 +452,10 @@ test("Razorpay uses JSON transport while preserving bounded raw bytes before par
     parseNativeOperationRequest("receiveRazorpayPaymentWebhook", {
       headers: {
         "x-razorpay-signature": "synthetic-signature-value",
+        "x-razorpay-event-id": "synthetic-event-id-0001",
         "content-type": "application/json"
       },
+      path: { registrationKey: "synthetic_registration_key_0001" },
       body: { event: "payment.captured" }
     }).success,
     false
@@ -459,9 +466,49 @@ test("Razorpay uses JSON transport while preserving bounded raw bytes before par
       Record<string, { requestBody?: { content: Record<string, { schema: { format?: string } }> } }>
     >;
   };
-  const content = openapi.paths["/v1/payment-webhooks/razorpay"]?.post?.requestBody?.content;
+  const content =
+    openapi.paths["/v1/provider-callbacks/razorpay/{registrationKey}"]?.post?.requestBody
+      ?.content;
   assert.equal(content?.["application/json"]?.schema.format, "binary");
   assert.equal(content?.["application/octet-stream"], undefined);
+});
+
+test("Meta challenge and webhook contracts are registration-scoped and raw-body safe", () => {
+  const path = { registrationKey: "synthetic_registration_key_0001" };
+  assert.equal(
+    parseNativeOperationRequest("verifyMetaWhatsAppCallback", {
+      path,
+      query: {
+        "hub.mode": "subscribe",
+        "hub.verify_token": "synthetic-verify-token",
+        "hub.challenge": "123456"
+      }
+    }).success,
+    true
+  );
+  const rawBody = new TextEncoder().encode('{"object":"whatsapp_business_account"}');
+  assert.equal(
+    parseNativeOperationRequest("receiveMetaWhatsAppWebhook", {
+      path,
+      headers: {
+        "content-type": "application/json",
+        "x-hub-signature-256": `sha256=${"0".repeat(64)}`
+      },
+      body: rawBody
+    }).success,
+    true
+  );
+  assert.equal(
+    parseNativeOperationRequest("receiveMetaWhatsAppWebhook", {
+      path,
+      headers: {
+        "content-type": "application/json",
+        "x-hub-signature-256": `sha256=${"0".repeat(64)}`
+      },
+      body: { object: "whatsapp_business_account" }
+    }).success,
+    false
+  );
 });
 
 test("patient create rejects unknown, tenant, actor and nested authority fields", () => {

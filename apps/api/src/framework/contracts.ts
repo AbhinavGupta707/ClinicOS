@@ -109,6 +109,12 @@ export interface ClinicOsNestRuntime {
     requestId: string,
     access: ResolvedAccessContext
   ): Promise<ApiResponse>;
+  handleProviderChallenge(
+    request: IncomingMessage,
+    operationId: string,
+    requestId: string,
+    parsedRequest: ParsedOperationRequest
+  ): Promise<ApiResponse>;
   handleWebhook(
     request: IncomingMessage,
     requestId: string,

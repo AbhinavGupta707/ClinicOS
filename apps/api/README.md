@@ -15,7 +15,7 @@ npm run build --workspace @clinic-os/api
 
 ## Checkpoint 12 Production Boundary
 
-The frozen generated registry contains exactly 128 operations. Every operation is selected deterministically and passes through one common boundary before dispatch:
+The generated registry contains exactly 130 operations. Every operation is selected deterministically and passes through one common boundary before dispatch:
 
 1. Match the exact method/path policy and establish a request ID using the injected clock.
 2. Enforce query/body limits, duplicate critical-header and query rejection, and bounded abuse budgets.

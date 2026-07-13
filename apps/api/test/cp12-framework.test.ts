@@ -14,6 +14,7 @@ import {
   OPTIMISTIC_CONCURRENCY_RESOURCE_TABLES
 } from "@clinic-os/db";
 import { FixedClock } from "@clinic-os/domain";
+import { RazorpayBoundaryError } from "@clinic-os/integrations";
 import { BoundaryError } from "@clinic-os/security";
 import {
   createClinicOsApiServer,
@@ -51,10 +52,10 @@ import {
   requiredRolesForOperation
 } from "../src/framework/route-registry.ts";
 
-test("CP12 app registry covers exactly 128 operations and separates doctor roles from permissions", () => {
-  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 128);
-  assert.equal(CLINIC_OS_ROUTE_POLICIES.length, 128);
-  assert.equal(new Set(CLINIC_OS_ROUTE_POLICIES.map(({ routeId }) => routeId)).size, 128);
+test("app registry covers exactly 130 operations and separates doctor roles from permissions", () => {
+  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 130);
+  assert.equal(CLINIC_OS_ROUTE_POLICIES.length, 130);
+  assert.equal(new Set(CLINIC_OS_ROUTE_POLICIES.map(({ routeId }) => routeId)).size, 130);
   assert.deepEqual(
     ACTIVE_NATIVE_HTTP_OPERATIONS.filter(({ concurrency }) => concurrency.mode === "if-match")
       .map(({ operationId }) => operationId)
@@ -681,43 +682,48 @@ test("chunked body with an unsupported content type fails before unbounded dispa
   });
 });
 
-test("production-shaped Razorpay JSON verifies Nest raw bytes before parsing and rejects other media", async (t) => {
+test("CP15 Razorpay callback preserves Nest raw bytes before parsing and rejects other media", async (t) => {
   let verifyCalls = 0;
-  let parseCalls = 0;
-  const paymentProvider = {
-    async verifyWebhook() {
-      verifyCalls += 1;
-      return { status: "invalid_signature", message: "Invalid signature." };
+  let receivedBody = "";
+  const providerCallbacks = {
+    async verifyMetaChallenge() {
+      return "unused";
     },
-    async parseWebhook() {
-      parseCalls += 1;
-      throw new Error("Must not parse an invalid signature.");
+    async receiveMetaWebhook() {},
+    async receiveRazorpayWebhook(input: { rawBody: Uint8Array }) {
+      verifyCalls += 1;
+      receivedBody = Buffer.from(input.rawBody).toString("utf8");
+      throw new RazorpayBoundaryError({
+        code: "INVALID_SIGNATURE",
+        message: "Invalid signature."
+      });
     }
   };
-  await withFixtureServer(t, { paymentProvider, useLocalAuthFixture: false }, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/v1/payment-webhooks/razorpay`, {
+  await withFixtureServer(t, { providerCallbacks }, async (baseUrl) => {
+    const response = await fetch(`${baseUrl}/v1/provider-callbacks/razorpay/registration_key_123456`, {
       method: "POST",
       headers: {
         "content-type": "application/json",
-        "x-razorpay-signature": "invalid-signature-value"
+        "x-razorpay-signature": "invalid-signature-value",
+        "x-razorpay-event-id": "event-invalid-0001"
       },
       body: "{not-json"
     });
     assert.equal(response.status, 403);
     assert.equal(verifyCalls, 1);
-    assert.equal(parseCalls, 0);
-    const unsupported = await fetch(`${baseUrl}/v1/payment-webhooks/razorpay`, {
+    assert.equal(receivedBody, "{not-json");
+    const unsupported = await fetch(`${baseUrl}/v1/provider-callbacks/razorpay/registration_key_123456`, {
       method: "POST",
       headers: {
         "content-type": "text/plain",
-        "x-razorpay-signature": "unsupported-media-signature"
+        "x-razorpay-signature": "unsupported-media-signature",
+        "x-razorpay-event-id": "event-media-0001"
       },
       body: "unsupported"
     });
     assert.equal(unsupported.status, 422);
     assert.equal((await unsupported.json()).error.code, "VALIDATION_ERROR");
     assert.equal(verifyCalls, 1);
-    assert.equal(parseCalls, 0);
   });
 });
 

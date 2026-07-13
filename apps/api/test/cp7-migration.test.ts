@@ -206,6 +206,48 @@ test("CP7 integration ops API surfaces provider health, dead-letter replay reque
   assert.equal("rawPayload" in listedBatches.body.migrationBatches[0].rows[0], false);
 });
 
+test("CP15 provider health uses durable activation truth without returning secret references", async () => {
+  const owner = await operationsContext("seed-owner", "cp15-provider-health");
+  const dependencies: OperationsDependencies = {
+    repository: new LocalFixtureClinicOperationsRepository(),
+    runtimeConfig: config,
+    providerOperationsRegistry: {
+      async list() {
+        return [
+          {
+            registrationId: "12345678-1234-4234-8234-123456789abc" as never,
+            providerKey: "meta_whatsapp_cloud",
+            activationState: "sandbox_verified",
+            providerMode: "test",
+            sandboxVerifiedAt: "2026-07-13T08:00:00.000Z",
+            productionVerifiedAt: null,
+            lastHealthCheckAt: "2026-07-13T08:05:00.000Z",
+            lastVerifiedCallbackAt: "2026-07-13T08:04:00.000Z",
+            lastReconciledAt: "2026-07-13T08:03:00.000Z",
+            lastFailureCode: null,
+            createdAt: "2026-07-13T07:00:00.000Z",
+            updatedAt: "2026-07-13T08:05:00.000Z"
+          }
+        ] as const;
+      }
+    }
+  };
+  const health = await listProviderHealth(owner, dependencies);
+  const meta = health.body.providers.find(
+    (provider) => provider.providerKey === "whatsapp_cloud"
+  );
+  const razorpay = health.body.providers.find(
+    (provider) => provider.providerKey === "razorpay"
+  );
+  assert.equal(meta?.activationState, "sandbox_verified");
+  assert.equal(meta?.status, "available");
+  assert.equal(meta?.lastVerifiedCallbackAt, "2026-07-13T08:04:00.000Z");
+  assert.equal(razorpay?.activationState, "absent");
+  assert.equal(razorpay?.status, "not_configured");
+  assert.equal(JSON.stringify(health.body).includes("credential_ref"), false);
+  assert.equal(JSON.stringify(health.body).includes("webhook_secret"), false);
+});
+
 test("CP7 migration routes expose create and row listing contract without raw payloads", async (t) => {
   const repository = new LocalFixtureClinicOperationsRepository();
   const server = createClinicOsApiServer({

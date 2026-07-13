@@ -14,7 +14,8 @@ test("Razorpay webhook verification uses the raw body HMAC signature", async () 
     keyId: "rzp_test_key",
     keySecret: "rzp_test_secret",
     webhookSecret,
-    webhookUrl: "https://api.example.test/v1/payment-webhooks/razorpay"
+    webhookUrl:
+      "https://api.example.test/v1/provider-callbacks/razorpay/registration_key_123456"
   });
   const rawBody = JSON.stringify(razorpayCapturedPayload({ amount: 5_000 }));
   const signature = signRazorpayWebhook(rawBody, webhookSecret);

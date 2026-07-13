@@ -24,6 +24,10 @@ export interface WorkerEnvironment {
   readonly outboxBatchSize: number;
   readonly outboxPollIntervalMs: number;
   readonly outboxMaxAttempts: number;
+  readonly providerReconciliationPollIntervalMs: number;
+  readonly providerReconciliationScopeBatchSize: number;
+  readonly providerReconciliationJobBatchSize: number;
+  readonly providerReconciliationLeaseMs: number;
   readonly dueGenerationCursorSecret?: string;
   readonly paymentProvider: "simulator" | "razorpay" | "unconfigured" | "manual_clinic_approved";
   readonly paymentQrMode: "payment_link_qr" | "razorpay_qr";
@@ -31,6 +35,9 @@ export interface WorkerEnvironment {
   readonly razorpayKeySecret?: string;
   readonly razorpayWebhookSecret?: string;
   readonly razorpayWebhookUrl?: string;
+  readonly officialProviderCallbacksEnabled: boolean;
+  readonly awsRegion: string;
+  readonly providerEndpointHmacSecret?: string;
 }
 
 export function parseWorkerEnvironment(env: NodeJS.ProcessEnv): WorkerEnvironment {
@@ -48,6 +55,22 @@ export function parseWorkerEnvironment(env: NodeJS.ProcessEnv): WorkerEnvironmen
   }
   const temporalTls = parseTemporalTls(env);
   const temporalAuth = parseTemporalAuth(env);
+  const officialProviderCallbacksEnabled = parseBoolean(
+    env.CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED
+  );
+  const awsRegion = env.S3_REGION ?? "ap-south-1";
+  if (!/^[a-z]{2}(?:-gov)?-[a-z]+-\d$/u.test(awsRegion)) {
+    throw new Error("S3_REGION must be a canonical AWS region for official provider secrets");
+  }
+  const providerEndpointHmacSecret = env.CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET;
+  if (
+    officialProviderCallbacksEnabled &&
+    (!providerEndpointHmacSecret || Buffer.byteLength(providerEndpointHmacSecret, "utf8") < 32)
+  ) {
+    throw new Error(
+      "CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET is required for official provider activities"
+    );
+  }
   if (productionLike && env.TEMPORAL_ADDRESS && !temporalTls) {
     throw new Error("Production-like Temporal connections require mutual TLS");
   }
@@ -70,14 +93,51 @@ export function parseWorkerEnvironment(env: NodeJS.ProcessEnv): WorkerEnvironmen
     outboxBatchSize: parsePositiveInteger(env.OUTBOX_BATCH_SIZE, 25),
     outboxPollIntervalMs: parsePositiveInteger(env.OUTBOX_POLL_INTERVAL_MS, 1000),
     outboxMaxAttempts: parsePositiveInteger(env.OUTBOX_MAX_ATTEMPTS, 8),
+    providerReconciliationPollIntervalMs: parseBoundedPositiveInteger(
+      env.PROVIDER_RECONCILIATION_POLL_INTERVAL_MS,
+      10_000,
+      250,
+      300_000,
+      "PROVIDER_RECONCILIATION_POLL_INTERVAL_MS"
+    ),
+    providerReconciliationScopeBatchSize: parseBoundedPositiveInteger(
+      env.PROVIDER_RECONCILIATION_SCOPE_BATCH_SIZE,
+      10,
+      1,
+      100,
+      "PROVIDER_RECONCILIATION_SCOPE_BATCH_SIZE"
+    ),
+    providerReconciliationJobBatchSize: parseBoundedPositiveInteger(
+      env.PROVIDER_RECONCILIATION_JOB_BATCH_SIZE,
+      1,
+      1,
+      1,
+      "PROVIDER_RECONCILIATION_JOB_BATCH_SIZE"
+    ),
+    providerReconciliationLeaseMs: parseBoundedPositiveInteger(
+      env.PROVIDER_RECONCILIATION_LEASE_MS,
+      300_000,
+      300_000,
+      300_000,
+      "PROVIDER_RECONCILIATION_LEASE_MS"
+    ),
     ...(dueGenerationCursorSecret ? { dueGenerationCursorSecret } : {}),
     paymentProvider,
+    officialProviderCallbacksEnabled,
+    awsRegion,
+    ...(providerEndpointHmacSecret ? { providerEndpointHmacSecret } : {}),
     paymentQrMode: env.PAYMENT_QR_MODE === "razorpay_qr" ? "razorpay_qr" : "payment_link_qr",
     ...(env.RAZORPAY_KEY_ID ? { razorpayKeyId: env.RAZORPAY_KEY_ID } : {}),
     ...(env.RAZORPAY_KEY_SECRET ? { razorpayKeySecret: env.RAZORPAY_KEY_SECRET } : {}),
     ...(env.RAZORPAY_WEBHOOK_SECRET ? { razorpayWebhookSecret: env.RAZORPAY_WEBHOOK_SECRET } : {}),
     ...(env.RAZORPAY_WEBHOOK_URL ? { razorpayWebhookUrl: env.RAZORPAY_WEBHOOK_URL } : {})
   };
+}
+
+function parseBoolean(value: string | undefined): boolean {
+  if (value === undefined || value === "false") return false;
+  if (value === "true") return true;
+  throw new Error("CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED must be true or false");
 }
 
 function parseTemporalAuth(env: NodeJS.ProcessEnv): WorkerEnvironment["temporalAuth"] {
@@ -189,6 +249,20 @@ function parsePositiveInteger(value: string | undefined, fallback: number): numb
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`Expected positive integer but received ${value}`);
+  }
+  return parsed;
+}
+
+function parseBoundedPositiveInteger(
+  value: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  name: string
+): number {
+  const parsed = value === undefined || value === "" ? fallback : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
   }
   return parsed;
 }

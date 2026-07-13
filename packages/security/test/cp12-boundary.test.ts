@@ -346,7 +346,7 @@ test("route policies require explicit security controls and coverage is exact", 
   const webhook = policy({
     routeId: "razorpay.webhook",
     method: "POST",
-    pathTemplate: "/v1/payment-webhooks/razorpay",
+    pathTemplate: "/v1/provider-callbacks/razorpay/{registrationKey}",
     access: {
       mode: "verified_webhook",
       provider: "razorpay",
@@ -359,7 +359,10 @@ test("route policies require explicit security controls and coverage is exact", 
   assertRouteSecurityCoverage(
     [
       { method: "POST", pathTemplate: "/v1/patients" },
-      { method: "POST", pathTemplate: "/v1/payment-webhooks/razorpay" }
+      {
+        method: "POST",
+        pathTemplate: "/v1/provider-callbacks/razorpay/{registrationKey}"
+      }
     ],
     [authenticated, webhook]
   );

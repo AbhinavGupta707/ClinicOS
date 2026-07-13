@@ -5,7 +5,7 @@ checked-in generated client.
 
 ## CP12 runtime contract registry
 
-`src/native-http-contracts.ts` is the contract authority for all 128 currently registered native
+`src/native-http-contracts.ts` is the contract authority for all 130 currently registered native
 HTTP operations from identity/health through CP2–CP10. The registry defines strict path, query,
 header, body, response, error, body-budget, pagination, idempotency, optimistic-concurrency, PHI,
 and cache metadata. It rejects unknown writable fields and recursively rejects tenant/actor,

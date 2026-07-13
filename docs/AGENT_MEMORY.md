@@ -390,3 +390,23 @@ Update these during orchestration:
 - Platform images need more than a version and vulnerability scan. CI should exercise fail-closed
   bootstrap/schema commands, real config rendering/start paths, clean realm import/readiness and
   exact service-account claims.
+
+## CP15 Integration Memory
+
+- CP15 local E3 implementation candidate `f1cfe7bb` contains official Meta/Razorpay boundaries,
+  migrations `0020`/`0021`, worker reconciliation and provider-operations truth. Full CP15 E4/exit
+  remains open under the CP14 cloud deferral; the release remains NO-GO.
+- Provider callback URLs are opaque registration-scoped routes. PostgreSQL stores only the callback
+  key digest and secret-manager references. Signature verification must precede parsing and durable
+  effects.
+- A provider request, creation response or reconciliation read is not sent/delivered/read/paid/
+  captured truth. Meta unsupported reads remain manual review; Razorpay settlement requires the
+  canonical signed callback transaction.
+- Reconciliation discovery may expose only the dedicated forced-RLS tenant/clinic scope queue.
+  Provider jobs stay transaction-scoped, use bounded leases and revalidate every registration field
+  before atomic finalization.
+- Telephony remains disabled whole until an official provider is selected. Do not add a generic
+  callback, simulator-as-product behavior or idle lane to imply progress.
+- Before external activation, reopen AWS/DNS authority, deploy the exact revision, register official
+  provider sandboxes, run the full signed event/outage/rotation matrix and update PRR-008/026 only
+  from E4 evidence.

@@ -18,7 +18,57 @@ test("local worker separates CP13 activity configuration and injects only local-
   assert.equal(parsed.databaseUrl, databaseUrl);
   assert.equal(parsed.activityDatabaseUrl, databaseUrl);
   assert.equal(parsed.paymentProvider, "simulator");
+  assert.equal(parsed.officialProviderCallbacksEnabled, false);
+  assert.equal(parsed.awsRegion, "ap-south-1");
   assert.match(parsed.dueGenerationCursorSecret ?? "", /^clinicos-local-synthetic/u);
+  assert.equal(parsed.providerReconciliationPollIntervalMs, 10_000);
+  assert.equal(parsed.providerReconciliationScopeBatchSize, 10);
+  assert.equal(parsed.providerReconciliationJobBatchSize, 1);
+  assert.equal(parsed.providerReconciliationLeaseMs, 300_000);
+});
+
+test("official provider activities require strict enablement and endpoint binding", () => {
+  const base = {
+    CLINIC_OS_ENV: "local",
+    DATABASE_URL: databaseUrl,
+    PAYMENT_PROVIDER: "unconfigured"
+  };
+  assert.throws(
+    () =>
+      parseWorkerEnvironment({
+        ...base,
+        CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED: "sometimes"
+      }),
+    /must be true or false/u
+  );
+  assert.throws(
+    () =>
+      parseWorkerEnvironment({
+        ...base,
+        CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED: "true"
+      }),
+    /PROVIDER_ENDPOINT_HMAC_SECRET/u
+  );
+
+  const parsed = parseWorkerEnvironment({
+    ...base,
+    CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED: "true",
+    CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET: "endpoint-binding-secret-value-00001",
+    S3_REGION: "eu-west-2"
+  });
+  assert.equal(parsed.officialProviderCallbacksEnabled, true);
+  assert.equal(parsed.awsRegion, "eu-west-2");
+  assert.equal(parsed.providerEndpointHmacSecret, "endpoint-binding-secret-value-00001");
+  assert.throws(
+    () =>
+      parseWorkerEnvironment({
+        ...base,
+        CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED: "true",
+        CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET: "endpoint-binding-secret-value-00001",
+        PROVIDER_RECONCILIATION_JOB_BATCH_SIZE: "2"
+      }),
+    /PROVIDER_RECONCILIATION_JOB_BATCH_SIZE/u
+  );
 });
 
 test("production-like worker requires least-privilege outbox and cursor-signing configuration", () => {

@@ -174,6 +174,9 @@ async function grantRuntimePrivileges() {
     );
     await client.query("grant execute on all functions in schema clinic_os to clinic_os_runtime");
     await client.query(
+      "revoke execute on function clinic_os.sync_provider_callback_route() from clinic_os_runtime"
+    );
+    await client.query(
       "alter default privileges for role clinic_os_migrator in schema public grant select, insert, update, delete on tables to clinic_os_runtime"
     );
     await client.query(
@@ -191,6 +194,7 @@ async function grantRuntimePrivileges() {
     await client.query(
       "revoke update, delete, truncate on table private_media_scan_evidence, private_media_operations from clinic_os_runtime"
     );
+    await client.query("revoke all on table provider_callback_routes from clinic_os_runtime");
     await client.query("revoke all on table outbox_trace_contexts from clinic_os_runtime");
     await client.query("revoke all on table flyway_schema_history from clinic_os_runtime");
     await client.query("grant select on table flyway_schema_history to clinic_os_runtime");
@@ -223,6 +227,7 @@ async function grantRuntimePrivileges() {
     await client.query(
       "revoke all on table private_media_records, private_media_scan_evidence, private_media_operations from clinic_os_worker"
     );
+    await client.query("revoke all on table provider_callback_routes from clinic_os_worker");
     await client.query(
       "revoke update, delete, truncate on table outbox_events from clinic_os_runtime"
     );

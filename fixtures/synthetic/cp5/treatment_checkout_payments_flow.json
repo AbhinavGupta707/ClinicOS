@@ -774,12 +774,13 @@
         "key": "reject-bad-signature-webhook",
         "actorKey": "razorpayProvider",
         "method": "POST",
-        "path": "/v1/payment-webhooks/razorpay",
+        "path": "/v1/provider-callbacks/razorpay/cp5_registration_key_01",
         "idempotencyKey": "cp5-reject-bad-signature-webhook",
         "expectedStatus": [400, 401],
         "providerWebhook": true,
         "requestHeaders": {
-          "X-Razorpay-Signature": "bad-synthetic-signature"
+          "X-Razorpay-Signature": "bad-synthetic-signature",
+          "X-Razorpay-Event-Id": "evt_cp5_synthetic_bad_signature"
         },
         "requestBody": {
           "event": "payment_link.paid",
@@ -811,12 +812,13 @@
         "key": "apply-partial-provider-webhook",
         "actorKey": "razorpayProvider",
         "method": "POST",
-        "path": "/v1/payment-webhooks/razorpay",
+        "path": "/v1/provider-callbacks/razorpay/cp5_registration_key_01",
         "idempotencyKey": "cp5-apply-partial-provider-webhook",
         "expectedStatus": [200, 202],
         "providerWebhook": true,
         "requestHeaders": {
-          "X-Razorpay-Signature": "synthetic-valid-signature-for-cp5-partial"
+          "X-Razorpay-Signature": "synthetic-valid-signature-for-cp5-partial",
+          "X-Razorpay-Event-Id": "evt_cp5_synthetic_partial_payment"
         },
         "requestBody": {
           "event": "payment_link.partially_paid",
@@ -853,12 +855,13 @@
         "key": "replay-partial-provider-webhook",
         "actorKey": "razorpayProvider",
         "method": "POST",
-        "path": "/v1/payment-webhooks/razorpay",
+        "path": "/v1/provider-callbacks/razorpay/cp5_registration_key_01",
         "idempotencyKey": "cp5-replay-partial-provider-webhook",
         "expectedStatus": [200, 202],
         "providerWebhook": true,
         "requestHeaders": {
-          "X-Razorpay-Signature": "synthetic-valid-signature-for-cp5-partial"
+          "X-Razorpay-Signature": "synthetic-valid-signature-for-cp5-partial",
+          "X-Razorpay-Event-Id": "evt_cp5_synthetic_partial_payment"
         },
         "requestBody": {
           "event": "payment_link.partially_paid",

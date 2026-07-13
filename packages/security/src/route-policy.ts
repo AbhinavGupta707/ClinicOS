@@ -15,6 +15,11 @@ export type RouteAccessPolicy =
       replayProtection: "required";
     }
   | {
+      mode: "provider_challenge";
+      provider: string;
+      verification: "constant_time_registered_token";
+    }
+  | {
       mode: "authenticated";
       tenant: "verified_active_membership";
       clinic: "verified_active_membership" | "not_applicable";
@@ -127,6 +132,12 @@ export function defineRouteSecurityPolicy(policy: RouteSecurityPolicy): RouteSec
   }
   if (policy.access.mode === "verified_webhook" && policy.abuse.rate.scope !== "ip") {
     throw new Error("Provider webhooks require a pre-verification IP-scoped rate budget.");
+  }
+  if (policy.access.mode === "provider_challenge" && policy.abuse.rate.scope !== "ip") {
+    throw new Error("Provider challenges require a pre-verification IP-scoped rate budget.");
+  }
+  if (policy.access.mode === "provider_challenge" && policy.method !== "GET") {
+    throw new Error("Provider challenges must use a read-only GET route.");
   }
   if (
     policy.access.mode === "authenticated" &&

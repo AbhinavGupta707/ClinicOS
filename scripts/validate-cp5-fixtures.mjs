@@ -66,9 +66,9 @@ const CANONICAL_FLOW_ROUTES = [
   "POST /v1/invoices",
   "GET /v1/invoices/50000000-0000-4000-8000-000000008001",
   "POST /v1/invoices/50000000-0000-4000-8000-000000008001/payment-requests",
-  "POST /v1/payment-webhooks/razorpay",
-  "POST /v1/payment-webhooks/razorpay",
-  "POST /v1/payment-webhooks/razorpay",
+  "POST /v1/provider-callbacks/razorpay/cp5_registration_key_01",
+  "POST /v1/provider-callbacks/razorpay/cp5_registration_key_01",
+  "POST /v1/provider-callbacks/razorpay/cp5_registration_key_01",
   "POST /v1/invoices/50000000-0000-4000-8000-000000008001/manual-payments",
   "POST /v1/invoices/50000000-0000-4000-8000-000000008001/receipts",
   "POST /v1/encounters/50000000-0000-4000-8000-000000004001/prescriptions",
@@ -825,10 +825,15 @@ export function validateCp5Scenario(scenario) {
       assert.ok(step.requestBody, `flow step ${step.key} must declare requestBody`);
     }
     if (step.providerWebhook === true) {
-      assert.equal(step.path, "/v1/payment-webhooks/razorpay");
+      assert.equal(step.path, "/v1/provider-callbacks/razorpay/cp5_registration_key_01");
       assert.ok(
         step.requestHeaders?.["X-Razorpay-Signature"],
         `provider webhook step ${step.key} needs signature header fixture`
+      );
+      assert.equal(
+        step.requestHeaders?.["X-Razorpay-Event-Id"],
+        step.requestBody.providerEventId,
+        `provider webhook step ${step.key} must bind the event-id header to the payload fixture`
       );
     }
 

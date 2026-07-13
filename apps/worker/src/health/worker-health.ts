@@ -8,7 +8,10 @@ import type { ExternalAdapter } from "@clinic-os/integrations";
 import type { Client } from "@temporalio/client";
 import type { OutboxProcessor } from "../outbox/processor.js";
 import type { OutboxRepository } from "../outbox/types.js";
-import type { WorkerBackpressurePort } from "../runtime/create-worker-runtime.js";
+import type {
+  WorkerBackgroundRuntimePort,
+  WorkerBackpressurePort
+} from "../runtime/create-worker-runtime.js";
 
 export interface WorkerHealthOptions {
   readonly service: string;
@@ -18,6 +21,7 @@ export interface WorkerHealthOptions {
   readonly providerAdapters?: readonly ExternalAdapter[];
   readonly observability?: ObservabilityRuntime;
   readonly backpressure?: WorkerBackpressurePort;
+  readonly providerReconciliation?: Pick<WorkerBackgroundRuntimePort, "healthCheck">;
 }
 
 export function createWorkerHealthRegistry(options: WorkerHealthOptions): HealthRegistry {
@@ -40,6 +44,12 @@ export function createWorkerHealthRegistry(options: WorkerHealthOptions): Health
         const decision = await options.backpressure!.observe();
         return createHealthCheckResult("backpressure", decision.state);
       }
+    });
+  }
+  if (options.providerReconciliation) {
+    registry.register({
+      name: "provider_reconciliation",
+      check: () => options.providerReconciliation!.healthCheck()
     });
   }
 

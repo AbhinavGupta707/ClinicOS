@@ -150,6 +150,14 @@ export class ClinicOsRequestPipeline {
         if (matched.policy.access.mode === "public_health") {
           return this.#runtime.health(matched.policy.access.healthKind, correlation.requestId);
         }
+        if (matched.policy.access.mode === "provider_challenge") {
+          return this.#runtime.handleProviderChallenge(
+            request,
+            matched.operation.operationId,
+            correlation.requestId,
+            parsedRequest
+          );
+        }
         if (matched.policy.access.mode === "verified_webhook") {
           const rawBody = rawRequestBody(request) ?? Buffer.alloc(0);
           return this.#runtime.handleWebhook(request, correlation.requestId, rawBody, transaction);
@@ -403,7 +411,15 @@ function routeFamilyForOperation(
   if (["healthLive", "healthReady", "healthStartup"].includes(operationId)) return "health";
   if (operationId === "getCurrentIdentity") return "identity";
   if (operationId === "getMorningDashboard") return "clinic_day";
-  if (operationId === "receiveRazorpayPaymentWebhook") return "provider_callback";
+  if (
+    [
+      "verifyMetaWhatsAppCallback",
+      "receiveMetaWhatsAppWebhook",
+      "receiveRazorpayPaymentWebhook"
+    ].includes(operationId)
+  ) {
+    return "provider_callback";
+  }
   if (/Media|media/u.test(operationId)) return "media";
   return "operations";
 }
@@ -456,6 +472,7 @@ function contractResponseHeaders(input: {
     headers[name] = value;
   }
   headers["x-request-id"] = input.requestId;
+  headers["content-type"] = `${responseContract?.contentType ?? "application/json"}; charset=utf-8`;
   if (!responseContract) return headers;
   const successful = input.status >= 200 && input.status < 300;
   if (successful && responseContract.headers["idempotency-replayed"]) {

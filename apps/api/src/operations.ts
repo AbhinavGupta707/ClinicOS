@@ -46,6 +46,8 @@ import type {
   GenerateDueContinuityInput,
   GenerateDueSopRunsInput,
   PatientRecordExportInput,
+  ProviderOperationsRegistryPort,
+  ProviderRegistrationHealthRecord,
   RecordRecallActionInput,
   RepositoryScope,
   ResolveMigrationRowInput,
@@ -234,6 +236,7 @@ export interface OperationsDependencies {
   paymentRepository?: PaymentOperationsRepository;
   runtimeConfig?: ClinicOsConfig;
   aiGatewayProvider?: AiGatewayProvider;
+  providerOperationsRegistry?: ProviderOperationsRegistryPort;
 }
 
 const SYSTEM_INTEGRATION_ACTOR_USER_ID = "00000000-0000-4000-8000-000000000000" as UUID;
@@ -1084,6 +1087,61 @@ export async function listProviderHealth(
 ) {
   authorize(context, { permission: "migration.manage" });
   const config = runtimeConfigFrom(dependencies);
+  if (dependencies.providerOperationsRegistry) {
+    const registrations = await dependencies.providerOperationsRegistry.list({
+      tenantId: context.accessContext.tenant.id,
+      clinicId: context.clinicId,
+      actorUserId: context.accessContext.user.id
+    });
+    return ok({
+      providers: [
+        ...officialProviderCards(registrations, nowIso(dependencies)),
+        manualProviderCard({
+          checkedAt: nowIso(dependencies),
+          activationChecks: [
+            "No official telephony provider has been selected or registered.",
+            "Manual missed-call capture remains the only enabled path.",
+            "No telephony credentials, callbacks, recordings or provider state are implied."
+          ],
+          category: "telephony",
+          evidence: "Telephony is deliberately disabled pending owner provider selection.",
+          id: "telephony-disabled",
+          label: "Telephony",
+          mode: "disabled",
+          providerKey: "exotel",
+          status: "not_configured"
+        }),
+        manualProviderCard({
+          checkedAt: nowIso(dependencies),
+          activationChecks: [
+            "Google Business Profile is manual source attribution only.",
+            "No Google API read/write dependency is active."
+          ],
+          category: "source",
+          evidence: "Google is manual/source only; no live profile API dependency is active.",
+          id: "google-business",
+          label: "Google Business Profile",
+          mode: "manual/source only",
+          providerKey: "google_business_profile",
+          status: "not_configured"
+        }),
+        manualProviderCard({
+          checkedAt: nowIso(dependencies),
+          activationChecks: [
+            "Clinic-approved import batches use durable migration review routes.",
+            "Verified ClinicOS records are never overwritten silently."
+          ],
+          category: "migration",
+          evidence: "Manual import review is available through migration batch routes.",
+          id: "manual-import",
+          label: "Manual import",
+          mode: "durable migration review",
+          providerKey: "manual_import",
+          status: "available"
+        })
+      ]
+    });
+  }
   const [messagingHealth, paymentHealth, telephonyHealth] = await Promise.all([
     createRuntimeMessagingProvider(config).healthCheck(),
     paymentProviderFrom(dependencies).healthCheck(),
@@ -6423,6 +6481,92 @@ function createRuntimeTelephonyProvider(config: ClinicOsConfig) {
     regionSubdomain: config.providers.telephony.regionSubdomain,
     webhookCallbackConfigured: false
   });
+}
+
+function officialProviderCards(
+  registrations: readonly ProviderRegistrationHealthRecord[],
+  checkedAt: string
+) {
+  const cards: Array<Record<string, unknown>> = registrations.map((registration) => {
+    const meta = registration.providerKey === "meta_whatsapp_cloud";
+    const status = officialProviderPublicStatus(registration.activationState);
+    const capabilities = meta
+      ? ["Signed callbacks", "Template send", "Delivery receipts"]
+      : ["Signed callbacks", "Payment Link / QR", "Payment reconciliation"];
+    return {
+      activationChecks: [
+        `Registration state: ${registration.activationState}.`,
+        registration.sandboxVerifiedAt
+          ? "Official sandbox verification evidence is recorded."
+          : "Official sandbox verification evidence is not recorded.",
+        registration.productionVerifiedAt
+          ? "Production verification evidence is recorded."
+          : "Production activation is not verified."
+      ],
+      activationState: registration.activationState,
+      capabilities: capabilities.map((label) => ({
+        detail: `${label} is ${status === "available" ? "verified" : status === "degraded" ? "not yet verified" : "disabled"} for this registration.`,
+        key: label.toLowerCase().replaceAll(/[^a-z0-9]+/gu, "_"),
+        label,
+        status:
+          status === "available" ? "available" : status === "degraded" ? "degraded" : "unavailable"
+      })),
+      category: meta ? ("messaging" as const) : ("payments" as const),
+      checkedAt: registration.lastHealthCheckAt ?? checkedAt,
+      evidence:
+        registration.activationState === "degraded" && registration.lastFailureCode
+          ? `Registration is degraded with bounded failure code ${registration.lastFailureCode}.`
+          : `Durable registration truth is ${registration.activationState}.`,
+      id: registration.registrationId,
+      label: meta ? "WhatsApp Cloud" : "Razorpay",
+      lastFailureCode: registration.lastFailureCode,
+      lastReconciledAt: registration.lastReconciledAt,
+      lastVerifiedCallbackAt: registration.lastVerifiedCallbackAt,
+      mode: registration.providerMode,
+      productionVerifiedAt: registration.productionVerifiedAt,
+      providerKey: meta ? ("whatsapp_cloud" as const) : ("razorpay" as const),
+      sandboxVerifiedAt: registration.sandboxVerifiedAt,
+      status
+    };
+  });
+  for (const provider of ["meta_whatsapp_cloud", "razorpay"] as const) {
+    if (registrations.some((registration) => registration.providerKey === provider)) continue;
+    const meta = provider === "meta_whatsapp_cloud";
+    cards.push({
+      activationChecks: [
+        "No durable provider registration exists for this clinic.",
+        "Credentials and callback state are not inferred from process environment variables.",
+        "Provider dashboard activation remains unavailable."
+      ],
+      activationState: "absent",
+      capabilities: [],
+      category: meta ? "messaging" : "payments",
+      checkedAt,
+      evidence: "No durable provider registration is present.",
+      id: meta ? "whatsapp-cloud-absent" : "razorpay-absent",
+      label: meta ? "WhatsApp Cloud" : "Razorpay",
+      lastFailureCode: null,
+      lastReconciledAt: null,
+      lastVerifiedCallbackAt: null,
+      mode: "disabled",
+      productionVerifiedAt: null,
+      providerKey: meta ? "whatsapp_cloud" : "razorpay",
+      sandboxVerifiedAt: null,
+      status: "not_configured"
+    });
+  }
+  return cards;
+}
+
+function officialProviderPublicStatus(
+  state: ProviderRegistrationHealthRecord["activationState"]
+): "available" | "degraded" | "not_configured" | "unavailable" {
+  if (state === "sandbox_verified" || state === "production_verified") return "available";
+  if (state === "registered" || state === "configured" || state === "degraded") {
+    return "degraded";
+  }
+  if (state === "disabled") return "unavailable";
+  return "not_configured";
 }
 
 function providerCardFromHealth(input: {

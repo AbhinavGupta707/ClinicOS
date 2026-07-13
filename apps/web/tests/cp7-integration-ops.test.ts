@@ -135,12 +135,25 @@ describe("CP7 integration ops workflow", () => {
 
   it("uses the documented live CP7 route family", async () => {
     const fixture = createFixtureCp7IntegrationOpsData("2026-07-07");
+    const durableProviders = fixture.providers.map((provider) =>
+      provider.id === "razorpay"
+        ? {
+            ...provider,
+            activationState: "sandbox_verified" as const,
+            lastFailureCode: null,
+            lastReconciledAt: "2026-07-07T10:12:00+05:30",
+            lastVerifiedCallbackAt: "2026-07-07T10:14:00+05:30",
+            productionVerifiedAt: null,
+            sandboxVerifiedAt: "2026-07-07T10:10:00+05:30"
+          }
+        : provider
+    );
     const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = input.toString();
 
       if (url === "http://localhost/v1/provider-health") {
         expect(init?.method).toBeUndefined();
-        return jsonResponse({ providers: fixture.providers });
+        return jsonResponse({ providers: durableProviders });
       }
 
       if (url === "http://localhost/v1/dead-letter-events?status=unreviewed") {
@@ -239,6 +252,17 @@ describe("CP7 integration ops workflow", () => {
     });
 
     expect(loaded.status).toBe("ready");
+    expect(
+      "data" in loaded
+        ? loaded.data.providers.find((provider) => provider.id === "razorpay")
+        : null
+    ).toMatchObject({
+      activationState: "sandbox_verified",
+      lastReconciledAt: "2026-07-07T10:12:00+05:30",
+      lastVerifiedCallbackAt: "2026-07-07T10:14:00+05:30",
+      productionVerifiedAt: null,
+      sandboxVerifiedAt: "2026-07-07T10:10:00+05:30"
+    });
     expect("data" in loaded ? loaded.data.migrationBatches[0]?.conflicts[0] : null).toMatchObject({
       rowId: "cp7MigrationRowDuplicatePatient",
       targetRecordId: "cp7ExistingPatient"

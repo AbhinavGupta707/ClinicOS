@@ -24,7 +24,7 @@ test("CP13 clinic-day ownership covers CP2-CP6 exactly once", () => {
   ).map((operation) => operation.operationId);
   const owned = Object.values(CP13_CLINIC_DAY_OPERATION_OWNERS).flat();
 
-  assert.equal(owned.length, 94);
+  assert.equal(owned.length, 93);
   assert.equal(new Set(owned).size, owned.length);
   assert.deepEqual([...owned].sort(), [...expected].sort());
   assert.deepEqual([...ALL_CP13_CLINIC_DAY_OPERATION_IDS].sort(), [...expected].sort());
@@ -33,11 +33,9 @@ test("CP13 clinic-day ownership covers CP2-CP6 exactly once", () => {
 test("CP13 ownership keeps shared compatibility files out of worker path design", () => {
   assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.frontOffice.length, 26);
   assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.clinicalDental.length, 22);
-  assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.treatmentBilling.length, 12);
+  assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.treatmentBilling.length, 11);
   assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.continuityOperations.length, 34);
-  assert.deepEqual(CP13_TREATMENT_BILLING_PROVIDER_OPERATION_IDS, [
-    "receiveRazorpayPaymentWebhook"
-  ]);
+  assert.deepEqual(CP13_TREATMENT_BILLING_PROVIDER_OPERATION_IDS, []);
   assert.equal(CP13_TREATMENT_BILLING_CLINIC_OPERATION_IDS.length, 11);
   assert.equal(ALL_CP13_CLINIC_FEATURE_OPERATION_IDS.length, 93);
   assert.equal(new Set(ALL_CP13_CLINIC_FEATURE_OPERATION_IDS).size, 93);

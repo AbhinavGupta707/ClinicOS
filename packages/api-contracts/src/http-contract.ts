@@ -9,8 +9,23 @@ import {
 
 export type HttpMethod = "GET" | "PATCH" | "POST" | "PUT";
 export type EvidenceCheckpoint =
-  "CP1" | "CP2" | "CP3" | "CP4" | "CP5" | "CP6" | "CP7" | "CP8" | "CP9" | "CP10";
-export type OperationAuth = "bearer" | "none" | "razorpay_signature";
+  | "CP1"
+  | "CP2"
+  | "CP3"
+  | "CP4"
+  | "CP5"
+  | "CP6"
+  | "CP7"
+  | "CP8"
+  | "CP9"
+  | "CP10"
+  | "CP15";
+export type OperationAuth =
+  | "bearer"
+  | "none"
+  | "meta_challenge"
+  | "meta_signature"
+  | "razorpay_signature";
 
 export interface IdempotencyContract {
   readonly mode: "header" | "none" | "provider_event";
@@ -44,6 +59,7 @@ export interface HttpBodyContract {
 export interface HttpResponseContract {
   readonly description: string;
   readonly schema: RuntimeSchema;
+  readonly contentType: "application/json" | "text/plain";
   readonly headers: Readonly<Record<string, HttpResponseHeaderContract>>;
 }
 
@@ -54,7 +70,9 @@ export interface HttpResponseHeaderContract {
   readonly sourceProperty?: string;
 }
 
-export type HttpResponseDefinition = Omit<HttpResponseContract, "headers">;
+export type HttpResponseDefinition = Omit<HttpResponseContract, "headers" | "contentType"> & {
+  readonly contentType?: HttpResponseContract["contentType"];
+};
 
 export interface HttpOperationContract {
   readonly operationId: string;
@@ -248,7 +266,20 @@ export function headersSchema(input: {
   }
   if (input.auth === "razorpay_signature") {
     properties["x-razorpay-signature"] = schema.string({ minLength: 16, maxLength: 1024 });
-    required.push("x-razorpay-signature");
+    properties["x-razorpay-event-id"] = schema.string({
+      minLength: 1,
+      maxLength: 200,
+      pattern: "^[A-Za-z0-9_-]{1,200}$"
+    });
+    required.push("x-razorpay-signature", "x-razorpay-event-id");
+  }
+  if (input.auth === "meta_signature") {
+    properties["x-hub-signature-256"] = schema.string({
+      minLength: 71,
+      maxLength: 71,
+      pattern: "^sha256=[A-Fa-f0-9]{64}$"
+    });
+    required.push("x-hub-signature-256");
   }
   if (input.mutation && input.auth === "bearer") {
     properties["idempotency-key"] = IDEMPOTENCY_KEY_SCHEMA;
@@ -321,6 +352,7 @@ export function defineOperation(
       Number(status),
       {
         ...response,
+        contentType: response.contentType ?? "application/json",
         headers: responseHeaders({
           status: Number(status),
           idempotency,

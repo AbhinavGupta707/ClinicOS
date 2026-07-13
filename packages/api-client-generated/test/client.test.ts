@@ -146,7 +146,11 @@ test("generated webhook client sends raw bytes with production JSON media type",
   const rawBody = new TextEncoder().encode('{"event":"payment.captured"}');
 
   await client.receiveRazorpayPaymentWebhook({
-    headers: { "x-razorpay-signature": "synthetic-signature-value" },
+    path: { registrationKey: "synthetic_registration_key_0001" },
+    headers: {
+      "x-razorpay-signature": "synthetic-signature-value",
+      "x-razorpay-event-id": "evt_synthetic_0001"
+    },
     body: rawBody
   });
 

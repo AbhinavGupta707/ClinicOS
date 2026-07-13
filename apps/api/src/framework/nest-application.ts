@@ -47,8 +47,9 @@ export async function createClinicOsNestApplication(
   app.useBodyParser("raw", {
     limit: "1mb",
     type: (request: { originalUrl?: string; url?: string }) =>
-      new URL(request.originalUrl ?? request.url ?? "/", "http://clinic-os.local").pathname ===
-      "/v1/payment-webhooks/razorpay"
+      /^\/v1\/provider-callbacks\/(?:meta-whatsapp|razorpay)\/[A-Za-z0-9_-]{16,128}$/u.test(
+        new URL(request.originalUrl ?? request.url ?? "/", "http://clinic-os.local").pathname
+      )
   });
   app.useBodyParser("raw", { limit: "100mb", type: "application/octet-stream" });
   app.useBodyParser("json", { limit: "1mb", strict: true, type: "application/json" });
@@ -147,16 +148,34 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
   Controller()(IdentityController);
   decorateRoute(IdentityController, "current", Get("v1/me"));
 
-  class PaymentWebhookController {
+  class ProviderCallbackController {
+    metaChallenge(request: ParsedIncomingRequest, response: ServerResponse) {
+      return executeAndSend(pipeline, request, response);
+    }
+
+    metaWebhook(request: ParsedIncomingRequest, response: ServerResponse) {
+      return executeAndSend(pipeline, request, response);
+    }
+
     razorpay(request: ParsedIncomingRequest, response: ServerResponse) {
       return executeAndSend(pipeline, request, response);
     }
   }
-  Controller()(PaymentWebhookController);
+  Controller()(ProviderCallbackController);
   decorateRoute(
-    PaymentWebhookController,
+    ProviderCallbackController,
+    "metaChallenge",
+    Get("v1/provider-callbacks/meta-whatsapp/:registrationKey")
+  );
+  decorateRoute(
+    ProviderCallbackController,
+    "metaWebhook",
+    Post("v1/provider-callbacks/meta-whatsapp/:registrationKey")
+  );
+  decorateRoute(
+    ProviderCallbackController,
     "razorpay",
-    Post("v1/payment-webhooks/razorpay")
+    Post("v1/provider-callbacks/razorpay/:registrationKey")
   );
 
   class LegacyStranglerController {
@@ -170,7 +189,7 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
   return [
     HealthController,
     IdentityController,
-    PaymentWebhookController,
+    ProviderCallbackController,
     LegacyStranglerController
   ];
 }
@@ -198,9 +217,13 @@ async function executeAndSend(
 
 function sendPipelineResponse(response: ServerResponse, result: PipelineResponse): void {
   response.statusCode = result.status;
-  response.setHeader("content-type", "application/json; charset=utf-8");
   for (const [name, value] of Object.entries(result.headers)) response.setHeader(name, value);
-  response.end(`${JSON.stringify(result.body)}\n`);
+  const contentType = result.headers["content-type"] ?? "application/json; charset=utf-8";
+  response.end(
+    contentType.startsWith("text/plain")
+      ? String(result.body)
+      : `${JSON.stringify(result.body)}\n`
+  );
 }
 
 class ClinicOsBoundaryExceptionFilter implements ExceptionFilter {

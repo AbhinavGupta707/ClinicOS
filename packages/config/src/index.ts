@@ -120,6 +120,13 @@ const runtimeEnvSchema = z
     CLINIC_OS_MEDIA_SCANNER_FUNCTION_ARN: optionalString,
     CLINIC_OS_MEDIA_SCANNER_SIGNING_KEY_ID: optionalString,
     CLINIC_OS_MEDIA_PRESIGNED_ORIGINS: optionalString,
+    CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED: booleanFromEnv.default(false),
+    CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET: optionalString,
+    CLINIC_OS_PROVIDER_RAW_WEBHOOK_BUCKET: optionalString,
+    CLINIC_OS_PROVIDER_RAW_WEBHOOK_PREFIX: requiredString.default(
+      "restricted/provider-webhooks/meta-whatsapp"
+    ),
+    CLINIC_OS_PROVIDER_RAW_WEBHOOK_KMS_KEY_ID: optionalString,
 
     WHATSAPP_PROVIDER: z.enum(whatsappProviders).default("simulator"),
     WHATSAPP_ACCESS_TOKEN: optionalString,
@@ -332,6 +339,31 @@ const runtimeEnvSchema = z
       }
     }
 
+    if (
+      env.CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED &&
+      (!env.CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET ||
+        Buffer.byteLength(env.CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET, "utf8") < 32)
+    ) {
+      context.addIssue({
+        code: "custom",
+        path: ["CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET"],
+        message:
+          "Official provider callbacks require a provider endpoint HMAC secret with at least 32 UTF-8 bytes."
+      });
+    }
+
+    requireFields(
+      context,
+      env,
+      env.CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED,
+      [
+        "CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET",
+        "CLINIC_OS_PROVIDER_RAW_WEBHOOK_BUCKET",
+        "CLINIC_OS_PROVIDER_RAW_WEBHOOK_KMS_KEY_ID"
+      ],
+      "Official provider callbacks require restricted S3/KMS storage and endpoint-HMAC configuration."
+    );
+
     requireFields(
       context,
       env,
@@ -506,6 +538,13 @@ export type ClinicOsConfig = {
     mediaScannerSigningKeyId?: string | undefined;
     mediaPresignedOrigins?: string | undefined;
   };
+  providerCallbacks: {
+    enabled: boolean;
+    endpointHmacSecret?: string | undefined;
+    rawWebhookBucket?: string | undefined;
+    rawWebhookPrefix: string;
+    rawWebhookKmsKeyId?: string | undefined;
+  };
   providers: {
     whatsapp: {
       provider: WhatsAppProvider;
@@ -633,6 +672,13 @@ function toConfig(env: RuntimeEnv): ClinicOsConfig {
       mediaScannerFunctionArn: env.CLINIC_OS_MEDIA_SCANNER_FUNCTION_ARN,
       mediaScannerSigningKeyId: env.CLINIC_OS_MEDIA_SCANNER_SIGNING_KEY_ID,
       mediaPresignedOrigins: env.CLINIC_OS_MEDIA_PRESIGNED_ORIGINS
+    },
+    providerCallbacks: {
+      enabled: env.CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED,
+      endpointHmacSecret: env.CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET,
+      rawWebhookBucket: env.CLINIC_OS_PROVIDER_RAW_WEBHOOK_BUCKET,
+      rawWebhookPrefix: env.CLINIC_OS_PROVIDER_RAW_WEBHOOK_PREFIX,
+      rawWebhookKmsKeyId: env.CLINIC_OS_PROVIDER_RAW_WEBHOOK_KMS_KEY_ID
     },
     providers: {
       whatsapp: {

@@ -154,7 +154,7 @@ function isPathExpression(node) {
 }
 
 function normalizeLiteralRoute(path) {
-  return path.replace(/\{[^}]+\}/g, "{}");
+  return path.replace(/\{[^}]+\}/g, "{}").replace(/:[A-Za-z][A-Za-z0-9_]*/g, "{}");
 }
 
 function normalizeRegexRoute(literal) {
