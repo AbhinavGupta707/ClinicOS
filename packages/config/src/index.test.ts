@@ -331,7 +331,7 @@ describe("parseClinicOsEnv", () => {
       ...baseEnv,
       LLM_PROVIDER: "fireworks",
       TRANSCRIPTION_PROVIDER: "fireworks",
-      FIREWORKS_API_KEY: "test-only-fireworks-key",
+      FIREWORKS_API_KEY_SECRET_REF: "clinicos/local/fireworks-inference-key",
       FIREWORKS_SERVICE_ACCOUNT_ID: "clinicos-staging-inference"
     });
 
@@ -346,7 +346,7 @@ describe("parseClinicOsEnv", () => {
       ...baseEnv,
       LLM_PROVIDER: "fireworks",
       TRANSCRIPTION_PROVIDER: "fireworks",
-      FIREWORKS_API_KEY: "test-only-fireworks-key",
+      FIREWORKS_API_KEY_SECRET_REF: "clinicos/local/fireworks-inference-key",
       FIREWORKS_SERVICE_ACCOUNT_ID: "clinicos-staging-inference",
       CLINIC_OS_AI_LIVE_CALLS_ENABLED: "true"
     });
@@ -371,7 +371,7 @@ describe("parseClinicOsEnv", () => {
       ...baseEnv,
       LLM_PROVIDER: "fireworks",
       TRANSCRIPTION_PROVIDER: "fireworks",
-      FIREWORKS_API_KEY: "test-only-fireworks-key",
+      FIREWORKS_API_KEY_SECRET_REF: "clinicos/local/fireworks-inference-key",
       FIREWORKS_SERVICE_ACCOUNT_ID: "clinicos-staging-inference",
       CLINIC_OS_AI_LIVE_CALLS_ENABLED: "true",
       CLINIC_OS_AI_KILL_SWITCH: "false",
@@ -401,7 +401,7 @@ describe("parseClinicOsEnv", () => {
     const result = safeParseClinicOsEnv({
       ...baseEnv,
       LLM_PROVIDER: "fireworks",
-      FIREWORKS_API_KEY: "test-only-fireworks-key",
+      FIREWORKS_API_KEY_SECRET_REF: "clinicos/local/fireworks-inference-key",
       FIREWORKS_SERVICE_ACCOUNT_ID: "clinicos-staging-inference",
       FIREWORKS_CHAT_COMPLETIONS_URL: "https://example.test/inference/v1/chat/completions"
     });

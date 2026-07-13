@@ -185,7 +185,7 @@ const runtimeEnvSchema = z
     LLM_PROVIDER: z.enum(llmProviders).default("simulator"),
     LLM_BASE_URL: optionalUrl,
     LLM_MODEL_PRIMARY: optionalString,
-    FIREWORKS_API_KEY: optionalString,
+    FIREWORKS_API_KEY_SECRET_REF: optionalString,
     FIREWORKS_SERVICE_ACCOUNT_ID: optionalString,
     FIREWORKS_CHAT_COMPLETIONS_URL: requiredUrl.default(
       "https://api.fireworks.ai/inference/v1/chat/completions"
@@ -552,7 +552,7 @@ const runtimeEnvSchema = z
       context,
       env,
       env.LLM_PROVIDER === "fireworks",
-      ["FIREWORKS_API_KEY", "FIREWORKS_SERVICE_ACCOUNT_ID"],
+      ["FIREWORKS_API_KEY_SECRET_REF", "FIREWORKS_SERVICE_ACCOUNT_ID"],
       "Fireworks is selected but its service-account credential settings are missing."
     );
 
@@ -560,7 +560,7 @@ const runtimeEnvSchema = z
       context,
       env,
       env.TRANSCRIPTION_PROVIDER === "fireworks",
-      ["FIREWORKS_API_KEY", "FIREWORKS_SERVICE_ACCOUNT_ID"],
+      ["FIREWORKS_API_KEY_SECRET_REF", "FIREWORKS_SERVICE_ACCOUNT_ID"],
       "Fireworks transcription is selected but its service-account credential settings are missing."
     );
 
@@ -732,7 +732,7 @@ export type ClinicOsConfig = {
       llmProvider: LlmProvider;
       llmBaseUrl?: string | undefined;
       llmModelPrimary?: string | undefined;
-      fireworksApiKey?: string | undefined;
+      fireworksApiKeySecretRef?: string | undefined;
       fireworksServiceAccountId?: string | undefined;
       fireworks: {
         chatCompletionsUrl: string;
@@ -901,7 +901,7 @@ function toConfig(env: RuntimeEnv): ClinicOsConfig {
         llmProvider: env.LLM_PROVIDER,
         llmBaseUrl: env.LLM_BASE_URL,
         llmModelPrimary: env.LLM_MODEL_PRIMARY,
-        fireworksApiKey: env.FIREWORKS_API_KEY,
+        fireworksApiKeySecretRef: env.FIREWORKS_API_KEY_SECRET_REF,
         fireworksServiceAccountId: env.FIREWORKS_SERVICE_ACCOUNT_ID,
         fireworks: {
           chatCompletionsUrl: env.FIREWORKS_CHAT_COMPLETIONS_URL,
