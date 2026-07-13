@@ -25,8 +25,11 @@ tenant/clinic scope. Each poll:
 The processor recovers after crash/restart through expired-lease reclamation. A superseded lease
 cannot finalize or mutate registration truth. Retry scheduling uses deterministic bounded
 exponential backoff, and attempt eight dead-letters. Credential-reference drift detected under the
-final registration lock is classified as `credential_rotation_race` and does not claim a health
-check against the new credential.
+final registration lock is classified as `provider_registration_changed` and does not claim a
+health check against the new credential. The same comparison covers registration identity,
+activation state, provider mode and provider account. A provider decision obtained under any stale
+registration field is discarded and the job is atomically rescheduled against the currently locked
+registration.
 
 Meta WhatsApp Cloud has no documented authoritative read endpoint for reconstructing an arbitrary
 outbound message's sent/delivered/read state. Meta jobs therefore finalize as `unsupported` with
@@ -34,13 +37,14 @@ outbound message's sent/delivered/read state. Meta jobs therefore finalize as `u
 manual-review truth. The processor never guesses a Meta lifecycle state and does not mark a provider
 health check when it performed none.
 
-For Razorpay jobs with a known `provider_payment_id`, the processor consumes the existing official
-`GET /v1/payments/:id` snapshot. It stores only a SHA-256 digest and bounded classification on the
-job; it never writes invoices, payment requests, payment transactions or business effects. A
-successful provider read can close outage/capture checks as matched or variance according to the
-frozen reason. The official missing-ID response (documented as HTTP 400; 404 is also handled) is an
-authoritative `provider_payment_not_found` variance. Provider outages, throttling, credential
-unavailability and invalid responses retry or dead-letter without inventing captured/paid truth.
+For Razorpay jobs with a known `provider_payment_id`, the read client returns a typed
+`found | not_found` result from official `GET /v1/payments/:id`. It stores only a SHA-256 digest and
+bounded classification on the job; it never writes invoices, payment requests, payment transactions
+or business effects. A successful provider read can close outage/capture checks as matched or
+variance according to the frozen reason. Only an allowlisted bounded error classification matching
+Razorpay's documented missing-ID response becomes authoritative `provider_payment_not_found`.
+Unrelated HTTP 400/404 responses remain `PROVIDER_REJECTED` and retry/dead-letter safely. Raw error
+bodies and descriptions are never placed in safe details, logs or durable job truth.
 
 For `creation_outcome_unknown`, the new read-only Razorpay client:
 
@@ -56,9 +60,18 @@ For `creation_outcome_unknown`, the new read-only Razorpay client:
   status is hashed as evidence but is never projected as payment settlement or capture.
 
 Responses are capped at 512 KiB before parsing, time out within configured bounds, retry GET-only
-transport/429/5xx failures at most three times, and expose only bounded safe error fields.
+transport/429/5xx failures at most three times, and expose only bounded safe error fields. Operation
+labels are fixed enums and never contain request paths, query strings, invoice IDs or internal IDs.
 Verified and degraded registrations with correctly mode-bound credentials can perform read-only
 recovery; absent, registered, configured and disabled registrations cannot call Razorpay.
+
+The client publishes conservative maximum durations derived from timeout, three attempts and
+bounded retry delays: 19 seconds for one default payment GET and 114 seconds for the six-GET
+worst-case creation lookup. Jobs use a 180-second default lease and carry their exact lease expiry
+from the claim. Before every provider read, the processor requires the declared provider budget plus
+a five-second finalization reserve to remain. In a sequential batch, later jobs reschedule without a
+provider call once that condition fails; they cannot start work whose declared HTTP budget exceeds
+their remaining lease.
 
 ## Owned files
 
@@ -80,13 +93,13 @@ lockfile, generated source, shared release document or release decision was chan
 | `npm --workspace @clinic-os/integrations run build`                                     | PASS                                                                 |
 | `npm --workspace @clinic-os/integrations run typecheck`                                 | PASS                                                                 |
 | `npm --workspace @clinic-os/integrations run lint`                                      | PASS                                                                 |
-| `node --test packages/integrations/test/cp15-razorpay-reconciliation-client.test.ts`    | PASS, 6/6, 0 skipped                                                 |
-| `npm --workspace @clinic-os/integrations test`                                          | PASS, 184/184, 0 skipped                                             |
+| `node --test packages/integrations/test/cp15-razorpay-reconciliation-client.test.ts`    | PASS, 8/8, 0 skipped                                                 |
+| `npm --workspace @clinic-os/integrations test`                                          | PASS, 186/186, 0 skipped                                             |
 | `npm --workspace @clinic-os/worker run build`                                           | PASS                                                                 |
 | `npm --workspace @clinic-os/worker run typecheck`                                       | PASS                                                                 |
 | `npm --workspace @clinic-os/worker run lint`                                            | PASS                                                                 |
-| `node --test apps/worker/dist/__tests__/cp15-provider-reconciliation-processor.test.js` | PASS, 12/12, 0 skipped                                               |
-| `npm --workspace @clinic-os/worker test`                                                | PASS, 44/44, 0 skipped                                               |
+| `node --test apps/worker/dist/__tests__/cp15-provider-reconciliation-processor.test.js` | PASS, 21/21, 0 skipped                                               |
+| `npm --workspace @clinic-os/worker test`                                                | PASS, 53/53, 0 skipped                                               |
 | `npm run security:secrets`                                                              | PASS, tracked and untracked release-scope scan                       |
 | Owned-path credential/private-key/PHI pattern scan                                      | PASS, no matches                                                     |
 | `npx prettier --check` on all five owned paths                                          | PASS after formatting                                                |
@@ -94,19 +107,21 @@ lockfile, generated source, shared release document or release decision was chan
 
 The focused suites cover scoped transactional claims, stale lease recovery, concurrent lease loss,
 atomic rollback when registration finalization fails, bounded retry and exact attempt exhaustion,
-credential rotation, degraded recovery, Meta manual-review truth, known-payment matched/variance and
-missing-provider truth, creation recovery/absence/duplicates, official pagination, cross-scope
-evidence, provider outage and oversized response behavior. All lane tests are mandatory and none are
-skipped.
+all registration-field drift on decision and failure paths, credential rotation, lease-budget
+admission, degraded recovery, Meta manual-review truth, typed known-payment matched/variance and
+missing-provider truth, non-authoritative 400/404 rejection, creation recovery/absence/duplicates,
+identifier-free safe operation details, official pagination, cross-scope evidence, provider outage
+and oversized response behavior. All lane tests are mandatory and none are skipped.
 
 ## Master-owned integration requirements and discovered blocker
 
 1. Export `RazorpayCollectionReconciliationClient` from
    `packages/integrations/src/cp15/razorpay/index.ts` and the shared integrations root.
-2. In `apps/worker/src/worker-runtime-main.ts`, construct a reconciliation provider client that
-   combines the existing `RazorpayApiClient.fetchPayment` with the new read-only creation lookup,
-   inject the existing secret resolver, schedule explicit tenant/clinic polls under the worker role,
-   add bounded metrics/readiness, and stop polling cleanly on shutdown.
+2. In `apps/worker/src/worker-runtime-main.ts`, use the new read client for both typed payment lookup
+   and bounded creation lookup. Preserve its declared payment/creation duration budgets when
+   satisfying `RazorpayReconciliationProviderClient`; do not adapt generic HTTP 400/404 errors into
+   `not_found`. Inject the existing secret resolver, schedule explicit tenant/clinic polls under the
+   worker role, add bounded metrics/readiness, and stop polling cleanly on shutdown.
 3. Retain the migration-0020 worker grants. The processor needs only `SELECT`/`UPDATE` on
    `provider_callback_registrations`, `meta_whatsapp_reconciliation_jobs` and
    `razorpay_reconciliation_jobs`; it intentionally requires no invoice/payment-table grant.

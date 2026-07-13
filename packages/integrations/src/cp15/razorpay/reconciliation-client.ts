@@ -1,11 +1,22 @@
 import { RazorpayBoundaryError } from "./errors.js";
-import type { RazorpayHttpRequest, RazorpayHttpResponse, RazorpayHttpTransport } from "./client.js";
+import type {
+  RazorpayHttpRequest,
+  RazorpayHttpResponse,
+  RazorpayHttpTransport,
+  RazorpayPaymentSnapshot
+} from "./client.js";
 
 const MAX_RESPONSE_BYTES = 512 * 1024;
 const MAX_QR_PAGES = 5;
 const QR_PAGE_SIZE = 100;
 const CREATION_WINDOW_SECONDS = 15 * 60;
 const OFFICIAL_BASE_URL = "https://api.razorpay.com/v1";
+const GET_ATTEMPTS = 3;
+const MAX_RETRY_DELAY_MS = 2_000;
+const CREATION_LOOKUP_GETS = 1 + MAX_QR_PAGES;
+
+type RazorpayReadOperation =
+  "fetch_payment_by_id" | "fetch_payment_links_by_reference" | "list_qr_codes_for_creation_window";
 
 export interface RazorpayCollectionReconciliationClientOptions {
   readonly keyId: string;
@@ -51,6 +62,10 @@ export type RazorpayCollectionLookupResult =
       readonly reason: "multiple_matches" | "scope_mismatch";
     };
 
+export type RazorpayPaymentLookupResult =
+  | { readonly outcome: "found"; readonly payment: RazorpayPaymentSnapshot }
+  | { readonly outcome: "not_found" };
+
 /**
  * Official, read-only recovery boundary for a Razorpay collection POST whose response was lost.
  * Payment Links support an exact reference_id filter. QR Codes support only bounded time/pagination
@@ -58,6 +73,8 @@ export type RazorpayCollectionLookupResult =
  * the creation client. No collection status is projected as paid/captured settlement truth here.
  */
 export class RazorpayCollectionReconciliationClient {
+  readonly maximumPaymentLookupDurationMs: number;
+  readonly maximumCreationLookupDurationMs: number;
   readonly #keyId: string;
   readonly #keySecret: string;
   readonly #baseUrl: string;
@@ -84,10 +101,54 @@ export class RazorpayCollectionReconciliationClient {
     ) {
       throw new Error("Razorpay timeout must be between 250 and 30000 milliseconds.");
     }
+    const maximumGetDurationMs = this.#timeoutMs * GET_ATTEMPTS + MAX_RETRY_DELAY_MS * 2;
+    this.maximumPaymentLookupDurationMs = maximumGetDurationMs;
+    this.maximumCreationLookupDurationMs = maximumGetDurationMs * CREATION_LOOKUP_GETS;
     this.#transport = options.transport ?? defaultTransport;
     this.#sleep =
       options.sleep ??
       ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)));
+  }
+
+  async lookupPayment(providerPaymentId: string): Promise<RazorpayPaymentLookupResult> {
+    const id = requiredPaymentId(providerPaymentId);
+    const response = await this.#request(
+      "fetch_payment_by_id",
+      `/payments/${encodeURIComponent(id)}`,
+      [400, 404]
+    );
+    if (response.status === 400 || response.status === 404) {
+      const providerError = classifyProviderError(response.body);
+      if (
+        providerError.code === "BAD_REQUEST_ERROR" &&
+        providerError.description === "The id provided does not exist."
+      ) {
+        return { outcome: "not_found" };
+      }
+      throw new RazorpayBoundaryError({
+        code: "PROVIDER_REJECTED",
+        message: "Razorpay payment lookup returned a non-authoritative client error.",
+        safeDetails: {
+          status: response.status,
+          operation: "fetch_payment_by_id",
+          ...(providerError.code ? { providerErrorCode: providerError.code } : {})
+        }
+      });
+    }
+
+    const entity = parseObject(response.body);
+    return {
+      outcome: "found",
+      payment: {
+        providerPaymentId: requiredIdentifier(entity.id, "payment.id"),
+        amountMinor: requiredMinor(entity.amount, "payment.amount"),
+        amountRefundedMinor: requiredMinor(entity.amount_refunded ?? 0, "payment.amount_refunded"),
+        currency: requiredBoundedString(entity.currency, "payment.currency"),
+        status: requiredBoundedString(entity.status, "payment.status"),
+        captured: requiredBoolean(entity.captured, "payment.captured"),
+        providerRequestId: optionalString(entity.invoice_id) ?? optionalString(entity.order_id)
+      }
+    };
   }
 
   async findCollectionByInvoiceReference(
@@ -101,6 +162,7 @@ export class RazorpayCollectionReconciliationClient {
     if (!Number.isFinite(createdAt)) throw new Error("jobCreatedAt must be an ISO timestamp.");
 
     const linkObject = await this.#getObject(
+      "fetch_payment_links_by_reference",
       `/payment_links/?reference_id=${encodeURIComponent(invoiceId)}`
     );
     const linkEntities = requiredArray(linkObject.payment_links, "payment_links");
@@ -134,6 +196,7 @@ export class RazorpayCollectionReconciliationClient {
     for (let page = 0; page < MAX_QR_PAGES; page += 1) {
       const skip = page * QR_PAGE_SIZE;
       const qrObject = await this.#getObject(
+        "list_qr_codes_for_creation_window",
         `/payments/qr_codes?from=${from}&to=${to}&count=${QR_PAGE_SIZE}&skip=${skip}`
       );
       searchedQrPages += 1;
@@ -196,8 +259,19 @@ export class RazorpayCollectionReconciliationClient {
     };
   }
 
-  async #getObject(path: string): Promise<Record<string, unknown>> {
-    for (let attempt = 1; attempt <= 3; attempt += 1) {
+  async #getObject(
+    operation: RazorpayReadOperation,
+    path: string
+  ): Promise<Record<string, unknown>> {
+    return parseObject((await this.#request(operation, path)).body);
+  }
+
+  async #request(
+    operation: RazorpayReadOperation,
+    path: string,
+    acceptedErrorStatuses: readonly number[] = []
+  ): Promise<RazorpayHttpResponse> {
+    for (let attempt = 1; attempt <= GET_ATTEMPTS; attempt += 1) {
       let response: RazorpayHttpResponse;
       try {
         response = await this.#transport({
@@ -211,7 +285,7 @@ export class RazorpayCollectionReconciliationClient {
         });
       } catch (error) {
         if (error instanceof RazorpayBoundaryError) throw error;
-        if (attempt < 3) {
+        if (attempt < GET_ATTEMPTS) {
           await this.#sleep(100 * 2 ** (attempt - 1));
           continue;
         }
@@ -219,7 +293,7 @@ export class RazorpayCollectionReconciliationClient {
           code: "PROVIDER_UNAVAILABLE",
           message: "Razorpay reconciliation API transport is unavailable.",
           retryable: true,
-          safeDetails: { operation: `GET ${path}`, errorClass: errorName(error) }
+          safeDetails: { operation, errorClass: errorName(error) }
         });
       }
       if (Buffer.byteLength(response.body, "utf8") > MAX_RESPONSE_BYTES) {
@@ -228,11 +302,14 @@ export class RazorpayCollectionReconciliationClient {
           "Razorpay reconciliation response exceeded its configured body limit."
         );
       }
-      if (response.status >= 200 && response.status < 300) {
-        return parseObject(response.body);
+      if (
+        (response.status >= 200 && response.status < 300) ||
+        acceptedErrorStatuses.includes(response.status)
+      ) {
+        return response;
       }
       const retryable = response.status === 429 || response.status >= 500;
-      if (retryable && attempt < 3) {
+      if (retryable && attempt < GET_ATTEMPTS) {
         await this.#sleep(retryDelay(response.headers, attempt));
         continue;
       }
@@ -245,7 +322,7 @@ export class RazorpayCollectionReconciliationClient {
               : "PROVIDER_REJECTED",
         message: `Razorpay reconciliation API request failed with HTTP ${response.status}.`,
         retryable,
-        safeDetails: { status: response.status, operation: `GET ${path}` }
+        safeDetails: { status: response.status, operation }
       });
     }
     throw new Error("Razorpay reconciliation request attempts exhausted.");
@@ -400,6 +477,13 @@ function requiredIdentifier(value: unknown, field: string): string {
   return text;
 }
 
+function requiredPaymentId(value: string): string {
+  if (!/^pay_[A-Za-z0-9]{6,128}$/u.test(value)) {
+    throw new Error("providerPaymentId must be a bounded official Razorpay payment identifier.");
+  }
+  return value;
+}
+
 function requiredBoundedString(value: unknown, field: string): string {
   const text = optionalString(value);
   if (!text || text.length > 256 || /[\r\n\0]/u.test(text)) {
@@ -426,10 +510,39 @@ function requiredEpoch(value: unknown, field: string): number {
   return value as number;
 }
 
+function requiredBoolean(value: unknown, field: string): boolean {
+  if (typeof value !== "boolean") {
+    throw boundary("PROVIDER_REJECTED", `Razorpay reconciliation ${field} is invalid.`);
+  }
+  return value;
+}
+
+function classifyProviderError(body: string): {
+  readonly code: string | null;
+  readonly description: string | null;
+} {
+  try {
+    const parsed: unknown = JSON.parse(body);
+    const top = optionalObject(parsed);
+    const error = optionalObject(top?.error);
+    const code = optionalString(error?.code);
+    const description = optionalString(error?.description);
+    return {
+      code: code && /^[A-Z][A-Z0-9_]{0,63}$/u.test(code) ? code : null,
+      description:
+        description && description.length <= 256 && !/[\r\n\0]/u.test(description)
+          ? description
+          : null
+    };
+  } catch {
+    return { code: null, description: null };
+  }
+}
+
 function retryDelay(headers: RazorpayHttpResponse["headers"], attempt: number): number {
   const seconds = Number(headers["retry-after"]);
   if (Number.isFinite(seconds) && seconds >= 0) {
-    return Math.min(2_000, Math.floor(seconds * 1_000));
+    return Math.min(MAX_RETRY_DELAY_MS, Math.floor(seconds * 1_000));
   }
   return 100 * 2 ** (attempt - 1);
 }

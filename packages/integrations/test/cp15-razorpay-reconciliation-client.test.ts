@@ -145,11 +145,16 @@ test("read-only lookup retries bounded outages and rejects oversized provider re
       return { status: 503, headers: {}, body: "unavailable" };
     }
   });
-  await assert.rejects(
-    retrying.findCollectionByInvoiceReference(scope),
-    (error: unknown) =>
-      error instanceof RazorpayBoundaryError && error.code === "PROVIDER_UNAVAILABLE"
-  );
+  await assert.rejects(retrying.findCollectionByInvoiceReference(scope), (error: unknown) => {
+    assert.ok(error instanceof RazorpayBoundaryError);
+    assert.equal(error.code, "PROVIDER_UNAVAILABLE");
+    assert.deepEqual(error.safeDetails, {
+      status: 503,
+      operation: "fetch_payment_links_by_reference"
+    });
+    assert.equal(JSON.stringify(error.safeDetails).includes(scope.invoiceId), false);
+    return true;
+  });
   assert.equal(calls, 3);
   assert.deepEqual(sleeps, [100, 200]);
 
@@ -162,6 +167,70 @@ test("read-only lookup retries bounded outages and rejects oversized provider re
     oversized.findCollectionByInvoiceReference(scope),
     (error: unknown) => error instanceof RazorpayBoundaryError && error.code === "PROVIDER_REJECTED"
   );
+});
+
+test("payment lookup returns a typed snapshot or exact authoritative absence only", async () => {
+  const found = createClient(async () =>
+    ok({
+      id: "pay_synthetic1",
+      amount: 25_000,
+      amount_refunded: 500,
+      currency: "INR",
+      status: "captured",
+      captured: true,
+      invoice_id: "inv_synthetic1"
+    })
+  );
+  assert.deepEqual(await found.lookupPayment("pay_synthetic1"), {
+    outcome: "found",
+    payment: {
+      providerPaymentId: "pay_synthetic1",
+      amountMinor: 25_000,
+      amountRefundedMinor: 500,
+      currency: "INR",
+      status: "captured",
+      captured: true,
+      providerRequestId: "inv_synthetic1"
+    }
+  });
+
+  const missing = createClient(async () => ({
+    status: 400,
+    headers: {},
+    body: JSON.stringify({
+      error: {
+        code: "BAD_REQUEST_ERROR",
+        description: "The id provided does not exist."
+      }
+    })
+  }));
+  assert.deepEqual(await missing.lookupPayment("pay_synthetic1"), { outcome: "not_found" });
+  assert.equal(missing.maximumPaymentLookupDurationMs, 19_000);
+  assert.equal(missing.maximumCreationLookupDurationMs, 114_000);
+});
+
+test("other payment 400/404 responses stay bounded provider rejection, never not-found", async () => {
+  for (const [status, body] of [
+    [
+      400,
+      JSON.stringify({
+        error: { code: "BAD_REQUEST_ERROR", description: "A different client error." }
+      })
+    ],
+    [404, "not-json"]
+  ] as const) {
+    const client = createClient(async () => ({ status, headers: {}, body }));
+    await assert.rejects(client.lookupPayment("pay_synthetic1"), (error: unknown) => {
+      assert.ok(error instanceof RazorpayBoundaryError);
+      assert.equal(error.code, "PROVIDER_REJECTED");
+      assert.equal(error.safeDetails.operation, "fetch_payment_by_id");
+      assert.equal(error.safeDetails.status, status);
+      const details = JSON.stringify(error.safeDetails);
+      assert.equal(details.includes("pay_synthetic1"), false);
+      assert.equal(details.includes("different client error"), false);
+      return true;
+    });
+  }
 });
 
 test("credentials and API origin are bounded before any read-only request", () => {

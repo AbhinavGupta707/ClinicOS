@@ -11,6 +11,7 @@ import {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
 const SAFE_CODE = /^[a-z][a-z0-9_.-]{0,127}$/u;
 const MAX_RECONCILIATION_ATTEMPTS = 8;
+const FINALIZATION_RESERVE_MS = 5_000;
 const RECONCILIATION_ACTIVE_STATES = new Set([
   "sandbox_verified",
   "production_verified",
@@ -50,8 +51,10 @@ export type RazorpayCreationLookupResult =
     };
 
 export interface RazorpayReconciliationProviderClient {
-  /** Must be backed by the official Razorpay GET /payments/:id client. */
-  fetchPayment(providerPaymentId: string): Promise<RazorpayPaymentSnapshot>;
+  readonly maximumPaymentLookupDurationMs: number;
+  readonly maximumCreationLookupDurationMs: number;
+  /** Must classify authoritative absence at the official GET /payments/:id boundary. */
+  lookupPayment(providerPaymentId: string): Promise<RazorpayPaymentLookupResult>;
   /** Must be backed by the official bounded Payment Link/QR collection GET client. */
   findCollectionByInvoiceReference(input: {
     readonly tenantId: string;
@@ -61,6 +64,10 @@ export interface RazorpayReconciliationProviderClient {
     readonly jobCreatedAt: string;
   }): Promise<RazorpayCreationLookupResult>;
 }
+
+export type RazorpayPaymentLookupResult =
+  | { readonly outcome: "found"; readonly payment: RazorpayPaymentSnapshot }
+  | { readonly outcome: "not_found" };
 
 export interface ProviderReconciliationProcessorOptions {
   readonly pool: Pick<Pool, "connect">;
@@ -124,6 +131,7 @@ interface RazorpayClaim {
   readonly reason: RazorpayReason;
   readonly attemptCount: number;
   readonly createdAt: string;
+  readonly leaseExpiresAt: string;
   readonly leaseOwner: string;
   readonly registrationId: string;
   readonly activationState: string;
@@ -140,8 +148,14 @@ interface ClaimedBatch {
 
 interface RegistrationLeaseRow {
   readonly registration_id: string;
+  readonly activation_state: string;
+  readonly provider_mode: string;
+  readonly provider_account_id: string;
   readonly api_credential_ref: string | null;
 }
+
+type RazorpayProcessResult =
+  "matched" | "variance" | "retry_scheduled" | "dead_lettered" | "lease_lost";
 
 interface RazorpayDecision {
   readonly status: "matched" | "variance";
@@ -170,7 +184,7 @@ export class ProviderReconciliationProcessor {
     this.#razorpaySecrets = options.razorpaySecrets;
     this.#createRazorpayClient = options.createRazorpayClient;
     this.#batchSize = boundedInteger(options.batchSize ?? 10, 1, 100, "batchSize");
-    this.#leaseMs = boundedInteger(options.leaseMs ?? 60_000, 5_000, 300_000, "leaseMs");
+    this.#leaseMs = boundedInteger(options.leaseMs ?? 180_000, 5_000, 300_000, "leaseMs");
     this.#maxAttempts = MAX_RECONCILIATION_ATTEMPTS;
     this.#baseRetryDelayMs = boundedInteger(
       options.baseRetryDelayMs ?? 5_000,
@@ -309,6 +323,7 @@ export class ProviderReconciliationProcessor {
          returning job.id, job.external_account_id, job.provider_payment_id,
                    job.provider_request_reference, job.invoice_id, job.reason,
                    job.attempt_count, job.created_at::text, job.lease_owner,
+                   job.lease_expires_at::text,
                    due.registration_id, due.activation_state, due.provider_mode,
                    due.provider_account_id, due.api_credential_ref`,
         [
@@ -362,7 +377,7 @@ export class ProviderReconciliationProcessor {
   async #processRazorpay(
     scope: ProviderReconciliationScope,
     job: RazorpayClaim
-  ): Promise<"matched" | "variance" | "retry_scheduled" | "dead_lettered" | "lease_lost"> {
+  ): Promise<RazorpayProcessResult> {
     if (!RECONCILIATION_ACTIVE_STATES.has(job.activationState) || !job.apiCredentialRef) {
       return this.#finalizeRazorpayFailure(scope, job, "provider_registration_inactive", false);
     }
@@ -381,14 +396,30 @@ export class ProviderReconciliationProcessor {
       return this.#finalizeRazorpayFailure(scope, job, "provider_credential_unavailable", false);
     }
 
+    const providerBudget = providerLookupBudget(client, job);
+    const remainingLeaseMs = Date.parse(job.leaseExpiresAt) - this.#now().getTime();
+    if (remainingLeaseMs < providerBudget + FINALIZATION_RESERVE_MS) {
+      return this.#finalizeRazorpayFailure(scope, job, "provider_lease_budget_insufficient", false);
+    }
+
     try {
       let decision: RazorpayDecision;
       if (job.providerPaymentId) {
-        const snapshot = validPaymentSnapshot(
-          await client.fetchPayment(job.providerPaymentId),
+        const lookup = validPaymentLookup(
+          await client.lookupPayment(job.providerPaymentId),
           job.providerPaymentId
         );
-        decision = decidePaymentSnapshot(job.reason, snapshot);
+        decision =
+          lookup.outcome === "found"
+            ? decidePaymentSnapshot(job.reason, lookup.payment)
+            : {
+                status: "variance",
+                snapshotDigest: sha256({
+                  outcome: "provider_payment_not_found",
+                  providerPaymentId: job.providerPaymentId
+                }),
+                failureCode: "provider_payment_not_found"
+              };
       } else {
         if (!job.invoiceId || !job.providerRequestReference) {
           throw new Error("Razorpay creation reconciliation subject is incomplete.");
@@ -419,26 +450,8 @@ export class ProviderReconciliationProcessor {
           failureCode: lookup.outcome === "found" ? null : "provider_creation_ambiguous"
         };
       }
-      const finalized = await this.#finalizeRazorpayDecision(scope, job, decision);
-      return finalized ? decision.status : "lease_lost";
+      return this.#finalizeRazorpayDecision(scope, job, decision);
     } catch (error) {
-      if (
-        error instanceof RazorpayBoundaryError &&
-        error.code === "PROVIDER_REJECTED" &&
-        (error.safeDetails.status === 400 || error.safeDetails.status === 404) &&
-        job.providerPaymentId
-      ) {
-        const decision: RazorpayDecision = {
-          status: "variance",
-          snapshotDigest: sha256({
-            outcome: "provider_payment_not_found",
-            providerPaymentId: job.providerPaymentId
-          }),
-          failureCode: "provider_payment_not_found"
-        };
-        const finalized = await this.#finalizeRazorpayDecision(scope, job, decision);
-        return finalized ? "variance" : "lease_lost";
-      }
       return this.#finalizeRazorpayFailure(scope, job, providerFailureCode(error), true);
     }
   }
@@ -447,11 +460,20 @@ export class ProviderReconciliationProcessor {
     scope: ProviderReconciliationScope,
     job: RazorpayClaim,
     decision: RazorpayDecision
-  ): Promise<boolean> {
-    const finalizedAt = this.#now().toISOString();
+  ): Promise<RazorpayProcessResult> {
+    const finalizedAt = this.#now();
     return scopedTransaction(this.#pool, scope, async (client) => {
-      const locked = await lockRazorpayLeaseAndRegistration(client, scope, job);
-      if (!locked) return false;
+      const registration = await lockRazorpayLeaseAndRegistration(client, scope, job);
+      if (!registration) return "lease_lost";
+      if (!sameRegistration(registration, job)) {
+        return finalizeRazorpayFailureUnderLock(client, scope, job, registration.registration_id, {
+          at: finalizedAt,
+          failureCode: "provider_registration_changed",
+          healthChecked: false,
+          maxAttempts: this.#maxAttempts,
+          retryDelayMs: this.#retryDelay(job)
+        });
+      }
       const updated = await client.query<{ id: string }>(
         `/* cp15:finalize-razorpay-decision */
          update razorpay_reconciliation_jobs
@@ -471,14 +493,14 @@ export class ProviderReconciliationProcessor {
           decision.failureCode
         ]
       );
-      if (updated.rows.length !== 1) return false;
-      await updateRegistration(client, scope, job.registrationId, {
-        at: finalizedAt,
+      if (updated.rows.length !== 1) return "lease_lost";
+      await updateRegistration(client, scope, registration.registration_id, {
+        at: finalizedAt.toISOString(),
         reconciled: true,
         healthChecked: true,
         failureCode: decision.failureCode
       });
-      return true;
+      return decision.status;
     });
   }
 
@@ -492,32 +514,14 @@ export class ProviderReconciliationProcessor {
     return scopedTransaction(this.#pool, scope, async (client) => {
       const registration = await lockRazorpayLeaseAndRegistration(client, scope, job);
       if (!registration) return "lease_lost";
-      const rotated = registration.api_credential_ref !== job.apiCredentialRef;
-      const failureCode = safeCode(rotated ? "credential_rotation_race" : initialFailureCode);
-      const exhausted = job.attemptCount >= this.#maxAttempts;
-      const status = exhausted ? "dead_lettered" : "retry_scheduled";
-      const nextAttemptAt = exhausted
-        ? null
-        : new Date(finalizedAt.getTime() + this.#retryDelay(job)).toISOString();
-      const updated = await client.query<{ id: string }>(
-        `/* cp15:finalize-razorpay-failure */
-         update razorpay_reconciliation_jobs
-            set status = $5, last_error_code = $6,
-                lease_owner = null, lease_expires_at = null,
-                next_attempt_at = $7::timestamptz
-          where tenant_id = $1 and clinic_id = $2 and id = $3
-            and status = 'leased' and lease_owner = $4
-         returning id`,
-        [scope.tenantId, scope.clinicId, job.id, job.leaseOwner, status, failureCode, nextAttemptAt]
-      );
-      if (updated.rows.length !== 1) return "lease_lost";
-      await updateRegistration(client, scope, job.registrationId, {
-        at: finalizedAt.toISOString(),
-        reconciled: exhausted,
-        healthChecked: healthChecked && !rotated,
-        failureCode
+      const changed = !sameRegistration(registration, job);
+      return finalizeRazorpayFailureUnderLock(client, scope, job, registration.registration_id, {
+        at: finalizedAt,
+        failureCode: changed ? "provider_registration_changed" : initialFailureCode,
+        healthChecked: healthChecked && !changed,
+        maxAttempts: this.#maxAttempts,
+        retryDelayMs: this.#retryDelay(job)
       });
-      return status;
     });
   }
 
@@ -530,6 +534,75 @@ export class ProviderReconciliationProcessor {
     const jitter = Math.floor((exponential * (digest.readUInt16BE(0) % 2_001)) / 10_000);
     return Math.min(this.#maxRetryDelayMs, exponential + jitter);
   }
+}
+
+async function finalizeRazorpayFailureUnderLock(
+  client: PoolClient,
+  scope: ProviderReconciliationScope,
+  job: RazorpayClaim,
+  registrationId: string,
+  input: {
+    readonly at: Date;
+    readonly failureCode: string;
+    readonly healthChecked: boolean;
+    readonly maxAttempts: number;
+    readonly retryDelayMs: number;
+  }
+): Promise<"retry_scheduled" | "dead_lettered" | "lease_lost"> {
+  const failureCode = safeCode(input.failureCode);
+  const exhausted = job.attemptCount >= input.maxAttempts;
+  const status = exhausted ? "dead_lettered" : "retry_scheduled";
+  const nextAttemptAt = exhausted
+    ? null
+    : new Date(input.at.getTime() + input.retryDelayMs).toISOString();
+  const updated = await client.query<{ id: string }>(
+    `/* cp15:finalize-razorpay-failure */
+     update razorpay_reconciliation_jobs
+        set status = $5, last_error_code = $6,
+            lease_owner = null, lease_expires_at = null,
+            next_attempt_at = $7::timestamptz
+      where tenant_id = $1 and clinic_id = $2 and id = $3
+        and status = 'leased' and lease_owner = $4
+     returning id`,
+    [scope.tenantId, scope.clinicId, job.id, job.leaseOwner, status, failureCode, nextAttemptAt]
+  );
+  if (updated.rows.length !== 1) return "lease_lost";
+  await updateRegistration(client, scope, registrationId, {
+    at: input.at.toISOString(),
+    reconciled: exhausted,
+    healthChecked: input.healthChecked,
+    failureCode
+  });
+  return status;
+}
+
+function sameRegistration(registration: RegistrationLeaseRow, job: RazorpayClaim): boolean {
+  return (
+    registration.registration_id === job.registrationId &&
+    registration.activation_state === job.activationState &&
+    registration.provider_mode === job.providerMode &&
+    registration.provider_account_id === job.providerAccountId &&
+    registration.api_credential_ref === job.apiCredentialRef
+  );
+}
+
+function providerLookupBudget(
+  client: RazorpayReconciliationProviderClient,
+  job: RazorpayClaim
+): number {
+  const paymentBudget = boundedInteger(
+    client.maximumPaymentLookupDurationMs,
+    250,
+    24 * 60 * 60_000,
+    "maximumPaymentLookupDurationMs"
+  );
+  const creationBudget = boundedInteger(
+    client.maximumCreationLookupDurationMs,
+    paymentBudget,
+    24 * 60 * 60_000,
+    "maximumCreationLookupDurationMs"
+  );
+  return job.providerPaymentId ? paymentBudget : creationBudget;
 }
 
 interface MetaClaimRow {
@@ -551,6 +624,7 @@ interface RazorpayClaimRow {
   attempt_count: number;
   created_at: string;
   lease_owner: string;
+  lease_expires_at: string;
   registration_id: string;
   activation_state: string;
   provider_mode: string;
@@ -605,6 +679,7 @@ function parseRazorpayClaim(row: RazorpayClaimRow): RazorpayClaim {
     row.attempt_count < 1 ||
     !row.lease_owner ||
     !Number.isFinite(Date.parse(row.created_at)) ||
+    !Number.isFinite(Date.parse(row.lease_expires_at)) ||
     (row.provider_mode !== "test" && row.provider_mode !== "live") ||
     !/^[A-Za-z0-9_-]{4,128}$/u.test(row.provider_account_id)
   ) {
@@ -628,6 +703,7 @@ function parseRazorpayClaim(row: RazorpayClaimRow): RazorpayClaim {
     reason,
     attemptCount: row.attempt_count,
     createdAt: new Date(row.created_at).toISOString(),
+    leaseExpiresAt: new Date(row.lease_expires_at).toISOString(),
     leaseOwner: row.lease_owner,
     registrationId: row.registration_id,
     activationState: row.activation_state,
@@ -769,7 +845,9 @@ async function lockRazorpayLeaseAndRegistration(
 ): Promise<RegistrationLeaseRow | null> {
   const result = await client.query<RegistrationLeaseRow>(
     `/* cp15:lock-razorpay-reconciliation */
-     select registration.id as registration_id, registration.api_credential_ref
+     select registration.id as registration_id, registration.activation_state,
+            registration.provider_mode, registration.provider_account_id,
+            registration.api_credential_ref
        from razorpay_reconciliation_jobs job
        join provider_callback_registrations registration
          on registration.tenant_id = job.tenant_id
@@ -778,9 +856,8 @@ async function lockRazorpayLeaseAndRegistration(
         and registration.provider_key = 'razorpay'
       where job.tenant_id = $1 and job.clinic_id = $2 and job.id = $3
         and job.status = 'leased' and job.lease_owner = $4
-        and registration.id = $5
       for update of job, registration`,
-    [scope.tenantId, scope.clinicId, job.id, job.leaseOwner, job.registrationId]
+    [scope.tenantId, scope.clinicId, job.id, job.leaseOwner]
   );
   if (result.rows.length > 1) throw new Error("Razorpay reconciliation registration is ambiguous.");
   return result.rows[0] ?? null;
@@ -864,6 +941,22 @@ function decidePaymentSnapshot(
     return { status: "variance", snapshotDigest, failureCode: "refund_mismatch" };
   }
   throw new Error("Creation-outcome reconciliation requires a collection lookup.");
+}
+
+function validPaymentLookup(
+  lookup: RazorpayPaymentLookupResult,
+  expectedPaymentId: string
+): RazorpayPaymentLookupResult {
+  if (!lookup || (lookup.outcome !== "found" && lookup.outcome !== "not_found")) {
+    throw new RazorpayBoundaryError({
+      code: "PROVIDER_REJECTED",
+      message: "Razorpay payment reconciliation result is invalid."
+    });
+  }
+  if (lookup.outcome === "found") {
+    validPaymentSnapshot(lookup.payment, expectedPaymentId);
+  }
+  return lookup;
 }
 
 function validPaymentSnapshot(

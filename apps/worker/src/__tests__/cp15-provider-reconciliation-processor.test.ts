@@ -27,8 +27,8 @@ test("claims scoped jobs transactionally, resolves Razorpay GET truth, and leave
     razorpayClaims: [razorpayClaim({ reason: "provider_not_captured" })]
   });
   const processor = harness.processor({
-    async fetchPayment(providerPaymentId) {
-      return paymentSnapshot({ providerPaymentId, captured: true, status: "captured" });
+    async lookupPayment(providerPaymentId) {
+      return paymentFound({ providerPaymentId, captured: true, status: "captured" });
     }
   });
 
@@ -70,8 +70,8 @@ test("authoritative payment snapshots preserve variance without inventing a loca
     razorpayClaims: [razorpayClaim({ reason: "amount_mismatch" })]
   });
   const processor = harness.processor({
-    async fetchPayment(providerPaymentId) {
-      return paymentSnapshot({ providerPaymentId, amountMinor: 31_000, captured: true });
+    async lookupPayment(providerPaymentId) {
+      return paymentFound({ providerPaymentId, amountMinor: 31_000, captured: true });
     }
   });
 
@@ -96,8 +96,8 @@ test("degraded registrations can perform read-only recovery without inventing he
     razorpayClaims: [razorpayClaim({ reason: "provider_outage", activationState: "degraded" })]
   });
   const processor = harness.processor({
-    async fetchPayment(providerPaymentId) {
-      return paymentSnapshot({ providerPaymentId });
+    async lookupPayment(providerPaymentId) {
+      return paymentFound({ providerPaymentId });
     }
   });
 
@@ -112,7 +112,7 @@ test("provider outages schedule bounded backoff and exhaust exactly at the froze
     razorpayClaims: [razorpayClaim({ attemptCount: 2, reason: "provider_outage" })]
   });
   const retryProcessor = retryHarness.processor({
-    async fetchPayment() {
+    async lookupPayment() {
       throw new RazorpayBoundaryError({
         code: "PROVIDER_UNAVAILABLE",
         message: "synthetic outage",
@@ -134,7 +134,7 @@ test("provider outages schedule bounded backoff and exhaust exactly at the froze
     razorpayClaims: [razorpayClaim({ attemptCount: 8, reason: "provider_outage" })]
   });
   const exhaustedProcessor = exhaustedHarness.processor({
-    async fetchPayment() {
+    async lookupPayment() {
       throw new RazorpayBoundaryError({
         code: "PROVIDER_RATE_LIMITED",
         message: "synthetic rate limit",
@@ -151,17 +151,13 @@ test("provider outages schedule bounded backoff and exhaust exactly at the froze
   assertRegistrationFinalized(exhaustedHarness, "provider_rate_limited", true, true);
 });
 
-test("Razorpay's documented missing-payment response becomes authoritative variance", async () => {
+test("only the typed authoritative missing-payment outcome becomes variance", async () => {
   const harness = new ProcessorHarness({
     razorpayClaims: [razorpayClaim({ reason: "missing_local_capture" })]
   });
   const processor = harness.processor({
-    async fetchPayment() {
-      throw new RazorpayBoundaryError({
-        code: "PROVIDER_REJECTED",
-        message: "synthetic missing payment",
-        safeDetails: { status: 400 }
-      });
+    async lookupPayment() {
+      return { outcome: "not_found" };
     }
   });
 
@@ -171,6 +167,27 @@ test("Razorpay's documented missing-payment response becomes authoritative varia
   assert.equal(values[4], "variance");
   assert.equal(values[6], "provider_payment_not_found");
   assertRegistrationFinalized(harness, "provider_payment_not_found", true, true);
+});
+
+test("non-authoritative payment 400/404 errors retry without becoming absence", async () => {
+  const harness = new ProcessorHarness({
+    razorpayClaims: [razorpayClaim({ reason: "missing_local_capture" })]
+  });
+  const processor = harness.processor({
+    async lookupPayment() {
+      throw new RazorpayBoundaryError({
+        code: "PROVIDER_REJECTED",
+        message: "synthetic bounded rejection",
+        safeDetails: { status: 400, operation: "fetch_payment_by_id" }
+      });
+    }
+  });
+
+  const result = await processor.pollOnce({ tenantId, clinicId });
+  assert.equal(result.variances, 0);
+  assert.equal(result.retriesScheduled, 1);
+  assert.equal(harness.indexOf("finalize-razorpay-decision"), -1);
+  assert.equal(harness.queryValues("finalize-razorpay-failure")[5], "provider_response_rejected");
 });
 
 test("creation-outcome lookup confirms only collection creation, never paid or captured state", async () => {
@@ -249,36 +266,143 @@ test("concurrent lease replacement rejects stale finalization without touching r
     razorpayLeasePresent: false
   });
   const processor = harness.processor({
-    async fetchPayment(providerPaymentId) {
-      return paymentSnapshot({ providerPaymentId });
+    async lookupPayment(providerPaymentId) {
+      return paymentFound({ providerPaymentId });
     }
   });
 
   const result = await processor.pollOnce({ tenantId, clinicId });
   assert.equal(result.leaseLost, 1);
-  assert.equal(
-    harness.queries.some((query) => query.sql.includes("finalize-razorpay-decision")),
-    false
-  );
-  assert.equal(
-    harness.queries.some((query) => query.sql.includes("update-reconciliation-registration")),
-    false
-  );
+  const lockIndex = harness.indexOf("lock-razorpay-reconciliation");
+  assert.notEqual(lockIndex, -1);
+  const afterRejectedLock = harness.queries
+    .slice(lockIndex + 1)
+    .map((query) => query.sql)
+    .join("\n");
+  assert.doesNotMatch(afterRejectedLock, /update\s+razorpay_reconciliation_jobs/iu);
+  assert.doesNotMatch(afterRejectedLock, /update\s+provider_callback_registrations/iu);
 });
 
-test("credential rotation races retry under the newly locked registration without false health", async () => {
+test("every claimed registration field is revalidated before a provider decision finalizes", async (t) => {
+  const changedRegistrationId = "20000000-0000-4000-8000-000000000005";
+  const cases: readonly [string, NonNullable<HarnessOptions["currentRegistration"]>, string][] = [
+    ["registration id", { id: changedRegistrationId }, changedRegistrationId],
+    ["activation", { activationState: "disabled" }, razorpayRegistrationId],
+    ["provider mode", { providerMode: "live" }, razorpayRegistrationId],
+    ["provider account", { providerAccountId: "rzp_live_account" }, razorpayRegistrationId],
+    [
+      "credential reference",
+      {
+        apiCredentialRef:
+          "arn:aws:secretsmanager:ap-south-1:123456789012:secret:clinicos/razorpay/rotated"
+      },
+      razorpayRegistrationId
+    ]
+  ];
+
+  for (const [name, currentRegistration, expectedRegistrationId] of cases) {
+    await t.test(name, async () => {
+      const harness = new ProcessorHarness({
+        razorpayClaims: [razorpayClaim({ reason: "provider_outage" })],
+        currentRegistration
+      });
+      const result = await harness.processor().pollOnce({ tenantId, clinicId });
+
+      assert.equal(result.matched, 0);
+      assert.equal(result.retriesScheduled, 1);
+      assert.equal(harness.indexOf("finalize-razorpay-decision"), -1);
+      assert.equal(
+        harness.queryValues("finalize-razorpay-failure")[5],
+        "provider_registration_changed"
+      );
+      const registrationUpdate = harness.queries.find((query) =>
+        query.sql.includes("update-reconciliation-registration")
+      );
+      assert.ok(registrationUpdate);
+      assert.equal(registrationUpdate.values[2], expectedRegistrationId);
+      assert.equal(registrationUpdate.values[3], false);
+    });
+  }
+});
+
+test("registration drift replaces a provider failure without claiming stale health", async () => {
   const harness = new ProcessorHarness({
     razorpayClaims: [razorpayClaim({ reason: "provider_outage" })],
-    currentCredentialRef:
-      "arn:aws:secretsmanager:ap-south-1:123456789012:secret:clinicos/razorpay/rotated",
+    currentRegistration: { providerAccountId: "rzp_changed_account" }
+  });
+  const processor = harness.processor({
+    async lookupPayment() {
+      throw new RazorpayBoundaryError({
+        code: "PROVIDER_UNAVAILABLE",
+        message: "synthetic outage",
+        retryable: true
+      });
+    }
+  });
+
+  const result = await processor.pollOnce({ tenantId, clinicId });
+  assert.equal(result.retriesScheduled, 1);
+  assert.equal(
+    harness.queryValues("finalize-razorpay-failure")[5],
+    "provider_registration_changed"
+  );
+  assertRegistrationFinalized(harness, "provider_registration_changed", false, false);
+});
+
+test("sequential batches stop provider reads when the remaining lease cannot cover the declared budget", async () => {
+  let nowMs = Date.parse(fixedNow);
+  let providerCalls = 0;
+  const harness = new ProcessorHarness({
+    razorpayClaims: [
+      razorpayClaim({ creationOutcome: true }),
+      razorpayClaim({
+        id: "20000000-0000-4000-8000-000000000007",
+        creationOutcome: true,
+        providerRequestReference: "20000000-0000-4000-8000-000000000009"
+      })
+    ]
+  });
+  const processor = harness.processor(
+    {
+      async findCollectionByInvoiceReference() {
+        providerCalls += 1;
+        nowMs += 114_000;
+        return creationFound();
+      }
+    },
+    { now: () => new Date(nowMs) }
+  );
+
+  const result = await processor.pollOnce({ tenantId, clinicId });
+  assert.equal(result.claimed, 2);
+  assert.equal(result.matched, 1);
+  assert.equal(result.retriesScheduled, 1);
+  assert.equal(providerCalls, 1);
+  const failures = harness.queries.filter((query) =>
+    query.sql.includes("finalize-razorpay-failure")
+  );
+  assert.equal(failures.length, 1);
+  assert.equal(failures[0]!.values[5], "provider_lease_budget_insufficient");
+});
+
+test("credential rotation is a registration-change race without false health", async () => {
+  const harness = new ProcessorHarness({
+    razorpayClaims: [razorpayClaim({ reason: "provider_outage" })],
+    currentRegistration: {
+      apiCredentialRef:
+        "arn:aws:secretsmanager:ap-south-1:123456789012:secret:clinicos/razorpay/rotated"
+    },
     secretFailure: true
   });
   const processor = harness.processor();
 
   const result = await processor.pollOnce({ tenantId, clinicId });
   assert.equal(result.retriesScheduled, 1);
-  assert.equal(harness.queryValues("finalize-razorpay-failure")[5], "credential_rotation_race");
-  assertRegistrationFinalized(harness, "credential_rotation_race", false, false);
+  assert.equal(
+    harness.queryValues("finalize-razorpay-failure")[5],
+    "provider_registration_changed"
+  );
+  assertRegistrationFinalized(harness, "provider_registration_changed", false, false);
 });
 
 test("stale max-attempt jobs are swept to dead letter atomically with registration truth", async () => {
@@ -301,8 +425,8 @@ test("registration update failure rolls back the job finalization transaction", 
     registrationUpdateSucceeds: false
   });
   const processor = harness.processor({
-    async fetchPayment(providerPaymentId) {
-      return paymentSnapshot({ providerPaymentId });
+    async lookupPayment(providerPaymentId) {
+      return paymentFound({ providerPaymentId });
     }
   });
 
@@ -338,7 +462,13 @@ interface HarnessOptions {
   readonly exhaustedRazorpayAccounts?: readonly string[];
   readonly metaLeasePresent?: boolean;
   readonly razorpayLeasePresent?: boolean;
-  readonly currentCredentialRef?: string;
+  readonly currentRegistration?: Partial<{
+    readonly id: string;
+    readonly activationState: string;
+    readonly providerMode: string;
+    readonly providerAccountId: string;
+    readonly apiCredentialRef: string | null;
+  }>;
   readonly secretFailure?: boolean;
   readonly registrationUpdateSucceeds?: boolean;
 }
@@ -361,11 +491,15 @@ class ProcessorHarness {
     clientOverrides: Partial<RazorpayReconciliationProviderClient> = {},
     optionOverrides: Partial<{
       workerId: string;
+      leaseMs: number;
+      now: () => Date;
     }> = {}
   ): ProviderReconciliationProcessor {
     const defaultClient: RazorpayReconciliationProviderClient = {
-      async fetchPayment(providerPaymentId) {
-        return paymentSnapshot({ providerPaymentId });
+      maximumPaymentLookupDurationMs: 19_000,
+      maximumCreationLookupDurationMs: 114_000,
+      async lookupPayment(providerPaymentId) {
+        return paymentFound({ providerPaymentId });
       },
       async findCollectionByInvoiceReference() {
         return creationFound();
@@ -386,9 +520,10 @@ class ProcessorHarness {
         }
       },
       createRazorpayClient: () => defaultClient,
+      leaseMs: optionOverrides.leaseMs,
       baseRetryDelayMs: 5_000,
       maxRetryDelayMs: 60_000,
-      now: () => new Date(fixedNow)
+      now: optionOverrides.now ?? (() => new Date(fixedNow))
     });
   }
 
@@ -431,12 +566,25 @@ class ProcessorHarness {
         : [{ registration_id: metaRegistrationId }];
     }
     if (sql.includes("lock-razorpay-reconciliation")) {
+      const claimed = this.#options.razorpayClaims?.[0];
       return this.#options.razorpayLeasePresent === false
         ? []
         : [
             {
-              registration_id: razorpayRegistrationId,
-              api_credential_ref: this.#options.currentCredentialRef ?? credentialRef
+              registration_id:
+                this.#options.currentRegistration?.id ??
+                String(claimed?.registration_id ?? razorpayRegistrationId),
+              activation_state:
+                this.#options.currentRegistration?.activationState ??
+                String(claimed?.activation_state ?? "sandbox_verified"),
+              provider_mode:
+                this.#options.currentRegistration?.providerMode ??
+                String(claimed?.provider_mode ?? "test"),
+              provider_account_id:
+                this.#options.currentRegistration?.providerAccountId ??
+                String(claimed?.provider_account_id ?? "rzp_test_account"),
+              api_credential_ref:
+                this.#options.currentRegistration?.apiCredentialRef ?? credentialRef
             }
           ];
     }
@@ -490,13 +638,18 @@ function razorpayClaim(
     readonly reason?: string;
     readonly creationOutcome?: boolean;
     readonly activationState?: string;
+    readonly id?: string;
+    readonly leaseExpiresAt?: string;
+    readonly providerRequestReference?: string;
   } = {}
 ): Record<string, unknown> {
   return {
-    id: razorpayJobId,
+    id: input.id ?? razorpayJobId,
     external_account_id: externalAccountId,
     provider_payment_id: input.creationOutcome ? null : "pay_synthetic_1",
-    provider_request_reference: input.creationOutcome ? providerRequestReference : null,
+    provider_request_reference: input.creationOutcome
+      ? (input.providerRequestReference ?? providerRequestReference)
+      : null,
     invoice_id: invoiceId,
     reason: input.creationOutcome
       ? "creation_outcome_unknown"
@@ -504,6 +657,8 @@ function razorpayClaim(
     attempt_count: input.attemptCount ?? 1,
     created_at: fixedNow,
     lease_owner: "cp15-reconciliation-worker:razorpay:synthetic",
+    lease_expires_at:
+      input.leaseExpiresAt ?? new Date(Date.parse(fixedNow) + 180_000).toISOString(),
     registration_id: razorpayRegistrationId,
     activation_state: input.activationState ?? "sandbox_verified",
     provider_mode: "test",
@@ -532,6 +687,13 @@ function paymentSnapshot(
     captured: overrides.captured ?? false,
     providerRequestId: overrides.providerRequestId ?? "plink_synthetic_1"
   };
+}
+
+function paymentFound(overrides: Parameters<typeof paymentSnapshot>[0] = {}): {
+  readonly outcome: "found";
+  readonly payment: ReturnType<typeof paymentSnapshot>;
+} {
+  return { outcome: "found", payment: paymentSnapshot(overrides) };
 }
 
 function creationFound(
