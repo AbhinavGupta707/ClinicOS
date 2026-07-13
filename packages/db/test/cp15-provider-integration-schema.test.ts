@@ -7,13 +7,17 @@ const migration = readFileSync(
   new URL("../migrations/0020_cp15_official_provider_integrations.sql", import.meta.url),
   "utf8"
 );
+const reconciliationQueueMigration = readFileSync(
+  new URL("../migrations/0021_cp15_provider_reconciliation_scope_queue.sql", import.meta.url),
+  "utf8"
+);
 const cp13ActivityPorts = readFileSync(
   new URL("../../../apps/worker/src/cp13/postgres-cp13-activity-ports.ts", import.meta.url),
   "utf8"
 );
 
 test("CP15 schema registers only secret references behind a forced-RLS callback resolver", () => {
-  assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "020");
+  assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "021");
   assert.match(migration, /create table provider_callback_registrations/u);
   assert.match(migration, /create table provider_callback_routes/u);
   assert.match(migration, /callback_key_digest char\(64\) not null unique/u);
@@ -34,6 +38,27 @@ test("CP15 schema registers only secret references behind a forced-RLS callback 
   assert.match(migration, /last_failure_code is null or last_failure_code ~ '\^\[a-z\]/u);
   assert.doesNotMatch(migration, /webhook_secret\s+text/u);
   assert.doesNotMatch(migration, /access_token\s+text/u);
+});
+
+test("CP15 reconciliation discovery exposes only a durable worker-leased scope queue", () => {
+  assert.match(reconciliationQueueMigration, /create table provider_reconciliation_scope_queue/u);
+  assert.match(
+    reconciliationQueueMigration,
+    /provider_reconciliation_scope_queue force row level security/u
+  );
+  assert.match(reconciliationQueueMigration, /current_user = 'clinic_os_worker'/u);
+  assert.match(reconciliationQueueMigration, /schedule_provider_reconciliation_scope/u);
+  assert.match(reconciliationQueueMigration, /meta_whatsapp_reconciliation_schedule_scope/u);
+  assert.match(reconciliationQueueMigration, /razorpay_reconciliation_schedule_scope/u);
+  assert.match(reconciliationQueueMigration, /cp15_reconciliation_backfill_meta_migrator/u);
+  assert.match(
+    reconciliationQueueMigration,
+    /drop policy cp15_reconciliation_backfill_queue_migrator/u
+  );
+  assert.doesNotMatch(
+    reconciliationQueueMigration,
+    /\b(?:provider_payment_id|provider_message_id|provider_request_reference|payload|secret_ref)\s+(?:text|jsonb)/u
+  );
 });
 
 test("CP15 durable provider tables preserve signed truth and reconciliation", () => {

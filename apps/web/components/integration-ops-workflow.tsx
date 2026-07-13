@@ -82,7 +82,8 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
           problem: classifyCp7EndpointFailures([
             {
               endpoint: "FETCH /v1/provider-health",
-              message: error instanceof Error ? error.message : "Unable to load CP7 integration ops",
+              message:
+                error instanceof Error ? error.message : "Unable to load CP7 integration ops",
               status: 0
             }
           ]),
@@ -166,7 +167,8 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
       } else {
         await resolveLiveMigrationConflict(batch.id, conflict, {
           actorName: profile.user.displayName,
-          notes: "Keep existing verified ClinicOS record; import row stays unverified/history only.",
+          notes:
+            "Keep existing verified ClinicOS record; import row stays unverified/history only.",
           resolution: "keep_existing_verified_record"
         });
         setActionMessage({
@@ -315,32 +317,26 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
 }
 
 function ReadinessPanel({ data }: { data: Cp7IntegrationOpsData }) {
+  const whatsapp = providerReadinessSummary(data, "whatsapp_cloud");
+  const telephony = providerReadinessSummary(data, "exotel");
+  const google = providerReadinessSummary(data, "google_business_profile");
+  const razorpay = providerReadinessSummary(data, "razorpay");
   return (
     <section
       className="readiness-grid readiness-grid--cp7"
       aria-label="CP7 provider readiness"
       data-testid="cp7-provider-readiness"
     >
-      <MetricCard
-        label="WhatsApp"
-        value="Configured/degraded"
-        detail="Sandbox-capable only; verified callback still required."
-      />
-      <MetricCard label="Telephony" value="Unavailable" detail="Manual missed-call entry only." />
-      <MetricCard
-        label="Google"
-        value="Manual/source only"
-        detail="No Business Profile API dependency."
-      />
-      <MetricCard
-        label="Razorpay"
-        value="Webhook URL missing"
-        detail="Payment state still waits for signed callback evidence."
-      />
+      <MetricCard label="WhatsApp" value={whatsapp.value} detail={whatsapp.detail} />
+      <MetricCard label="Telephony" value={telephony.value} detail={telephony.detail} />
+      <MetricCard label="Google" value={google.value} detail={google.detail} />
+      <MetricCard label="Razorpay" value={razorpay.value} detail={razorpay.detail} />
       <MetricCard
         label="Failed events"
         value={`${getOpenDeadLetterCount(data)} open`}
-        detail={data.readiness.replay === "fixture_review_only" ? "Fixture review path" : "API path"}
+        detail={
+          data.readiness.replay === "fixture_review_only" ? "Fixture review path" : "API path"
+        }
       />
       <MetricCard
         label="Migration"
@@ -349,6 +345,23 @@ function ReadinessPanel({ data }: { data: Cp7IntegrationOpsData }) {
       />
     </section>
   );
+}
+
+function providerReadinessSummary(
+  data: Cp7IntegrationOpsData,
+  providerKey: ProviderHealthCard["providerKey"]
+): { readonly value: string; readonly detail: string } {
+  const provider = data.providers.find((candidate) => candidate.providerKey === providerKey);
+  if (!provider) {
+    return { value: "Absent", detail: "No provider registration was returned by the API." };
+  }
+  const activation = provider.activationState
+    ? PROVIDER_ACTIVATION_LABELS[provider.activationState]
+    : null;
+  return {
+    value: activation ?? PROVIDER_STATUS_LABELS[provider.status],
+    detail: provider.evidence
+  };
 }
 
 function MetricCard({ detail, label, value }: { detail: string; label: string; value: string }) {
@@ -468,7 +481,11 @@ function ReplayPanel({
   }
 
   return (
-    <section className="work-panel" aria-labelledby="cp7-replay-title" data-testid="cp7-dead-letter-replay">
+    <section
+      className="work-panel"
+      aria-labelledby="cp7-replay-title"
+      data-testid="cp7-dead-letter-replay"
+    >
       <div className="panel-heading">
         <div>
           <h2 id="cp7-replay-title">Dead-letter replay review</h2>
@@ -555,7 +572,11 @@ function MigrationReviewPanel({
   const commitReady = batch.commit.state === "ready";
 
   return (
-    <section className="work-panel" aria-labelledby="cp7-migration-title" data-testid="cp7-migration-review">
+    <section
+      className="work-panel"
+      aria-labelledby="cp7-migration-title"
+      data-testid="cp7-migration-review"
+    >
       <div className="panel-heading">
         <div>
           <h2 id="cp7-migration-title">Migration review and commit</h2>
@@ -591,7 +612,7 @@ function MigrationReviewPanel({
           <p>
             {batch.commit.state === "committed"
               ? `${batch.commit.committedRows} reviewed rows committed. Rejected rows were not imported.`
-              : batch.commit.blockedReason ?? "Reviewed rows are ready to commit."}
+              : (batch.commit.blockedReason ?? "Reviewed rows are ready to commit.")}
           </p>
           {openConflict ? (
             <p>
@@ -676,13 +697,7 @@ function ProblemPanel({ problem }: { problem: Cp7IntegrationOpsProblem }) {
   );
 }
 
-function WorkflowTabs({
-  mode,
-  setMode
-}: {
-  mode: Cp7Mode;
-  setMode: (mode: Cp7Mode) => void;
-}) {
+function WorkflowTabs({ mode, setMode }: { mode: Cp7Mode; setMode: (mode: Cp7Mode) => void }) {
   return (
     <div className="workflow-tabs" role="tablist" aria-label="CP7 integration ops views">
       {MODE_ITEMS.map((item) => {

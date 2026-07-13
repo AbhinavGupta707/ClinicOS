@@ -24,6 +24,10 @@ export interface WorkerEnvironment {
   readonly outboxBatchSize: number;
   readonly outboxPollIntervalMs: number;
   readonly outboxMaxAttempts: number;
+  readonly providerReconciliationPollIntervalMs: number;
+  readonly providerReconciliationScopeBatchSize: number;
+  readonly providerReconciliationJobBatchSize: number;
+  readonly providerReconciliationLeaseMs: number;
   readonly dueGenerationCursorSecret?: string;
   readonly paymentProvider: "simulator" | "razorpay" | "unconfigured" | "manual_clinic_approved";
   readonly paymentQrMode: "payment_link_qr" | "razorpay_qr";
@@ -89,6 +93,34 @@ export function parseWorkerEnvironment(env: NodeJS.ProcessEnv): WorkerEnvironmen
     outboxBatchSize: parsePositiveInteger(env.OUTBOX_BATCH_SIZE, 25),
     outboxPollIntervalMs: parsePositiveInteger(env.OUTBOX_POLL_INTERVAL_MS, 1000),
     outboxMaxAttempts: parsePositiveInteger(env.OUTBOX_MAX_ATTEMPTS, 8),
+    providerReconciliationPollIntervalMs: parseBoundedPositiveInteger(
+      env.PROVIDER_RECONCILIATION_POLL_INTERVAL_MS,
+      10_000,
+      250,
+      300_000,
+      "PROVIDER_RECONCILIATION_POLL_INTERVAL_MS"
+    ),
+    providerReconciliationScopeBatchSize: parseBoundedPositiveInteger(
+      env.PROVIDER_RECONCILIATION_SCOPE_BATCH_SIZE,
+      10,
+      1,
+      100,
+      "PROVIDER_RECONCILIATION_SCOPE_BATCH_SIZE"
+    ),
+    providerReconciliationJobBatchSize: parseBoundedPositiveInteger(
+      env.PROVIDER_RECONCILIATION_JOB_BATCH_SIZE,
+      1,
+      1,
+      1,
+      "PROVIDER_RECONCILIATION_JOB_BATCH_SIZE"
+    ),
+    providerReconciliationLeaseMs: parseBoundedPositiveInteger(
+      env.PROVIDER_RECONCILIATION_LEASE_MS,
+      300_000,
+      300_000,
+      300_000,
+      "PROVIDER_RECONCILIATION_LEASE_MS"
+    ),
     ...(dueGenerationCursorSecret ? { dueGenerationCursorSecret } : {}),
     paymentProvider,
     officialProviderCallbacksEnabled,
@@ -217,6 +249,20 @@ function parsePositiveInteger(value: string | undefined, fallback: number): numb
   const parsed = Number(value);
   if (!Number.isInteger(parsed) || parsed <= 0) {
     throw new Error(`Expected positive integer but received ${value}`);
+  }
+  return parsed;
+}
+
+function parseBoundedPositiveInteger(
+  value: string | undefined,
+  fallback: number,
+  minimum: number,
+  maximum: number,
+  name: string
+): number {
+  const parsed = value === undefined || value === "" ? fallback : Number(value);
+  if (!Number.isSafeInteger(parsed) || parsed < minimum || parsed > maximum) {
+    throw new Error(`${name} must be an integer between ${minimum} and ${maximum}`);
   }
   return parsed;
 }

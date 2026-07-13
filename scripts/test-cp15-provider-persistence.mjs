@@ -9,6 +9,8 @@ import {
   PostgresProviderCallbackRegistrationResolver
 } from "@clinic-os/db";
 import { PostgresOfficialProviderCallbackRuntime } from "../apps/api/src/providers/cp15/official-provider-callback-runtime.ts";
+import { ProviderReconciliationProcessor } from "../apps/worker/src/cp15/provider-reconciliation-processor.ts";
+import { PostgresProviderReconciliationScopeSource } from "../apps/worker/src/cp15/postgres-provider-reconciliation-scope-source.ts";
 
 const root = resolve(import.meta.dirname, "..");
 const adminUrl =
@@ -26,7 +28,8 @@ const IDS = Object.freeze({
   metaSystemId: "15000000-0000-4000-8000-000000002001",
   metaAccountId: "15000000-0000-4000-8000-000000002101",
   razorpaySystemId: "15000000-0000-4000-8000-000000003001",
-  razorpayAccountId: "15000000-0000-4000-8000-000000003101"
+  razorpayAccountId: "15000000-0000-4000-8000-000000003101",
+  reconciliationJobId: "15000000-0000-4000-8000-000000004001"
 });
 const META_APP_SECRET = "cp15-meta-synthetic-app-secret-000000000001";
 const META_VERIFY_TOKEN = "cp15-meta-synthetic-verify-token-000000001";
@@ -47,6 +50,7 @@ const razorpayRegistrationKey = randomBytes(32).toString("base64url");
 const admin = new Client({ connectionString: adminUrl });
 let adminConnected = false;
 let runtimePool;
+let workerPool;
 
 try {
   await admin.connect();
@@ -60,6 +64,7 @@ try {
   await seedProviderRegistry();
 
   runtimePool = new Pool({ connectionString: runtimeDatabaseUrl, max: 3 });
+  workerPool = new Pool({ connectionString: workerUrl(adminUrl, testDatabase), max: 3 });
   const registrations = new PostgresProviderCallbackRegistrationResolver(runtimePool);
   const secretValues = new Map([
     [SECRET_REFS.metaApi, "synthetic-not-used-api-token"],
@@ -189,6 +194,18 @@ try {
   );
 
   await assertRouteIndexDenied(runtimePool);
+  await seedRazorpayReconciliationJob(runtimePool);
+  await assertWorkerJobScopeIsRequired(workerPool);
+  const reconciliationEvidence = await processRazorpayReconciliation(workerPool, secretValues);
+  assert.deepEqual(reconciliationEvidence, {
+    claimedScopes: 1,
+    claimedJobs: 1,
+    matchedJobs: 1,
+    refreshedScope: "removed",
+    dueScopesAfterRefresh: 0,
+    matchedRows: 1,
+    reconciledRegistrations: 1
+  });
   const evidence = await scopedEvidence(runtimePool);
   assert.deepEqual(evidence, {
     metaRawEvents: 1,
@@ -212,6 +229,8 @@ try {
         metaChallengeAndSignature: "pass",
         metaAtomicCommitAndReplay: "pass",
         razorpaySignatureAndReconciliation: "pass",
+        providerScopeQueue: "pass",
+        workerRlsReconciliation: "pass",
         providerHealthProjection: "pass",
         invalidSignatureNoWrite: "pass",
         secretValuesAbsentFromDatabase: "pass",
@@ -222,11 +241,156 @@ try {
     )
   );
 } finally {
+  await workerPool?.end().catch(() => undefined);
   await runtimePool?.end().catch(() => undefined);
   if (adminConnected) {
     await dropTestDatabase(admin).catch(() => undefined);
     await admin.end().catch(() => undefined);
   }
+}
+
+async function seedRazorpayReconciliationJob(pool) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await setScope(client);
+    const registration = await client.query(
+      `update provider_callback_registrations
+          set activation_state = 'sandbox_verified', sandbox_verified_at = $3::timestamptz
+        where tenant_id = $1 and clinic_id = $2
+          and external_account_id = $4 and provider_key = 'razorpay'
+      returning id`,
+      [IDS.tenantId, IDS.clinicId, NOW, IDS.razorpayAccountId]
+    );
+    assert.equal(registration.rowCount, 1);
+    await client.query(
+      `insert into razorpay_reconciliation_jobs (
+         id, tenant_id, clinic_id, external_account_id, provider_payment_id,
+         reason, status, attempt_count, created_at
+       ) values ($1, $2, $3, $4, 'pay_cp15_reconciliation_0001',
+                 'provider_outage', 'pending', 0, $5::timestamptz)`,
+      [IDS.reconciliationJobId, IDS.tenantId, IDS.clinicId, IDS.razorpayAccountId, RECEIVED_AT]
+    );
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function assertWorkerJobScopeIsRequired(pool) {
+  const hiddenJobs = await pool.query(
+    "select count(*)::integer as count from razorpay_reconciliation_jobs"
+  );
+  assert.equal(hiddenJobs.rows[0]?.count, 0);
+  const discoverableScopes = await pool.query(
+    "select count(*)::integer as count from provider_reconciliation_scope_queue"
+  );
+  assert.equal(discoverableScopes.rows[0]?.count, 1);
+}
+
+async function processRazorpayReconciliation(pool, secretValues) {
+  const source = new PostgresProviderReconciliationScopeSource(pool);
+  const leaseUntil = new Date(Date.parse(NOW) + 5 * 60_000).toISOString();
+  const scopes = await source.claimDueScopes({
+    workerId: "cp15-persistence",
+    limit: 1,
+    now: NOW,
+    leaseUntil
+  });
+  assert.equal(scopes.length, 1);
+  assert.equal(scopes[0]?.tenantId, IDS.tenantId);
+  assert.equal(scopes[0]?.clinicId, IDS.clinicId);
+
+  const processor = new ProviderReconciliationProcessor({
+    pool,
+    workerId: "cp15-persistence",
+    razorpaySecrets: {
+      async resolveSecret(reference) {
+        const value = secretValues.get(reference);
+        if (!value) throw new Error("Synthetic secret reference was not registered.");
+        return value;
+      }
+    },
+    createRazorpayClient(credential, registration) {
+      assert.equal(credential.keyId, "rzp_test_synthetic0001");
+      assert.equal(registration.providerMode, "test");
+      assert.equal(registration.providerAccountId, "acc_test_cp15");
+      return {
+        maximumPaymentLookupDurationMs: 19_000,
+        maximumCreationLookupDurationMs: 114_000,
+        async lookupPayment(providerPaymentId) {
+          assert.equal(providerPaymentId, "pay_cp15_reconciliation_0001");
+          return {
+            outcome: "found",
+            payment: {
+              providerPaymentId,
+              amountMinor: 4_000,
+              amountRefundedMinor: 0,
+              currency: "INR",
+              status: "captured",
+              captured: true,
+              providerRequestId: null
+            }
+          };
+        },
+        async findCollectionByInvoiceReference() {
+          throw new Error("Creation lookup is not expected in this persistence proof.");
+        }
+      };
+    },
+    batchSize: 1,
+    leaseMs: 5 * 60_000,
+    now: () => new Date(NOW)
+  });
+  const result = await processor.pollOnce(scopes[0]);
+  const refreshedScope = await source.refreshScope(scopes[0], NOW);
+  const dueScopesAfterRefresh = await source.countDue(NOW);
+  const durable = await scopedReconciliationEvidence(pool);
+  return {
+    claimedScopes: scopes.length,
+    claimedJobs: result.claimed,
+    matchedJobs: result.matched,
+    refreshedScope,
+    dueScopesAfterRefresh,
+    ...durable
+  };
+}
+
+async function scopedReconciliationEvidence(pool) {
+  const client = await pool.connect();
+  try {
+    await client.query("begin");
+    await setScope(client);
+    const evidence = await client.query(
+      `select
+         (select count(*)::integer from razorpay_reconciliation_jobs
+           where id = $1 and status = 'matched' and attempt_count = 1
+             and provider_snapshot_digest is not null and last_error_code is null) as "matchedRows",
+         (select count(*)::integer from provider_callback_registrations
+           where external_account_id = $2 and provider_key = 'razorpay'
+             and activation_state = 'sandbox_verified'
+             and last_reconciled_at = $3::timestamptz
+             and last_health_check_at = $3::timestamptz
+             and last_failure_code is null) as "reconciledRegistrations"`,
+      [IDS.reconciliationJobId, IDS.razorpayAccountId, NOW]
+    );
+    await client.query("commit");
+    return evidence.rows[0];
+  } catch (error) {
+    await client.query("rollback").catch(() => undefined);
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function setScope(client) {
+  await client.query("select set_config('app.tenant_id', $1, true)", [IDS.tenantId]);
+  await client.query("select set_config('app.clinic_id', $1, true)", [IDS.clinicId]);
+  await client.query("select set_config('app.user_id', $1, true)", [IDS.actorUserId]);
 }
 
 async function assertRouteIndexDenied(pool) {
@@ -431,6 +595,14 @@ function runtimeUrl(connectionString, database) {
   const parsed = new URL(connectionString);
   parsed.username = "clinic_os_runtime";
   parsed.password = "clinic_os_runtime";
+  parsed.pathname = `/${database}`;
+  return parsed.toString();
+}
+
+function workerUrl(connectionString, database) {
+  const parsed = new URL(connectionString);
+  parsed.username = "clinic_os_worker";
+  parsed.password = "clinic_os_worker";
   parsed.pathname = `/${database}`;
   return parsed.toString();
 }

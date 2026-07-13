@@ -1,8 +1,18 @@
 import type { Client } from "@temporalio/client";
-import type { Logger, MetricRecorder, ObservabilityRuntime } from "@clinic-os/observability";
+import type {
+  HealthCheckResult,
+  Logger,
+  MetricRecorder,
+  ObservabilityRuntime
+} from "@clinic-os/observability";
 import { createWorkerHealthRegistry } from "../health/worker-health.js";
 import { OutboxProcessor } from "../outbox/processor.js";
 import type { OutboxEventHandler, OutboxRepository } from "../outbox/types.js";
+
+export interface WorkerBackgroundRuntimePort {
+  start(signal?: AbortSignal): Promise<void>;
+  healthCheck(): Promise<HealthCheckResult>;
+}
 
 export interface WorkerBackpressurePort {
   observe(): Promise<Readonly<{ ready: boolean; state: "healthy" | "degraded" | "unhealthy" }>>;
@@ -21,11 +31,13 @@ export interface WorkerRuntimeOptions {
   readonly outboxBatchSize: number;
   readonly outboxPollIntervalMs: number;
   readonly outboxMaxAttempts: number;
+  readonly providerReconciliation?: WorkerBackgroundRuntimePort;
 }
 
 export interface WorkerRuntime {
   readonly processor: OutboxProcessor;
   readonly healthRegistry: ReturnType<typeof createWorkerHealthRegistry>;
+  readonly providerReconciliation?: WorkerBackgroundRuntimePort;
   start(signal?: AbortSignal): Promise<void>;
 }
 
@@ -50,12 +62,23 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): WorkerRuntim
     processor,
     ...(options.temporalClient ? { temporalClient: options.temporalClient } : {}),
     ...(options.observability ? { observability: options.observability } : {}),
-    ...(options.backpressure ? { backpressure: options.backpressure } : {})
+    ...(options.backpressure ? { backpressure: options.backpressure } : {}),
+    ...(options.providerReconciliation
+      ? { providerReconciliation: options.providerReconciliation }
+      : {})
   });
 
   return {
     processor,
     healthRegistry,
-    start: (signal) => processor.start(signal)
+    ...(options.providerReconciliation
+      ? { providerReconciliation: options.providerReconciliation }
+      : {}),
+    start: async (signal) => {
+      await Promise.all([
+        processor.start(signal),
+        ...(options.providerReconciliation ? [options.providerReconciliation.start(signal)] : [])
+      ]);
+    }
   };
 }

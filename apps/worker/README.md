@@ -42,6 +42,17 @@ Optional:
 - `OUTBOX_BATCH_SIZE`, default `25`.
 - `OUTBOX_POLL_INTERVAL_MS`, default `1000`.
 - `OUTBOX_MAX_ATTEMPTS`, default `8`.
+- `PROVIDER_RECONCILIATION_POLL_INTERVAL_MS`, default `10000`.
+- `PROVIDER_RECONCILIATION_SCOPE_BATCH_SIZE`, default `10`.
+- `PROVIDER_RECONCILIATION_JOB_BATCH_SIZE`, fixed at `1` so the bounded official-provider read
+  budget remains inside the durable lease.
+- `PROVIDER_RECONCILIATION_LEASE_MS`, fixed at `300000` (five minutes).
+
+When `CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED=true`, the worker also starts the CP15
+provider-reconciliation loop. It discovers only due tenant/clinic identifiers from the dedicated
+forced-RLS scope queue, then sets transaction-local tenant/clinic scope before reading or changing
+provider reconciliation jobs. Meta outcomes without an official authoritative lookup remain manual
+review; Razorpay recovery performs read-only official API calls and never projects settlement state.
 
 ## Data/Auth Table Contract
 

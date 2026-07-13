@@ -1,5 +1,9 @@
 import { Pool } from "pg";
-import { createAwsProviderSecretResolver, createPaymentProvider } from "@clinic-os/integrations";
+import {
+  RazorpayCollectionReconciliationClient,
+  createAwsProviderSecretResolver,
+  createPaymentProvider
+} from "@clinic-os/integrations";
 import { systemClock, type Clock } from "@clinic-os/domain";
 import { createClinicTemporalWorker, createTemporalClient } from "@clinic-os/workflow";
 import {
@@ -25,6 +29,9 @@ import { TemporalOAuthTokenProvider } from "./runtime/temporal-oauth.js";
 import { createWorkerRuntime } from "./runtime/create-worker-runtime.js";
 import { createScopedRazorpayPaymentProviderResolver } from "./cp15/scoped-razorpay-payment-provider.js";
 import { createScopedMetaInstructionSender } from "./cp15/scoped-meta-instruction-sender.js";
+import { ProviderReconciliationProcessor } from "./cp15/provider-reconciliation-processor.js";
+import { ProviderReconciliationRuntime } from "./cp15/provider-reconciliation-runtime.js";
+import { PostgresProviderReconciliationScopeSource } from "./cp15/postgres-provider-reconciliation-scope-source.js";
 
 export async function runWorker(
   observability: ObservabilityRuntime,
@@ -67,8 +74,14 @@ export async function runWorker(
       })
     : undefined;
   const handlers: OutboxEventHandler[] = [];
+  const providerSecrets = env.officialProviderCallbacksEnabled
+    ? createAwsProviderSecretResolver({ region: env.awsRegion })
+    : undefined;
   const activityPool = env.temporalAddress
     ? new Pool({ connectionString: env.activityDatabaseUrl })
+    : undefined;
+  const reconciliationPool = env.officialProviderCallbacksEnabled
+    ? new Pool({ connectionString: env.databaseUrl })
     : undefined;
   let temporalWorker: Awaited<ReturnType<typeof createClinicTemporalWorker>> | undefined;
 
@@ -81,9 +94,6 @@ export async function runWorker(
       razorpayWebhookSecret: env.razorpayWebhookSecret,
       razorpayWebhookUrl: env.razorpayWebhookUrl
     });
-    const providerSecrets = env.officialProviderCallbacksEnabled
-      ? createAwsProviderSecretResolver({ region: env.awsRegion })
-      : undefined;
     const composition = createCp13WorkerComposition({
       temporalClient,
       cp13ActivityPorts: createPostgresCp13ActivityPorts({
@@ -177,6 +187,30 @@ export async function runWorker(
     }
   };
 
+  const providerReconciliation =
+    reconciliationPool && providerSecrets
+      ? new ProviderReconciliationRuntime({
+          workerId: env.workerId,
+          processor: new ProviderReconciliationProcessor({
+            pool: reconciliationPool,
+            workerId: env.workerId,
+            razorpaySecrets: providerSecrets,
+            createRazorpayClient: (credential) =>
+              new RazorpayCollectionReconciliationClient(credential),
+            batchSize: env.providerReconciliationJobBatchSize,
+            leaseMs: env.providerReconciliationLeaseMs,
+            now: () => clock.now()
+          }),
+          scopes: new PostgresProviderReconciliationScopeSource(reconciliationPool),
+          logger,
+          metrics: observability.metrics,
+          pollIntervalMs: env.providerReconciliationPollIntervalMs,
+          scopeBatchSize: env.providerReconciliationScopeBatchSize,
+          scopeLeaseMs: env.providerReconciliationLeaseMs,
+          clock
+        })
+      : undefined;
+
   const runtime = createWorkerRuntime({
     workerId: env.workerId,
     repository,
@@ -188,7 +222,8 @@ export async function runWorker(
     ...(temporalClient ? { temporalClient } : {}),
     outboxBatchSize: env.outboxBatchSize,
     outboxPollIntervalMs: env.outboxPollIntervalMs,
-    outboxMaxAttempts: env.outboxMaxAttempts
+    outboxMaxAttempts: env.outboxMaxAttempts,
+    ...(providerReconciliation ? { providerReconciliation } : {})
   });
 
   const server = await startWorkerHealthServer({
@@ -217,10 +252,11 @@ export async function runWorker(
         serverClose,
         repository.close(),
         activityPool?.end() ?? Promise.resolve(),
+        reconciliationPool?.end() ?? Promise.resolve(),
         observability.shutdown()
       ]);
       const rejected = results.filter((result) => result.status === "rejected").length;
-      const telemetryResult = results[3];
+      const telemetryResult = results[4];
       const telemetryErrors =
         telemetryResult?.status === "fulfilled" ? telemetryResult.value.errors : [];
       if (rejected > 0 || telemetryErrors.length > 0) {
