@@ -469,15 +469,14 @@ export function createPostgresCp13ActivityPorts(
             `insert into razorpay_reconciliation_jobs (
                tenant_id, clinic_id, external_account_id, invoice_id,
                provider_request_reference, reason, status, attempt_count, next_attempt_at
-             ) values ($1, $2, $3, $4, $5, 'creation_outcome_unknown', 'pending', 0, $6)
+             ) values ($1, $2, $3, $4, $5, 'creation_outcome_unknown', 'pending', 0, null)
              on conflict do nothing`,
             [
               request.tenantId,
               request.clinicId,
               existing.externalAccountId,
               existing.invoiceId,
-              existing.id,
-              now().toISOString()
+              existing.id
             ]
           );
         }

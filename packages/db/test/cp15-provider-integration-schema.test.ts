@@ -7,6 +7,10 @@ const migration = readFileSync(
   new URL("../migrations/0020_cp15_official_provider_integrations.sql", import.meta.url),
   "utf8"
 );
+const cp13ActivityPorts = readFileSync(
+  new URL("../../../apps/worker/src/cp13/postgres-cp13-activity-ports.ts", import.meta.url),
+  "utf8"
+);
 
 test("CP15 schema registers only secret references behind a forced-RLS callback resolver", () => {
   assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "020");
@@ -52,4 +56,8 @@ test("CP15 durable provider tables preserve signed truth and reconciliation", ()
   assert.match(migration, /provider_request_reference text/u);
   assert.match(migration, /PAYMENT_PROVIDER_CREATION_OUTCOME_UNKNOWN|creation_outcome_unknown/u);
   assert.match(migration, /razorpay_reconciliation_jobs_subject_check/u);
+  assert.match(
+    cp13ActivityPorts,
+    /'creation_outcome_unknown', 'pending', 0, null\)[\s\S]*on conflict do nothing/u
+  );
 });
