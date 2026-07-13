@@ -1142,3 +1142,22 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 - Local E3 implementation is eligible for promotion under the owner deferral. CP15 E4/full exit,
   Meta/Razorpay official sandbox activation and telephony remain open. The release remains NO-GO;
   user-owned `research/` and `scripts/research/` remain untouched.
+
+## CP16 Local Implementation Launch - 2026-07-14
+
+- Launch base is promoted CP15 `main` at `149a9d5e0dd394e3d53e6f5761da6c1b59b0b94d`;
+  integration branch is `codex/integration/checkpoint-16`. `main` remains frozen until the CP16
+  integration candidate passes its executable gates.
+- Previous-checkpoint preflight passes the root workspace/config/clock/format checks and the real
+  PostgreSQL CP15 provider-persistence gate with zero skips. Only user-owned untracked `research/`
+  and `scripts/research/` exist and remain out of scope.
+- The owner selected Fireworks AI for the initial text and speech provider and will supply
+  credentials later. Fireworks offers `whisper-v3` and `whisper-v3-turbo`; the local wave will build
+  credential-ready typed adapters and evaluations while all live calls fail closed pending
+  contract, retention, residency, budget and clinical approval.
+- Three path-disjoint `gpt-5.6-sol` / `xhigh` candidates are authorized: native mobile capture,
+  Fireworks AI/STT and FHIR/interoperability. Shared manifests/lockfile/config/migrations/contracts,
+  API composition, evidence and release truth remain master-owned.
+- Physical-device, signed distribution, live-provider, official FHIR validator and ABDM sandbox
+  evidence remain external E4 gates and cannot be replaced by simulator or fixture claims. The
+  release remains NO-GO.
