@@ -1,6 +1,14 @@
 import { createHash } from "node:crypto";
 import type { AdapterCapability, ProviderHealth } from "./provider-contracts.js";
 
+export * from "./cp16/fireworks/audio.js";
+export * from "./cp16/fireworks/catalog.js";
+export * from "./cp16/fireworks/errors.js";
+export * from "./cp16/fireworks/gateway.js";
+export * from "./cp16/fireworks/structured-output.js";
+export * from "./cp16/fireworks/transport.js";
+export * from "./cp16/fireworks/types.js";
+
 export type AiGatewayProviderKey = "simulator" | "unconfigured" | "live_disabled";
 export type AiGatewayProviderMode = "simulator" | "unconfigured" | "live_disabled";
 export type UUID = string;
