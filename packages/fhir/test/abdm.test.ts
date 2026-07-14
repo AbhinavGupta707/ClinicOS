@@ -4,6 +4,8 @@ import test from "node:test";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  ABDM_PUBLISHED_FHIR_IG,
+  evaluateAbdmCapabilityBoundary,
   evaluateAbdmReadiness,
   missingAbdmCredentialKeys,
   redactAbdmReadinessForLogs
@@ -60,7 +62,7 @@ test("CP9 ABDM log summary redacts credential values", async () => {
   assert.deepEqual(summary.missingCredentialKeys, readiness.missingCredentialKeys);
 });
 
-test("CP9 ABDM sandbox readiness still does not enable live exchange", () => {
+test("CP16 ABDM credentials and flags cannot substitute for official activation", () => {
   const credentials = {
     baseUrl: "https://sandbox.abdm.example.test",
     clientId: "sandbox-client",
@@ -99,11 +101,44 @@ test("CP9 ABDM sandbox readiness still does not enable live exchange", () => {
     }
   });
 
-  assert.equal(readiness.configurationStatus, "sandbox_ready");
-  assert.equal(readiness.availabilityStatus, "sandbox_ready");
-  assert.equal(readiness.exchangeMode, "sandbox_only");
+  assert.equal(readiness.configurationStatus, "sandbox_configured_unapproved");
+  assert.equal(readiness.availabilityStatus, "unavailable");
+  assert.equal(readiness.exchangeMode, "fixture_only");
   assert.equal(readiness.liveExchangeAllowed, false);
   assert.deepEqual(missingAbdmCredentialKeys(credentials), []);
+});
+
+test("CP16 ABDM capability is unregistered without exact official 6.5.0 evidence", () => {
+  const unavailable = evaluateAbdmCapabilityBoundary({
+    activation: null,
+    evaluatedAt: "2026-07-14T10:00:00.000Z"
+  });
+  assert.deepEqual(unavailable, {
+    activationStatus: "unregistered",
+    availability: "unavailable",
+    evaluatedAt: "2026-07-14T10:00:00.000Z",
+    igPackage: "ndhm.in#6.5.0",
+    liveExchangeAllowed: false,
+    reason: "official_activation_absent",
+    registered: false
+  });
+
+  const sandbox = evaluateAbdmCapabilityBoundary({
+    activation: {
+      registrationId: "registration-123",
+      environment: "sandbox",
+      igPackage: ABDM_PUBLISHED_FHIR_IG.packageSpec,
+      registeredAt: "2026-07-14T09:00:00.000Z",
+      sandboxEvidenceId: "sandbox-evidence-123",
+      status: "sandbox_verified",
+      validatorEvidenceId: "validator-evidence-123",
+      verifiedAt: "2026-07-14T09:30:00.000Z"
+    },
+    evaluatedAt: "2026-07-14T10:00:00.000Z"
+  });
+  assert.equal(sandbox.registered, true);
+  assert.equal(sandbox.availability, "sandbox_only");
+  assert.equal(sandbox.liveExchangeAllowed, false);
 });
 
 async function loadFixture() {
