@@ -17,6 +17,23 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Objec
   verifyMetaWhatsAppCallback: [],
   receiveMetaWhatsAppWebhook: [],
   receiveRazorpayPaymentWebhook: [],
+  getFhirR4Capability: ["patient.read"],
+  getAbdmCapability: ["patient.read"],
+  exportFhirClinicalSummary: [
+    "interoperability.fhir_r4.export",
+    "patient.read",
+    "patient.phi.read"
+  ],
+  importFhirClinicalSummary: [
+    "interoperability.fhir_r4.import",
+    "patient.read",
+    "patient.phi.read"
+  ],
+  reviewFhirClinicalSummaryImport: [
+    "interoperability.fhir_r4.reconcile",
+    "patient.read",
+    "patient.phi.read"
+  ],
   listPatients: ["patient.read"],
   createPatient: ["patient.write"],
   getPatient: ["patient.read", "patient.phi.read"],
@@ -248,29 +265,29 @@ function createPolicy(operation: HttpOperationContract): RouteSecurityPolicy {
                 verification: "constant_time_registered_token"
               } as const)
             : operation.auth === "meta_signature" || operation.auth === "razorpay_signature"
-            ? ({
-                mode: "verified_webhook",
-                provider:
-                  operation.auth === "meta_signature" ? "meta_whatsapp_cloud" : "razorpay",
-                signatureVerification: "raw_body_before_parse",
-                replayProtection: "required"
-              } as const)
-            : operation.operationId === "getCurrentIdentity"
               ? ({
-                  mode: "authenticated",
-                  tenant: "verified_active_membership",
-                  clinic: "not_applicable",
-                  authorization: { mode: "active_identity" }
+                  mode: "verified_webhook",
+                  provider:
+                    operation.auth === "meta_signature" ? "meta_whatsapp_cloud" : "razorpay",
+                  signatureVerification: "raw_body_before_parse",
+                  replayProtection: "required"
                 } as const)
-              : ({
-                  mode: "authenticated",
-                  tenant: "verified_active_membership",
-                  clinic: "verified_active_membership",
-                  authorization: {
-                    mode: "all_permissions",
-                    permissions: permissions as readonly [string, ...string[]]
-                  }
-                } as const);
+              : operation.operationId === "getCurrentIdentity"
+                ? ({
+                    mode: "authenticated",
+                    tenant: "verified_active_membership",
+                    clinic: "not_applicable",
+                    authorization: { mode: "active_identity" }
+                  } as const)
+                : ({
+                    mode: "authenticated",
+                    tenant: "verified_active_membership",
+                    clinic: "verified_active_membership",
+                    authorization: {
+                      mode: "all_permissions",
+                      permissions: permissions as readonly [string, ...string[]]
+                    }
+                  } as const);
 
   return defineRouteSecurityPolicy({
     routeId: toRouteId(operation.operationId),
@@ -278,10 +295,7 @@ function createPolicy(operation: HttpOperationContract): RouteSecurityPolicy {
     pathTemplate: operation.path,
     access,
     abuse: {
-      body:
-        operation.method === "GET"
-          ? null
-          : { maxBytes: bodyMaximumBytes ?? 0 },
+      body: operation.method === "GET" ? null : { maxBytes: bodyMaximumBytes ?? 0 },
       query: {
         maxParameters: queryPropertyCount,
         maxTotalBytes: queryPropertyCount === 0 ? 0 : 4096,
@@ -328,9 +342,9 @@ function createPolicy(operation: HttpOperationContract): RouteSecurityPolicy {
 }
 
 function assertApplicationRouteRegistry(): void {
-  if (ACTIVE_NATIVE_HTTP_OPERATIONS.length !== 130) {
+  if (ACTIVE_NATIVE_HTTP_OPERATIONS.length !== 135) {
     throw new Error(
-      `ClinicOS application route registry expected exactly 130 operations; received ${ACTIVE_NATIVE_HTTP_OPERATIONS.length}.`
+      `ClinicOS application route registry expected exactly 135 operations; received ${ACTIVE_NATIVE_HTTP_OPERATIONS.length}.`
     );
   }
   const operationIds = new Set(ACTIVE_NATIVE_HTTP_OPERATIONS.map(({ operationId }) => operationId));
@@ -348,7 +362,9 @@ function assertApplicationRouteRegistry(): void {
       operation.operationId !== "getCurrentIdentity" &&
       permissionsForOperation(operation.operationId).length === 0
     ) {
-      throw new Error(`Authenticated clinic operation has no central permission: ${operation.operationId}`);
+      throw new Error(
+        `Authenticated clinic operation has no central permission: ${operation.operationId}`
+      );
     }
   }
 }

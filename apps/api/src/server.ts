@@ -1,5 +1,6 @@
 import { type IncomingMessage, type Server } from "node:http";
 import { pathToFileURL } from "node:url";
+import { DescribeKeyCommand, KMSClient } from "@aws-sdk/client-kms";
 import { safeParseClinicOsEnv, type ClinicOsConfig } from "@clinic-os/config";
 import {
   createAwsProviderSecretResolver,
@@ -12,6 +13,7 @@ import {
 import {
   buildAccessContext,
   buildMeResponse,
+  permissionsForScope,
   principalFromVerifiedKeycloakClaims,
   type AccessContext,
   type KeycloakAccessTokenClaims
@@ -219,6 +221,20 @@ import {
 import { runClinicFeatureOperation } from "./features/runtime.ts";
 import { PendingLocalClinicalMediaInspectionSimulator } from "./media-inspection.ts";
 import { createPostgresS3TransactionMediaProviderFactory } from "./providers/media/index.ts";
+import {
+  createInteroperabilityHandlers,
+  InteroperabilityExchangeService,
+  type AuthenticatedInteroperabilityContext,
+  type InteroperabilityApiResponse
+} from "./features/cp16-interoperability/index.ts";
+import {
+  AwsKmsCp16ProtectedPayloadCodec,
+  PostgresInteroperabilityClinicalSource,
+  PostgresInteroperabilityConsent,
+  PostgresInteroperabilityReconciliation,
+  type Cp16KmsCommandSender
+} from "./providers/cp16/index.ts";
+import { operationOutcome } from "@clinic-os/fhir";
 
 interface AuditSink {
   appendAuditEvent(event: AuditEventRecord): Promise<void>;
@@ -287,6 +303,10 @@ export interface ClinicOsApiServerOptions {
   observabilityRuntime?: ObservabilityRuntime;
   providerCallbacks?: OfficialProviderCallbackRuntime;
   providerOperationsRegistry?: ProviderOperationsRegistryPort;
+  interoperabilityHandlers?: ReturnType<typeof createInteroperabilityHandlers>;
+  interoperabilityHandlersForTransaction?: (
+    transaction: ApiTransactionContext | undefined
+  ) => ReturnType<typeof createInteroperabilityHandlers>;
 }
 
 interface RuntimeOptions {
@@ -572,6 +592,64 @@ function createClinicOsNestRuntime(options: ClinicOsApiServerOptions): ClinicOsN
       rawBody,
       transaction
     ) {
+      if (isInteroperabilityOperation(operationId)) {
+        if (
+          options.interoperabilityHandlersForTransaction &&
+          isInteroperabilityMutation(operationId) &&
+          !transaction
+        ) {
+          throw new ApiError(
+            503,
+            "CONFIGURATION_ERROR",
+            "FHIR mutation did not receive the transaction-bound API context."
+          );
+        }
+        const interoperabilityHandlers =
+          options.interoperabilityHandlersForTransaction?.(transaction) ??
+          options.interoperabilityHandlers;
+        if (!interoperabilityHandlers) return unavailableInteroperabilityResponse();
+        const context = interoperabilityContext(access);
+        const path = parsedRequest.path as Record<string, unknown>;
+        const headers = request.headers;
+        let response: InteroperabilityApiResponse = unavailableInteroperabilityResponse();
+        switch (operationId) {
+          case "getFhirR4Capability":
+            response = interoperabilityHandlers.capability();
+            break;
+          case "getAbdmCapability":
+            response = interoperabilityHandlers.abdmCapability();
+            break;
+          case "exportFhirClinicalSummary":
+            response = await interoperabilityHandlers.exportClinicalSummary({
+              body: parsedRequest.body,
+              context,
+              encounterId: requiredParsedString(path.encounterId),
+              headers,
+              patientId: requiredParsedString(path.patientId),
+              requestId
+            });
+            break;
+          case "importFhirClinicalSummary":
+            response = await interoperabilityHandlers.importClinicalSummary({
+              context,
+              headers,
+              patientId: requiredParsedString(path.patientId),
+              rawBody: rawBody ?? Buffer.alloc(0),
+              requestId
+            });
+            break;
+          case "reviewFhirClinicalSummaryImport":
+            response = await interoperabilityHandlers.reviewClinicalSummaryImport({
+              body: parsedRequest.body,
+              context,
+              headers,
+              reconciliationId: requiredParsedString(path.reconciliationId),
+              requestId
+            });
+            break;
+        }
+        return response;
+      }
       const featureOperationId = operationId as Cp13ClinicFeatureOperationId;
       const handler = options.featureHandlers?.[featureOperationId];
       if (!handler) {
@@ -796,6 +874,76 @@ function createRuntimeComposition(
     serverOptions.providerOperationsRegistry = new PostgresProviderOperationsRegistry(
       repositorySet.pool
     );
+    if (parsed.data.interoperability?.fhirR4Enabled) {
+      const keyId = parsed.data.interoperability.payloadKmsKeyId;
+      if (!keyId) {
+        throw new ApiError(
+          503,
+          "CONFIGURATION_ERROR",
+          "FHIR R4 exchange requires the CP16 protected-payload KMS key."
+        );
+      }
+      const kms = new KMSClient({ region: parsed.data.storage.region });
+      const payloads = new AwsKmsCp16ProtectedPayloadCodec({
+        kms: kms as unknown as Cp16KmsCommandSender,
+        keyId
+      });
+      const createInteroperabilityComposition = (unitOfWork: OperationsUnitOfWork) => {
+        const source = new PostgresInteroperabilityClinicalSource(unitOfWork);
+        const reconciliation = new PostgresInteroperabilityReconciliation({
+          unitOfWork,
+          payloads
+        });
+        const service = new InteroperabilityExchangeService({
+          clock: systemClock,
+          source,
+          consent: new PostgresInteroperabilityConsent(unitOfWork),
+          reconciliation
+        });
+        return {
+          reconciliation,
+          handlers: createInteroperabilityHandlers({
+            abdmActivation: null,
+            now: () => systemClock.now(),
+            service
+          })
+        };
+      };
+      const baseInteroperability = createInteroperabilityComposition(
+        repositorySet.operationsUnitOfWork
+      );
+      serverOptions.interoperabilityHandlers = baseInteroperability.handlers;
+      serverOptions.interoperabilityHandlersForTransaction = (transaction) => {
+        if (!transaction) return baseInteroperability.handlers;
+        const boundUnitOfWork: OperationsUnitOfWork = {
+          run: (callback) => callback(transaction)
+        };
+        return createInteroperabilityComposition(boundUnitOfWork).handlers;
+      };
+      serverOptions.dependencyProbes = [
+        ...(serverOptions.dependencyProbes ?? []),
+        {
+          name: "fhir_interoperability_persistence",
+          required: true,
+          async check() {
+            const readiness = await baseInteroperability.reconciliation.readiness();
+            if (readiness.status !== "available") {
+              throw new Error("FHIR interoperability persistence is unavailable.");
+            }
+          }
+        },
+        {
+          name: "cp16_payload_kms",
+          required: true,
+          async check() {
+            const result = await kms.send(new DescribeKeyCommand({ KeyId: keyId }));
+            if (!result.KeyMetadata?.Enabled) {
+              throw new Error("CP16 protected-payload KMS key is unavailable.");
+            }
+          }
+        }
+      ];
+    }
     if (parsed.data.providerCallbacks.enabled) {
       const endpointHmacSecret = parsed.data.providerCallbacks.endpointHmacSecret;
       const rawWebhookBucket = parsed.data.providerCallbacks.rawWebhookBucket;
@@ -840,6 +988,67 @@ function createRuntimeComposition(
       ]).then(() => undefined);
       return closePromise;
     }
+  };
+}
+
+const INTEROPERABILITY_OPERATION_IDS = new Set([
+  "getFhirR4Capability",
+  "getAbdmCapability",
+  "exportFhirClinicalSummary",
+  "importFhirClinicalSummary",
+  "reviewFhirClinicalSummaryImport"
+]);
+
+function isInteroperabilityOperation(operationId: string): boolean {
+  return INTEROPERABILITY_OPERATION_IDS.has(operationId);
+}
+
+function isInteroperabilityMutation(operationId: string): boolean {
+  return operationId !== "getFhirR4Capability" && operationId !== "getAbdmCapability";
+}
+
+function interoperabilityContext(
+  access: VerifiedClinicRequestContext
+): AuthenticatedInteroperabilityContext {
+  const permissions = new Set(
+    permissionsForScope(access.context, access.context.tenant.id, access.clinicId)
+  );
+  const capabilities = new Set<
+    AuthenticatedInteroperabilityContext["capabilities"] extends ReadonlySet<infer C> ? C : never
+  >();
+  for (const capability of [
+    "interoperability.fhir_r4.export",
+    "interoperability.fhir_r4.import",
+    "interoperability.fhir_r4.reconcile"
+  ] as const) {
+    if (permissions.has(capability)) capabilities.add(capability);
+  }
+  return {
+    verified: true,
+    tenantId: access.context.tenant.id,
+    clinicId: access.clinicId,
+    actorUserId: access.context.user.id,
+    actorDisplayName: access.context.user.displayName,
+    capabilities
+  };
+}
+
+function unavailableInteroperabilityResponse(): InteroperabilityApiResponse {
+  return {
+    status: 503,
+    headers: {
+      "content-type": "application/fhir+json; charset=utf-8",
+      "retry-after": "300"
+    },
+    body: operationOutcome([
+      {
+        clinicOsCode: "FHIR_INTEROPERABILITY_UNREGISTERED",
+        code: "not-supported",
+        diagnostics:
+          "FHIR R4 exchange is disabled until its durable persistence and protected-payload KMS configuration are registered.",
+        expression: ["CapabilityStatement"]
+      }
+    ])
   };
 }
 
@@ -2059,11 +2268,7 @@ function createRuntimeMediaComposition(
       })
     };
   } catch {
-    throw new ApiError(
-      503,
-      "CONFIGURATION_ERROR",
-      "AWS private-media composition is invalid."
-    );
+    throw new ApiError(503, "CONFIGURATION_ERROR", "AWS private-media composition is invalid.");
   }
 }
 
@@ -2087,9 +2292,7 @@ function providerCallbackPath(rawUrl: string): {
 } | null {
   const pathname = new URL(rawUrl, "http://clinic-os.local").pathname;
   const match =
-    /^\/v1\/provider-callbacks\/(meta-whatsapp|razorpay)\/([A-Za-z0-9_-]{16,128})$/u.exec(
-      pathname
-    );
+    /^\/v1\/provider-callbacks\/(meta-whatsapp|razorpay)\/([A-Za-z0-9_-]{16,128})$/u.exec(pathname);
   return match
     ? {
         provider: match[1] as "meta-whatsapp" | "razorpay",
@@ -2136,7 +2339,15 @@ function mapOfficialProviderCallbackError(error: unknown): ApiError {
   ) {
     return new ApiError(403, "PERMISSION_DENIED", "Provider callback verification failed.");
   }
-  if (["NOT_CONFIGURED", "PROVIDER_UNAVAILABLE", "not_configured", "persistence_failed", "EVENT_IN_PROGRESS"].includes(code)) {
+  if (
+    [
+      "NOT_CONFIGURED",
+      "PROVIDER_UNAVAILABLE",
+      "not_configured",
+      "persistence_failed",
+      "EVENT_IN_PROGRESS"
+    ].includes(code)
+  ) {
     return new ApiError(
       503,
       "DEPENDENCY_UNAVAILABLE",
@@ -2157,7 +2368,11 @@ function mapOfficialProviderCallbackError(error: unknown): ApiError {
     return new ApiError(400, "BAD_REQUEST", "Provider callback payload is invalid.");
   }
   if (code === "DURABLE_EVIDENCE_CONFLICT") {
-    return new ApiError(409, "CONFLICT", "Provider callback evidence conflicts with durable state.");
+    return new ApiError(
+      409,
+      "CONFLICT",
+      "Provider callback evidence conflicts with durable state."
+    );
   }
   return new ApiError(500, "INTERNAL_ERROR", "Provider callback processing failed.");
 }

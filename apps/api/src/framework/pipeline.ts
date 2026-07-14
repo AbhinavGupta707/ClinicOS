@@ -191,7 +191,7 @@ export class ClinicOsRequestPipeline {
         );
       };
 
-      const validateResponse = (response: ApiResponse, replayed: boolean): ApiResponse => {
+      const validateResponse = (response: ApiResponse, replayed: boolean | null): ApiResponse => {
         const body = normalizeJsonResponseBody(response.body);
         const headers = contractResponseHeaders({
           operation: matched.operation,
@@ -238,7 +238,11 @@ export class ClinicOsRequestPipeline {
         }
         return normalizedResponse;
       };
+      const pipelineOwnsTransaction =
+        matched.operation.integration.transactionOwnership === "pipeline";
       const concurrency =
+        pipelineOwnsTransaction &&
+        matched.operation.integration.concurrencyOwnership === "pipeline" &&
         matched.operation.concurrency.mode === "if-match"
           ? concurrencyMetadata(
               matched.operation.operationId,
@@ -247,7 +251,7 @@ export class ClinicOsRequestPipeline {
             )
           : null;
       const mutationResult =
-        matched.operation.idempotency.mode === "header"
+        pipelineOwnsTransaction && matched.operation.idempotency.mode === "header"
           ? await this.#runtime.mutationCoordinator.execute(
               {
                 identity: mutationIdentity(verifiedClinic),
@@ -271,11 +275,9 @@ export class ClinicOsRequestPipeline {
           : null;
       const response = mutationResult
         ? validateResponse(mutationResult.response, mutationResult.replayed)
-        : validateResponse(await dispatch(), false);
-      const successfulIdempotentMutation =
-        matched.operation.idempotency.mode === "header" &&
-        response.status >= 200 &&
-        response.status < 300;
+        : validateResponse(await dispatch(), pipelineOwnsTransaction ? false : null);
+      const successfulPipelineMutation =
+        mutationResult !== null && response.status >= 200 && response.status < 300;
 
       return {
         status: response.status,
@@ -284,8 +286,8 @@ export class ClinicOsRequestPipeline {
           ...response.headers,
           "cache-control": response.headers?.["cache-control"] ?? "no-store",
           "x-request-id": correlation.requestId,
-          ...(successfulIdempotentMutation
-            ? { "idempotency-replayed": mutationResult?.replayed ? "true" : "false" }
+          ...(successfulPipelineMutation
+            ? { "idempotency-replayed": mutationResult.replayed ? "true" : "false" }
             : {})
         }
       };
@@ -450,7 +452,7 @@ function contractResponseHeaders(input: {
   body: unknown;
   effectHeaders: Readonly<Record<string, string>> | undefined;
   requestId: string;
-  replayed: boolean;
+  replayed: boolean | null;
 }): Readonly<Record<string, string>> {
   const responseContract = input.operation.responses[input.status];
   const allowed = new Set<string>([
@@ -476,7 +478,9 @@ function contractResponseHeaders(input: {
   if (!responseContract) return headers;
   const successful = input.status >= 200 && input.status < 300;
   if (successful && responseContract.headers["idempotency-replayed"]) {
-    headers["idempotency-replayed"] = input.replayed ? "true" : "false";
+    if (input.replayed !== null) {
+      headers["idempotency-replayed"] = input.replayed ? "true" : "false";
+    }
   } else {
     delete headers["idempotency-replayed"];
   }

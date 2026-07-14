@@ -241,6 +241,9 @@ const runtimeEnvSchema = z
     CLINIC_OS_AI_MONTHLY_BUDGET_CENTS: nonNegativeIntegerFromEnv(0),
     CLINIC_OS_AI_PER_CLINIC_DAILY_BUDGET_CENTS: nonNegativeIntegerFromEnv(0),
 
+    CLINIC_OS_FHIR_R4_ENABLED: booleanFromEnv.default(false),
+    CLINIC_OS_CP16_PAYLOAD_KMS_KEY_ID: optionalString,
+
     AWS_PROFILE: optionalString,
     AWS_REGION: requiredString.default("ap-south-1"),
     AWS_DR_REGION: requiredString.default("ap-south-2"),
@@ -656,6 +659,14 @@ const runtimeEnvSchema = z
         });
       }
     }
+
+    requireFields(
+      context,
+      env,
+      env.CLINIC_OS_FHIR_R4_ENABLED,
+      ["CLINIC_OS_CP16_PAYLOAD_KMS_KEY_ID"],
+      "FHIR R4 exchange is enabled but its protected-payload KMS key is missing."
+    );
   });
 
 type RuntimeEnv = z.infer<typeof runtimeEnvSchema>;
@@ -697,6 +708,10 @@ export type ClinicOsConfig = {
     rawWebhookBucket?: string | undefined;
     rawWebhookPrefix: string;
     rawWebhookKmsKeyId?: string | undefined;
+  };
+  interoperability?: {
+    fhirR4Enabled: boolean;
+    payloadKmsKeyId?: string | undefined;
   };
   providers: {
     whatsapp: {
@@ -866,6 +881,10 @@ function toConfig(env: RuntimeEnv): ClinicOsConfig {
       rawWebhookBucket: env.CLINIC_OS_PROVIDER_RAW_WEBHOOK_BUCKET,
       rawWebhookPrefix: env.CLINIC_OS_PROVIDER_RAW_WEBHOOK_PREFIX,
       rawWebhookKmsKeyId: env.CLINIC_OS_PROVIDER_RAW_WEBHOOK_KMS_KEY_ID
+    },
+    interoperability: {
+      fhirR4Enabled: env.CLINIC_OS_FHIR_R4_ENABLED,
+      payloadKmsKeyId: env.CLINIC_OS_CP16_PAYLOAD_KMS_KEY_ID
     },
     providers: {
       whatsapp: {

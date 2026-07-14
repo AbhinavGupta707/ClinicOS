@@ -20,12 +20,24 @@ const nestApplicationSource = await readFile(
   new URL("../../../apps/api/src/framework/nest-application.ts", import.meta.url),
   "utf8"
 );
+const routeRegistrySource = await readFile(
+  new URL("../../../apps/api/src/framework/route-registry.ts", import.meta.url),
+  "utf8"
+);
+
+const interoperabilityOperationIds = new Set([
+  "getFhirR4Capability",
+  "getAbdmCapability",
+  "exportFhirClinicalSummary",
+  "importFhirClinicalSummary",
+  "reviewFhirClinicalSummaryImport"
+]);
 
 test("CP12 inventory covers every current Nest and strangler operation registration", async () => {
   assert.equal(CURRENT_ROUTE_CONTROL_INVENTORY.length, CURRENT_ROUTE_COUNT);
-  assert.equal(CURRENT_ROUTE_COUNT, 130);
+  assert.equal(CURRENT_ROUTE_COUNT, 135);
   const extracted = await assertNativeRouterInventoryCoverage();
-  assert.equal(extracted.actual.length, 130);
+  assert.equal(extracted.actual.length, 135);
   assert.deepEqual(extracted.actual, extracted.contracted);
 
   const keys = CURRENT_ROUTE_CONTROL_INVENTORY.map(
@@ -41,10 +53,15 @@ test("CP12 inventory covers every current Nest and strangler operation registrat
     (match) => match[1]
   );
   const inventoriedHandlers = CURRENT_ROUTE_CONTROL_INVENTORY.filter(
-    (route) => route.routeClass === "authenticated_clinic_operation"
+    (route) =>
+      route.routeClass === "authenticated_clinic_operation" &&
+      !interoperabilityOperationIds.has(route.operationId)
   ).map((route) => route.handler);
 
-  assert.equal(registeredHandlers.length, CURRENT_OPERATION_ROUTE_COUNT);
+  assert.equal(
+    registeredHandlers.length,
+    CURRENT_OPERATION_ROUTE_COUNT - interoperabilityOperationIds.size
+  );
   assert.deepEqual(inventoriedHandlers.toSorted(), registeredHandlers.toSorted());
   assert.match(nestApplicationSource, /Get\("v1\/me"\)/);
   assert.match(
@@ -82,7 +99,9 @@ test("inventory permission claims are grounded in the current operation handlers
   for (const route of CURRENT_ROUTE_CONTROL_INVENTORY.filter(
     (candidate) => candidate.routeClass === "authenticated_clinic_operation"
   )) {
-    const handlerSource = functionChunks.get(route.handler);
+    const handlerSource = interoperabilityOperationIds.has(route.operationId)
+      ? routeRegistrySource
+      : functionChunks.get(route.handler);
     assert.ok(handlerSource, `missing source for ${route.handler}`);
     const authorizationSource =
       route.handler === "createPatientDentalFinding"

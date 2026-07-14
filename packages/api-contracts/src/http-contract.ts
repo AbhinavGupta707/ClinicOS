@@ -9,23 +9,9 @@ import {
 
 export type HttpMethod = "GET" | "PATCH" | "POST" | "PUT";
 export type EvidenceCheckpoint =
-  | "CP1"
-  | "CP2"
-  | "CP3"
-  | "CP4"
-  | "CP5"
-  | "CP6"
-  | "CP7"
-  | "CP8"
-  | "CP9"
-  | "CP10"
-  | "CP15";
+  "CP1" | "CP2" | "CP3" | "CP4" | "CP5" | "CP6" | "CP7" | "CP8" | "CP9" | "CP10" | "CP15" | "CP16";
 export type OperationAuth =
-  | "bearer"
-  | "none"
-  | "meta_challenge"
-  | "meta_signature"
-  | "razorpay_signature";
+  "bearer" | "none" | "meta_challenge" | "meta_signature" | "razorpay_signature";
 
 export interface IdempotencyContract {
   readonly mode: "header" | "none" | "provider_event";
@@ -51,7 +37,7 @@ export interface PaginationContract {
 }
 
 export interface HttpBodyContract {
-  readonly contentType: "application/json" | "application/octet-stream";
+  readonly contentType: "application/json" | "application/octet-stream" | "application/fhir+json";
   readonly maximumBytes: number;
   readonly schema: RuntimeSchema;
 }
@@ -59,7 +45,7 @@ export interface HttpBodyContract {
 export interface HttpResponseContract {
   readonly description: string;
   readonly schema: RuntimeSchema;
-  readonly contentType: "application/json" | "text/plain";
+  readonly contentType: "application/json" | "text/plain" | "application/fhir+json";
   readonly headers: Readonly<Record<string, HttpResponseHeaderContract>>;
 }
 
@@ -72,6 +58,7 @@ export interface HttpResponseHeaderContract {
 
 export type HttpResponseDefinition = Omit<HttpResponseContract, "headers" | "contentType"> & {
   readonly contentType?: HttpResponseContract["contentType"];
+  readonly headers?: Readonly<Record<string, HttpResponseHeaderContract>>;
 };
 
 export interface HttpOperationContract {
@@ -98,6 +85,14 @@ export interface HttpOperationContract {
   readonly integration: {
     readonly nativeRuntimeEnforcement: "body-parser-only" | "partial" | "route-parity";
     readonly requiredMasterWiring: readonly string[];
+    /**
+     * `handler` is reserved for a durable feature service that owns idempotency, concurrency,
+     * domain effects, audit and outbox in one transaction. The HTTP pipeline still enforces the
+     * declared headers and response contract, but must not wrap that service in a second unit of
+     * work.
+     */
+    readonly transactionOwnership: "pipeline" | "handler";
+    readonly concurrencyOwnership: "pipeline" | "handler";
   };
 }
 
@@ -249,7 +244,7 @@ export function headersSchema(input: {
   readonly auth: OperationAuth;
   readonly mutation?: boolean;
   readonly concurrency?: boolean;
-  readonly contentType?: "application/json" | "application/octet-stream";
+  readonly contentType?: "application/json" | "application/octet-stream" | "application/fhir+json";
 }): RuntimeSchema {
   const properties: Record<string, RuntimeSchema> = {
     "x-request-id": REQUEST_ID_SCHEMA
@@ -353,11 +348,14 @@ export function defineOperation(
       {
         ...response,
         contentType: response.contentType ?? "application/json",
-        headers: responseHeaders({
-          status: Number(status),
-          idempotency,
-          schema: response.schema
-        })
+        headers: {
+          ...responseHeaders({
+            status: Number(status),
+            idempotency,
+            schema: response.schema
+          }),
+          ...(response.headers ?? {})
+        }
       }
     ])
   );
@@ -381,6 +379,8 @@ export function defineOperation(
       : { mode: "none", cursor: false },
     integration: {
       nativeRuntimeEnforcement: input.integration?.nativeRuntimeEnforcement ?? "body-parser-only",
+      transactionOwnership: input.integration?.transactionOwnership ?? "pipeline",
+      concurrencyOwnership: input.integration?.concurrencyOwnership ?? "pipeline",
       requiredMasterWiring: input.integration?.requiredMasterWiring ?? [
         "Invoke the runtime contract before the native or NestJS handler.",
         ...(mutation && input.auth === "bearer"

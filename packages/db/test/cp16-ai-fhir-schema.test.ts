@@ -46,6 +46,10 @@ test("CP16 FHIR persistence quarantines imports and never grants destructive run
   assert.match(migration, /'pending_review', 'quarantined', 'accepted_pending_apply'/u);
   assert.match(migration, /expected_patient_version bigint not null/u);
   assert.match(migration, /expected_encounter_version bigint not null/u);
+  assert.match(migration, /source_encounter_id uuid not null/u);
+  assert.match(migration, /encounter_id uuid,/u);
+  assert.match(migration, /payload_plaintext_digest char\(64\)/u);
+  assert.match(migration, /minimized_plaintext_digest char\(64\)/u);
   assert.match(migration, /row_version bigint not null default 1/u);
   assert.match(migration, /bundle_ciphertext bytea/u);
   assert.match(migration, /minimized_ciphertext bytea/u);

@@ -52,6 +52,7 @@ export async function createClinicOsNestApplication(
       )
   });
   app.useBodyParser("raw", { limit: "100mb", type: "application/octet-stream" });
+  app.useBodyParser("raw", { limit: "2mb", type: "application/fhir+json" });
   app.useBodyParser("json", { limit: "1mb", strict: true, type: "application/json" });
   app.useGlobalFilters(new ClinicOsBoundaryExceptionFilter());
   await app.init();
@@ -178,6 +179,46 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
     Post("v1/provider-callbacks/razorpay/:registrationKey")
   );
 
+  class InteroperabilityController {
+    fhirCapability(request: ParsedIncomingRequest, response: ServerResponse) {
+      return executeAndSend(pipeline, request, response);
+    }
+
+    abdmCapability(request: ParsedIncomingRequest, response: ServerResponse) {
+      return executeAndSend(pipeline, request, response);
+    }
+
+    exportClinicalSummary(request: ParsedIncomingRequest, response: ServerResponse) {
+      return executeAndSend(pipeline, request, response);
+    }
+
+    importClinicalSummary(request: ParsedIncomingRequest, response: ServerResponse) {
+      return executeAndSend(pipeline, request, response);
+    }
+
+    reviewClinicalSummaryImport(request: ParsedIncomingRequest, response: ServerResponse) {
+      return executeAndSend(pipeline, request, response);
+    }
+  }
+  Controller()(InteroperabilityController);
+  decorateRoute(InteroperabilityController, "fhirCapability", Get("v1/fhir/metadata"));
+  decorateRoute(InteroperabilityController, "abdmCapability", Get("v1/abdm/capability"));
+  decorateRoute(
+    InteroperabilityController,
+    "exportClinicalSummary",
+    Post("v1/patients/:patientId/encounters/:encounterId/fhir/clinical-summary")
+  );
+  decorateRoute(
+    InteroperabilityController,
+    "importClinicalSummary",
+    Post("v1/patients/:patientId/fhir/clinical-summary-imports")
+  );
+  decorateRoute(
+    InteroperabilityController,
+    "reviewClinicalSummaryImport",
+    Post("v1/fhir/clinical-summary-imports/:reconciliationId/review")
+  );
+
   class LegacyStranglerController {
     all(request: ParsedIncomingRequest, response: ServerResponse) {
       return executeAndSend(pipeline, request, response);
@@ -190,6 +231,7 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
     HealthController,
     IdentityController,
     ProviderCallbackController,
+    InteroperabilityController,
     LegacyStranglerController
   ];
 }
@@ -220,9 +262,7 @@ function sendPipelineResponse(response: ServerResponse, result: PipelineResponse
   for (const [name, value] of Object.entries(result.headers)) response.setHeader(name, value);
   const contentType = result.headers["content-type"] ?? "application/json; charset=utf-8";
   response.end(
-    contentType.startsWith("text/plain")
-      ? String(result.body)
-      : `${JSON.stringify(result.body)}\n`
+    contentType.startsWith("text/plain") ? String(result.body) : `${JSON.stringify(result.body)}\n`
   );
 }
 

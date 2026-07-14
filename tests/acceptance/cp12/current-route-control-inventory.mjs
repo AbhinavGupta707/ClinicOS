@@ -494,10 +494,39 @@ const providerCallbackRoutes = Object.freeze([
   })
 ]);
 
+const interoperabilityRoutes = Object.freeze([
+  Object.freeze({
+    method: "GET",
+    pathTemplate: "/v1/fhir/metadata",
+    handler: "fhirCapability"
+  }),
+  Object.freeze({
+    method: "GET",
+    pathTemplate: "/v1/abdm/capability",
+    handler: "abdmCapability"
+  }),
+  Object.freeze({
+    method: "POST",
+    pathTemplate: "/v1/patients/{patientId}/encounters/{encounterId}/fhir/clinical-summary",
+    handler: "exportClinicalSummary"
+  }),
+  Object.freeze({
+    method: "POST",
+    pathTemplate: "/v1/patients/{patientId}/fhir/clinical-summary-imports",
+    handler: "importClinicalSummary"
+  }),
+  Object.freeze({
+    method: "POST",
+    pathTemplate: "/v1/fhir/clinical-summary-imports/{reconciliationId}/review",
+    handler: "reviewClinicalSummaryImport"
+  })
+]);
+
 const handlerInventory = Object.freeze([
   ...publicHealthRoutes,
   identityRoute,
   ...providerCallbackRoutes,
+  ...interoperabilityRoutes,
   ...operationRoutes
 ]);
 
@@ -525,29 +554,29 @@ export const CURRENT_ROUTE_CONTROL_INVENTORY = Object.freeze(
         ? "public_health"
         : policy.access.mode === "provider_challenge"
           ? "verified_provider_challenge"
-        : policy.access.mode === "verified_webhook"
-          ? "verified_provider_webhook"
-          : activeOperation.operationId === "getCurrentIdentity"
-            ? "authenticated_identity"
-            : "authenticated_clinic_operation";
+          : policy.access.mode === "verified_webhook"
+            ? "verified_provider_webhook"
+            : activeOperation.operationId === "getCurrentIdentity"
+              ? "authenticated_identity"
+              : "authenticated_clinic_operation";
     const authentication =
       policy.access.mode === "public_health"
         ? "intentionally_public"
         : policy.access.mode === "provider_challenge"
           ? "constant_time_registered_provider_challenge"
-        : policy.access.mode === "verified_webhook"
-          ? "provider_signature_over_raw_body_before_parse"
-          : "verified_keycloak_or_local_only_fixture";
+          : policy.access.mode === "verified_webhook"
+            ? "provider_signature_over_raw_body_before_parse"
+            : "verified_keycloak_or_local_only_fixture";
     const authorization =
       policy.access.mode === "public_health"
         ? "explicit_public_health_exception"
         : policy.access.mode === "provider_challenge"
           ? "registered_provider_challenge_only"
-        : policy.access.mode === "verified_webhook"
-          ? "provider_signature_and_verified_event_scope"
-          : activeOperation.operationId === "getCurrentIdentity"
-            ? "active_registered_identity"
-            : "central_all_permissions_and_required_roles";
+          : policy.access.mode === "verified_webhook"
+            ? "provider_signature_and_verified_event_scope"
+            : activeOperation.operationId === "getCurrentIdentity"
+              ? "active_registered_identity"
+              : "central_all_permissions_and_required_roles";
     const bodyContract = activeOperation.request.body;
 
     return Object.freeze({
@@ -564,9 +593,9 @@ export const CURRENT_ROUTE_CONTROL_INVENTORY = Object.freeze(
             ? "not_applicable"
             : policy.access.mode === "provider_challenge"
               ? "registered_provider_scope_after_token_verification"
-            : policy.access.mode === "verified_webhook"
-              ? "verified_provider_event_after_signature"
-              : "verified_identity_repository",
+              : policy.access.mode === "verified_webhook"
+                ? "verified_provider_event_after_signature"
+                : "verified_identity_repository",
         clinicAuthority:
           policy.access.mode === "authenticated" &&
           policy.access.clinic === "verified_active_membership"

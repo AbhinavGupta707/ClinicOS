@@ -105,6 +105,7 @@ export function requestBodyForContract(
   }
   if (
     operation.request.body.contentType === "application/octet-stream" ||
+    operation.request.body.contentType === "application/fhir+json" ||
     operation.request.body.schema.format === "binary"
   ) {
     return rawBody ?? Buffer.alloc(0);

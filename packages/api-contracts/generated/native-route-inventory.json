@@ -3285,9 +3285,141 @@
       },
       "path": "/v1/pilot-readiness",
       "phi": "none"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP16",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "route-parity",
+      "operationId": "getFhirR4Capability",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/fhir/metadata",
+      "phi": "none"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP16",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "route-parity",
+      "operationId": "getAbdmCapability",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/abdm/capability",
+      "phi": "none"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": 16384,
+      "checkpoint": "CP16",
+      "concurrency": {
+        "header": "if-match",
+        "mode": "if-match",
+        "required": true,
+        "semantics": "If-Match must contain the current canonical strong ETag \"rv-<rowVersion>\" and the repository must compare/increment rowVersion atomically.",
+        "strongEtagFormat": "\"rv-<rowVersion>\"",
+        "versionProperty": "rowVersion"
+      },
+      "idempotency": {
+        "header": "idempotency-key",
+        "mode": "header",
+        "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+        "required": true
+      },
+      "method": "POST",
+      "nativeRuntimeEnforcement": "route-parity",
+      "operationId": "exportFhirClinicalSummary",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/{patientId}/encounters/{encounterId}/fhir/clinical-summary",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": 2097152,
+      "checkpoint": "CP16",
+      "concurrency": {
+        "header": "if-match",
+        "mode": "if-match",
+        "required": true,
+        "semantics": "If-Match must contain the current canonical strong ETag \"rv-<rowVersion>\" and the repository must compare/increment rowVersion atomically.",
+        "strongEtagFormat": "\"rv-<rowVersion>\"",
+        "versionProperty": "rowVersion"
+      },
+      "idempotency": {
+        "header": "idempotency-key",
+        "mode": "header",
+        "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+        "required": true
+      },
+      "method": "POST",
+      "nativeRuntimeEnforcement": "route-parity",
+      "operationId": "importFhirClinicalSummary",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/{patientId}/fhir/clinical-summary-imports",
+      "phi": "write"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": 16384,
+      "checkpoint": "CP16",
+      "concurrency": {
+        "header": "if-match",
+        "mode": "if-match",
+        "required": true,
+        "semantics": "If-Match must contain the current canonical strong ETag \"rv-<rowVersion>\" and the repository must compare/increment rowVersion atomically.",
+        "strongEtagFormat": "\"rv-<rowVersion>\"",
+        "versionProperty": "rowVersion"
+      },
+      "idempotency": {
+        "header": "idempotency-key",
+        "mode": "header",
+        "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+        "required": true
+      },
+      "method": "POST",
+      "nativeRuntimeEnforcement": "route-parity",
+      "operationId": "reviewFhirClinicalSummaryImport",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/fhir/clinical-summary-imports/{reconciliationId}/review",
+      "phi": "write"
     }
   ],
-  "activeOperationCount": 130,
+  "activeOperationCount": 135,
   "deferred": [
     {
       "activationGate": "Register a complete messaging request workflow with provider state, audit, outbox and parity tests, or keep it absent.",

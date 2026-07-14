@@ -183,16 +183,21 @@ interface NativeOperationInput {
   readonly pathProperties?: Readonly<Record<string, RuntimeSchema>>;
   readonly queryProperties?: Readonly<Record<string, RuntimeSchema>>;
   readonly body?: RuntimeSchema;
-  readonly bodyContentType?: "application/json" | "application/octet-stream";
+  readonly bodyContentType?:
+    "application/json" | "application/octet-stream" | "application/fhir+json";
   readonly maximumBodyBytes?: number;
   readonly success: Readonly<Record<number, RuntimeSchema>>;
-  readonly successContentTypes?: Readonly<Record<number, "application/json" | "text/plain">>;
+  readonly successContentTypes?: Readonly<
+    Record<number, "application/json" | "text/plain" | "application/fhir+json">
+  >;
   readonly mutation?: boolean;
   readonly optimisticConcurrency?: boolean;
   readonly paginated?: boolean;
   readonly providerEventIdempotency?: boolean;
   readonly nativeRuntimeEnforcement?: "body-parser-only" | "partial" | "route-parity";
   readonly requiredMasterWiring?: readonly string[];
+  readonly transactionOwnership?: "pipeline" | "handler";
+  readonly concurrencyOwnership?: "pipeline" | "handler";
 }
 
 function operation(input: NativeOperationInput): HttpOperationContract {
@@ -249,7 +254,9 @@ function operation(input: NativeOperationInput): HttpOperationContract {
     providerEventIdempotency: input.providerEventIdempotency,
     integration: {
       nativeRuntimeEnforcement: input.nativeRuntimeEnforcement ?? "body-parser-only",
-      requiredMasterWiring: input.requiredMasterWiring
+      requiredMasterWiring: input.requiredMasterWiring,
+      transactionOwnership: input.transactionOwnership,
+      concurrencyOwnership: input.concurrencyOwnership
     }
   });
 }
@@ -464,7 +471,8 @@ export const ACTIVE_NATIVE_HTTP_OPERATIONS: readonly HttpOperationContract[] = [
   ...cp7Operations(),
   ...cp8Operations(),
   ...cp9Operations(),
-  ...cp10Operations()
+  ...cp10Operations(),
+  ...cp16Operations()
 ];
 
 export type VersionedResourceFamily =
@@ -838,6 +846,294 @@ function healthDependencyOperations(): HttpOperationContract[] {
       mutation: false,
       success: { 200: healthReport, 503: healthReport },
       nativeRuntimeEnforcement: "route-parity"
+    })
+  ];
+}
+
+function cp16Operations(): HttpOperationContract[] {
+  const fhirResource = schema.publicJsonObject({ maxProperties: 512 });
+  const fhirError = schema.publicJsonObject({ maxProperties: 16 });
+  const strongEtag = {
+    description:
+      "Canonical strong row-version ETag for the authoritative source or reconciliation.",
+    required: true,
+    schema: schema.string({ format: "strong-row-version-etag", minLength: 6, maxLength: 24 })
+  } as const;
+  const fhirErrors = Object.fromEntries(
+    [400, 403, 404, 409, 412, 415, 422, 428, 429, 503].map((status) => [
+      status,
+      {
+        description: "Bounded FHIR OperationOutcome failure response.",
+        schema: fhirError,
+        contentType: "application/fhir+json" as const,
+        ...(status === 503
+          ? {
+              headers: {
+                "Retry-After": {
+                  description: "Bounded delta-seconds before a transient retry.",
+                  required: false,
+                  schema: schema.string({ format: "retry-after-seconds" })
+                }
+              }
+            }
+          : {})
+      }
+    ])
+  ) as Readonly<Record<number, HttpResponseDefinition>>;
+  const reconciliationResult = responseSchema({
+    bundleDigest: schema.sha256({ minLength: 64, maxLength: 64 }),
+    candidateCount: schema.integer({ minimum: 0, maximum: 128 }),
+    encounterId: uuid,
+    patientId: uuid,
+    quarantineReason: schema.nullable(
+      schema.enum([
+        "ambiguous_exact_match",
+        "missing_exact_match",
+        "patient_version_conflict",
+        "target_patient_mismatch",
+        "ambiguous_exact_encounter_match",
+        "encounter_version_conflict",
+        "missing_exact_encounter_match",
+        "target_encounter_mismatch"
+      ])
+    ),
+    reconciliationId: uuid,
+    reconciliationVersion: positiveInteger,
+    replayed: schema.boolean(),
+    status: schema.enum(["pending_review", "quarantined"])
+  });
+  const reviewResult = responseSchema({
+    effects: responseSchema({
+      auditAppended: schema.boolean(),
+      clinicalStateApplied: schema.boolean(),
+      outboxAppended: schema.boolean(),
+      patientMerged: schema.enum([false])
+    }),
+    encounterId: uuid,
+    patientId: uuid,
+    reconciliationId: uuid,
+    reconciliationVersion: positiveInteger,
+    status: schema.enum(["accepted_pending_apply", "applied", "rejected"])
+  });
+  const handlerIntegration = {
+    nativeRuntimeEnforcement: "route-parity" as const,
+    transactionOwnership: "pipeline" as const,
+    concurrencyOwnership: "handler" as const,
+    requiredMasterWiring: [
+      "The HTTP mutation coordinator and durable interoperability adapters must reuse one PostgreSQL transaction for replay, conditional versions, domain effects, audit and outbox.",
+      "The interoperability adapter, not the generic version mapper, owns the conditional source and reconciliation version checks.",
+      "Keep core FHIR disabled until the durable adapters and protected-payload KMS key are configured."
+    ]
+  };
+
+  return [
+    defineOperation({
+      operationId: "getFhirR4Capability",
+      checkpoint: "CP16",
+      method: "GET",
+      path: "/v1/fhir/metadata",
+      summary: "Describe the registered ClinicOS FHIR R4 clinical-summary capability",
+      description:
+        "Returns the bounded core FHIR R4 capability only from an authenticated clinic scope.",
+      tags: ["FHIR", "Interoperability"],
+      auth: "bearer",
+      phi: "none",
+      cache: "no-store",
+      request: {
+        path: pathSchema(),
+        query: querySchema(),
+        headers: headersSchema({ auth: "bearer" })
+      },
+      responses: {
+        ...fhirErrors,
+        200: {
+          description: "Registered core FHIR R4 capability statement.",
+          schema: fhirResource,
+          contentType: "application/fhir+json"
+        }
+      },
+      mutation: false,
+      integration: handlerIntegration
+    }),
+    defineOperation({
+      operationId: "getAbdmCapability",
+      checkpoint: "CP16",
+      method: "GET",
+      path: "/v1/abdm/capability",
+      summary: "Report the independently evidenced ABDM activation boundary",
+      description:
+        "Returns unavailable until official validator and sandbox activation evidence exists.",
+      tags: ["ABDM", "Interoperability"],
+      auth: "bearer",
+      phi: "none",
+      cache: "no-store",
+      request: {
+        path: pathSchema(),
+        query: querySchema(),
+        headers: headersSchema({ auth: "bearer" })
+      },
+      responses: {
+        200: { description: "Officially activated ABDM capability.", schema: fhirResource },
+        503: {
+          description: "ABDM remains unregistered without external evidence.",
+          schema: fhirError,
+          contentType: "application/fhir+json",
+          headers: {
+            "Retry-After": {
+              description: "Bounded delta-seconds before retrying the unavailable boundary.",
+              required: false,
+              schema: schema.string({ format: "retry-after-seconds" })
+            }
+          }
+        }
+      },
+      mutation: false,
+      integration: handlerIntegration
+    }),
+    defineOperation({
+      operationId: "exportFhirClinicalSummary",
+      checkpoint: "CP16",
+      method: "POST",
+      path: "/v1/patients/{patientId}/encounters/{encounterId}/fhir/clinical-summary",
+      summary: "Export one consent-bound encounter as a FHIR R4 document",
+      description:
+        "Produces a version-bound, encrypted-at-rest, replayable clinical-summary Bundle.",
+      tags: ["FHIR", "Interoperability"],
+      auth: "bearer",
+      phi: "read",
+      cache: "no-store",
+      request: {
+        path: pathSchema({ patientId: uuid, encounterId: uuid }),
+        query: querySchema(),
+        headers: headersSchema({
+          auth: "bearer",
+          mutation: true,
+          concurrency: true,
+          contentType: "application/json"
+        }),
+        body: {
+          contentType: "application/json",
+          maximumBytes: 16 * 1024,
+          schema: bodySchema({
+            recipient: schema.object(
+              {
+                identifier: schema.string({ minLength: 1, maxLength: 256 }),
+                type: schema.enum(["authorized_organization", "authorized_system"])
+              },
+              ["identifier", "type"]
+            )
+          })
+        }
+      },
+      responses: {
+        ...fhirErrors,
+        200: {
+          description: "Validated FHIR R4 clinical-summary document Bundle.",
+          schema: fhirResource,
+          contentType: "application/fhir+json",
+          headers: {
+            ETag: strongEtag,
+            Digest: {
+              description: "RFC-style base64 SHA-256 digest of the canonical Bundle.",
+              required: true,
+              schema: schema.string({
+                minLength: 52,
+                maxLength: 52,
+                pattern: "^sha-256=[A-Za-z0-9+/]{43}=$"
+              })
+            },
+            "x-clinicos-canonicalization": {
+              description: "Versioned ClinicOS deterministic JSON canonicalization identifier.",
+              required: true,
+              schema: schema.enum(["clinic-os-json-sort-v1"])
+            }
+          }
+        }
+      },
+      mutation: true,
+      optimisticConcurrency: true,
+      integration: handlerIntegration
+    }),
+    defineOperation({
+      operationId: "importFhirClinicalSummary",
+      checkpoint: "CP16",
+      method: "POST",
+      path: "/v1/patients/{patientId}/fhir/clinical-summary-imports",
+      summary: "Stage a bounded FHIR R4 document for exact-match reconciliation",
+      description:
+        "Validates raw FHIR bytes, stores only the encrypted minimized allowlist and never auto-merges a patient.",
+      tags: ["FHIR", "Interoperability"],
+      auth: "bearer",
+      phi: "write",
+      cache: "no-store",
+      request: {
+        path: pathSchema({ patientId: uuid }),
+        query: querySchema(),
+        headers: headersSchema({
+          auth: "bearer",
+          mutation: true,
+          concurrency: true,
+          contentType: "application/fhir+json"
+        }),
+        body: {
+          contentType: "application/fhir+json",
+          maximumBytes: 2 * 1024 * 1024,
+          schema: schema.string({ format: "binary", minLength: 1, maxLength: 2 * 1024 * 1024 })
+        }
+      },
+      responses: {
+        ...fhirErrors,
+        202: {
+          description: "Versioned pending-review or quarantined reconciliation.",
+          schema: reconciliationResult,
+          headers: { ETag: strongEtag }
+        }
+      },
+      mutation: true,
+      optimisticConcurrency: true,
+      integration: handlerIntegration
+    }),
+    defineOperation({
+      operationId: "reviewFhirClinicalSummaryImport",
+      checkpoint: "CP16",
+      method: "POST",
+      path: "/v1/fhir/clinical-summary-imports/{reconciliationId}/review",
+      summary: "Review a versioned FHIR clinical-summary reconciliation",
+      description:
+        "Conditionally applies only the minimized allowlist to the exact matched rows or records a rejection.",
+      tags: ["FHIR", "Interoperability"],
+      auth: "bearer",
+      phi: "write",
+      cache: "no-store",
+      request: {
+        path: pathSchema({ reconciliationId: uuid }),
+        query: querySchema(),
+        headers: headersSchema({
+          auth: "bearer",
+          mutation: true,
+          concurrency: true,
+          contentType: "application/json"
+        }),
+        body: {
+          contentType: "application/json",
+          maximumBytes: 16 * 1024,
+          schema: bodySchema({
+            decision: schema.enum(["accept", "reject"]),
+            reason: schema.string({ minLength: 1, maxLength: 500 })
+          })
+        }
+      },
+      responses: {
+        ...fhirErrors,
+        200: {
+          description: "Completed conditional review decision.",
+          schema: reviewResult,
+          headers: { ETag: strongEtag }
+        }
+      },
+      mutation: true,
+      optimisticConcurrency: true,
+      integration: handlerIntegration
     })
   ];
 }
@@ -3601,7 +3897,9 @@ export function assertNativeHttpContractRegistry(): void {
   }
 
   const conditionalOperations = ACTIVE_NATIVE_HTTP_OPERATIONS.filter(
-    (candidate) => candidate.concurrency.mode === "if-match"
+    (candidate) =>
+      candidate.concurrency.mode === "if-match" &&
+      candidate.integration.concurrencyOwnership === "pipeline"
   ).map((candidate) => candidate.operationId);
   const mappedConditionalOperations = VERSIONED_RESOURCE_RESPONSE_CONTRACTS.map(
     (contract) => contract.updateOperationId

@@ -43,7 +43,7 @@ function collectVersionedResponsePaths(definition: RuntimeSchema, path = ""): st
 }
 
 test("active native registry covers identity/health and every implemented checkpoint", () => {
-  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 130);
+  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 135);
   const checkpoints = new Set(
     ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.checkpoint)
   );
@@ -58,7 +58,8 @@ test("active native registry covers identity/health and every implemented checkp
     "CP8",
     "CP9",
     "CP10",
-    "CP15"
+    "CP15",
+    "CP16"
   ]) {
     assert.ok(checkpoints.has(checkpoint as never), `missing ${checkpoint}`);
   }
@@ -68,7 +69,7 @@ test("active native registry covers identity/health and every implemented checkp
   assert.equal(new Set(routeKeys).size, routeKeys.length);
   assert.equal(
     new Set(ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.operationId)).size,
-    130
+    135
   );
 });
 
@@ -156,7 +157,9 @@ test("versioned public resources require a UUID and positive safe rowVersion wit
 test("all 12 conditional-update families expose versions on canonical records, not projections", () => {
   assert.equal(VERSIONED_RESOURCE_RESPONSE_CONTRACTS.length, 12);
   const conditionalOperationIds = ACTIVE_NATIVE_HTTP_OPERATIONS.filter(
-    (operation) => operation.concurrency.mode === "if-match"
+    (operation) =>
+      operation.concurrency.mode === "if-match" &&
+      operation.integration.concurrencyOwnership === "pipeline"
   )
     .map((operation) => operation.operationId)
     .sort();
@@ -467,8 +470,7 @@ test("Razorpay uses JSON transport while preserving bounded raw bytes before par
     >;
   };
   const content =
-    openapi.paths["/v1/provider-callbacks/razorpay/{registrationKey}"]?.post?.requestBody
-      ?.content;
+    openapi.paths["/v1/provider-callbacks/razorpay/{registrationKey}"]?.post?.requestBody?.content;
   assert.equal(content?.["application/json"]?.schema.format, "binary");
   assert.equal(content?.["application/octet-stream"], undefined);
 });
@@ -749,8 +751,10 @@ test("generation is deterministic and documents deferred workflows without inven
   assert.equal(generatedOperationIds.length, ACTIVE_NATIVE_HTTP_OPERATIONS.length);
   assert.ok(DEFERRED_OR_UNREGISTERED_HTTP_WORKFLOWS.length >= 10);
   assert.equal(
-    ACTIVE_NATIVE_HTTP_OPERATIONS.some((operation) => operation.path.startsWith("/v1/fhir")),
-    false
+    ACTIVE_NATIVE_HTTP_OPERATIONS.filter(
+      (operation) => operation.checkpoint === "CP16" && operation.path.includes("fhir")
+    ).length,
+    4
   );
   assert.equal(getNativeHttpOperation("healthLive").auth, "none");
 });
