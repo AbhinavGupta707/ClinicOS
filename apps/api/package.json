@@ -15,6 +15,7 @@
     "build": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "3.1084.0",
     "@clinic-os/api-contracts": "0.0.0",
     "@clinic-os/auth": "0.0.0",
     "@clinic-os/config": "0.0.0",
