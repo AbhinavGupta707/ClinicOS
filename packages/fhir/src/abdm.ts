@@ -7,6 +7,44 @@ export const REQUIRED_ABDM_CREDENTIAL_KEYS = [
   "cmId"
 ] as const;
 
+export const ABDM_PUBLISHED_FHIR_IG = Object.freeze({
+  canonical: "https://nrces.in/ndhm/fhir/r4",
+  packageId: "ndhm.in",
+  version: "6.5.0",
+  packageSpec: "ndhm.in#6.5.0"
+} as const);
+
+export interface AbdmOfficialActivationEvidence {
+  /** Opaque identifier of the provider-side registration, not a credential. */
+  readonly registrationId: string;
+  readonly environment: "sandbox";
+  readonly igPackage: typeof ABDM_PUBLISHED_FHIR_IG.packageSpec;
+  readonly registeredAt: string;
+  readonly sandboxEvidenceId: string;
+  readonly status: "sandbox_verified";
+  readonly validatorEvidenceId: string;
+  readonly verifiedAt: string;
+}
+
+export interface AbdmCapabilityBoundaryInput {
+  readonly activation: AbdmOfficialActivationEvidence | null;
+  readonly evaluatedAt: string;
+}
+
+export interface AbdmCapabilityBoundaryResult {
+  readonly activationStatus: "sandbox_verified" | "unregistered";
+  readonly availability: "sandbox_only" | "unavailable";
+  readonly evaluatedAt: string;
+  readonly igPackage: typeof ABDM_PUBLISHED_FHIR_IG.packageSpec;
+  readonly liveExchangeAllowed: false;
+  readonly reason:
+    | "official_activation_absent"
+    | "official_activation_invalid"
+    | "production_activation_not_supported"
+    | "sandbox_verified";
+  readonly registered: boolean;
+}
+
 export type AbdmCredentialKey = (typeof REQUIRED_ABDM_CREDENTIAL_KEYS)[number];
 
 export interface AbdmCredentials {
@@ -50,6 +88,7 @@ export interface AbdmReadinessInput {
   credentials: AbdmCredentials;
   evaluatedAt: string;
   featureFlags: AbdmFeatureFlags;
+  officialActivation?: AbdmOfficialActivationEvidence | null;
   patient: AbdmPatientPosture;
 }
 
@@ -149,17 +188,16 @@ export function evaluateAbdmReadiness(input: AbdmReadinessInput): AbdmReadinessR
   }
 
   const configured = missingCredentialKeys.length === 0;
-  const sandboxReady = configured && flags.sandboxActivationApproved === true;
+  const sandboxReady =
+    configured &&
+    flags.sandboxActivationApproved === true &&
+    isValidOfficialActivation(input.officialActivation ?? null);
   const configurationStatus: AbdmConfigurationStatus = !configured
     ? "not_configured"
     : sandboxReady
       ? "sandbox_ready"
       : "sandbox_configured_unapproved";
-  const availabilityStatus: AbdmAvailabilityStatus = sandboxReady
-    ? "sandbox_ready"
-    : configured && flags.simulatorMode
-      ? "simulator_ready"
-      : "unavailable";
+  const availabilityStatus: AbdmAvailabilityStatus = sandboxReady ? "sandbox_ready" : "unavailable";
   const exchangeMode: AbdmExchangeMode = sandboxReady ? "sandbox_only" : "fixture_only";
 
   return {
@@ -206,6 +244,47 @@ export function evaluateAbdmReadiness(input: AbdmReadinessInput): AbdmReadinessR
     missingCredentialKeys,
     notes: readinessNotes(configurationStatus, availabilityStatus),
     simulatorOnly: !sandboxReady
+  };
+}
+
+export function evaluateAbdmCapabilityBoundary(
+  input: AbdmCapabilityBoundaryInput
+): AbdmCapabilityBoundaryResult {
+  if (!validIsoInstant(input.evaluatedAt)) {
+    throw new Error(
+      "ABDM capability evaluation requires an ISO timestamp with an explicit offset."
+    );
+  }
+  if (!input.activation) {
+    return {
+      activationStatus: "unregistered",
+      availability: "unavailable",
+      evaluatedAt: input.evaluatedAt,
+      igPackage: ABDM_PUBLISHED_FHIR_IG.packageSpec,
+      liveExchangeAllowed: false,
+      reason: "official_activation_absent",
+      registered: false
+    };
+  }
+  if (!isValidOfficialActivation(input.activation)) {
+    return {
+      activationStatus: "unregistered",
+      availability: "unavailable",
+      evaluatedAt: input.evaluatedAt,
+      igPackage: ABDM_PUBLISHED_FHIR_IG.packageSpec,
+      liveExchangeAllowed: false,
+      reason: "official_activation_invalid",
+      registered: false
+    };
+  }
+  return {
+    activationStatus: "sandbox_verified",
+    availability: "sandbox_only",
+    evaluatedAt: input.evaluatedAt,
+    igPackage: ABDM_PUBLISHED_FHIR_IG.packageSpec,
+    liveExchangeAllowed: false,
+    reason: "sandbox_verified",
+    registered: true
   };
 }
 
@@ -297,4 +376,27 @@ function readinessNotes(
     ];
   }
   return ["ABDM exchange is unavailable."];
+}
+
+function isValidOfficialActivation(
+  activation: AbdmOfficialActivationEvidence | null
+): activation is AbdmOfficialActivationEvidence {
+  return Boolean(
+    activation &&
+    activation.environment === "sandbox" &&
+    activation.status === "sandbox_verified" &&
+    activation.igPackage === ABDM_PUBLISHED_FHIR_IG.packageSpec &&
+    /^[A-Za-z0-9._:-]{8,128}$/u.test(activation.registrationId) &&
+    /^[A-Za-z0-9._:-]{8,128}$/u.test(activation.sandboxEvidenceId) &&
+    /^[A-Za-z0-9._:-]{8,128}$/u.test(activation.validatorEvidenceId) &&
+    validIsoInstant(activation.registeredAt) &&
+    validIsoInstant(activation.verifiedAt)
+  );
+}
+
+function validIsoInstant(value: string): boolean {
+  return (
+    /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?(?:Z|[+-]\d{2}:\d{2})$/u.test(value) &&
+    Number.isFinite(Date.parse(value))
+  );
 }
