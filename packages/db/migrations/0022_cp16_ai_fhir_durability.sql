@@ -305,6 +305,7 @@ create table cp16_fhir_import_reconciliations (
   tenant_id uuid not null references tenants(id) on delete restrict,
   clinic_id uuid not null,
   patient_id uuid not null,
+  encounter_id uuid not null,
   actor_user_id uuid not null references users(id) on delete restrict,
   status text not null check (
     status in (
@@ -324,12 +325,15 @@ create table cp16_fhir_import_reconciliations (
     payload_encryption_algorithm is null or payload_encryption_algorithm = 'AES-256-GCM'
   ),
   expected_patient_version bigint not null check (expected_patient_version > 0),
+  expected_encounter_version bigint not null check (expected_encounter_version > 0),
   candidate_count integer check (candidate_count is null or candidate_count >= 0),
   quarantine_reason text check (
     quarantine_reason is null
     or quarantine_reason in (
       'ambiguous_exact_match', 'missing_exact_match', 'patient_version_conflict',
-      'target_patient_mismatch'
+      'target_patient_mismatch', 'ambiguous_exact_encounter_match',
+      'encounter_version_conflict', 'missing_exact_encounter_match',
+      'target_encounter_mismatch'
     )
   ),
   review_reason text check (review_reason is null or length(trim(review_reason)) between 1 and 2000),
@@ -345,6 +349,8 @@ create table cp16_fhir_import_reconciliations (
     foreign key (tenant_id, clinic_id) references clinics(tenant_id, id) on delete restrict,
   constraint cp16_fhir_imports_patient_fk
     foreign key (tenant_id, patient_id) references patients(tenant_id, id) on delete restrict,
+  constraint cp16_fhir_imports_encounter_fk
+    foreign key (tenant_id, encounter_id) references encounters(tenant_id, id) on delete restrict,
   constraint cp16_fhir_imports_state_check check (
     (
       status = 'in_progress' and bundle_ciphertext is null and minimized_ciphertext is null
@@ -393,12 +399,46 @@ create trigger cp16_fhir_imports_set_updated_at
 before update on cp16_fhir_import_reconciliations
 for each row execute function clinic_os.set_updated_at();
 
+create table cp16_fhir_applied_summaries (
+  reconciliation_id uuid primary key,
+  tenant_id uuid not null references tenants(id) on delete restrict,
+  clinic_id uuid not null,
+  patient_id uuid not null,
+  encounter_id uuid not null,
+  bundle_digest char(64) not null check (bundle_digest ~ '^[0-9a-f]{64}$'),
+  composition_id text not null check (length(trim(composition_id)) between 1 and 64),
+  composition_status text not null check (composition_status in ('amended', 'final')),
+  composition_date timestamptz not null,
+  source_medication_request_count integer not null
+    check (source_medication_request_count between 0 and 128),
+  applied_by_user_id uuid not null references users(id) on delete restrict,
+  applied_at timestamptz not null,
+  created_at timestamptz not null default now(),
+  unique (tenant_id, clinic_id, reconciliation_id),
+  constraint cp16_fhir_applied_summaries_reconciliation_fk
+    foreign key (tenant_id, clinic_id, reconciliation_id)
+    references cp16_fhir_import_reconciliations(tenant_id, clinic_id, id) on delete restrict,
+  constraint cp16_fhir_applied_summaries_clinic_fk
+    foreign key (tenant_id, clinic_id) references clinics(tenant_id, id) on delete restrict,
+  constraint cp16_fhir_applied_summaries_patient_fk
+    foreign key (tenant_id, patient_id) references patients(tenant_id, id) on delete restrict,
+  constraint cp16_fhir_applied_summaries_encounter_fk
+    foreign key (tenant_id, encounter_id) references encounters(tenant_id, id) on delete restrict
+);
+
+create index cp16_fhir_applied_summaries_encounter_idx
+  on cp16_fhir_applied_summaries
+    (tenant_id, clinic_id, patient_id, encounter_id, applied_at desc);
+
 create table cp16_fhir_exchange_failures (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references tenants(id) on delete restrict,
   clinic_id uuid not null,
   patient_id uuid,
-  reconciliation_id uuid,
+  scope_kind text not null check (scope_kind in ('patient', 'unscoped')),
+  unscoped_subject text check (
+    unscoped_subject is null or unscoped_subject in ('patient_request', 'reconciliation_request')
+  ),
   action text not null check (
     action in ('clinical_summary_export', 'clinical_summary_import', 'clinical_summary_review')
   ),
@@ -411,11 +451,9 @@ create table cp16_fhir_exchange_failures (
     foreign key (tenant_id, clinic_id) references clinics(tenant_id, id) on delete restrict,
   constraint cp16_fhir_failures_patient_fk
     foreign key (tenant_id, patient_id) references patients(tenant_id, id) on delete restrict,
-  constraint cp16_fhir_failures_reconciliation_fk
-    foreign key (tenant_id, clinic_id, reconciliation_id)
-    references cp16_fhir_import_reconciliations(tenant_id, clinic_id, id) on delete restrict,
   constraint cp16_fhir_failures_scope_check check (
-    num_nonnulls(patient_id, reconciliation_id) = 1
+    (scope_kind = 'patient' and patient_id is not null and unscoped_subject is null)
+    or (scope_kind = 'unscoped' and patient_id is null and unscoped_subject is not null)
   )
 );
 
@@ -430,6 +468,8 @@ alter table cp16_fhir_exports enable row level security;
 alter table cp16_fhir_exports force row level security;
 alter table cp16_fhir_import_reconciliations enable row level security;
 alter table cp16_fhir_import_reconciliations force row level security;
+alter table cp16_fhir_applied_summaries enable row level security;
+alter table cp16_fhir_applied_summaries force row level security;
 alter table cp16_fhir_exchange_failures enable row level security;
 alter table cp16_fhir_exchange_failures force row level security;
 
@@ -445,6 +485,9 @@ create policy cp16_fhir_exports_tenant_clinic on cp16_fhir_exports
 create policy cp16_fhir_imports_tenant_clinic on cp16_fhir_import_reconciliations
   using (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id())
   with check (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id());
+create policy cp16_fhir_applied_summaries_tenant_clinic on cp16_fhir_applied_summaries
+  using (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id())
+  with check (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id());
 create policy cp16_fhir_failures_tenant_clinic on cp16_fhir_exchange_failures
   using (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id())
   with check (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id());
@@ -458,15 +501,20 @@ begin
       cp16_fhir_exports,
       cp16_fhir_import_reconciliations
       to clinic_os_runtime;
-    grant select, insert on table cp16_fhir_exchange_failures to clinic_os_runtime;
+    grant select, insert on table
+      cp16_fhir_applied_summaries,
+      cp16_fhir_exchange_failures
+      to clinic_os_runtime;
     revoke delete, truncate on table
       cp16_ai_invocations,
       cp16_ai_usage_reservations,
       cp16_fhir_exports,
       cp16_fhir_import_reconciliations,
+      cp16_fhir_applied_summaries,
       cp16_fhir_exchange_failures
       from clinic_os_runtime;
-    revoke update on table cp16_fhir_exchange_failures from clinic_os_runtime;
+    revoke update on table cp16_fhir_applied_summaries, cp16_fhir_exchange_failures
+      from clinic_os_runtime;
   end if;
 end
 $$;
@@ -479,5 +527,7 @@ comment on table cp16_fhir_exports is
   'Forced-RLS idempotent FHIR R4 document exports with application-encrypted replay payloads.';
 comment on table cp16_fhir_import_reconciliations is
   'Forced-RLS exact-patient FHIR import review state. Application is conditional and cannot merge, create or relink a patient.';
+comment on table cp16_fhir_applied_summaries is
+  'Immutable reviewed FHIR clinical-summary evidence linked to an existing patient and encounter; it does not execute prescriptions or overwrite signed records.';
 comment on table cp16_fhir_exchange_failures is
   'Append-only, tenant/clinic-scoped interoperability failure evidence without raw payloads or request identifiers.';

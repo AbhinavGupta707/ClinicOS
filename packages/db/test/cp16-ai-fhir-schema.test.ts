@@ -37,6 +37,7 @@ test("CP16 FHIR persistence quarantines imports and never grants destructive run
   for (const table of [
     "cp16_fhir_exports",
     "cp16_fhir_import_reconciliations",
+    "cp16_fhir_applied_summaries",
     "cp16_fhir_exchange_failures"
   ]) {
     assert.match(migration, new RegExp(`create table ${table}`, "u"));
@@ -44,11 +45,16 @@ test("CP16 FHIR persistence quarantines imports and never grants destructive run
   }
   assert.match(migration, /'pending_review', 'quarantined', 'accepted_pending_apply'/u);
   assert.match(migration, /expected_patient_version bigint not null/u);
+  assert.match(migration, /expected_encounter_version bigint not null/u);
   assert.match(migration, /row_version bigint not null default 1/u);
   assert.match(migration, /bundle_ciphertext bytea/u);
   assert.match(migration, /minimized_ciphertext bytea/u);
-  assert.match(migration, /num_nonnulls\(patient_id, reconciliation_id\) = 1/u);
+  assert.match(migration, /scope_kind = 'unscoped' and patient_id is null/u);
+  assert.match(migration, /source_medication_request_count integer not null/u);
   assert.match(migration, /revoke delete, truncate on table/u);
-  assert.match(migration, /revoke update on table cp16_fhir_exchange_failures/u);
+  assert.match(
+    migration,
+    /revoke update on table cp16_fhir_applied_summaries, cp16_fhir_exchange_failures/u
+  );
   assert.doesNotMatch(migration, /merge_patient|create_patient|relink_patient/u);
 });
