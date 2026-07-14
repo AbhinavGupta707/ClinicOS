@@ -49,6 +49,10 @@ test("CP16 FHIR persistence quarantines imports and never grants destructive run
   assert.match(migration, /row_version bigint not null default 1/u);
   assert.match(migration, /bundle_ciphertext bytea/u);
   assert.match(migration, /minimized_ciphertext bytea/u);
+  assert.doesNotMatch(
+    migration,
+    /create table cp16_fhir_import_reconciliations[\s\S]*?bundle_ciphertext bytea[\s\S]*?create index cp16_fhir_imports_review_idx/u
+  );
   assert.match(migration, /scope_kind = 'unscoped' and patient_id is null/u);
   assert.match(migration, /source_medication_request_count integer not null/u);
   assert.match(migration, /revoke delete, truncate on table/u);

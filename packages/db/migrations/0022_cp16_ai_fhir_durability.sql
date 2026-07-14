@@ -316,7 +316,6 @@ create table cp16_fhir_import_reconciliations (
   idempotency_key_digest char(64) not null check (idempotency_key_digest ~ '^[0-9a-f]{64}$'),
   request_digest char(64) not null check (request_digest ~ '^[0-9a-f]{64}$'),
   bundle_digest char(64) not null check (bundle_digest ~ '^[0-9a-f]{64}$'),
-  bundle_ciphertext bytea,
   minimized_ciphertext bytea,
   payload_encryption_key_ref text check (
     payload_encryption_key_ref is null or length(payload_encryption_key_ref) between 20 and 2048
@@ -353,7 +352,7 @@ create table cp16_fhir_import_reconciliations (
     foreign key (tenant_id, encounter_id) references encounters(tenant_id, id) on delete restrict,
   constraint cp16_fhir_imports_state_check check (
     (
-      status = 'in_progress' and bundle_ciphertext is null and minimized_ciphertext is null
+      status = 'in_progress' and minimized_ciphertext is null
       and payload_encryption_key_ref is null and payload_encryption_algorithm is null
       and candidate_count is null and quarantine_reason is null
       and review_reason is null and reviewed_by_user_id is null and reviewed_at is null
@@ -361,7 +360,6 @@ create table cp16_fhir_import_reconciliations (
     )
     or (
       status in ('pending_review', 'quarantined')
-      and bundle_ciphertext is not null and octet_length(bundle_ciphertext) between 1 and 8388608
       and minimized_ciphertext is not null and octet_length(minimized_ciphertext) between 1 and 2097152
       and payload_encryption_key_ref is not null
       and payload_encryption_algorithm = 'AES-256-GCM'
@@ -375,7 +373,7 @@ create table cp16_fhir_import_reconciliations (
     )
     or (
       status in ('accepted_pending_apply', 'applied', 'rejected')
-      and bundle_ciphertext is not null and minimized_ciphertext is not null
+      and minimized_ciphertext is not null
       and payload_encryption_key_ref is not null
       and payload_encryption_algorithm = 'AES-256-GCM'
       and candidate_count is not null and review_reason is not null
@@ -383,7 +381,7 @@ create table cp16_fhir_import_reconciliations (
       and lease_expires_at is null
     )
     or (
-      status = 'failed' and bundle_ciphertext is null and minimized_ciphertext is null
+      status = 'failed' and minimized_ciphertext is null
       and payload_encryption_key_ref is null and payload_encryption_algorithm is null
       and review_reason is null and reviewed_by_user_id is null and reviewed_at is null
       and lease_expires_at is null
@@ -526,7 +524,7 @@ comment on table cp16_ai_usage_reservations is
 comment on table cp16_fhir_exports is
   'Forced-RLS idempotent FHIR R4 document exports with application-encrypted replay payloads.';
 comment on table cp16_fhir_import_reconciliations is
-  'Forced-RLS exact-patient FHIR import review state. Application is conditional and cannot merge, create or relink a patient.';
+  'Forced-RLS exact-patient FHIR import review state. Only the minimized allowlist is encrypted and retained; the raw import is never persisted. Application is conditional and cannot merge, create or relink a patient.';
 comment on table cp16_fhir_applied_summaries is
   'Immutable reviewed FHIR clinical-summary evidence linked to an existing patient and encounter; it does not execute prescriptions or overwrite signed records.';
 comment on table cp16_fhir_exchange_failures is

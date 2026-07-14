@@ -11,7 +11,7 @@ const context = {
   tenantId: "10000000-0000-4000-8000-000000000001",
   clinicId: "10000000-0000-4000-8000-000000000101",
   patientId: "10000000-0000-4000-8000-000000001001",
-  resourceType: "fhir_import_bundle" as const,
+  resourceType: "fhir_import_minimized" as const,
   resourceId: "10000000-0000-4000-8000-000000002001"
 };
 

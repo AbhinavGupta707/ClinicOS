@@ -13,8 +13,7 @@ export interface Cp16ProtectedPayloadContext {
   readonly tenantId: string;
   readonly clinicId: string;
   readonly patientId: string;
-  readonly resourceType:
-    "ai_invocation_result" | "fhir_export" | "fhir_import_bundle" | "fhir_import_minimized";
+  readonly resourceType: "ai_invocation_result" | "fhir_export" | "fhir_import_minimized";
   readonly resourceId: string;
 }
 
