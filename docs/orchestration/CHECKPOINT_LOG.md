@@ -1199,3 +1199,6 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 - Local implementation is eligible for promotion. CP16 E4/full exit, physical/signed devices, live
   Fireworks approval/evals, deployed KMS/provider paths and ABDM sandbox remain open. The release is
   NO-GO and CP17 must not start from this result.
+- Promotion merge `bce3de3870d2156295f7e0e93b0c5cc067c3f7f0` advanced `main` from the frozen CP15
+  baseline. The complete check/type/lint/test/build/secret-scan sequence passed again after
+  promotion. User-owned research remained untouched.

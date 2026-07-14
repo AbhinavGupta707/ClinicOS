@@ -5,6 +5,8 @@ and the product release **NO-GO**.
 
 **Implementation candidate:** `1553507e92a5acd701f8e0817d8bb90c65ba98e7`
 
+**Promotion merge:** `bce3de3870d2156295f7e0e93b0c5cc067c3f7f0` on `main`
+
 **Evidence:** `docs/qa/checkpoint-16-evidence.md`
 
 **Threat delta:** `docs/security/checkpoint-16-threat-model-delta.md`
@@ -35,6 +37,8 @@ moderate transitive Next/Expo advisories remain recorded without an unsafe force
 
 No physical device, live Fireworks credential, deployed AWS/KMS path, ABDM sandbox, real PHI or
 external provider action was used.
+
+The complete executable repository gate passed again after promotion.
 
 ## Remaining authority gates
 

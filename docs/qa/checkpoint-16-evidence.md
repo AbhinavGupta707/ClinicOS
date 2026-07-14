@@ -11,6 +11,8 @@ evaluation, deployed KMS/cloud paths, and ABDM sandbox evidence remain open. The
 
 **Branch:** `codex/integration/checkpoint-16`
 
+**Promotion merge:** `bce3de3870d2156295f7e0e93b0c5cc067c3f7f0` on `main`
+
 ## Implemented boundaries
 
 ### Native mobile
@@ -105,6 +107,7 @@ URIs. They are not profile, terminology, graph or cardinality warnings.
 5. No real PHI, patient audio, provider dashboard, external message/payment/call or national-health
    exchange action occurred.
 
-The candidate is eligible for local promotion under the existing owner deferral because every
-external boundary fails closed and later code may consume the stable contracts. Promotion does not
-close the CP16 E4/full exit gate or authorize CP17.
+The candidate was promoted locally under the existing owner deferral because every external
+boundary fails closed and later code may consume the stable contracts. The complete check,
+typecheck, lint, test, build and secret-scan sequence passed again after promotion. Promotion does
+not close the CP16 E4/full exit gate or authorize CP17.

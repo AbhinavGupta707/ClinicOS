@@ -1,6 +1,6 @@
 # Checkpoint 16 — Native Mobile, AI/Scribe and Interoperability
 
-**Status:** Local implementation candidate complete at E3; official core R4 validator passes; device/live-provider/ABDM E4 evidence remains separately gated
+**Status:** Local E3 implementation promoted to `main`; official core R4 validator passes; device/live-provider/ABDM E4 evidence remains separately gated
 **Evidence target:** E4 physical-device/provider/validator
 **Workers:** provisionally two to three initial boundary worktrees; only activated, independently progressable boundaries launch
 **Primary findings:** PRR-004, 005, 021-023
