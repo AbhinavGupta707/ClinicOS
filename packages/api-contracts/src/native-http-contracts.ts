@@ -1216,7 +1216,8 @@ function cp3Operations(): HttpOperationContract[] {
     "photo_capture",
     "photo_sharing",
     "abdm_abha",
-    "procedure_treatment"
+    "procedure_treatment",
+    "clinical_data_exchange"
   ] as const;
   const captureMethods = [
     "digital_patient",

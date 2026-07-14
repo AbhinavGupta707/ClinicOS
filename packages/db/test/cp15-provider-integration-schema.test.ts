@@ -17,7 +17,7 @@ const cp13ActivityPorts = readFileSync(
 );
 
 test("CP15 schema registers only secret references behind a forced-RLS callback resolver", () => {
-  assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "021");
+  assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "022");
   assert.match(migration, /create table provider_callback_registrations/u);
   assert.match(migration, /create table provider_callback_routes/u);
   assert.match(migration, /callback_key_digest char\(64\) not null unique/u);

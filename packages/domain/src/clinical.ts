@@ -45,7 +45,8 @@ export const CONSENT_PURPOSES = [
   "photo_capture",
   "photo_sharing",
   "abdm_abha",
-  "procedure_treatment"
+  "procedure_treatment",
+  "clinical_data_exchange"
 ] as const;
 export type ConsentPurpose = (typeof CONSENT_PURPOSES)[number];
 
@@ -59,10 +60,7 @@ export type ConsentCaptureMethod = (typeof CONSENT_CAPTURE_METHODS)[number];
 
 export type ConsentStatus = "active" | "revoked";
 export type ConsentBlockReason =
-  | "consent_granted"
-  | "consent_missing"
-  | "consent_revoked"
-  | "consent_not_yet_effective";
+  "consent_granted" | "consent_missing" | "consent_revoked" | "consent_not_yet_effective";
 
 export interface ConsentRecord {
   id: UUID;
@@ -383,13 +381,11 @@ export function buildConsentEnforcementState(
     evaluatedAt,
     activePurposes,
     revokedPurposes,
-    treatmentAllowed:
-      active.has("treatment_registration") || active.has("procedure_treatment"),
+    treatmentAllowed: active.has("treatment_registration") || active.has("procedure_treatment"),
     whatsappCommunicationAllowed: active.has("whatsapp_communication"),
     marketingRecallAllowed: active.has("marketing_recall"),
     aiAudioCaptureAllowed: active.has("ai_audio_capture"),
-    rawAudioRetentionAllowed:
-      active.has("ai_audio_capture") && active.has("raw_audio_retention"),
+    rawAudioRetentionAllowed: active.has("ai_audio_capture") && active.has("raw_audio_retention"),
     photoCaptureAllowed: active.has("photo_capture"),
     photoSharingAllowed: active.has("photo_capture") && active.has("photo_sharing"),
     abdmAbhaAllowed: active.has("abdm_abha")
@@ -451,7 +447,9 @@ export function evaluateAiAudioReadiness(
   };
 }
 
-function latestConsentByPurpose(consents: readonly ConsentRecord[]): Map<ConsentPurpose, ConsentRecord> {
+function latestConsentByPurpose(
+  consents: readonly ConsentRecord[]
+): Map<ConsentPurpose, ConsentRecord> {
   const latestByPurpose = new Map<ConsentPurpose, ConsentRecord>();
 
   for (const consent of consents) {
