@@ -55,14 +55,14 @@ A finding closes only when all of the following exist:
 
 ### PRR-004 — Native photo and audio capture are intentionally unavailable (P1)
 
-- **Evidence:** the default photo provider throws an unavailable error (`apps/mobile/src/features/capture/adapters/photoCaptureProvider.ts:42-45`); audio is hardcoded unavailable (`apps/mobile/src/features/shell/MobileShellScreen.tsx:26-30`); required native packages are absent (`apps/mobile/package.json:15-28`).
+- **Evidence:** superseded at local E3 by CP16 candidate `1553507e`: Expo Camera/Audio, explicit permission and action-time consent state machines, native/web availability truth, bounded capture and interruption behavior pass deterministic tests and native build checks. No representative physical-device or signed-distribution evidence exists (`docs/qa/checkpoint-16-evidence.md`).
 - **Risk:** chairside media and consented recording workflows cannot operate on supported devices.
 - **Remediation:** CP16 must implement approved Expo camera/audio providers, runtime permission flows, consent enforcement, capture cancellation/retry, foreground/background behavior, metadata minimization, and device capability diagnostics. Audio stays disabled unless active consent and policy allow it.
 - **Closure evidence:** physical iOS and Android device tests, denied/revoked permission tests, consent transition tests, upload/retry/offline tests, and distribution build evidence.
 
 ### PRR-005 — Mobile “secure” capture cache is memory-only (P1)
 
-- **Evidence:** `InMemorySecureCaptureCache` stores bytes and queue state in process memory (`apps/mobile/src/features/capture/secureCache.ts:7-29`) and is used by the shell (`MobileShellScreen.tsx:37-40`).
+- **Evidence:** superseded at local E3 by CP16 candidate `1553507e`: authenticated encrypted app-private media, protected keys/tokens, SQLCipher queue state, stable idempotency, process recovery and verified purge are implemented and tested. Physical storage/backup, reboot, low-storage and lost-device evidence remains open (`docs/qa/checkpoint-16-evidence.md`).
 - **Risk:** captures disappear on process death; offline retry is not durable; an eventual naïve persistence implementation could leak PHI.
 - **Remediation:** encrypted application-private file storage for media, SecureStore/Keychain/Keystore for key material and tokens, authenticated metadata encryption, TTL and post-upload secure deletion, device backup exclusion, logout/revocation purge, low-storage handling, and remote-session invalidation.
 - **Closure evidence:** process-kill/reboot/offline recovery, logout purge, storage inspection, tamper/corruption tests, and lost/stolen device threat tests.
@@ -174,14 +174,14 @@ A finding closes only when all of the following exist:
 
 ### PRR-021 — AI/STT is simulator-only and has no approved production data path (P1 if enabled)
 
-- **Evidence:** live AI/STT keys, endpoints/model approvals, residency, no-training/no-retention contract evidence, and live evaluation were absent. CP8 correctly kept clinical application deferred.
+- **Evidence:** CP16 candidate `1553507e` implements a durable server-only Fireworks text/STT gateway with exact task/model/evaluation binding, consent, minimization, structured review-only output, independent safety review, KMS-protected results, forced-RLS usage controls, provenance, kill switch and PHI-free metrics. Live keys were intentionally absent; vendor/legal/no-retention/residency approval and live clinical evaluations remain open, so activation fails closed (`docs/qa/checkpoint-16-evidence.md`).
 - **Risk:** PHI disclosure, hallucinated clinical content, unreviewed record mutation, uncontrolled cost, and irreproducible output.
 - **Remediation:** keep feature unreachable until CP16 approves provider/legal/data path; gateway with allowlisted models/regions, data minimization, consent, retention controls, prompt/version provenance, structured schemas, safety/effectiveness evals, monitoring, kill switch, cost limits, and mandatory clinician review/signature. AI never signs or autonomously prescribes/bills/messages.
 - **Closure evidence:** approved DPIA/vendor terms, E4 red-team/eval thresholds, human factors test, consent/revocation, failure/fallback, and audit provenance.
 
 ### PRR-022 — FHIR/ABDM interoperability is a projection foundation, not a live workflow (P1 if enabled)
 
-- **Evidence:** FHIR package/fixtures exist; no live FHIR API route is claimed and ABDM credentials/approvals are absent.
+- **Evidence:** CP16 candidate `1553507e` implements authenticated/durable core FHIR R4 clinical-summary export/import/review with exact scope/version/consent, bounded graph validation, identity quarantine, atomic reconciliation and generated contracts. The synthetic document passes official HL7 Validator CLI `6.9.11` against R4 core with 0 errors/0 warnings. ABDM remains unregistered/unavailable and no deployed peer/sandbox evidence exists (`docs/qa/checkpoint-16-evidence.md`).
 - **Risk:** overstating interoperability can create clinical/legal expectations; partial exports can be incomplete or misidentified.
 - **Remediation:** implement and validate only a selected complete export/exchange scope; terminology/profile validation; patient matching; consent; provenance; idempotency; retry/reconciliation; authorized official ABDM sandbox/production path. Otherwise keep the workflow wholly unavailable.
 - **Closure evidence:** official validator and sandbox results, round-trip reconciliation, negative consent/identity tests, and signed clinical review.
@@ -249,8 +249,8 @@ A finding closes only when all of the following exist:
 | PRR-001 migrations/database                  | P1       | CP11          | Partial: E3 local closed; E4/E5 open                                        | Hard                       |
 | PRR-002 deterministic time/tests             | P1       | CP11          | Closed at E3                                                                | Hard                       |
 | PRR-003 live smoke runtime IDs               | P1       | CP11          | Partial: E3 closed; E4 open                                                 | Hard                       |
-| PRR-004 native capture                       | P1       | CP16          | Open                                                                        | Hard if mobile enabled     |
-| PRR-005 encrypted durable mobile cache       | P1       | CP16          | Open                                                                        | Hard if mobile enabled     |
+| PRR-004 native capture                       | P1       | CP16          | Implemented at local E3; physical-device E4 open                            | Hard if mobile enabled     |
+| PRR-005 encrypted durable mobile cache       | P1       | CP16          | Implemented at local E3; physical storage/recovery E4 open                  | Hard if mobile enabled     |
 | PRR-006 deployable cloud                     | P1       | CP14          | Open                                                                        | Hard                       |
 | PRR-007 telemetry/alerts                     | P1       | CP14          | Open                                                                        | Hard                       |
 | PRR-008 official provider activation         | P1       | CP15          | Partial: local E3 boundaries/reconciliation complete; official E4 open      | Hard for enabled provider  |
@@ -266,8 +266,8 @@ A finding closes only when all of the following exist:
 | PRR-018 vulnerability management             | P1       | CP14/CP17     | Open                                                                        | Hard                       |
 | PRR-019 immutable audit/privileged access    | P1       | CP14          | Open                                                                        | Hard                       |
 | PRR-020 lifecycle/cryptographic operations   | P1       | CP14          | Open                                                                        | Hard                       |
-| PRR-021 approved AI/STT path                 | P1       | CP16          | Open                                                                        | Hard if AI enabled         |
-| PRR-022 live FHIR/ABDM scope                 | P1       | CP16          | Open                                                                        | Hard if enabled            |
+| PRR-021 approved AI/STT path                 | P1       | CP16          | Implemented fail-closed at E3; live legal/eval/provider E4 open             | Hard if AI enabled         |
+| PRR-022 live FHIR/ABDM scope                 | P1       | CP16          | Core FHIR implemented/validated locally; peer/ABDM E4 open                  | Hard if enabled            |
 | PRR-023 mobile release/device controls       | P1       | CP16          | Open                                                                        | Hard if mobile enabled     |
 | PRR-024 SLO/capacity/resilience/incident ops | P1       | CP14/CP17     | Open                                                                        | Hard                       |
 | PRR-025 accurate readiness governance        | P1       | Docs/CP11     | Partial: CP10 corrected; production approvals open                          | Hard                       |
@@ -373,6 +373,28 @@ Implementation candidate: `f1cfe7bb`; evidence: `docs/qa/checkpoint-15-evidence.
   advisories remain; the high-severity audit and secret scan pass.
 - The release remains NO-GO. No AWS/DNS/provider dashboard, live credential, real message/payment/
   call, PHI, official sandbox or deployed alert/recovery evidence was created.
+
+### CP16 local implementation status delta — 2026-07-14
+
+Implementation candidate: `1553507e`; evidence: `docs/qa/checkpoint-16-evidence.md`; threat delta:
+`docs/security/checkpoint-16-threat-model-delta.md`.
+
+- PRR-004/005 are implemented at local E3 with native capture, explicit permission/consent,
+  encrypted app-private storage, protected key/token material, SQLCipher recovery, idempotent
+  delivery and verified purge. They remain open at the required E4 tier because no signed physical-
+  device matrix, storage inspection, reboot/low-storage or lost-device exercise exists.
+- PRR-021 is implemented as a fail-closed Fireworks text/STT path. Exact task/model/evaluation
+  binding, review-only safety, consent, durable protected results, cost/concurrency controls and
+  kill switch pass locally. Vendor/legal/no-retention/residency approval, service-account rotation,
+  live model availability and clinical evaluations remain hard activation gates.
+- PRR-022 core FHIR R4 export/import/reconciliation passes local durable tests and official HL7
+  Validator CLI `6.9.11` with 0 errors/0 warnings. Deployed peer exchange, clinical receiving review
+  and ABDM `ndhm.in#6.5.0` sandbox evidence remain open; ABDM stays unregistered/unavailable.
+- PRR-023 remains open. Internal build configuration and unsigned simulator/native build evidence
+  exist, but signed distribution and representative physical-device evidence do not.
+- Full local checks/types/lint/tests/builds, high-severity audit, secret scan and real PostgreSQL
+  migration/AI durability pass. Twelve moderate transitive advisories remain tracked. The release
+  remains NO-GO; no live credential, PHI, device, cloud/KMS or national exchange action occurred.
 
 ## 5. Remediation Dependency Order
 

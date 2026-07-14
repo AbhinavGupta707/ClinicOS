@@ -1,6 +1,6 @@
 # Checkpoint 16 — Native Mobile, AI/Scribe and Interoperability
 
-**Status:** Active local E1/E3 implementation from the promoted CP15 baseline; device/provider/validator E4 evidence remains separately gated
+**Status:** Local implementation candidate complete at E3; official core R4 validator passes; device/live-provider/ABDM E4 evidence remains separately gated
 **Evidence target:** E4 physical-device/provider/validator
 **Workers:** provisionally two to three initial boundary worktrees; only activated, independently progressable boundaries launch
 **Primary findings:** PRR-004, 005, 021-023
@@ -30,9 +30,10 @@ Complete the selected native capture, AI/STT and FHIR/ABDM boundaries without ex
   review, DeepSeek V4 Flash for bounded extraction/classification, Kimi K2.6 for long-context
   summarization, Qwen3 Embedding 8B and Qwen3 Reranker 8B for retrieval. These are candidates, not
   clinical approval: a route cannot activate until its versioned per-task evaluation gate passes.
-- Physical-device, signed distribution, live Fireworks, official FHIR validator and ABDM sandbox
-  evidence cannot be fabricated. The corresponding E4 gates remain open while their production
-  code, deterministic contract tests and honest unavailable states are completed.
+- Physical-device, signed distribution, live Fireworks and ABDM sandbox evidence cannot be
+  fabricated. The integrated synthetic core document now passes the official HL7 R4 validator with
+  zero errors/warnings; deployed peer and ABDM evidence remain open while every unavailable path
+  stays fail closed.
 - User-owned untracked `research/` and `scripts/research/` are out of scope and must remain
   untouched.
 
@@ -84,11 +85,11 @@ Launch only the mobile, AI/STT and FHIR/ABDM candidates that can make material p
 
 ### Conflict and ownership matrix
 
-| Surface | Worker ownership | Master-only integration |
-| --- | --- | --- |
-| Native capture | `apps/mobile/**` | root lockfile/workspace scripts, evidence truth and signed external distribution |
-| AI/STT | new namespaced CP16 AI/STT domain/integration/API/eval files and focused tests | shared barrels, config/env, canonical migrations, route registry/bootstrap, provider secret wiring and activation |
-| FHIR/ABDM | `packages/fhir/**`, new namespaced interoperability API files and focused tests | shared contracts/bootstrap, canonical migration, consent/audit registry and external validator/sandbox evidence |
+| Surface        | Worker ownership                                                                | Master-only integration                                                                                           |
+| -------------- | ------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
+| Native capture | `apps/mobile/**`                                                                | root lockfile/workspace scripts, evidence truth and signed external distribution                                  |
+| AI/STT         | new namespaced CP16 AI/STT domain/integration/API/eval files and focused tests  | shared barrels, config/env, canonical migrations, route registry/bootstrap, provider secret wiring and activation |
+| FHIR/ABDM      | `packages/fhir/**`, new namespaced interoperability API files and focused tests | shared contracts/bootstrap, canonical migration, consent/audit registry and external validator/sandbox evidence   |
 
 Workers cannot edit root manifests, `package-lock.json`, shared environment/configuration,
 canonical migrations, generated contracts, API bootstrap/route registry, security/readiness

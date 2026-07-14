@@ -23,7 +23,7 @@ npm --workspace @clinic-os/fhir run typecheck
 npm --workspace @clinic-os/fhir test
 ```
 
-`officialFhirR4ValidatorCommand()` returns the command contract for the official HL7 Validator CLI with `hl7.fhir.r4.core#4.0.1`. `officialAbdmValidatorCommand()` separately adds `ndhm.in#6.5.0`. These command contracts are marked `E4_pending`: no official validator runtime/evidence exists in this worktree, so local validation is not official conformance evidence.
+`officialFhirR4ValidatorCommand()` returns the command contract for the official HL7 Validator CLI with `hl7.fhir.r4.core#4.0.1`. `officialAbdmValidatorCommand()` separately adds `ndhm.in#6.5.0`. The integrated synthetic clinical summary passes official HL7 Validator CLI `6.9.11` against core R4 with zero errors and zero warnings; the exact command and artifact digest are recorded in `docs/qa/checkpoint-16-evidence.md`. The command contracts retain `E4_pending` because this local core result is not deployed peer-exchange, clinical sign-off or ABDM evidence.
 
 The current published ABDM FHIR IG target is pinned to `ndhm.in#6.5.0`; the visible 7.0.0 preview/local-development build is not an activation target. ABDM remains unregistered and unavailable unless exact official package validation plus official sandbox registration evidence is supplied through the typed activation boundary. Credentials or feature flags alone never activate it, and production ABDM exchange is not implemented.
 

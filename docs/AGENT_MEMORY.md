@@ -410,3 +410,28 @@ Update these during orchestration:
 - Before external activation, reopen AWS/DNS authority, deploy the exact revision, register official
   provider sandboxes, run the full signed event/outage/rotation matrix and update PRR-008/026 only
   from E4 evidence.
+
+## CP16 Integration Memory
+
+- CP16 local implementation candidate `1553507e` contains native capture/offline delivery,
+  Fireworks AI/STT and core FHIR R4 exchange. Its local baseline may be promoted, but physical/live-
+  provider/ABDM E4 remains open and the release remains NO-GO.
+- Native capture authority is the conjunction of device permission, verified session/scope and
+  action-time consent. Media/metadata stay encrypted in app-private storage; delivery uses stable
+  three-phase idempotency and explicit outcome uncertainty. Delete tokens and verify DB/WAL/SHM/
+  media removal before destroying keys.
+- Fireworks is server-only and fail closed. Exact task/model/prompt/schema/evaluation evidence is
+  activation state, not a recommendation. Never silently substitute models or quality tiers. A key
+  alone does not satisfy vendor/legal/no-retention/residency, budget or clinical-evaluation gates.
+- Fireworks Whisper V3/Turbo supplies the initial STT path; do not add a second vendor absent a
+  measured requirement. Audio URLs, provider tools, retained Responses state, chain-of-thought and
+  raw PHI telemetry are forbidden.
+- AI claims/results/usage use forced RLS, KMS-protected payloads, transaction-bound audit/outbox and
+  injected clocks. Preserve the CP11 clock guard; no application/PostgreSQL adapter may create its
+  own system-time default.
+- Core FHIR uses closed URN-linked R4 document graphs, standard terminology, action-time consent,
+  exact identity/version matching and quarantine-first import. Official core validation is 0/0, but
+  ABDM stays unregistered/unavailable until exact package plus sandbox evidence exists.
+- Before external activation, obtain physical signed-device evidence, Fireworks contract/region/
+  evaluation/key-rotation approval, deployed KMS/telemetry and authorized ABDM/peer evidence. Do not
+  start CP17 while the cloud and real-clinic prerequisites remain blocked.
