@@ -6,7 +6,11 @@ import {
 import {
   CLINIC_OS_IDENTIFIER_SYSTEMS,
   CLINIC_OS_INTEROPERABILITY_ACTIVITY_SYSTEM,
+  CLINIC_OS_INTEROPERABILITY_CONSENT_POLICY,
   CLINIC_OS_INTEROPERABILITY_PURPOSE_SYSTEM,
+  HL7_CONSENT_ACTION_SYSTEM,
+  HL7_DATA_OPERATION_SYSTEM,
+  HL7_PURPOSE_OF_USE_SYSTEM,
   patientIdentifierSystem
 } from "./clinical-summary.ts";
 import { ClinicOsFhirError, type ClinicOsFhirIssueInput } from "./operation-outcome.ts";
@@ -71,6 +75,7 @@ const IMPORT_FIELD_NAMES = fields(
   "agent",
   "appointment",
   "attachment",
+  "authority",
   "author",
   "authoredOn",
   "birthDate",
@@ -141,6 +146,7 @@ const IMPORT_FIELD_NAMES = fields(
   "text",
   "title",
   "type",
+  "uri",
   "url",
   "use",
   "value",
@@ -152,6 +158,9 @@ const ALLOWED_SYSTEMS = new Set([
   ...Object.values(CLINIC_OS_IDENTIFIER_SYSTEMS),
   CLINIC_OS_INTEROPERABILITY_ACTIVITY_SYSTEM,
   CLINIC_OS_INTEROPERABILITY_PURPOSE_SYSTEM,
+  HL7_CONSENT_ACTION_SYSTEM,
+  HL7_DATA_OPERATION_SYSTEM,
+  HL7_PURPOSE_OF_USE_SYSTEM,
   "http://hl7.org/fhir/resource-types",
   "http://loinc.org",
   "http://terminology.hl7.org/CodeSystem/consentscope",
@@ -166,6 +175,7 @@ const RESOURCE_FIELDS: Readonly<Record<FhirResource["resourceType"], ReadonlySet
     "resourceType",
     "id",
     "meta",
+    "text",
     "identifier",
     "status",
     "type",
@@ -181,6 +191,7 @@ const RESOURCE_FIELDS: Readonly<Record<FhirResource["resourceType"], ReadonlySet
     "resourceType",
     "id",
     "meta",
+    "text",
     "identifier",
     "status",
     "scope",
@@ -188,6 +199,7 @@ const RESOURCE_FIELDS: Readonly<Record<FhirResource["resourceType"], ReadonlySet
     "patient",
     "dateTime",
     "performer",
+    "policy",
     "organization",
     "provision"
   ),
@@ -195,6 +207,7 @@ const RESOURCE_FIELDS: Readonly<Record<FhirResource["resourceType"], ReadonlySet
     "resourceType",
     "id",
     "meta",
+    "text",
     "identifier",
     "status",
     "docStatus",
@@ -212,6 +225,7 @@ const RESOURCE_FIELDS: Readonly<Record<FhirResource["resourceType"], ReadonlySet
     "resourceType",
     "id",
     "meta",
+    "text",
     "identifier",
     "status",
     "class",
@@ -226,6 +240,7 @@ const RESOURCE_FIELDS: Readonly<Record<FhirResource["resourceType"], ReadonlySet
     "resourceType",
     "id",
     "meta",
+    "text",
     "identifier",
     "status",
     "intent",
@@ -237,11 +252,21 @@ const RESOURCE_FIELDS: Readonly<Record<FhirResource["resourceType"], ReadonlySet
     "dosageInstruction",
     "note"
   ),
-  Organization: fields("resourceType", "id", "meta", "identifier", "active", "name", "partOf"),
+  Organization: fields(
+    "resourceType",
+    "id",
+    "meta",
+    "text",
+    "identifier",
+    "active",
+    "name",
+    "partOf"
+  ),
   Patient: fields(
     "resourceType",
     "id",
     "meta",
+    "text",
     "identifier",
     "active",
     "name",
@@ -250,11 +275,21 @@ const RESOURCE_FIELDS: Readonly<Record<FhirResource["resourceType"], ReadonlySet
     "managingOrganization",
     "telecom"
   ),
-  Practitioner: fields("resourceType", "id", "meta", "identifier", "active", "name", "telecom"),
+  Practitioner: fields(
+    "resourceType",
+    "id",
+    "meta",
+    "text",
+    "identifier",
+    "active",
+    "name",
+    "telecom"
+  ),
   Provenance: fields(
     "resourceType",
     "id",
     "meta",
+    "text",
     "identifier",
     "target",
     "occurredDateTime",
@@ -723,11 +758,19 @@ function validateResourceSemantics(
             `${path}.category`
           );
         if (
+          resource.policy?.length !== 1 ||
+          resource.policy[0]?.uri !== CLINIC_OS_INTEROPERABILITY_CONSENT_POLICY
+        )
+          semantic(
+            issues,
+            "FHIR_CONSENT_POLICY",
+            "Consent.policy must contain the reviewed purpose-specific interoperability policy.",
+            `${path}.policy`
+          );
+        if (
           resource.provision?.type !== "permit" ||
           !resource.provision.purpose?.some(
-            (purpose) =>
-              purpose.system === CLINIC_OS_INTEROPERABILITY_PURPOSE_SYSTEM &&
-              purpose.code === "encounter-clinical-summary"
+            (purpose) => purpose.system === HL7_PURPOSE_OF_USE_SYSTEM && purpose.code === "TREAT"
           )
         )
           semantic(
@@ -738,7 +781,7 @@ function validateResourceSemantics(
           );
         if (
           !resource.provision?.action?.some((action) =>
-            coding(action, CLINIC_OS_INTEROPERABILITY_ACTIVITY_SYSTEM, "clinical_summary_export")
+            coding(action, HL7_CONSENT_ACTION_SYSTEM, "disclose")
           ) ||
           !resource.provision.class?.some(
             (item) => item.system === "http://hl7.org/fhir/resource-types" && item.code === "Bundle"
@@ -838,13 +881,7 @@ function validateResourceSemantics(
             "Provenance requires target, agent and recorded instant.",
             path
           );
-        if (
-          !coding(
-            resource.activity,
-            CLINIC_OS_INTEROPERABILITY_ACTIVITY_SYSTEM,
-            "clinical-summary-export"
-          )
-        )
+        if (!coding(resource.activity, HL7_DATA_OPERATION_SYSTEM, "CREATE"))
           semantic(
             issues,
             "FHIR_PROVENANCE_ACTIVITY",
@@ -852,9 +889,7 @@ function validateResourceSemantics(
             `${path}.activity`
           );
         if (
-          !resource.reason?.some((reason) =>
-            coding(reason, CLINIC_OS_INTEROPERABILITY_PURPOSE_SYSTEM, "encounter-clinical-summary")
-          ) ||
+          !resource.reason?.some((reason) => coding(reason, HL7_PURPOSE_OF_USE_SYSTEM, "TREAT")) ||
           !resource.policy?.includes(
             "https://fhir.clinicos.in/Policy/purpose-specific-interoperability-consent-v1"
           )
@@ -996,7 +1031,13 @@ function validateDocumentGraph(
         referenceIs(agent.who, "Practitioner", practitioner.id) &&
         referenceIs(agent.onBehalfOf, "Organization", clinic.id)
     ),
-    provenance.entity?.some((entity) => entity.what.reference === `Consent/${consent.id}`) === true
+    provenance.entity?.some((entity) =>
+      referenceIs(
+        entity.what.reference ? { reference: entity.what.reference } : undefined,
+        "Consent",
+        consent.id
+      )
+    ) === true
   ];
   if (relationshipChecks.some((valid) => !valid)) {
     semantic(
@@ -1013,11 +1054,18 @@ function referenceIs(
   resourceType: FhirResource["resourceType"],
   id: string
 ): boolean {
-  return reference?.reference === `${resourceType}/${id}`;
+  return (
+    reference?.reference === `${resourceType}/${id}` || reference?.reference === `urn:uuid:${id}`
+  );
 }
 
 function validResourceShape(resource: Record<string, unknown>): boolean {
-  if (!validMeta(resource.meta) || !validIdentifiers(resource.identifier)) return false;
+  if (
+    !validMeta(resource.meta) ||
+    !validIdentifiers(resource.identifier) ||
+    !validOptionalNarrative(resource.text)
+  )
+    return false;
   switch (resource.resourceType) {
     case "Composition":
       return (
@@ -1042,6 +1090,7 @@ function validResourceShape(resource: Record<string, unknown>): boolean {
         optionalString(resource.dateTime) &&
         referenceArray(resource.performer) &&
         referenceArray(resource.organization) &&
+        validConsentPolicies(resource.policy) &&
         validConsentProvision(resource.provision)
       );
     case "DocumentReference":
@@ -1168,10 +1217,30 @@ function validNarrative(value: unknown): boolean {
   )
     return false;
   const textOnly = value.replace(
-    /<\/?(?:div(?: xmlns="http:\/\/www\.w3\.org\/1999\/xhtml")?|section|h2|p|ul|li)>/gu,
+    /<\/?(?:div(?: xmlns="http:\/\/www\.w3\.org\/1999\/xhtml")?|h2|p|ul|li)>/gu,
     ""
   );
   return !/[<>]/u.test(textOnly);
+}
+
+function validOptionalNarrative(value: unknown): boolean {
+  return (
+    value === undefined ||
+    (isRecord(value) && requiredString(value.status) && validNarrative(value.div))
+  );
+}
+
+function validConsentPolicies(value: unknown): boolean {
+  return (
+    Array.isArray(value) &&
+    value.length === 1 &&
+    value.every(
+      (policy) =>
+        isRecord(policy) &&
+        policy.uri === CLINIC_OS_INTEROPERABILITY_CONSENT_POLICY &&
+        optionalString(policy.authority)
+    )
+  );
 }
 
 function validConsentProvision(value: unknown): boolean {
@@ -1450,9 +1519,7 @@ function validateUriSurface(value: unknown, issues: ClinicOsFhirIssueInput[]): v
       return;
     }
     if (key === "policy") {
-      if (
-        nested !== "https://fhir.clinicos.in/Policy/purpose-specific-interoperability-consent-v1"
-      ) {
+      if (nested !== CLINIC_OS_INTEROPERABILITY_CONSENT_POLICY) {
         issues.push(
           issue(
             "FHIR_POLICY_NOT_ALLOWED",
@@ -1464,6 +1531,7 @@ function validateUriSurface(value: unknown, issues: ClinicOsFhirIssueInput[]): v
       }
       return;
     }
+    if (key === "uri" && nested === CLINIC_OS_INTEROPERABILITY_CONSENT_POLICY) return;
     if (key === "fullUrl" && /^urn:uuid:[0-9a-f-]{36}$/iu.test(nested)) return;
     if (key === "reference" && /^urn:uuid:[0-9a-f-]{36}$/iu.test(nested)) return;
     if (key === "url" && /^urn:clinicos:document-evidence:[0-9a-f-]{36}$/iu.test(nested)) return;

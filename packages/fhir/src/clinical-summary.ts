@@ -38,6 +38,11 @@ export const CLINIC_OS_INTEROPERABILITY_PURPOSE_SYSTEM =
   "https://fhir.clinicos.in/CodeSystem/interoperability-purpose";
 export const CLINIC_OS_INTEROPERABILITY_ACTIVITY_SYSTEM =
   "https://fhir.clinicos.in/CodeSystem/interoperability-activity";
+export const CLINIC_OS_INTEROPERABILITY_CONSENT_POLICY =
+  "https://fhir.clinicos.in/Policy/purpose-specific-interoperability-consent-v1";
+export const HL7_CONSENT_ACTION_SYSTEM = "http://terminology.hl7.org/CodeSystem/consentaction";
+export const HL7_DATA_OPERATION_SYSTEM = "http://terminology.hl7.org/CodeSystem/v3-DataOperation";
+export const HL7_PURPOSE_OF_USE_SYSTEM = "http://terminology.hl7.org/CodeSystem/v3-ActReason";
 
 export type InteroperabilityAction = "clinical_summary_export" | "clinical_summary_import";
 
@@ -196,6 +201,7 @@ export function buildClinicalSummaryDocument(input: {
   const composition = buildComposition({
     source: input.source,
     compositionId,
+    consent,
     generatedAt: input.generatedAt,
     latestNote,
     noteReference,
@@ -329,6 +335,7 @@ function buildTenant(source: ClinicalSummarySourceSnapshot): FhirOrganization {
     resourceType: "Organization",
     id: source.tenant.id,
     meta: { profile: [CLINIC_OS_FHIR_R4_CORE_PROFILES.Organization] },
+    text: narrative(`Organization: ${source.tenant.displayName}`),
     active: true,
     identifier: [{ system: CLINIC_OS_IDENTIFIER_SYSTEMS.tenant, value: source.tenant.id }],
     name: source.tenant.displayName
@@ -340,6 +347,7 @@ function buildClinic(source: ClinicalSummarySourceSnapshot): FhirOrganization {
     resourceType: "Organization",
     id: source.clinic.id,
     meta: { profile: [CLINIC_OS_FHIR_R4_CORE_PROFILES.Organization] },
+    text: narrative(`Clinic: ${source.clinic.displayName}`),
     active: true,
     identifier: [{ system: CLINIC_OS_IDENTIFIER_SYSTEMS.clinic, value: source.clinic.id }],
     name: source.clinic.displayName,
@@ -355,6 +363,7 @@ function buildPatient(source: ClinicalSummarySourceSnapshot): FhirPatient {
       profile: [CLINIC_OS_FHIR_R4_CORE_PROFILES.Patient],
       versionId: String(source.patient.rowVersion)
     },
+    text: narrative(`Patient: ${source.patient.fullName}`),
     active: true,
     identifier: [
       {
@@ -374,6 +383,7 @@ function buildPractitioner(source: ClinicalSummarySourceSnapshot): FhirPractitio
     resourceType: "Practitioner",
     id: source.practitioner.id,
     meta: { profile: [CLINIC_OS_FHIR_R4_CORE_PROFILES.Practitioner] },
+    text: narrative(`Practitioner: ${source.practitioner.displayName}`),
     active: true,
     identifier: [
       {
@@ -401,6 +411,7 @@ function buildEncounter(source: ClinicalSummarySourceSnapshot): FhirEncounter {
       profile: [CLINIC_OS_FHIR_R4_CORE_PROFILES.Encounter],
       versionId: String(source.encounter.rowVersion)
     },
+    text: narrative(`Finished ambulatory encounter for ${source.patient.fullName}`),
     identifier: [{ system: CLINIC_OS_IDENTIFIER_SYSTEMS.encounter, value: source.encounter.id }],
     class: {
       system: "http://terminology.hl7.org/CodeSystem/v3-ActCode",
@@ -440,6 +451,7 @@ function buildConsent(
     meta: {
       profile: [CLINIC_OS_FHIR_R4_CORE_PROFILES.Consent]
     },
+    text: narrative("Active purpose-specific consent for disclosure of this clinical summary"),
     identifier: [{ system: CLINIC_OS_IDENTIFIER_SYSTEMS.consent, value: authorization.consentId }],
     status: "active",
     scope: codeable(
@@ -451,19 +463,14 @@ function buildConsent(
     patient: ref("Patient", source.patient.id, source.patient.fullName),
     dateTime: authorization.grantedAt,
     organization: [ref("Organization", source.clinic.id, source.clinic.displayName)],
+    policy: [{ uri: CLINIC_OS_INTEROPERABILITY_CONSENT_POLICY }],
     provision: {
       type: "permit",
       period: {
         start: authorization.grantedAt,
         ...(authorization.expiresAt ? { end: authorization.expiresAt } : {})
       },
-      action: [
-        codeable(
-          CLINIC_OS_INTEROPERABILITY_ACTIVITY_SYSTEM,
-          authorization.action,
-          "Clinical summary exchange"
-        )
-      ],
+      action: [codeable(HL7_CONSENT_ACTION_SYSTEM, "disclose", "Disclose")],
       class: [
         {
           system: "http://hl7.org/fhir/resource-types",
@@ -473,8 +480,9 @@ function buildConsent(
       ],
       purpose: [
         {
-          system: CLINIC_OS_INTEROPERABILITY_PURPOSE_SYSTEM,
-          code: "encounter-clinical-summary"
+          system: HL7_PURPOSE_OF_USE_SYSTEM,
+          code: "TREAT",
+          display: "treatment"
         }
       ],
       data: [
@@ -498,6 +506,7 @@ function buildClinicalNoteReference(
       profile: [CLINIC_OS_FHIR_R4_CORE_PROFILES.DocumentReference],
       versionId: String(note.versionNumber)
     },
+    text: narrative("Signed ClinicOS clinical note evidence"),
     identifier: [{ system: CLINIC_OS_IDENTIFIER_SYSTEMS.signedClinicalNote, value: note.id }],
     status: "current",
     docStatus: note.status === "amended" ? "amended" : "final",
@@ -532,6 +541,9 @@ function buildMedicationRequests(source: ClinicalSummarySourceSnapshot): FhirMed
       resourceType: "MedicationRequest" as const,
       id: deterministicUuid(`medication:${prescription.id}:${index}`),
       meta: { profile: [CLINIC_OS_FHIR_R4_CORE_PROFILES.MedicationRequest] },
+      text: narrative(
+        `Medication order: ${[medication.name, medication.strength].filter(Boolean).join(" ")}`
+      ),
       identifier: [
         {
           system: CLINIC_OS_IDENTIFIER_SYSTEMS.prescription,
@@ -566,6 +578,7 @@ function buildMedicationRequests(source: ClinicalSummarySourceSnapshot): FhirMed
 
 function buildComposition(input: {
   readonly compositionId: string;
+  readonly consent: FhirConsent;
   readonly generatedAt: string;
   readonly latestNote: ClinicalSummarySourceSnapshot["clinicalNotes"][number];
   readonly medicationRequests: readonly FhirMedicationRequest[];
@@ -581,6 +594,12 @@ function buildComposition(input: {
         div: noteNarrative(input.latestNote.sections)
       },
       entry: [ref("DocumentReference", input.noteReference.id)]
+    },
+    {
+      title: "Interoperability authorization",
+      code: codeable("http://loinc.org", "59284-0", "Consent Document"),
+      text: narrative("Purpose-specific consent authorizes disclosure of this clinical summary"),
+      entry: [ref("Consent", input.consent.id)]
     }
   ];
   if (input.medicationRequests.length > 0) {
@@ -598,8 +617,9 @@ function buildComposition(input: {
     resourceType: "Composition",
     id: input.compositionId,
     meta: { profile: [CLINIC_OS_FHIR_R4_CORE_PROFILES.Composition] },
+    text: narrative("ClinicOS encounter clinical summary"),
     status: input.latestNote.status === "amended" ? "amended" : "final",
-    type: codeable("http://loinc.org", "34133-9", "Summarization of Episode Note"),
+    type: codeable("http://loinc.org", "34133-9", "Summary of episode note"),
     subject: ref("Patient", input.source.patient.id, input.source.patient.fullName),
     encounter: ref("Encounter", input.source.encounter.id),
     date: input.generatedAt,
@@ -627,6 +647,7 @@ function buildExportProvenance(input: {
     resourceType: "Provenance",
     id: input.provenanceId,
     meta: { profile: [CLINIC_OS_FHIR_R4_CORE_PROFILES.Provenance] },
+    text: narrative("Provenance for creation of the ClinicOS clinical summary export"),
     target: [
       ref("Composition", input.composition.id),
       ref("Encounter", input.encounter.id),
@@ -635,23 +656,17 @@ function buildExportProvenance(input: {
     ],
     occurredDateTime: input.generatedAt,
     recorded: input.generatedAt,
-    policy: ["https://fhir.clinicos.in/Policy/purpose-specific-interoperability-consent-v1"],
-    activity: codeable(
-      CLINIC_OS_INTEROPERABILITY_ACTIVITY_SYSTEM,
-      "clinical-summary-export",
-      "Clinical summary export"
-    ),
-    reason: [
-      codeable(
-        CLINIC_OS_INTEROPERABILITY_PURPOSE_SYSTEM,
-        "encounter-clinical-summary",
-        "Authorized encounter clinical summary"
-      )
-    ],
+    policy: [CLINIC_OS_INTEROPERABILITY_CONSENT_POLICY],
+    activity: codeable(HL7_DATA_OPERATION_SYSTEM, "CREATE", "create"),
+    reason: [codeable(HL7_PURPOSE_OF_USE_SYSTEM, "TREAT", "treatment")],
     agent: [
       {
         role: [
-          codeable("http://terminology.hl7.org/CodeSystem/v3-ParticipationType", "AUT", "author")
+          codeable(
+            "http://terminology.hl7.org/CodeSystem/v3-ParticipationType",
+            "AUT",
+            "author (originator)"
+          )
         ],
         who: ref(
           "Practitioner",
@@ -674,7 +689,7 @@ function buildExportProvenance(input: {
       },
       {
         role: "source",
-        what: { reference: `Consent/${input.consent.id}` }
+        what: ref("Consent", input.consent.id)
       }
     ]
   };
@@ -928,7 +943,7 @@ function noteNarrative(sections: Readonly<Record<string, string>>): string {
     .sort(([left], [right]) => left.localeCompare(right))
     .map(
       ([key, value]) =>
-        `<section><h2>${escapeHtml(titleFromKey(key))}</h2><p>${escapeHtml(value)}</p></section>`
+        `<div><h2>${escapeHtml(titleFromKey(key))}</h2><p>${escapeHtml(value)}</p></div>`
     )
     .join("");
   return `<div xmlns="http://www.w3.org/1999/xhtml">${body}</div>`;
@@ -945,6 +960,13 @@ function medicationNarrative(medications: readonly FhirMedicationRequest[]): str
   return `<div xmlns="http://www.w3.org/1999/xhtml"><ul>${items}</ul></div>`;
 }
 
+function narrative(summary: string): { readonly div: string; readonly status: "generated" } {
+  return {
+    status: "generated",
+    div: `<div xmlns="http://www.w3.org/1999/xhtml"><p>${escapeHtml(summary)}</p></div>`
+  };
+}
+
 function deterministicUuid(value: string): string {
   const hex = createHash("sha256").update(value, "utf8").digest("hex").slice(0, 32).split("");
   hex[12] = "5";
@@ -959,7 +981,7 @@ function ref(
   display?: string
 ): FhirReference {
   return {
-    reference: `${resourceType}/${id}`,
+    reference: `urn:uuid:${id}`,
     ...(display ? { display } : {})
   };
 }

@@ -68,6 +68,7 @@ export interface FhirResourceBase {
   resourceType: Exclude<FhirResourceType, "Bundle" | "CapabilityStatement" | "OperationOutcome">;
   id: string;
   meta: FhirMeta;
+  text?: FhirNarrative;
   extension?: FhirExtension[];
   identifier?: FhirIdentifier[];
 }
@@ -205,6 +206,10 @@ export interface FhirConsent extends FhirResourceBase {
   organization?: FhirReference[];
   patient?: FhirReference;
   performer?: FhirReference[];
+  policy?: Array<{
+    authority?: string;
+    uri: string;
+  }>;
   provision?: {
     action?: FhirCodeableConcept[];
     class?: FhirCoding[];
