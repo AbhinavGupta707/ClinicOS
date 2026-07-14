@@ -2,22 +2,37 @@
   "name": "@clinic-os/mobile",
   "version": "0.0.0",
   "private": true,
-  "description": "ClinicOS Expo/React Native capture app. Checkpoint 1 starts app shell; Checkpoint 8 expands capture workflows.",
+  "description": "ClinicOS native capture app with consent-gated encrypted offline delivery.",
   "type": "module",
   "main": "expo-router/entry",
   "scripts": {
     "dev": "expo start",
+    "dev:client": "expo start --dev-client",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "lint": "tsc --noEmit -p tsconfig.json",
     "test": "node --test test/*.test.ts",
-    "build": "expo export --platform web --output-dir dist"
+    "build": "expo export --platform web --output-dir dist",
+    "smoke:web": "node test/webSmoke.mjs",
+    "config:verify": "expo config --type public",
+    "dependencies:verify": "expo install --check"
   },
   "dependencies": {
     "@expo/metro-runtime": "~57.0.3",
     "expo": "^57.0.2",
+    "expo-audio": "~57.0.0",
+    "expo-build-properties": "~57.0.0",
+    "expo-camera": "~57.0.0",
     "expo-constants": "~57.0.3",
+    "expo-crypto": "~57.0.0",
+    "expo-dev-client": "~57.0.5",
+    "expo-file-system": "~57.0.0",
     "expo-linking": "~57.0.1",
-    "expo-router": "57.0.3",
+    "expo-network": "~57.0.0",
+    "expo-router": "~57.0.4",
+    "expo-screen-capture": "~57.0.0",
+    "expo-secure-store": "~57.0.0",
+    "expo-sqlite": "~57.0.0",
+    "expo-system-ui": "~57.0.0",
     "react": "19.2.3",
     "react-dom": "19.2.3",
     "react-native": "0.86.0",
@@ -26,5 +41,10 @@
     "react-native-safe-area-context": "~5.7.0",
     "react-native-screens": "4.25.2",
     "react-native-web": "^0.21.2"
+  },
+  "expo": {
+    "autolinking": {
+      "nativeModulesDir": "./modules"
+    }
   }
 }
