@@ -30,6 +30,9 @@ export const PERMISSIONS = [
   "ai.scribe.read",
   "ai.scribe.write",
   "ai.scribe.review",
+  "interoperability.fhir_r4.export",
+  "interoperability.fhir_r4.import",
+  "interoperability.fhir_r4.reconcile",
   "media.read",
   "media.write",
   "billing.read",
@@ -98,6 +101,9 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "ai.scribe.read",
     "ai.scribe.write",
     "ai.scribe.review",
+    "interoperability.fhir_r4.export",
+    "interoperability.fhir_r4.import",
+    "interoperability.fhir_r4.reconcile",
     "media.read",
     "media.write",
     "billing.read",
@@ -136,6 +142,9 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "ai.scribe.read",
     "ai.scribe.write",
     "ai.scribe.review",
+    "interoperability.fhir_r4.export",
+    "interoperability.fhir_r4.import",
+    "interoperability.fhir_r4.reconcile",
     "media.read",
     "media.write",
     "billing.read",
@@ -230,7 +239,9 @@ export function permissionsForRoles(roleSlugs: readonly ClinicRoleSlug[]): Permi
 }
 
 export function roleGrantsPermission(roleSlug: ClinicRoleSlug, permission: PermissionKey): boolean {
-  return (DEFAULT_ROLE_PERMISSION_GRANTS[roleSlug] as readonly PermissionKey[]).includes(permission);
+  return (DEFAULT_ROLE_PERMISSION_GRANTS[roleSlug] as readonly PermissionKey[]).includes(
+    permission
+  );
 }
 
 export function normalizePermissionList(values: readonly string[]): PermissionKey[] {
@@ -252,6 +263,7 @@ export function isClinicalPermission(permission: PermissionKey): boolean {
     permission.startsWith("clinical.") ||
     permission.startsWith("dental.") ||
     permission.startsWith("prescription.") ||
+    permission.startsWith("interoperability.") ||
     permission.startsWith("patient_instruction.") ||
     permission === "task.manage" ||
     permission === "recall.manage" ||

@@ -1324,6 +1324,121 @@
         ]
       }
     },
+    "/v1/abdm/capability": {
+      "get": {
+        "description": "Returns unavailable until official validator and sandbox activation evidence exists.",
+        "operationId": "getAbdmCapability",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Officially activated ABDM capability.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "ABDM remains unregistered without external evidence.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before retrying the unavailable boundary.",
+                "schema": {
+                  "format": "retry-after-seconds",
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                "x-clinicos-required": false
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Report the independently evidenced ABDM activation boundary",
+        "tags": [
+          "ABDM",
+          "Interoperability"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP16",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "mode": "none",
+          "replaySemantics": "This operation has no client mutation effect.",
+          "required": false
+        },
+        "x-clinicos-native-enforcement": "route-parity",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "none",
+        "x-clinicos-required-master-wiring": [
+          "The HTTP mutation coordinator and durable interoperability adapters must reuse one PostgreSQL transaction for replay, conditional versions, domain effects, audit and outbox.",
+          "The interoperability adapter, not the generic version mapper, owns the conditional source and reconciliation version checks.",
+          "Keep core FHIR disabled until the durable adapters and protected-payload KMS key are configured."
+        ]
+      }
+    },
     "/v1/ai-scribe/sessions/{sessionId}": {
       "get": {
         "description": "Get review-safe AI scribe session detail. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
@@ -16108,6 +16223,795 @@
         "x-clinicos-required-master-wiring": [
           "Invoke the runtime contract before the native or NestJS handler.",
           "Persist and replay idempotency records by actor, clinic, operation, key, and request digest."
+        ]
+      }
+    },
+    "/v1/fhir/clinical-summary-imports/{reconciliationId}/review": {
+      "post": {
+        "description": "Conditionally applies only the minimized allowlist to the exact matched rows or records a rejection.",
+        "operationId": "reviewFhirClinicalSummaryImport",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "reconciliationId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "if-match",
+            "required": true,
+            "schema": {
+              "description": "Canonical strong ETag derived from rowVersion: rowVersion 7 is represented as \"rv-7\".",
+              "format": "strong-row-version-etag",
+              "maxLength": 21,
+              "minLength": 6,
+              "pattern": "^\"rv-[1-9][0-9]{0,15}\"$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "maxProperties": 2,
+                "properties": {
+                  "decision": {
+                    "enum": [
+                      "accept",
+                      "reject"
+                    ]
+                  },
+                  "reason": {
+                    "maxLength": 500,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              }
+            }
+          },
+          "required": true,
+          "x-maximum-bytes": 16384
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 6,
+                  "properties": {
+                    "effects": {
+                      "additionalProperties": false,
+                      "maxProperties": 4,
+                      "properties": {
+                        "auditAppended": {
+                          "type": "boolean"
+                        },
+                        "clinicalStateApplied": {
+                          "type": "boolean"
+                        },
+                        "outboxAppended": {
+                          "type": "boolean"
+                        },
+                        "patientMerged": {
+                          "enum": [
+                            false
+                          ]
+                        }
+                      },
+                      "required": [
+                        "auditAppended",
+                        "clinicalStateApplied",
+                        "outboxAppended",
+                        "patientMerged"
+                      ],
+                      "type": "object"
+                    },
+                    "encounterId": {
+                      "format": "uuid",
+                      "maxLength": 36,
+                      "minLength": 36,
+                      "type": "string"
+                    },
+                    "patientId": {
+                      "format": "uuid",
+                      "maxLength": 36,
+                      "minLength": 36,
+                      "type": "string"
+                    },
+                    "reconciliationId": {
+                      "format": "uuid",
+                      "maxLength": 36,
+                      "minLength": 36,
+                      "type": "string"
+                    },
+                    "reconciliationVersion": {
+                      "maximum": 2147483647,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "status": {
+                      "enum": [
+                        "accepted_pending_apply",
+                        "applied",
+                        "rejected"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "effects",
+                    "encounterId",
+                    "patientId",
+                    "reconciliationId",
+                    "reconciliationVersion",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Completed conditional review decision.",
+            "headers": {
+              "ETag": {
+                "description": "Canonical strong row-version ETag for the authoritative source or reconciliation.",
+                "schema": {
+                  "format": "strong-row-version-etag",
+                  "maxLength": 24,
+                  "minLength": 6,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "idempotency-replayed": {
+                "description": "Literal wire value false on first execution and true when the response was replayed from the persisted idempotency record.",
+                "schema": {
+                  "description": "Required wire boolean: false on first execution and true when a persisted response is replayed.",
+                  "enum": [
+                    "false",
+                    "true"
+                  ],
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "412": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "415": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "428": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before a transient retry.",
+                "schema": {
+                  "format": "retry-after-seconds",
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                "x-clinicos-required": false
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Review a versioned FHIR clinical-summary reconciliation",
+        "tags": [
+          "FHIR",
+          "Interoperability"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP16",
+        "x-clinicos-concurrency": {
+          "header": "if-match",
+          "mode": "if-match",
+          "required": true,
+          "semantics": "If-Match must contain the current canonical strong ETag \"rv-<rowVersion>\" and the repository must compare/increment rowVersion atomically.",
+          "strongEtagFormat": "\"rv-<rowVersion>\"",
+          "versionProperty": "rowVersion"
+        },
+        "x-clinicos-idempotency": {
+          "header": "idempotency-key",
+          "mode": "header",
+          "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+          "required": true
+        },
+        "x-clinicos-native-enforcement": "route-parity",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "write",
+        "x-clinicos-required-master-wiring": [
+          "The HTTP mutation coordinator and durable interoperability adapters must reuse one PostgreSQL transaction for replay, conditional versions, domain effects, audit and outbox.",
+          "The interoperability adapter, not the generic version mapper, owns the conditional source and reconciliation version checks.",
+          "Keep core FHIR disabled until the durable adapters and protected-payload KMS key are configured."
+        ]
+      }
+    },
+    "/v1/fhir/metadata": {
+      "get": {
+        "description": "Returns the bounded core FHIR R4 capability only from an authenticated clinic scope.",
+        "operationId": "getFhirR4Capability",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Registered core FHIR R4 capability statement.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "412": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "415": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "428": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before a transient retry.",
+                "schema": {
+                  "format": "retry-after-seconds",
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                "x-clinicos-required": false
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Describe the registered ClinicOS FHIR R4 clinical-summary capability",
+        "tags": [
+          "FHIR",
+          "Interoperability"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP16",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "mode": "none",
+          "replaySemantics": "This operation has no client mutation effect.",
+          "required": false
+        },
+        "x-clinicos-native-enforcement": "route-parity",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "none",
+        "x-clinicos-required-master-wiring": [
+          "The HTTP mutation coordinator and durable interoperability adapters must reuse one PostgreSQL transaction for replay, conditional versions, domain effects, audit and outbox.",
+          "The interoperability adapter, not the generic version mapper, owns the conditional source and reconciliation version checks.",
+          "Keep core FHIR disabled until the durable adapters and protected-payload KMS key are configured."
         ]
       }
     },
@@ -35255,7 +36159,8 @@
                       "photo_capture",
                       "photo_sharing",
                       "abdm_abha",
-                      "procedure_treatment"
+                      "procedure_treatment",
+                      "clinical_data_exchange"
                     ]
                   },
                   "relationshipToPatient": {
@@ -37200,6 +38105,917 @@
         "x-clinicos-required-master-wiring": [
           "Invoke the runtime contract before the native or NestJS handler.",
           "Persist and replay idempotency records by actor, clinic, operation, key, and request digest."
+        ]
+      }
+    },
+    "/v1/patients/{patientId}/encounters/{encounterId}/fhir/clinical-summary": {
+      "post": {
+        "description": "Produces a version-bound, encrypted-at-rest, replayable clinical-summary Bundle.",
+        "operationId": "exportFhirClinicalSummary",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "patientId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "encounterId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "if-match",
+            "required": true,
+            "schema": {
+              "description": "Canonical strong ETag derived from rowVersion: rowVersion 7 is represented as \"rv-7\".",
+              "format": "strong-row-version-etag",
+              "maxLength": 21,
+              "minLength": 6,
+              "pattern": "^\"rv-[1-9][0-9]{0,15}\"$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "maxProperties": 1,
+                "properties": {
+                  "recipient": {
+                    "additionalProperties": false,
+                    "maxProperties": 2,
+                    "properties": {
+                      "identifier": {
+                        "maxLength": 256,
+                        "minLength": 1,
+                        "type": "string"
+                      },
+                      "type": {
+                        "enum": [
+                          "authorized_organization",
+                          "authorized_system"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "identifier",
+                      "type"
+                    ],
+                    "type": "object"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              }
+            }
+          },
+          "required": true,
+          "x-maximum-bytes": 16384
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Validated FHIR R4 clinical-summary document Bundle.",
+            "headers": {
+              "Digest": {
+                "description": "RFC-style base64 SHA-256 digest of the canonical Bundle.",
+                "schema": {
+                  "maxLength": 52,
+                  "minLength": 52,
+                  "pattern": "^sha-256=[A-Za-z0-9+/]{43}=$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "ETag": {
+                "description": "Canonical strong row-version ETag for the authoritative source or reconciliation.",
+                "schema": {
+                  "format": "strong-row-version-etag",
+                  "maxLength": 24,
+                  "minLength": 6,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "idempotency-replayed": {
+                "description": "Literal wire value false on first execution and true when the response was replayed from the persisted idempotency record.",
+                "schema": {
+                  "description": "Required wire boolean: false on first execution and true when a persisted response is replayed.",
+                  "enum": [
+                    "false",
+                    "true"
+                  ],
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-clinicos-canonicalization": {
+                "description": "Versioned ClinicOS deterministic JSON canonicalization identifier.",
+                "schema": {
+                  "enum": [
+                    "clinic-os-json-sort-v1"
+                  ]
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "412": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "415": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "428": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before a transient retry.",
+                "schema": {
+                  "format": "retry-after-seconds",
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                "x-clinicos-required": false
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Export one consent-bound encounter as a FHIR R4 document",
+        "tags": [
+          "FHIR",
+          "Interoperability"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP16",
+        "x-clinicos-concurrency": {
+          "header": "if-match",
+          "mode": "if-match",
+          "required": true,
+          "semantics": "If-Match must contain the current canonical strong ETag \"rv-<rowVersion>\" and the repository must compare/increment rowVersion atomically.",
+          "strongEtagFormat": "\"rv-<rowVersion>\"",
+          "versionProperty": "rowVersion"
+        },
+        "x-clinicos-idempotency": {
+          "header": "idempotency-key",
+          "mode": "header",
+          "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+          "required": true
+        },
+        "x-clinicos-native-enforcement": "route-parity",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "read",
+        "x-clinicos-required-master-wiring": [
+          "The HTTP mutation coordinator and durable interoperability adapters must reuse one PostgreSQL transaction for replay, conditional versions, domain effects, audit and outbox.",
+          "The interoperability adapter, not the generic version mapper, owns the conditional source and reconciliation version checks.",
+          "Keep core FHIR disabled until the durable adapters and protected-payload KMS key are configured."
+        ]
+      }
+    },
+    "/v1/patients/{patientId}/fhir/clinical-summary-imports": {
+      "post": {
+        "description": "Validates raw FHIR bytes, stores only the encrypted minimized allowlist and never auto-merges a patient.",
+        "operationId": "importFhirClinicalSummary",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "patientId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "if-match",
+            "required": true,
+            "schema": {
+              "description": "Canonical strong ETag derived from rowVersion: rowVersion 7 is represented as \"rv-7\".",
+              "format": "strong-row-version-etag",
+              "maxLength": 21,
+              "minLength": 6,
+              "pattern": "^\"rv-[1-9][0-9]{0,15}\"$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/fhir+json": {
+              "schema": {
+                "format": "binary",
+                "maxLength": 2097152,
+                "minLength": 1,
+                "type": "string"
+              }
+            }
+          },
+          "required": true,
+          "x-maximum-bytes": 2097152
+        },
+        "responses": {
+          "202": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 9,
+                  "properties": {
+                    "bundleDigest": {
+                      "format": "sha256",
+                      "maxLength": 64,
+                      "minLength": 64,
+                      "type": "string"
+                    },
+                    "candidateCount": {
+                      "maximum": 128,
+                      "minimum": 0,
+                      "type": "integer"
+                    },
+                    "encounterId": {
+                      "format": "uuid",
+                      "maxLength": 36,
+                      "minLength": 36,
+                      "type": "string"
+                    },
+                    "patientId": {
+                      "format": "uuid",
+                      "maxLength": 36,
+                      "minLength": 36,
+                      "type": "string"
+                    },
+                    "quarantineReason": {
+                      "anyOf": [
+                        {
+                          "type": "null"
+                        }
+                      ],
+                      "enum": [
+                        "ambiguous_exact_match",
+                        "missing_exact_match",
+                        "patient_version_conflict",
+                        "target_patient_mismatch",
+                        "ambiguous_exact_encounter_match",
+                        "encounter_version_conflict",
+                        "missing_exact_encounter_match",
+                        "target_encounter_mismatch"
+                      ]
+                    },
+                    "reconciliationId": {
+                      "format": "uuid",
+                      "maxLength": 36,
+                      "minLength": 36,
+                      "type": "string"
+                    },
+                    "reconciliationVersion": {
+                      "maximum": 2147483647,
+                      "minimum": 1,
+                      "type": "integer"
+                    },
+                    "replayed": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "enum": [
+                        "pending_review",
+                        "quarantined"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "bundleDigest",
+                    "candidateCount",
+                    "encounterId",
+                    "patientId",
+                    "quarantineReason",
+                    "reconciliationId",
+                    "reconciliationVersion",
+                    "replayed",
+                    "status"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Versioned pending-review or quarantined reconciliation.",
+            "headers": {
+              "ETag": {
+                "description": "Canonical strong row-version ETag for the authoritative source or reconciliation.",
+                "schema": {
+                  "format": "strong-row-version-etag",
+                  "maxLength": 24,
+                  "minLength": 6,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "idempotency-replayed": {
+                "description": "Literal wire value false on first execution and true when the response was replayed from the persisted idempotency record.",
+                "schema": {
+                  "description": "Required wire boolean: false on first execution and true when a persisted response is replayed.",
+                  "enum": [
+                    "false",
+                    "true"
+                  ],
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "412": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "415": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "428": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/fhir+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicJsonObject"
+                }
+              }
+            },
+            "description": "Bounded FHIR OperationOutcome failure response.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before a transient retry.",
+                "schema": {
+                  "format": "retry-after-seconds",
+                  "maxLength": 4096,
+                  "type": "string"
+                },
+                "x-clinicos-required": false
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Stage a bounded FHIR R4 document for exact-match reconciliation",
+        "tags": [
+          "FHIR",
+          "Interoperability"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP16",
+        "x-clinicos-concurrency": {
+          "header": "if-match",
+          "mode": "if-match",
+          "required": true,
+          "semantics": "If-Match must contain the current canonical strong ETag \"rv-<rowVersion>\" and the repository must compare/increment rowVersion atomically.",
+          "strongEtagFormat": "\"rv-<rowVersion>\"",
+          "versionProperty": "rowVersion"
+        },
+        "x-clinicos-idempotency": {
+          "header": "idempotency-key",
+          "mode": "header",
+          "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+          "required": true
+        },
+        "x-clinicos-native-enforcement": "route-parity",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "write",
+        "x-clinicos-required-master-wiring": [
+          "The HTTP mutation coordinator and durable interoperability adapters must reuse one PostgreSQL transaction for replay, conditional versions, domain effects, audit and outbox.",
+          "The interoperability adapter, not the generic version mapper, owns the conditional source and reconciliation version checks.",
+          "Keep core FHIR disabled until the durable adapters and protected-payload KMS key are configured."
         ]
       }
     },
@@ -51575,6 +53391,9 @@
   },
   "tags": [
     {
+      "name": "ABDM"
+    },
+    {
       "name": "AI Scribe"
     },
     {
@@ -51617,6 +53436,9 @@
       "name": "Exports"
     },
     {
+      "name": "FHIR"
+    },
+    {
       "name": "Health"
     },
     {
@@ -51633,6 +53455,9 @@
     },
     {
       "name": "Integrations"
+    },
+    {
+      "name": "Interoperability"
     },
     {
       "name": "Inventory"

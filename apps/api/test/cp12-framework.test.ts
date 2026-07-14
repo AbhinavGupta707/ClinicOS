@@ -52,12 +52,15 @@ import {
   requiredRolesForOperation
 } from "../src/framework/route-registry.ts";
 
-test("app registry covers exactly 130 operations and separates doctor roles from permissions", () => {
-  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 130);
-  assert.equal(CLINIC_OS_ROUTE_POLICIES.length, 130);
-  assert.equal(new Set(CLINIC_OS_ROUTE_POLICIES.map(({ routeId }) => routeId)).size, 130);
+test("app registry covers exactly 135 operations and separates doctor roles from permissions", () => {
+  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 135);
+  assert.equal(CLINIC_OS_ROUTE_POLICIES.length, 135);
+  assert.equal(new Set(CLINIC_OS_ROUTE_POLICIES.map(({ routeId }) => routeId)).size, 135);
   assert.deepEqual(
-    ACTIVE_NATIVE_HTTP_OPERATIONS.filter(({ concurrency }) => concurrency.mode === "if-match")
+    ACTIVE_NATIVE_HTTP_OPERATIONS.filter(
+      ({ concurrency, integration }) =>
+        concurrency.mode === "if-match" && integration.concurrencyOwnership === "pipeline"
+    )
       .map(({ operationId }) => operationId)
       .sort(),
     Object.keys(OPTIMISTIC_CONCURRENCY_RESOURCE_TABLES).sort()
@@ -75,6 +78,11 @@ test("app registry covers exactly 130 operations and separates doctor roles from
     ),
     false
   );
+  assert.deepEqual(permissionsForOperation("exportFhirClinicalSummary"), [
+    "interoperability.fhir_r4.export",
+    "patient.read",
+    "patient.phi.read"
+  ]);
   assert.equal(
     matchClinicOsRoute("PATCH", `/v1/patients/${CHECKPOINT1_SEED_IDS.patientId}`)?.operation
       .operationId,
@@ -700,27 +708,33 @@ test("CP15 Razorpay callback preserves Nest raw bytes before parsing and rejects
     }
   };
   await withFixtureServer(t, { providerCallbacks }, async (baseUrl) => {
-    const response = await fetch(`${baseUrl}/v1/provider-callbacks/razorpay/registration_key_123456`, {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-        "x-razorpay-signature": "invalid-signature-value",
-        "x-razorpay-event-id": "event-invalid-0001"
-      },
-      body: "{not-json"
-    });
+    const response = await fetch(
+      `${baseUrl}/v1/provider-callbacks/razorpay/registration_key_123456`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          "x-razorpay-signature": "invalid-signature-value",
+          "x-razorpay-event-id": "event-invalid-0001"
+        },
+        body: "{not-json"
+      }
+    );
     assert.equal(response.status, 403);
     assert.equal(verifyCalls, 1);
     assert.equal(receivedBody, "{not-json");
-    const unsupported = await fetch(`${baseUrl}/v1/provider-callbacks/razorpay/registration_key_123456`, {
-      method: "POST",
-      headers: {
-        "content-type": "text/plain",
-        "x-razorpay-signature": "unsupported-media-signature",
-        "x-razorpay-event-id": "event-media-0001"
-      },
-      body: "unsupported"
-    });
+    const unsupported = await fetch(
+      `${baseUrl}/v1/provider-callbacks/razorpay/registration_key_123456`,
+      {
+        method: "POST",
+        headers: {
+          "content-type": "text/plain",
+          "x-razorpay-signature": "unsupported-media-signature",
+          "x-razorpay-event-id": "event-media-0001"
+        },
+        body: "unsupported"
+      }
+    );
     assert.equal(unsupported.status, 422);
     assert.equal((await unsupported.json()).error.code, "VALIDATION_ERROR");
     assert.equal(verifyCalls, 1);

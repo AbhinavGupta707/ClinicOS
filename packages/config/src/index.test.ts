@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { parseClinicOsEnv, safeParseClinicOsEnv } from "./index.js";
+import { fireworksModelDefaults, parseClinicOsEnv, safeParseClinicOsEnv } from "./index.js";
 
 const baseEnv = {
   NODE_ENV: "development",
@@ -297,6 +297,148 @@ describe("parseClinicOsEnv", () => {
     expect(config.providers.payment.provider).toBe("razorpay");
     expect(config.providers.payment.razorpayWebhookUrl).toBe(
       "https://api.example.test/webhooks/razorpay"
+    );
+  });
+
+  it("defaults the Fireworks catalogue to disabled, budget-zero activation", () => {
+    const config = parseClinicOsEnv(baseEnv);
+
+    expect(config.providers.ai.fireworks.models).toEqual({
+      clinicalStructuredDraft: fireworksModelDefaults.clinicalStructuredDraft,
+      clinicalSafetyReview: fireworksModelDefaults.clinicalSafetyReview,
+      boundedExtraction: fireworksModelDefaults.boundedExtraction,
+      longContextSummary: fireworksModelDefaults.longContextSummary,
+      retrievalEmbedding: fireworksModelDefaults.retrievalEmbedding,
+      retrievalRerank: fireworksModelDefaults.retrievalRerank,
+      speechQuality: fireworksModelDefaults.speechQuality,
+      speechLowLatency: fireworksModelDefaults.speechLowLatency
+    });
+    expect(config.providers.ai.activation).toMatchObject({
+      liveCallsEnabled: false,
+      killSwitch: true,
+      providerContractApproved: false,
+      noTrainingApproved: false,
+      zeroRetentionApproved: false,
+      dataResidencyApproved: false,
+      clinicalEvalApproved: false
+    });
+    expect(config.providers.ai.limits.monthlyBudgetCents).toBe(0);
+    expect(config.providers.ai.limits.perClinicDailyBudgetCents).toBe(0);
+  });
+
+  it("accepts credential-ready Fireworks configuration while live processing stays disabled", () => {
+    const config = parseClinicOsEnv({
+      ...baseEnv,
+      LLM_PROVIDER: "fireworks",
+      TRANSCRIPTION_PROVIDER: "fireworks",
+      FIREWORKS_API_KEY_SECRET_REF: "clinicos/local/fireworks-inference-key",
+      FIREWORKS_SERVICE_ACCOUNT_ID: "clinicos-staging-inference"
+    });
+
+    expect(config.providers.ai.llmProvider).toBe("fireworks");
+    expect(config.providers.ai.transcriptionProvider).toBe("fireworks");
+    expect(config.providers.ai.activation.liveCallsEnabled).toBe(false);
+    expect(config.providers.ai.activation.killSwitch).toBe(true);
+  });
+
+  it("does not treat a legacy raw Fireworks key as production credential wiring", () => {
+    const result = safeParseClinicOsEnv({
+      ...baseEnv,
+      LLM_PROVIDER: "fireworks",
+      TRANSCRIPTION_PROVIDER: "fireworks",
+      FIREWORKS_API_KEY: "must-not-be-consumed",
+      FIREWORKS_SERVICE_ACCOUNT_ID: "clinicos-staging-inference"
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.map((issue) => issue.path.join("."))).toContain(
+      "FIREWORKS_API_KEY_SECRET_REF"
+    );
+  });
+
+  it("rejects live Fireworks activation without every approval, kill-switch and budget gate", () => {
+    const result = safeParseClinicOsEnv({
+      ...baseEnv,
+      LLM_PROVIDER: "fireworks",
+      TRANSCRIPTION_PROVIDER: "fireworks",
+      FIREWORKS_API_KEY_SECRET_REF: "clinicos/local/fireworks-inference-key",
+      FIREWORKS_SERVICE_ACCOUNT_ID: "clinicos-staging-inference",
+      CLINIC_OS_AI_LIVE_CALLS_ENABLED: "true"
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.map((issue) => issue.path.join("."))).toEqual(
+      expect.arrayContaining([
+        "CLINIC_OS_AI_PROVIDER_CONTRACT_APPROVED",
+        "CLINIC_OS_AI_SERVICE_ACCOUNT_APPROVED",
+        "CLINIC_OS_AI_DPA_APPROVED",
+        "CLINIC_OS_AI_HEALTHCARE_CONTRACT_APPROVED",
+        "CLINIC_OS_AI_NO_TRAINING_APPROVED",
+        "CLINIC_OS_AI_ZERO_RETENTION_APPROVED",
+        "CLINIC_OS_AI_DATA_RESIDENCY_APPROVED",
+        "CLINIC_OS_AI_CLINICAL_EVAL_APPROVED",
+        "CLINIC_OS_AI_KILL_SWITCH",
+        "CLINIC_OS_AI_MONTHLY_BUDGET_CENTS"
+      ])
+    );
+  });
+
+  it("parses an explicitly approved and bounded Fireworks activation envelope", () => {
+    const config = parseClinicOsEnv({
+      ...baseEnv,
+      LLM_PROVIDER: "fireworks",
+      TRANSCRIPTION_PROVIDER: "fireworks",
+      FIREWORKS_API_KEY_SECRET_REF: "clinicos/local/fireworks-inference-key",
+      FIREWORKS_SERVICE_ACCOUNT_ID: "clinicos-staging-inference",
+      CLINIC_OS_AI_LIVE_CALLS_ENABLED: "true",
+      CLINIC_OS_AI_KILL_SWITCH: "false",
+      CLINIC_OS_AI_PROVIDER_CONTRACT_APPROVED: "true",
+      CLINIC_OS_AI_SERVICE_ACCOUNT_APPROVED: "true",
+      CLINIC_OS_AI_DPA_APPROVED: "true",
+      CLINIC_OS_AI_HEALTHCARE_CONTRACT_APPROVED: "true",
+      CLINIC_OS_AI_NO_TRAINING_APPROVED: "true",
+      CLINIC_OS_AI_ZERO_RETENTION_APPROVED: "true",
+      CLINIC_OS_AI_DATA_RESIDENCY_APPROVED: "true",
+      CLINIC_OS_AI_CLINICAL_EVAL_APPROVED: "true",
+      CLINIC_OS_AI_MONTHLY_BUDGET_CENTS: "25000",
+      CLINIC_OS_AI_PER_CLINIC_DAILY_BUDGET_CENTS: "1000",
+      FIREWORKS_MODEL_AVAILABILITY_EVIDENCE_JSON: "{}",
+      FIREWORKS_CLINICAL_EVALUATION_EVIDENCE_JSON: "{}",
+      CLINIC_OS_CP16_PAYLOAD_KMS_KEY_ID:
+        "arn:aws:kms:ap-south-1:123456789012:key/11111111-1111-1111-1111-111111111111"
+    });
+
+    expect(config.providers.ai.activation).toMatchObject({
+      liveCallsEnabled: true,
+      killSwitch: false,
+      providerContractApproved: true,
+      serviceAccountApproved: true,
+      dataProcessingAgreementApproved: true,
+      healthcareContractApproved: true,
+      noTrainingApproved: true,
+      zeroRetentionApproved: true,
+      dataResidencyApproved: true,
+      clinicalEvalApproved: true
+    });
+    expect(config.providers.ai.limits.monthlyBudgetCents).toBe(25000);
+    expect(config.providers.ai.limits.perClinicDailyBudgetCents).toBe(1000);
+  });
+
+  it("rejects an unreviewed Fireworks endpoint override", () => {
+    const result = safeParseClinicOsEnv({
+      ...baseEnv,
+      LLM_PROVIDER: "fireworks",
+      FIREWORKS_API_KEY_SECRET_REF: "clinicos/local/fireworks-inference-key",
+      FIREWORKS_SERVICE_ACCOUNT_ID: "clinicos-staging-inference",
+      FIREWORKS_CHAT_COMPLETIONS_URL: "https://example.test/inference/v1/chat/completions"
+    });
+
+    expect(result.success).toBe(false);
+    if (result.success) return;
+    expect(result.error.issues.map((issue) => issue.path.join("."))).toContain(
+      "FIREWORKS_CHAT_COMPLETIONS_URL"
     );
   });
 });

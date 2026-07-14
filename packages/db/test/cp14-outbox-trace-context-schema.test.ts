@@ -10,7 +10,7 @@ const migration = readFileSync(
 );
 
 test("CP14 outbox correlation is the current canonical schema version", () => {
-  assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "021");
+  assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "022");
   assert.match(migration, /create table outbox_trace_contexts \(/u);
   assert.match(migration, /traceparent char\(55\)/u);
   assert.doesNotMatch(migration, /alter table outbox_events\s+add column/u);

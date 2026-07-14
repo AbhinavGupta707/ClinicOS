@@ -1142,3 +1142,60 @@ This file records historical CP0-CP10 worktrees, the single-session CP11 foundat
 - Local E3 implementation is eligible for promotion under the owner deferral. CP15 E4/full exit,
   Meta/Razorpay official sandbox activation and telephony remain open. The release remains NO-GO;
   user-owned `research/` and `scripts/research/` remain untouched.
+
+## CP16 Local Implementation Launch - 2026-07-14
+
+- Launch base is promoted CP15 `main` at `149a9d5e0dd394e3d53e6f5761da6c1b59b0b94d`;
+  integration branch is `codex/integration/checkpoint-16`. `main` remains frozen until the CP16
+  integration candidate passes its executable gates.
+- Previous-checkpoint preflight passes the root workspace/config/clock/format checks and the real
+  PostgreSQL CP15 provider-persistence gate with zero skips. Only user-owned untracked `research/`
+  and `scripts/research/` exist and remain out of scope.
+- The owner selected Fireworks AI for the initial text and speech provider and will supply
+  credentials later. Fireworks offers `whisper-v3` and `whisper-v3-turbo`; the local wave will build
+  credential-ready typed adapters and evaluations while all live calls fail closed pending
+  contract, retention, residency, budget and clinical approval.
+- Three path-disjoint `gpt-5.6-sol` / `xhigh` candidates are authorized: native mobile capture,
+  Fireworks AI/STT and FHIR/interoperability. Shared manifests/lockfile/config/migrations/contracts,
+  API composition, evidence and release truth remain master-owned.
+- Visible project-scoped worktree tasks launched from integration commit `c4fd166f`:
+
+| Lane             | Thread                                 | Worktree                                             | Owned boundary                                               |
+| ---------------- | -------------------------------------- | ---------------------------------------------------- | ------------------------------------------------------------ |
+| Native mobile    | `019f5dce-976f-7492-8303-7cc7b840001f` | `/Users/abhinavgupta/.codex/worktrees/8f66/ClinicOS` | `apps/mobile/**`                                             |
+| Fireworks AI/STT | `019f5dce-9786-72e2-ac35-088116ecdf64` | `/Users/abhinavgupta/.codex/worktrees/6766/ClinicOS` | namespaced AI/STT domain, integration, API and eval paths    |
+| FHIR/ABDM        | `019f5dce-977e-7232-9b9c-1ed8c629315c` | `/Users/abhinavgupta/.codex/worktrees/5a2f/ClinicOS` | `packages/fhir/**` and namespaced interoperability API paths |
+
+- Each lane uses native worktree dependencies, commits only its owned boundary and hands shared
+  changes back to the master. Workers cannot merge, push, use provider credentials, mutate external
+  systems or claim checkpoint completion.
+- Physical-device, signed distribution, live-provider, official FHIR validator and ABDM sandbox
+  evidence remain external E4 gates and cannot be replaced by simulator or fixture claims. The
+  release remains NO-GO.
+
+### CP16 Local Integration Result - 2026-07-14
+
+- Integration candidate `1553507e92a5acd701f8e0817d8bb90c65ba98e7` contains the three reviewed
+  worktree boundaries plus master-owned API/config/contract/migration/lockfile composition.
+- Native capture now uses Expo Camera/Audio, explicit permissions and consent, protected tokens/
+  keys, authenticated app-private blobs, SQLCipher queue state, deterministic leases/retry/
+  uncertainty, session-revocation purge, privacy/release manifests and honest web unavailability.
+- Fireworks text/STT uses exact eight-task routing, stateless structured requests, independent
+  review, source anchors, no autonomous effects, server-only secret references, activation/eval/
+  legal/residency gates, budgets/concurrency/circuit/kill controls, KMS-protected durable results and
+  transaction-bound usage/audit/outbox. Whisper V3/Turbo provides the initial STT path.
+- Core FHIR R4 export/import/review is durable, consent/version/identity bound and quarantine-first.
+  Official HL7 Validator CLI `6.9.11` reports 0 errors/0 warnings on the synthetic final document.
+  ABDM remains unregistered/unavailable without exact official package and sandbox evidence.
+- Master integration found and fixed two real cross-lane defects: a BST-sensitive PostgreSQL date-
+  only accounting conversion and direct CP16 current-time ownership that violated the CP11 clock
+  guard. The final real migration/AI durability gate and clock guard pass.
+- Full repository check/type/lint/test/build, secret scan and high-severity audit pass. Twelve
+  moderate transitive advisories remain; no force downgrade was applied. Mobile type/test/export,
+  native prebuild/simulator and desktop/390px smoke pass as supplemental local evidence.
+- Evidence: `docs/qa/checkpoint-16-evidence.md`; final report:
+  `docs/orchestration/CHECKPOINT_16_FINAL_REPORT.md`; threat delta:
+  `docs/security/checkpoint-16-threat-model-delta.md`.
+- Local implementation is eligible for promotion. CP16 E4/full exit, physical/signed devices, live
+  Fireworks approval/evals, deployed KMS/provider paths and ABDM sandbox remain open. The release is
+  NO-GO and CP17 must not start from this result.

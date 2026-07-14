@@ -5,6 +5,7 @@ import { DeleteObjectCommand, PutObjectCommand } from "@aws-sdk/client-s3";
 import { GetSecretValueCommand } from "@aws-sdk/client-secrets-manager";
 import {
   AwsSecretsManagerProviderSecretResolver,
+  ProviderSecretResolutionError,
   S3MetaEncryptedRawBodyStore
 } from "../dist/index.js";
 
@@ -31,9 +32,8 @@ test("CP15 provider secrets resolve only bounded official Secrets Manager refere
     commands[0]?.input.SecretId,
     "arn:aws:secretsmanager:ap-south-1:123456789012:secret:clinicos/provider/example"
   );
-  await assert.rejects(
-    resolver.resolveSecret("secret reference with spaces"),
-    (error: unknown) => providerError(error, "not_configured")
+  await assert.rejects(resolver.resolveSecret("secret reference with spaces"), (error: unknown) =>
+    providerError(error, "not_configured")
   );
   assert.equal(commands.length, 1);
 });
@@ -51,6 +51,8 @@ test("CP15 provider secret outages expose no provider or credential detail", asy
     resolver.resolveSecret("clinicos/provider/razorpay/webhook"),
     (error: unknown) => {
       assert.equal(providerError(error, "not_configured"), true);
+      assert.ok(error instanceof ProviderSecretResolutionError);
+      assert.equal(error.name, "ProviderSecretResolutionError");
       assert.equal(String(error).includes("AccessDenied"), false);
       assert.equal(String(error).includes("secret-value"), false);
       return true;

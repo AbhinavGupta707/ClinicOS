@@ -78,7 +78,11 @@ interface ExecuteInput {
     | "meta_challenge"
     | "meta_signature"
     | "razorpay_signature";
-  readonly contentType: "application/json" | "application/octet-stream" | null;
+  readonly contentType:
+    | "application/json"
+    | "application/octet-stream"
+    | "application/fhir+json"
+    | null;
   readonly bodyEncoding: "json" | "raw";
   readonly successStatuses: readonly number[];
   readonly input: GeneratedRequestInput;
@@ -213,7 +217,7 @@ export type GetPatientPrepSummaryRequest = { readonly path: { readonly patientId
 export type GetPatientPrepSummaryResponse = { readonly prepSummary: { readonly patient: { readonly id: string; readonly fullName: string; readonly phone: string | null; readonly dateOfBirth: string | null; readonly gender: "female" | "male" | "other" | "unknown" }; readonly appointment: { readonly id: string; readonly status: "requested" | "booked" | "confirmed" | "checked_in" | "in_consult" | "completed" | "cancelled" | "no_show"; readonly startAt: string; readonly endAt: string; readonly providerUserId: string; readonly reason: string | null }; readonly generatedAt: string; readonly latestIntakeResponse: PublicJsonObject | null; readonly consentEnforcementState: PublicJsonObject; readonly activeConsentPurposes: readonly (string)[]; readonly timelineHighlights: readonly (PublicJsonObject)[]; readonly priorClinicalTimeline: readonly (PublicJsonObject)[]; readonly medicalHistoryChangePromptRequired: boolean; readonly dataCoverage: PublicJsonObject }; readonly summary: { readonly patient: { readonly id: string; readonly fullName: string; readonly phone: string | null; readonly dateOfBirth: string | null; readonly gender: "female" | "male" | "other" | "unknown" }; readonly appointment: { readonly id: string; readonly status: "requested" | "booked" | "confirmed" | "checked_in" | "in_consult" | "completed" | "cancelled" | "no_show"; readonly startAt: string; readonly endAt: string; readonly providerUserId: string; readonly reason: string | null }; readonly generatedAt: string; readonly latestIntakeResponse: PublicJsonObject | null; readonly consentEnforcementState: PublicJsonObject; readonly activeConsentPurposes: readonly (string)[]; readonly timelineHighlights: readonly (PublicJsonObject)[]; readonly priorClinicalTimeline: readonly (PublicJsonObject)[]; readonly medicalHistoryChangePromptRequired: boolean; readonly dataCoverage: PublicJsonObject } };
 export type ListPatientConsentsRequest = { readonly path: { readonly patientId: string } };
 export type ListPatientConsentsResponse = { readonly consents: readonly (PublicJsonObject)[]; readonly enforcementState: PublicJsonObject };
-export type CreatePatientConsentRequest = { readonly path: { readonly patientId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly purpose: "treatment_registration" | "privacy_notice" | "whatsapp_communication" | "marketing_recall" | "ai_audio_capture" | "raw_audio_retention" | "photo_capture" | "photo_sharing" | "abdm_abha" | "procedure_treatment"; readonly templateCode: string; readonly templateVersion: number; readonly captureMethod?: "digital_patient" | "assistant_paper_card" | "clinic_staff" | "imported_record"; readonly grantedByName?: string | null; readonly relationshipToPatient?: string | null; readonly evidence: WritableJsonObject; readonly provenance: WritableJsonObject } };
+export type CreatePatientConsentRequest = { readonly path: { readonly patientId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly purpose: "treatment_registration" | "privacy_notice" | "whatsapp_communication" | "marketing_recall" | "ai_audio_capture" | "raw_audio_retention" | "photo_capture" | "photo_sharing" | "abdm_abha" | "procedure_treatment" | "clinical_data_exchange"; readonly templateCode: string; readonly templateVersion: number; readonly captureMethod?: "digital_patient" | "assistant_paper_card" | "clinic_staff" | "imported_record"; readonly grantedByName?: string | null; readonly relationshipToPatient?: string | null; readonly evidence: WritableJsonObject; readonly provenance: WritableJsonObject } };
 export type CreatePatientConsentResponse = { readonly consent: PublicJsonObject; readonly enforcementState: PublicJsonObject };
 export type RevokePatientConsentRequest = { readonly path: { readonly patientId: string; readonly consentId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly reason: string } };
 export type RevokePatientConsentResponse = { readonly consent: PublicJsonObject; readonly enforcementState: PublicJsonObject };
@@ -405,6 +409,16 @@ export type ReviewBreakGlassAccessRequestRequest = { readonly path: { readonly b
 export type ReviewBreakGlassAccessRequestResponse = { readonly breakGlassAccess: PublicJsonObject };
 export type GetPilotReadinessRequest = Readonly<Record<string, never>>;
 export type GetPilotReadinessResponse = { readonly readiness: PublicJsonObject };
+export type GetFhirR4CapabilityRequest = Readonly<Record<string, never>>;
+export type GetFhirR4CapabilityResponse = PublicJsonObject;
+export type GetAbdmCapabilityRequest = Readonly<Record<string, never>>;
+export type GetAbdmCapabilityResponse = PublicJsonObject;
+export type ExportFhirClinicalSummaryRequest = { readonly path: { readonly patientId: string; readonly encounterId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly recipient?: { readonly identifier: string; readonly type: "authorized_organization" | "authorized_system" } } };
+export type ExportFhirClinicalSummaryResponse = PublicJsonObject;
+export type ImportFhirClinicalSummaryRequest = { readonly path: { readonly patientId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: Uint8Array };
+export type ImportFhirClinicalSummaryResponse = { readonly bundleDigest: string; readonly candidateCount: number; readonly encounterId: string; readonly patientId: string; readonly quarantineReason: "ambiguous_exact_match" | "missing_exact_match" | "patient_version_conflict" | "target_patient_mismatch" | "ambiguous_exact_encounter_match" | "encounter_version_conflict" | "missing_exact_encounter_match" | "target_encounter_mismatch" | null; readonly reconciliationId: string; readonly reconciliationVersion: number; readonly replayed: boolean; readonly status: "pending_review" | "quarantined" };
+export type ReviewFhirClinicalSummaryImportRequest = { readonly path: { readonly reconciliationId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly decision?: "accept" | "reject"; readonly reason?: string } };
+export type ReviewFhirClinicalSummaryImportResponse = { readonly effects: { readonly auditAppended: boolean; readonly clinicalStateApplied: boolean; readonly outboxAppended: boolean; readonly patientMerged: false }; readonly encounterId: string; readonly patientId: string; readonly reconciliationId: string; readonly reconciliationVersion: number; readonly status: "accepted_pending_apply" | "applied" | "rejected" };
 
 export interface ClinicOsNativeOperationMap {
   readonly healthLive: { readonly request: HealthLiveRequest; readonly response: HealthLiveResponse };
@@ -537,6 +551,11 @@ export interface ClinicOsNativeOperationMap {
   readonly createBreakGlassAccessRequest: { readonly request: CreateBreakGlassAccessRequestRequest; readonly response: CreateBreakGlassAccessRequestResponse };
   readonly reviewBreakGlassAccessRequest: { readonly request: ReviewBreakGlassAccessRequestRequest; readonly response: ReviewBreakGlassAccessRequestResponse };
   readonly getPilotReadiness: { readonly request: GetPilotReadinessRequest; readonly response: GetPilotReadinessResponse };
+  readonly getFhirR4Capability: { readonly request: GetFhirR4CapabilityRequest; readonly response: GetFhirR4CapabilityResponse };
+  readonly getAbdmCapability: { readonly request: GetAbdmCapabilityRequest; readonly response: GetAbdmCapabilityResponse };
+  readonly exportFhirClinicalSummary: { readonly request: ExportFhirClinicalSummaryRequest; readonly response: ExportFhirClinicalSummaryResponse };
+  readonly importFhirClinicalSummary: { readonly request: ImportFhirClinicalSummaryRequest; readonly response: ImportFhirClinicalSummaryResponse };
+  readonly reviewFhirClinicalSummaryImport: { readonly request: ReviewFhirClinicalSummaryImportRequest; readonly response: ReviewFhirClinicalSummaryImportResponse };
 }
 
 export class ClinicOsApiClient {
@@ -3701,6 +3720,126 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/pilot-readiness",
       auth: "bearer",
       contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getFhirR4Capability(input?: GetFhirR4CapabilityRequest): Promise<GetFhirR4CapabilityResponse> {
+    return this.execute<GetFhirR4CapabilityResponse>({
+      method: "GET",
+      pathTemplate: "/v1/fhir/metadata",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getFhirR4CapabilityWithMetadata(input?: GetFhirR4CapabilityRequest): Promise<ClinicOsApiResponse<GetFhirR4CapabilityResponse>> {
+    return this.executeWithMetadata<GetFhirR4CapabilityResponse>({
+      method: "GET",
+      pathTemplate: "/v1/fhir/metadata",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getAbdmCapability(input?: GetAbdmCapabilityRequest): Promise<GetAbdmCapabilityResponse> {
+    return this.execute<GetAbdmCapabilityResponse>({
+      method: "GET",
+      pathTemplate: "/v1/abdm/capability",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getAbdmCapabilityWithMetadata(input?: GetAbdmCapabilityRequest): Promise<ClinicOsApiResponse<GetAbdmCapabilityResponse>> {
+    return this.executeWithMetadata<GetAbdmCapabilityResponse>({
+      method: "GET",
+      pathTemplate: "/v1/abdm/capability",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async exportFhirClinicalSummary(input: ExportFhirClinicalSummaryRequest): Promise<ExportFhirClinicalSummaryResponse> {
+    return this.execute<ExportFhirClinicalSummaryResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/encounters/{encounterId}/fhir/clinical-summary",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async exportFhirClinicalSummaryWithMetadata(input: ExportFhirClinicalSummaryRequest): Promise<ClinicOsApiResponse<ExportFhirClinicalSummaryResponse>> {
+    return this.executeWithMetadata<ExportFhirClinicalSummaryResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/encounters/{encounterId}/fhir/clinical-summary",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async importFhirClinicalSummary(input: ImportFhirClinicalSummaryRequest): Promise<ImportFhirClinicalSummaryResponse> {
+    return this.execute<ImportFhirClinicalSummaryResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/fhir/clinical-summary-imports",
+      auth: "bearer",
+      contentType: "application/fhir+json",
+      bodyEncoding: "raw",
+      successStatuses: [202],
+      input: input ?? {}
+    });
+  }
+
+  async importFhirClinicalSummaryWithMetadata(input: ImportFhirClinicalSummaryRequest): Promise<ClinicOsApiResponse<ImportFhirClinicalSummaryResponse>> {
+    return this.executeWithMetadata<ImportFhirClinicalSummaryResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/fhir/clinical-summary-imports",
+      auth: "bearer",
+      contentType: "application/fhir+json",
+      bodyEncoding: "raw",
+      successStatuses: [202],
+      input: input ?? {}
+    });
+  }
+
+  async reviewFhirClinicalSummaryImport(input: ReviewFhirClinicalSummaryImportRequest): Promise<ReviewFhirClinicalSummaryImportResponse> {
+    return this.execute<ReviewFhirClinicalSummaryImportResponse>({
+      method: "POST",
+      pathTemplate: "/v1/fhir/clinical-summary-imports/{reconciliationId}/review",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async reviewFhirClinicalSummaryImportWithMetadata(input: ReviewFhirClinicalSummaryImportRequest): Promise<ClinicOsApiResponse<ReviewFhirClinicalSummaryImportResponse>> {
+    return this.executeWithMetadata<ReviewFhirClinicalSummaryImportResponse>({
+      method: "POST",
+      pathTemplate: "/v1/fhir/clinical-summary-imports/{reconciliationId}/review",
+      auth: "bearer",
+      contentType: "application/json",
       bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}

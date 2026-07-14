@@ -133,12 +133,7 @@ function openApiOperation(operation: HttpOperationContract): Record<string, unkn
     ...schemaParameters(
       operation.request.headers,
       "header",
-      new Set([
-        "authorization",
-        "content-type",
-        "x-hub-signature-256",
-        "x-razorpay-signature"
-      ])
+      new Set(["authorization", "content-type", "x-hub-signature-256", "x-razorpay-signature"])
     )
   ];
   const responses = Object.fromEntries(
@@ -175,9 +170,9 @@ function openApiOperation(operation: HttpOperationContract): Record<string, unkn
         ? [{ bearerAuth: [] }]
         : operation.auth === "meta_signature"
           ? [{ metaSignature: [] }]
-        : operation.auth === "razorpay_signature"
-          ? [{ razorpaySignature: [] }]
-          : [],
+          : operation.auth === "razorpay_signature"
+            ? [{ razorpaySignature: [] }]
+            : [],
     parameters,
     ...(operation.request.body
       ? {
@@ -502,7 +497,11 @@ interface ExecuteInput {
     | "meta_challenge"
     | "meta_signature"
     | "razorpay_signature";
-  readonly contentType: "application/json" | "application/octet-stream" | null;
+  readonly contentType:
+    | "application/json"
+    | "application/octet-stream"
+    | "application/fhir+json"
+    | null;
   readonly bodyEncoding: "json" | "raw";
   readonly successStatuses: readonly number[];
   readonly input: GeneratedRequestInput;

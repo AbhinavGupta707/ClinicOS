@@ -1271,9 +1271,8 @@ export async function getPilotReadiness(
         dataResidencyApproved: false,
         llmCredentialsPresent: Boolean(
           (config.providers.ai.llmProvider === "fireworks" &&
-            config.providers.ai.fireworksApiKey &&
-            config.providers.ai.llmBaseUrl &&
-            config.providers.ai.llmModelPrimary) ||
+            config.providers.ai.fireworksApiKeySecretRef &&
+            config.providers.ai.fireworksServiceAccountId) ||
           (config.providers.ai.llmProvider === "openai" &&
             config.providers.ai.openaiApiKey &&
             config.providers.ai.llmModelPrimary)
@@ -1283,6 +1282,9 @@ export async function getPilotReadiness(
           (config.providers.ai.transcriptionProvider === "openai" &&
             config.providers.ai.openaiApiKey &&
             config.providers.ai.transcriptionModel) ||
+          (config.providers.ai.transcriptionProvider === "fireworks" &&
+            config.providers.ai.fireworksApiKeySecretRef &&
+            config.providers.ai.fireworksServiceAccountId) ||
           (config.providers.ai.transcriptionProvider === "deepgram" &&
             config.providers.ai.deepgramApiKey &&
             config.providers.ai.transcriptionModel)
@@ -3739,10 +3741,16 @@ export async function generateAiScribeDrafts(
       clinicId: context.clinicId,
       patientId: detail.session.patientId,
       encounterId: detail.session.encounterId,
+      actorUserId: context.accessContext.user.id,
       sessionId,
       segments: detail.transcriptSegments,
       sourceAnchorIds,
-      correlationId: context.requestId
+      correlationId: context.requestId,
+      idempotencyKey:
+        context.idempotencyKey ??
+        (() => {
+          throw new ApiError(400, "VALIDATION_ERROR", "AI draft generation requires idempotency.");
+        })()
     });
   } catch (error) {
     if (error instanceof AiGatewayProviderError) {
@@ -8530,7 +8538,6 @@ function resolveAiGatewayProvider(dependencies: OperationsDependencies): AiGatew
     llmProvider: config?.providers.ai.llmProvider ?? "simulator",
     transcriptionProvider: config?.providers.ai.transcriptionProvider ?? "simulator",
     openaiApiKey: config?.providers.ai.openaiApiKey,
-    fireworksApiKey: config?.providers.ai.fireworksApiKey,
     deepgramApiKey: config?.providers.ai.deepgramApiKey,
     dataResidencyApproved: false,
     liveCallsEnabled: false

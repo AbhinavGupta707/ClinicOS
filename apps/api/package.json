@@ -15,11 +15,13 @@
     "build": "tsc --noEmit -p tsconfig.json"
   },
   "dependencies": {
+    "@aws-sdk/client-kms": "3.1084.0",
     "@clinic-os/api-contracts": "0.0.0",
     "@clinic-os/auth": "0.0.0",
     "@clinic-os/config": "0.0.0",
     "@clinic-os/db": "0.0.0",
     "@clinic-os/domain": "0.0.0",
+    "@clinic-os/fhir": "0.0.0",
     "@clinic-os/integrations": "0.0.0",
     "@clinic-os/observability": "0.0.0",
     "@clinic-os/security": "0.0.0",

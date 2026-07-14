@@ -3,7 +3,17 @@ import {
   SecretsManagerClient,
   type SecretsManagerClientConfig
 } from "@aws-sdk/client-secrets-manager";
-import { MetaWhatsAppError } from "./cp15/meta-whatsapp/errors.js";
+
+export class ProviderSecretResolutionError extends Error {
+  readonly code = "not_configured" as const;
+  readonly httpStatus = 503;
+  readonly retryable = true;
+
+  constructor() {
+    super("Provider secret resolution is unavailable.");
+    this.name = "ProviderSecretResolutionError";
+  }
+}
 
 export interface ProviderSecretResolver {
   resolveSecret(secretRef: string): Promise<string>;
@@ -59,15 +69,11 @@ function validSecretRef(value: string): boolean {
     !/[\s\0\r\n]/u.test(value) &&
     (/^arn:aws(?:-[a-z]+)?:secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+$/u.test(
       value
-    ) || /^[A-Za-z0-9/_+=.@-]{1,512}$/u.test(value))
+    ) ||
+      /^[A-Za-z0-9/_+=.@-]{1,512}$/u.test(value))
   );
 }
 
-function configurationError(): MetaWhatsAppError {
-  return new MetaWhatsAppError({
-    code: "not_configured",
-    message: "Provider secret resolution is unavailable.",
-    httpStatus: 503,
-    retryable: true
-  });
+function configurationError(): ProviderSecretResolutionError {
+  return new ProviderSecretResolutionError();
 }

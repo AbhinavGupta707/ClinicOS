@@ -98,6 +98,23 @@ const workflows = [
   "provider",
   "other"
 ] as const;
+const aiTasks = [
+  "clinical_structured_draft",
+  "clinical_safety_review",
+  "bounded_extraction",
+  "long_context_summary",
+  "retrieval_embedding",
+  "retrieval_rerank",
+  "speech_quality",
+  "speech_low_latency"
+] as const;
+const aiProviderStatuses = [
+  "succeeded",
+  "rejected",
+  "unavailable",
+  "provider_outcome_uncertain",
+  "provider_succeeded_persistence_uncertain"
+] as const;
 
 export const clinicOsMetricCatalog: readonly MetricDefinition[] = [
   counter("clinic_os.http.requests", { routeFamily: routeFamilies, status: statuses }),
@@ -120,6 +137,20 @@ export const clinicOsMetricCatalog: readonly MetricDefinition[] = [
   counter("clinic_os.identity.outcomes", { operation: operations, status: statuses }),
   counter("clinic_os.media.outcomes", { operation: operations, status: statuses }),
   counter("clinic_os.provider.outcomes", { operation: operations, status: statuses }),
+  counter("clinic_os.ai.provider_calls", {
+    provider: ["fireworks"],
+    task: aiTasks,
+    status: aiProviderStatuses
+  }),
+  timing("clinic_os.ai.provider_latency_ms", {
+    provider: ["fireworks"],
+    task: aiTasks,
+    status: aiProviderStatuses
+  }),
+  counter("clinic_os.ai.input_tokens", { provider: ["fireworks"], task: aiTasks }),
+  counter("clinic_os.ai.output_tokens", { provider: ["fireworks"], task: aiTasks }),
+  counter("clinic_os.ai.audio_bytes", { provider: ["fireworks"], task: aiTasks }),
+  counter("clinic_os.ai.audio_duration_ms", { provider: ["fireworks"], task: aiTasks }),
   counter("clinic_os.worker.executions", { workflow: workflows, status: statuses }),
   gauge("clinic_os.backpressure.state", {
     status: ["normal", "constrained", "shed_noncritical", "not_ready", "other"]

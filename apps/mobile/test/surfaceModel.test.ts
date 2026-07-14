@@ -7,7 +7,7 @@ import {
   mobileSurfaces
 } from "../src/features/shell/surfaceModel.ts";
 
-test("mobile shell exposes Checkpoint 8 capture surfaces without stale routes", () => {
+test("mobile shell registers the CP16 native surfaces without stale unavailable adapters", () => {
   assert.equal(
     getActiveCaptureSurfaces()
       .map((surface) => surface.id)
@@ -16,7 +16,7 @@ test("mobile shell exposes Checkpoint 8 capture surfaces without stale routes", 
   );
   assert.equal(getAvailableMobileSurfaces().length, 3);
   assert.equal(getUnavailableMobileSurfaces().length, 1);
-  assert.equal(getUnavailableMobileSurfaces()[0]?.id, "voice-note");
+  assert.equal(getUnavailableMobileSurfaces()[0]?.id, "native-on-web");
   assert.equal(
     mobileSurfaces.every((surface) => surface.apiBoundary.length > 0),
     true

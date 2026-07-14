@@ -10,13 +10,9 @@ const ownedUsages = new Map(
     ],
     "apps/api/src/local-fixture.ts": [1, "local/test auth fixture with optional injected now"],
     "apps/api/src/media-storage.ts": [2, "local-only storage simulator; provider clock due CP14"],
-    "apps/mobile/src/features/capture/uploadQueue.ts": [
-      2,
-      "mobile queue has injected now; ID fallback due CP16"
-    ],
-    "apps/mobile/src/features/shell/MobileShellScreen.tsx": [
+    "apps/mobile/src/lib/clock.ts": [
       1,
-      "presentation-only UTC date due CP16 native clinic context"
+      "sole mobile system-clock boundary; workflow consumers accept injected clocks due CP16"
     ],
     "apps/worker/src/health/health-server.ts": [
       1,
