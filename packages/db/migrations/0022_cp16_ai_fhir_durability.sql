@@ -21,6 +21,21 @@ alter table consents add constraint consents_purpose_check check (
   )
 );
 
+-- CP8 deliberately allowed only simulator/unavailable modes. CP16 registers the reviewed live
+-- provider boundary, while runtime activation remains separately fail closed.
+alter table ai_sessions drop constraint if exists ai_sessions_provider_mode_check;
+alter table ai_sessions add constraint ai_sessions_provider_mode_check
+  check (provider_mode in ('simulator', 'unconfigured', 'live_disabled', 'live'));
+alter table ai_jobs drop constraint if exists ai_jobs_provider_mode_check;
+alter table ai_jobs add constraint ai_jobs_provider_mode_check
+  check (provider_mode in ('simulator', 'unconfigured', 'live_disabled', 'live'));
+alter table ai_draft_outputs drop constraint if exists ai_draft_outputs_provider_mode_check;
+alter table ai_draft_outputs add constraint ai_draft_outputs_provider_mode_check
+  check (provider_mode in ('simulator', 'unconfigured', 'live_disabled', 'live'));
+alter table ai_action_proposals drop constraint if exists ai_action_proposals_provider_mode_check;
+alter table ai_action_proposals add constraint ai_action_proposals_provider_mode_check
+  check (provider_mode in ('simulator', 'unconfigured', 'live_disabled', 'live'));
+
 insert into permissions (key, display_name, category, description, phi_involved)
 values
   (
@@ -79,9 +94,11 @@ create table cp16_ai_invocations (
       'speech_quality', 'speech_low_latency'
     )
   ),
+  processing_stage text not null check (processing_stage in ('clinical_processing', 'capture_processing')),
   status text not null check (
     status in (
-      'claimed', 'completed', 'failed', 'provider_succeeded_persistence_uncertain'
+      'claimed', 'completed', 'failed', 'provider_outcome_uncertain',
+      'provider_succeeded_persistence_uncertain'
     )
   ),
   disposition text check (disposition in ('review_only_ready', 'blocked')),
@@ -100,6 +117,7 @@ create table cp16_ai_invocations (
     application_policy_reason_code is null
     or application_policy_reason_code ~ '^[a-z0-9_]{1,64}$'
   ),
+  application_policy_evaluated_at timestamptz,
   result_kind text check (result_kind in ('structured', 'transcription', 'embedding', 'rerank')),
   result_ciphertext bytea,
   result_encryption_key_ref text check (
@@ -117,7 +135,8 @@ create table cp16_ai_invocations (
   uncertain_reason text check (
     uncertain_reason is null
     or uncertain_reason in (
-      'usage_settlement_outcome_unknown', 'atomic_result_commit_outcome_unknown'
+      'usage_settlement_outcome_unknown', 'atomic_result_commit_outcome_unknown',
+      'transport_outcome_unknown', 'lease_expired_after_possible_dispatch'
     )
   ),
   lease_expires_at timestamptz,
@@ -161,6 +180,8 @@ create table cp16_ai_invocations (
         )
       )
       and provenance is not null and error_code is null and uncertain_reason is null
+      and application_policy_snapshot_digest is not null
+      and application_policy_reason_code is not null and application_policy_evaluated_at is not null
       and completed_at is not null and lease_expires_at is null
     )
     or (
@@ -176,8 +197,21 @@ create table cp16_ai_invocations (
       and disposition is null and result_kind is null and result_ciphertext is null
       and result_encryption_key_ref is null and result_encryption_algorithm is null
       and result_plaintext_digest is null and provenance is not null and error_code is null
-      and uncertain_reason is not null and completed_at is not null and lease_expires_at is null
+      and uncertain_reason in ('usage_settlement_outcome_unknown', 'atomic_result_commit_outcome_unknown')
+      and application_policy_snapshot_digest is not null
+      and application_policy_reason_code is not null and application_policy_evaluated_at is not null
+      and completed_at is not null and lease_expires_at is null
       and payload_deleted_at is null
+    )
+    or (
+      status = 'provider_outcome_uncertain'
+      and disposition is null and result_kind is null and result_ciphertext is null
+      and result_encryption_key_ref is null and result_encryption_algorithm is null
+      and result_plaintext_digest is null and provenance is null and error_code is null
+      and uncertain_reason in ('transport_outcome_unknown', 'lease_expired_after_possible_dispatch')
+      and application_policy_snapshot_digest is not null
+      and application_policy_reason_code is not null and application_policy_evaluated_at is not null
+      and completed_at is not null and lease_expires_at is null and payload_deleted_at is null
     )
   )
 );
@@ -186,7 +220,7 @@ create index cp16_ai_invocations_patient_idx
   on cp16_ai_invocations (tenant_id, clinic_id, patient_id, encounter_id, created_at desc);
 create index cp16_ai_invocations_reconciliation_idx
   on cp16_ai_invocations (tenant_id, clinic_id, status, updated_at)
-  where status = 'provider_succeeded_persistence_uncertain';
+  where status in ('provider_succeeded_persistence_uncertain', 'provider_outcome_uncertain');
 create trigger cp16_ai_invocations_set_updated_at
 before update on cp16_ai_invocations
 for each row execute function clinic_os.set_updated_at();
@@ -195,6 +229,7 @@ create table cp16_ai_usage_reservations (
   id uuid primary key default gen_random_uuid(),
   tenant_id uuid not null references tenants(id) on delete restrict,
   clinic_id uuid not null,
+  actor_user_id uuid not null references users(id) on delete restrict,
   provider_key text not null check (provider_key = 'fireworks'),
   task text not null check (
     task in (
@@ -204,18 +239,35 @@ create table cp16_ai_usage_reservations (
     )
   ),
   idempotency_digest char(64) not null check (idempotency_digest ~ '^[0-9a-f]{64}$'),
+  correlation_digest char(64) not null check (correlation_digest ~ '^[0-9a-f]{64}$'),
+  request_digest char(64) not null check (request_digest ~ '^[0-9a-f]{64}$'),
+  model_id text not null check (length(model_id) between 1 and 160),
   status text not null check (status in ('reserved', 'settled', 'cancelled', 'uncertain')),
   estimated_input_tokens integer not null check (estimated_input_tokens >= 0),
   maximum_output_tokens integer not null check (maximum_output_tokens >= 0),
   estimated_audio_bytes integer not null check (estimated_audio_bytes >= 0),
   estimated_audio_duration_ms integer not null check (estimated_audio_duration_ms >= 0),
+  maximum_attempts integer not null check (maximum_attempts between 1 and 4),
+  estimated_cost_microusd bigint not null check (estimated_cost_microusd > 0),
+  tenant_month_start date not null,
+  clinic_day_start date not null,
   actual_input_tokens integer check (actual_input_tokens is null or actual_input_tokens >= 0),
   actual_output_tokens integer check (actual_output_tokens is null or actual_output_tokens >= 0),
   actual_audio_bytes integer check (actual_audio_bytes is null or actual_audio_bytes >= 0),
   actual_audio_duration_ms integer check (
     actual_audio_duration_ms is null or actual_audio_duration_ms >= 0
   ),
+  actual_attempt_count integer check (actual_attempt_count is null or actual_attempt_count between 1 and 4),
+  settled_cost_microusd bigint check (settled_cost_microusd is null or settled_cost_microusd > 0),
+  uncertain_reason text check (
+    uncertain_reason is null
+    or uncertain_reason in (
+      'transport_outcome_unknown', 'provider_response_usage_unknown',
+      'completion_outcome_unknown', 'reservation_lease_expired'
+    )
+  ),
   reserved_at timestamptz not null,
+  lease_expires_at timestamptz,
   settled_at timestamptz,
   unique (tenant_id, clinic_id, id),
   unique (tenant_id, clinic_id, idempotency_digest),
@@ -226,22 +278,54 @@ create table cp16_ai_usage_reservations (
       status = 'reserved' and settled_at is null
       and actual_input_tokens is null and actual_output_tokens is null
       and actual_audio_bytes is null and actual_audio_duration_ms is null
+      and actual_attempt_count is null and settled_cost_microusd is null
+      and uncertain_reason is null and lease_expires_at is not null
     )
     or (
-      status in ('settled', 'uncertain') and settled_at is not null
+      status = 'settled' and settled_at is not null
       and actual_input_tokens is not null and actual_output_tokens is not null
       and actual_audio_bytes is not null and actual_audio_duration_ms is not null
+      and actual_attempt_count is not null and settled_cost_microusd is not null
+      and uncertain_reason is null and lease_expires_at is null
+    )
+    or (
+      status = 'uncertain' and settled_at is not null
+      and actual_input_tokens is null and actual_output_tokens is null
+      and actual_audio_bytes is null and actual_audio_duration_ms is null
+      and actual_attempt_count is null and settled_cost_microusd = estimated_cost_microusd
+      and uncertain_reason is not null and lease_expires_at is null
     )
     or (
       status = 'cancelled' and settled_at is not null
       and actual_input_tokens is null and actual_output_tokens is null
       and actual_audio_bytes is null and actual_audio_duration_ms is null
+      and actual_attempt_count is null and settled_cost_microusd is null
+      and uncertain_reason is null and lease_expires_at is null
     )
   )
 );
 
 create index cp16_ai_usage_reservations_status_idx
   on cp16_ai_usage_reservations (tenant_id, clinic_id, status, reserved_at);
+
+create table cp16_ai_budget_counters (
+  tenant_id uuid not null references tenants(id) on delete restrict,
+  scope_kind text not null check (scope_kind in ('tenant_month', 'clinic_day')),
+  scope_key uuid not null,
+  period_start date not null,
+  reserved_cost_microusd bigint not null default 0 check (reserved_cost_microusd >= 0),
+  settled_cost_microusd bigint not null default 0 check (settled_cost_microusd >= 0),
+  uncertain_cost_microusd bigint not null default 0 check (uncertain_cost_microusd >= 0),
+  updated_at timestamptz not null default now(),
+  primary key (tenant_id, scope_kind, scope_key, period_start),
+  constraint cp16_ai_budget_counter_scope_check check (
+    (scope_kind = 'tenant_month' and scope_key = tenant_id)
+    or scope_kind = 'clinic_day'
+  )
+);
+create trigger cp16_ai_budget_counters_set_updated_at
+before update on cp16_ai_budget_counters
+for each row execute function clinic_os.set_updated_at();
 
 create table cp16_fhir_exports (
   id uuid primary key default gen_random_uuid(),
@@ -477,6 +561,8 @@ alter table cp16_ai_invocations enable row level security;
 alter table cp16_ai_invocations force row level security;
 alter table cp16_ai_usage_reservations enable row level security;
 alter table cp16_ai_usage_reservations force row level security;
+alter table cp16_ai_budget_counters enable row level security;
+alter table cp16_ai_budget_counters force row level security;
 alter table cp16_fhir_exports enable row level security;
 alter table cp16_fhir_exports force row level security;
 alter table cp16_fhir_import_reconciliations enable row level security;
@@ -492,6 +578,15 @@ create policy cp16_ai_invocations_tenant_clinic on cp16_ai_invocations
 create policy cp16_ai_usage_tenant_clinic on cp16_ai_usage_reservations
   using (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id())
   with check (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id());
+create policy cp16_ai_budget_counters_scope on cp16_ai_budget_counters
+  using (
+    tenant_id = clinic_os.current_tenant_id()
+    and (scope_kind = 'tenant_month' or scope_key = clinic_os.current_clinic_id())
+  )
+  with check (
+    tenant_id = clinic_os.current_tenant_id()
+    and (scope_kind = 'tenant_month' or scope_key = clinic_os.current_clinic_id())
+  );
 create policy cp16_fhir_exports_tenant_clinic on cp16_fhir_exports
   using (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id())
   with check (tenant_id = clinic_os.current_tenant_id() and clinic_id = clinic_os.current_clinic_id());
@@ -511,6 +606,7 @@ begin
     grant select, insert, update on table
       cp16_ai_invocations,
       cp16_ai_usage_reservations,
+      cp16_ai_budget_counters,
       cp16_fhir_exports,
       cp16_fhir_import_reconciliations
       to clinic_os_runtime;
@@ -521,6 +617,7 @@ begin
     revoke delete, truncate on table
       cp16_ai_invocations,
       cp16_ai_usage_reservations,
+      cp16_ai_budget_counters,
       cp16_fhir_exports,
       cp16_fhir_import_reconciliations,
       cp16_fhir_applied_summaries,
@@ -536,6 +633,8 @@ comment on table cp16_ai_invocations is
   'Forced-RLS, attributable Fireworks invocation state with application-encrypted result payload and bounded provenance.';
 comment on table cp16_ai_usage_reservations is
   'Forced-RLS durable AI budget reservations; ambiguous settlement is explicit and never authorizes a blind provider retry.';
+comment on table cp16_ai_budget_counters is
+  'Forced-RLS atomic tenant-month and clinic-day Fireworks budget counters in integer micro-USD; uncertain reservations remain fully charged until reconciled.';
 comment on table cp16_fhir_exports is
   'Forced-RLS idempotent FHIR R4 document exports with application-encrypted replay payloads.';
 comment on table cp16_fhir_import_reconciliations is

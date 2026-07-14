@@ -71,7 +71,9 @@ test("CP8 AI scribe blocks missing consent before capture", async () => {
   );
 
   assert.equal(dependencies.repository.aiSessions.length, 0);
-  assert.ok(dependencies.auditSink.events.some((event) => event.action === "consent.enforcement.checked"));
+  assert.ok(
+    dependencies.auditSink.events.some((event) => event.action === "consent.enforcement.checked")
+  );
 });
 
 test("CP8 simulator generates review-only outputs without exposing transcript text", async () => {
@@ -88,10 +90,15 @@ test("CP8 simulator generates review-only outputs without exposing transcript te
     provenance: { kind: "manual_entry" }
   });
 
-  const session = await createAiScribeSession(assistant, dependencies, encounter.body.encounter.id, {
-    captureSurface: "mobile",
-    languageHint: "en-IN"
-  });
+  const session = await createAiScribeSession(
+    assistant,
+    dependencies,
+    encounter.body.encounter.id,
+    {
+      captureSurface: "mobile",
+      languageHint: "en-IN"
+    }
+  );
   assert.equal(session.body.session.providerMode, "simulator");
   assert.equal(session.body.session.retentionPolicy.providerTrainingAllowed, false);
 
@@ -109,7 +116,12 @@ test("CP8 simulator generates review-only outputs without exposing transcript te
   assert.equal(segment.body.segment.textDigest.length, 64);
   assert.equal("text" in segment.body.segment, false);
 
-  const generated = await generateAiScribeDrafts(assistant, dependencies, session.body.session.id, {});
+  const generated = await generateAiScribeDrafts(
+    assistant,
+    dependencies,
+    session.body.session.id,
+    {}
+  );
   assert.equal(generated.status, 201);
   assert.equal(generated.body.draftOutputs.length, 2);
   assert.equal(generated.body.actionProposals.length, 1);
@@ -120,16 +132,25 @@ test("CP8 simulator generates review-only outputs without exposing transcript te
   assert.equal(detail.body.aiScribeSession.transcriptSegments[0].textDigest.length, 64);
   assert.equal("text" in detail.body.aiScribeSession.transcriptSegments[0], false);
 
-  const approved = await recordAiScribeReviewDecision(doctor, dependencies, session.body.session.id, {
-    targetType: "draft_output",
-    targetId: generated.body.draftOutputs[0].id,
-    decision: "approve",
-    reason: "Reviewed transcript anchors; keep as AI draft evidence only."
-  });
+  const approved = await recordAiScribeReviewDecision(
+    doctor,
+    dependencies,
+    session.body.session.id,
+    {
+      targetType: "draft_output",
+      targetId: generated.body.draftOutputs[0].id,
+      decision: "approve",
+      reason: "Reviewed transcript anchors; keep as AI draft evidence only."
+    }
+  );
   assert.equal(approved.body.reviewDecision.appliedWorkflow, "review_only");
   assert.equal(approved.body.reviewDecision.appliedRecordId, null);
   assert.equal(dependencies.repository.clinicalNoteVersions.length, 0);
-  assert.ok(dependencies.repository.outboxEvents.some((event) => event.eventType === "ai.review_decision.recorded"));
+  assert.ok(
+    dependencies.repository.outboxEvents.some(
+      (event) => event.eventType === "ai.review_decision.recorded"
+    )
+  );
 });
 
 test("CP8 revoked consent blocks later transcript processing", async () => {
@@ -143,7 +164,12 @@ test("CP8 revoked consent blocks later transcript processing", async () => {
     templateVersion: 1,
     captureMethod: "clinic_staff"
   });
-  const session = await createAiScribeSession(assistant, dependencies, encounter.body.encounter.id, {});
+  const session = await createAiScribeSession(
+    assistant,
+    dependencies,
+    encounter.body.encounter.id,
+    {}
+  );
   await revokePatientConsent(assistant, dependencies, patientId, consent.body.consent.id, {
     reason: "Patient stopped recording consent"
   });
@@ -171,19 +197,29 @@ test("CP8 unsupported source anchors block draft generation", async () => {
     templateVersion: 1,
     captureMethod: "clinic_staff"
   });
-  const session = await createAiScribeSession(assistant, dependencies, encounter.body.encounter.id, {});
+  const session = await createAiScribeSession(
+    assistant,
+    dependencies,
+    encounter.body.encounter.id,
+    {}
+  );
   await createAiScribeTranscriptSegment(assistant, dependencies, session.body.session.id, {
     text: "Tooth 36 pain with caries.",
     startsAtMs: 0,
     endsAtMs: 1000
   });
-  const unsupported = await createAiScribeSourceAnchor(assistant, dependencies, session.body.session.id, {
-    anchorType: "external_document",
-    sourceRecordType: "legacy_pdf",
-    sourceRecordId: "legacy-note-1",
-    supported: false,
-    unsupportedReason: "external_document_parser_not_enabled"
-  });
+  const unsupported = await createAiScribeSourceAnchor(
+    assistant,
+    dependencies,
+    session.body.session.id,
+    {
+      anchorType: "external_document",
+      sourceRecordType: "legacy_pdf",
+      sourceRecordId: "legacy-note-1",
+      supported: false,
+      unsupportedReason: "external_document_parser_not_enabled"
+    }
+  );
 
   await assert.rejects(
     () =>
@@ -205,7 +241,12 @@ test("CP8 retention deletion removes transcript payloads but keeps evaluation ou
     templateVersion: 1,
     captureMethod: "clinic_staff"
   });
-  const session = await createAiScribeSession(assistant, dependencies, encounter.body.encounter.id, {});
+  const session = await createAiScribeSession(
+    assistant,
+    dependencies,
+    encounter.body.encounter.id,
+    {}
+  );
   await createAiScribeTranscriptSegment(assistant, dependencies, session.body.session.id, {
     text: "Tooth 36 pain with caries.",
     startsAtMs: 0,
@@ -213,12 +254,18 @@ test("CP8 retention deletion removes transcript payloads but keeps evaluation ou
   });
   await generateAiScribeDrafts(assistant, dependencies, session.body.session.id, {});
 
-  const deleted = await deleteAiScribeRetainedPayloads(assistant, dependencies, session.body.session.id);
+  const deleted = await deleteAiScribeRetainedPayloads(
+    assistant,
+    dependencies,
+    session.body.session.id
+  );
   assert.equal(deleted.body.deletedTranscriptSegments, 1);
   assert.equal(dependencies.repository.aiTranscriptSegments.length, 0);
   assert.equal(dependencies.repository.aiDraftOutputs.length, 2);
   assert.equal(deleted.body.session.status, "retention_deleted");
-  assert.ok(dependencies.repository.outboxEvents.some((event) => event.eventType === "ai.retention.deleted"));
+  assert.ok(
+    dependencies.repository.outboxEvents.some((event) => event.eventType === "ai.retention.deleted")
+  );
 });
 
 function dependenciesForCp8(): OperationsDependencies & {
@@ -250,6 +297,7 @@ function operationsContext(
 ): OperationsRequestContext {
   return {
     requestId,
+    idempotencyKey: `${requestId}-idempotency`,
     clinicId: CHECKPOINT1_SEED_IDS.clinicId,
     accessContext: {
       principal: {

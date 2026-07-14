@@ -72,12 +72,7 @@ export interface FireworksActivationConfiguration {
 }
 
 export type FireworksReadinessStatus =
-  | "not_configured"
-  | "policy_blocked"
-  | "ready"
-  | "degraded"
-  | "circuit_open"
-  | "disabled";
+  "not_configured" | "policy_blocked" | "ready" | "degraded" | "circuit_open" | "disabled";
 
 export interface FireworksTaskReadiness {
   readonly task: FireworksTask;
@@ -123,7 +118,10 @@ export interface FireworksConsentPolicyGate {
 }
 
 export interface FireworksKillSwitch {
-  isKillActive(input: { readonly task: FireworksTask; readonly checkedAt: string }): Promise<boolean>;
+  isKillActive(input: {
+    readonly task: FireworksTask;
+    readonly checkedAt: string;
+  }): Promise<boolean>;
 }
 
 export interface FireworksUsageRequest {
@@ -141,6 +139,8 @@ export interface FireworksUsageRequest {
   readonly maximumOutputTokens: number;
   readonly audioBytes: number;
   readonly audioDurationMs: number;
+  /** Budget reservations must cover the worst-case configured provider attempts. */
+  readonly maximumAttempts: number;
 }
 
 export interface FireworksUsageActual {
@@ -150,8 +150,13 @@ export interface FireworksUsageActual {
   readonly audioDurationMs: number;
 }
 
+export interface FireworksUsageSettlement extends FireworksUsageActual {
+  /** Includes the successful attempt and every prior received transient response. */
+  readonly attemptCount: number;
+}
+
 export interface FireworksUsageReservation {
-  complete(actual: FireworksUsageActual): Promise<void>;
+  complete(actual: FireworksUsageSettlement): Promise<void>;
   cancel(): Promise<void>;
   markUncertain(input: {
     readonly reason:
@@ -256,11 +261,7 @@ export interface FireworksStructuredResult {
   readonly provenance: FireworksRequestProvenance;
 }
 
-export type FireworksAudioMimeType =
-  | "audio/wav"
-  | "audio/flac"
-  | "audio/mpeg"
-  | "audio/mp4";
+export type FireworksAudioMimeType = "audio/wav" | "audio/flac" | "audio/mpeg" | "audio/mp4";
 
 export interface FireworksTranscriptionRequest extends FireworksClinicalScope {
   readonly task: FireworksSpeechTask;

@@ -3741,10 +3741,16 @@ export async function generateAiScribeDrafts(
       clinicId: context.clinicId,
       patientId: detail.session.patientId,
       encounterId: detail.session.encounterId,
+      actorUserId: context.accessContext.user.id,
       sessionId,
       segments: detail.transcriptSegments,
       sourceAnchorIds,
-      correlationId: context.requestId
+      correlationId: context.requestId,
+      idempotencyKey:
+        context.idempotencyKey ??
+        (() => {
+          throw new ApiError(400, "VALIDATION_ERROR", "AI draft generation requires idempotency.");
+        })()
     });
   } catch (error) {
     if (error instanceof AiGatewayProviderError) {

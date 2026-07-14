@@ -372,6 +372,9 @@ describe("parseClinicOsEnv", () => {
     expect(result.error.issues.map((issue) => issue.path.join("."))).toEqual(
       expect.arrayContaining([
         "CLINIC_OS_AI_PROVIDER_CONTRACT_APPROVED",
+        "CLINIC_OS_AI_SERVICE_ACCOUNT_APPROVED",
+        "CLINIC_OS_AI_DPA_APPROVED",
+        "CLINIC_OS_AI_HEALTHCARE_CONTRACT_APPROVED",
         "CLINIC_OS_AI_NO_TRAINING_APPROVED",
         "CLINIC_OS_AI_ZERO_RETENTION_APPROVED",
         "CLINIC_OS_AI_DATA_RESIDENCY_APPROVED",
@@ -392,18 +395,28 @@ describe("parseClinicOsEnv", () => {
       CLINIC_OS_AI_LIVE_CALLS_ENABLED: "true",
       CLINIC_OS_AI_KILL_SWITCH: "false",
       CLINIC_OS_AI_PROVIDER_CONTRACT_APPROVED: "true",
+      CLINIC_OS_AI_SERVICE_ACCOUNT_APPROVED: "true",
+      CLINIC_OS_AI_DPA_APPROVED: "true",
+      CLINIC_OS_AI_HEALTHCARE_CONTRACT_APPROVED: "true",
       CLINIC_OS_AI_NO_TRAINING_APPROVED: "true",
       CLINIC_OS_AI_ZERO_RETENTION_APPROVED: "true",
       CLINIC_OS_AI_DATA_RESIDENCY_APPROVED: "true",
       CLINIC_OS_AI_CLINICAL_EVAL_APPROVED: "true",
       CLINIC_OS_AI_MONTHLY_BUDGET_CENTS: "25000",
-      CLINIC_OS_AI_PER_CLINIC_DAILY_BUDGET_CENTS: "1000"
+      CLINIC_OS_AI_PER_CLINIC_DAILY_BUDGET_CENTS: "1000",
+      FIREWORKS_MODEL_AVAILABILITY_EVIDENCE_JSON: "{}",
+      FIREWORKS_CLINICAL_EVALUATION_EVIDENCE_JSON: "{}",
+      CLINIC_OS_CP16_PAYLOAD_KMS_KEY_ID:
+        "arn:aws:kms:ap-south-1:123456789012:key/11111111-1111-1111-1111-111111111111"
     });
 
     expect(config.providers.ai.activation).toMatchObject({
       liveCallsEnabled: true,
       killSwitch: false,
       providerContractApproved: true,
+      serviceAccountApproved: true,
+      dataProcessingAgreementApproved: true,
+      healthcareContractApproved: true,
       noTrainingApproved: true,
       zeroRetentionApproved: true,
       dataResidencyApproved: true,

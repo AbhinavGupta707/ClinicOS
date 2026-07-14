@@ -76,33 +76,33 @@ export interface FireworksGatewayPort {
 }
 
 type ResolvedFireworksGatewayOptions = Required<
-    Pick<
-      FireworksGatewayOptions,
-      | "maximumAudioBytes"
-      | "maximumAudioDurationMs"
-      | "timeoutMs"
-      | "maximumAttempts"
-      | "modelAvailabilityMaximumAgeMs"
-      | "circuitFailureThreshold"
-      | "circuitOpenMs"
-      | "now"
-      | "random"
-      | "sleep"
-    >
-  > &
-    Omit<
-      FireworksGatewayOptions,
-      | "maximumAudioBytes"
-      | "maximumAudioDurationMs"
-      | "timeoutMs"
-      | "maximumAttempts"
-      | "modelAvailabilityMaximumAgeMs"
-      | "circuitFailureThreshold"
-      | "circuitOpenMs"
-      | "now"
-      | "random"
-      | "sleep"
-    >;
+  Pick<
+    FireworksGatewayOptions,
+    | "maximumAudioBytes"
+    | "maximumAudioDurationMs"
+    | "timeoutMs"
+    | "maximumAttempts"
+    | "modelAvailabilityMaximumAgeMs"
+    | "circuitFailureThreshold"
+    | "circuitOpenMs"
+    | "now"
+    | "random"
+    | "sleep"
+  >
+> &
+  Omit<
+    FireworksGatewayOptions,
+    | "maximumAudioBytes"
+    | "maximumAudioDurationMs"
+    | "timeoutMs"
+    | "maximumAttempts"
+    | "modelAvailabilityMaximumAgeMs"
+    | "circuitFailureThreshold"
+    | "circuitOpenMs"
+    | "now"
+    | "random"
+    | "sleep"
+  >;
 
 export class FireworksGateway implements FireworksGatewayPort {
   readonly #options: ResolvedFireworksGatewayOptions;
@@ -119,8 +119,16 @@ export class FireworksGateway implements FireworksGatewayPort {
     this.#options = {
       ...options,
       catalog,
-      maximumAudioBytes: boundedInteger(options.maximumAudioBytes ?? 25 * 1024 * 1024, 1_024, 100 * 1024 * 1024),
-      maximumAudioDurationMs: boundedInteger(options.maximumAudioDurationMs ?? 60 * 60 * 1_000, 1_000, 4 * 60 * 60 * 1_000),
+      maximumAudioBytes: boundedInteger(
+        options.maximumAudioBytes ?? 25 * 1024 * 1024,
+        1_024,
+        100 * 1024 * 1024
+      ),
+      maximumAudioDurationMs: boundedInteger(
+        options.maximumAudioDurationMs ?? 60 * 60 * 1_000,
+        1_000,
+        4 * 60 * 60 * 1_000
+      ),
       timeoutMs: boundedInteger(options.timeoutMs ?? 20_000, 100, 60_000),
       maximumAttempts: boundedInteger(options.maximumAttempts ?? 3, 1, 4),
       modelAvailabilityMaximumAgeMs: boundedInteger(
@@ -132,7 +140,9 @@ export class FireworksGateway implements FireworksGatewayPort {
       circuitOpenMs: boundedInteger(options.circuitOpenMs ?? 30_000, 1_000, 10 * 60_000),
       now: options.now ?? (() => new Date()),
       random: options.random ?? Math.random,
-      sleep: options.sleep ?? ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
+      sleep:
+        options.sleep ??
+        ((milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds)))
     };
     validateActivationShape(this.#options.activation);
   }
@@ -148,12 +158,22 @@ export class FireworksGateway implements FireworksGatewayPort {
       try {
         await this.#resolveCredential();
       } catch {
-        return readinessResult(this.#options, checkedAt, "not_configured", "service_account_key_unavailable");
+        return readinessResult(
+          this.#options,
+          checkedAt,
+          "not_configured",
+          "service_account_key_unavailable"
+        );
       }
       return readinessResult(this.#options, checkedAt, "disabled", activation.code);
     }
     if (this.#circuitOpenedUntil > checkedDate.getTime()) {
-      return readinessResult(this.#options, checkedAt, "circuit_open", "transient_failure_circuit_open");
+      return readinessResult(
+        this.#options,
+        checkedAt,
+        "circuit_open",
+        "transient_failure_circuit_open"
+      );
     }
     for (const task of FIREWORKS_TASKS) {
       if (await this.#options.killSwitch.isKillActive({ task, checkedAt })) {
@@ -163,7 +183,12 @@ export class FireworksGateway implements FireworksGatewayPort {
     try {
       await this.#resolveCredential();
     } catch {
-      return readinessResult(this.#options, checkedAt, "not_configured", "service_account_key_unavailable");
+      return readinessResult(
+        this.#options,
+        checkedAt,
+        "not_configured",
+        "service_account_key_unavailable"
+      );
     }
     return readinessResult(this.#options, checkedAt, "ready", "activation_approved");
   }
@@ -296,7 +321,13 @@ export class FireworksGateway implements FireworksGatewayPort {
           timeoutMs: this.#options.timeoutMs,
           maximumResponseBytes: 8 * 1024 * 1024
         }),
-      parse: (response) => parseEmbeddingResponse(response, configuration.modelId, inputs.length, configuration.maximumInputTokens)
+      parse: (response) =>
+        parseEmbeddingResponse(
+          response,
+          configuration.modelId,
+          inputs.length,
+          configuration.maximumInputTokens
+        )
     });
     return Object.freeze({ embeddings: result.value, provenance: result.provenance });
   }
@@ -372,7 +403,8 @@ export class FireworksGateway implements FireworksGatewayPort {
       estimatedInputTokens: input.estimatedInputTokens,
       maximumOutputTokens: input.maximumOutputTokens,
       audioBytes: input.audioBytes,
-      audioDurationMs: input.audioDurationMs
+      audioDurationMs: input.audioDurationMs,
+      maximumAttempts: this.#options.maximumAttempts
     };
     let reservation;
     try {
@@ -433,15 +465,23 @@ export class FireworksGateway implements FireworksGatewayPort {
             await this.#retryDelay(attemptCount, response.headers["retry-after"] ?? null);
             continue;
           }
-          throw sanitizedFireworksError("provider_unavailable", "Fireworks transient failure limit was reached.", {
-            retryable: true,
-            providerHttpStatus: response.status
-          });
+          throw sanitizedFireworksError(
+            "provider_unavailable",
+            "Fireworks transient failure limit was reached.",
+            {
+              retryable: true,
+              providerHttpStatus: response.status
+            }
+          );
         }
         if (response.status < 200 || response.status >= 300) {
-          throw sanitizedFireworksError("provider_rejected", "Fireworks rejected the bounded request.", {
-            providerHttpStatus: response.status
-          });
+          throw sanitizedFireworksError(
+            "provider_rejected",
+            "Fireworks rejected the bounded request.",
+            {
+              providerHttpStatus: response.status
+            }
+          );
         }
         responseMayHaveCost = true;
         const parsed = input.parse(response);
@@ -472,7 +512,7 @@ export class FireworksGateway implements FireworksGatewayPort {
         });
         completionAttempted = true;
         try {
-          await reservation.complete(parsed.usage);
+          await reservation.complete({ ...parsed.usage, attemptCount });
         } catch {
           await markReservationUncertain(reservation, "completion_outcome_unknown");
           reservationMarkedUncertain = true;
@@ -545,11 +585,16 @@ export class FireworksGateway implements FireworksGatewayPort {
       );
     }
     if (this.#circuitOpenedUntil > now.getTime()) {
-      throw sanitizedFireworksError("circuit_open", "Fireworks circuit breaker is open.", { retryable: true });
+      throw sanitizedFireworksError("circuit_open", "Fireworks circuit breaker is open.", {
+        retryable: true
+      });
     }
     const checkedAt = now.toISOString();
     if (await this.#options.killSwitch.isKillActive({ task, checkedAt })) {
-      throw sanitizedFireworksError("kill_switch_active", "Fireworks is disabled by the clinical safety kill switch.");
+      throw sanitizedFireworksError(
+        "kill_switch_active",
+        "Fireworks is disabled by the clinical safety kill switch."
+      );
     }
     const policy = await this.#options.consentPolicy.evaluate({
       ...scope,
@@ -562,7 +607,10 @@ export class FireworksGateway implements FireworksGatewayPort {
       typeof policy.snapshotDigest !== "string" ||
       !/^[a-f0-9]{64}$/u.test(policy.snapshotDigest)
     ) {
-      throw sanitizedFireworksError("policy_blocked", "Fireworks consent or processing policy blocked the call.");
+      throw sanitizedFireworksError(
+        "policy_blocked",
+        "Fireworks consent or processing policy blocked the call."
+      );
     }
     const credential = await this.#resolveCredential();
     return Object.freeze({ credential, consentSnapshotDigest: policy.snapshotDigest });
@@ -571,13 +619,19 @@ export class FireworksGateway implements FireworksGatewayPort {
   async #resolveCredential(): Promise<string> {
     const secretRef = this.#options.activation.serviceAccountSecretRef;
     if (!secretRef || !validSecretReference(secretRef)) {
-      throw sanitizedFireworksError("not_configured", "Fireworks service-account secret reference is not configured.");
+      throw sanitizedFireworksError(
+        "not_configured",
+        "Fireworks service-account secret reference is not configured."
+      );
     }
     let credential: string;
     try {
       credential = await this.#options.secretResolver.resolveSecret(secretRef);
     } catch {
-      throw sanitizedFireworksError("not_configured", "Fireworks service-account key is unavailable.");
+      throw sanitizedFireworksError(
+        "not_configured",
+        "Fireworks service-account key is unavailable."
+      );
     }
     if (
       credential.length < 16 ||
@@ -585,13 +639,17 @@ export class FireworksGateway implements FireworksGatewayPort {
       /[\s\0]/u.test(credential) ||
       /^Bearer\s/iu.test(credential)
     ) {
-      throw sanitizedFireworksError("not_configured", "Fireworks service-account key is unavailable.");
+      throw sanitizedFireworksError(
+        "not_configured",
+        "Fireworks service-account key is unavailable."
+      );
     }
     return credential;
   }
 
   async #retryDelay(attempt: number, retryAfter: string | null): Promise<void> {
-    const serverDelay = retryAfter && /^\d{1,3}$/u.test(retryAfter) ? Number(retryAfter) * 1_000 : 0;
+    const serverDelay =
+      retryAfter && /^\d{1,3}$/u.test(retryAfter) ? Number(retryAfter) * 1_000 : 0;
     const exponential = Math.min(2_000, 100 * 2 ** Math.max(0, attempt - 1));
     const jitter = Math.floor(Math.min(0.999999, Math.max(0, this.#options.random())) * 100);
     await this.#options.sleep(Math.min(5_000, Math.max(serverDelay, exponential + jitter)));
@@ -601,7 +659,8 @@ export class FireworksGateway implements FireworksGatewayPort {
     if (!transient) return;
     this.#consecutiveFailures += 1;
     if (this.#consecutiveFailures >= this.#options.circuitFailureThreshold) {
-      this.#circuitOpenedUntil = validNow(this.#options.now).getTime() + this.#options.circuitOpenMs;
+      this.#circuitOpenedUntil =
+        validNow(this.#options.now).getTime() + this.#options.circuitOpenMs;
     }
   }
 
@@ -635,7 +694,9 @@ export class FireworksGateway implements FireworksGatewayPort {
           tenantDigest: digest(input.scope.tenantId),
           correlationDigest: digest(input.scope.correlationId),
           status: input.status,
-          reasonCode: /^[a-z0-9_]{1,64}$/u.test(input.reasonCode) ? input.reasonCode : "provider_error",
+          reasonCode: /^[a-z0-9_]{1,64}$/u.test(input.reasonCode)
+            ? input.reasonCode
+            : "provider_error",
           attemptCount: input.attemptCount,
           inputTokens: input.usage.inputTokens,
           outputTokens: input.usage.outputTokens,
@@ -657,30 +718,37 @@ function parseChatResponse(input: {
   readonly modelId: string;
   readonly maximumInputTokens: number;
   readonly maximumOutputTokens: number;
-}): { readonly content: unknown; readonly usage: { readonly inputTokens: number; readonly outputTokens: number } } {
-  const value = strictObject(parseBoundedJson(input.response.body), [
-    "id",
-    "created",
-    "model",
-    "choices",
-    "object",
-    "usage"
-  ], ["perf_metrics", "prompt_token_ids"]);
+}): {
+  readonly content: unknown;
+  readonly usage: { readonly inputTokens: number; readonly outputTokens: number };
+} {
+  const value = strictObject(
+    parseBoundedJson(input.response.body),
+    ["id", "created", "model", "choices", "object", "usage"],
+    ["perf_metrics", "prompt_token_ids"]
+  );
   if (value.model !== input.modelId || value.object !== "chat.completion") invalid();
   boundedString(value.id, 1, 256);
   safeInteger(value.created, 0, Number.MAX_SAFE_INTEGER);
   if (!Array.isArray(value.choices) || value.choices.length !== 1) invalid();
-  const choice = strictObject(value.choices[0], ["index", "message", "finish_reason"], ["logprobs", "raw_output"]);
+  const choice = strictObject(
+    value.choices[0],
+    ["index", "message", "finish_reason"],
+    ["logprobs", "raw_output"]
+  );
   safeInteger(choice.index, 0, 0);
   if (choice.finish_reason === "length") {
-    throw sanitizedFireworksError("truncated_response", "Fireworks structured response was truncated.");
+    throw sanitizedFireworksError(
+      "truncated_response",
+      "Fireworks structured response was truncated."
+    );
   }
   if (choice.finish_reason !== "stop") invalid();
-  const message = strictObject(choice.message, ["role", "content"], [
-    "reasoning_content",
-    "tool_calls",
-    "token_ids"
-  ]);
+  const message = strictObject(
+    choice.message,
+    ["role", "content"],
+    ["reasoning_content", "tool_calls", "token_ids"]
+  );
   if (message.role !== "assistant" || typeof message.content !== "string") invalid();
   const toolsSafe =
     message.tool_calls === undefined ||
@@ -690,8 +758,15 @@ function parseChatResponse(input: {
     message.reasoning_content === undefined ||
     message.reasoning_content === null ||
     message.reasoning_content === "";
-  if (!toolsSafe || !reasoningSafe || (choice.raw_output !== undefined && choice.raw_output !== null)) {
-    throw sanitizedFireworksError("unsafe_output", "Fireworks returned tools, reasoning, or raw output outside the approved boundary.");
+  if (
+    !toolsSafe ||
+    !reasoningSafe ||
+    (choice.raw_output !== undefined && choice.raw_output !== null)
+  ) {
+    throw sanitizedFireworksError(
+      "unsafe_output",
+      "Fireworks returned tools, reasoning, or raw output outside the approved boundary."
+    );
   }
   return {
     content: parseBoundedJson(Buffer.from(message.content, "utf8")),
@@ -706,13 +781,20 @@ function parseEmbeddingResponse(
   maximumInputTokens: number
 ): ParsedProviderResult<readonly (readonly number[])[]> {
   const value = strictObject(parseBoundedJson(response.body), ["data", "model", "object", "usage"]);
-  if (value.model !== modelId || value.object !== "list" || !Array.isArray(value.data) || value.data.length !== inputCount) invalid();
+  if (
+    value.model !== modelId ||
+    value.object !== "list" ||
+    !Array.isArray(value.data) ||
+    value.data.length !== inputCount
+  )
+    invalid();
   let dimension: number | null = null;
   const indices = new Set<number>();
   const embeddingsByIndex = value.data.map((item) => {
     const record = strictObject(item, ["index", "embedding", "object"]);
     const index = safeInteger(record.index, 0, inputCount - 1);
-    if (indices.has(index) || record.object !== "embedding" || !Array.isArray(record.embedding)) invalid();
+    if (indices.has(index) || record.object !== "embedding" || !Array.isArray(record.embedding))
+      invalid();
     indices.add(index);
     if (record.embedding.length < 1 || record.embedding.length > 16_384) invalid();
     dimension ??= record.embedding.length;
@@ -727,7 +809,10 @@ function parseEmbeddingResponse(
   embeddingsByIndex.sort((left, right) => left.index - right.index);
   const embeddings = embeddingsByIndex.map((item) => item.embedding);
   const usage = providerUsage(value.usage, maximumInputTokens, 0);
-  return { data: Object.freeze(embeddings), usage: { ...usage, audioBytes: 0, audioDurationMs: 0 } };
+  return {
+    data: Object.freeze(embeddings),
+    usage: { ...usage, audioBytes: 0, audioDurationMs: 0 }
+  };
 }
 
 function parseRerankResponse(
@@ -744,13 +829,17 @@ function parseRerankResponse(
     !Array.isArray(value.data) ||
     value.data.length < 1 ||
     value.data.length > topN
-  ) invalid();
+  )
+    invalid();
   const seen = new Set<number>();
   let previous = Number.POSITIVE_INFINITY;
   const results = value.data.map((item) => {
     const record = strictObject(item, ["index", "relevance_score"], ["document"]);
     if (record.document !== undefined) {
-      throw sanitizedFireworksError("invalid_response", "Fireworks reranker returned document text despite redaction policy.");
+      throw sanitizedFireworksError(
+        "invalid_response",
+        "Fireworks reranker returned document text despite redaction policy."
+      );
     }
     const index = safeInteger(record.index, 0, documentCount - 1);
     const relevanceScore = finiteNumber(record.relevance_score, 0, 1);
@@ -785,16 +874,25 @@ function validateScope(input: {
 
 function validateSourceAnchors(value: readonly string[]): readonly string[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > 128) {
-    throw sanitizedFireworksError("invalid_request", "Fireworks source anchors are missing or oversized.");
+    throw sanitizedFireworksError(
+      "invalid_request",
+      "Fireworks source anchors are missing or oversized."
+    );
   }
   const anchors = value.map((anchor) => opaqueIdentifier(anchor, "sourceAnchorId", 128));
   if (new Set(anchors).size !== anchors.length) {
-    throw sanitizedFireworksError("invalid_request", "Fireworks source anchors contain duplicates.");
+    throw sanitizedFireworksError(
+      "invalid_request",
+      "Fireworks source anchors contain duplicates."
+    );
   }
   return Object.freeze(anchors);
 }
 
-function validateRetrievalInputs(value: readonly string[], maximumItems: number): readonly string[] {
+function validateRetrievalInputs(
+  value: readonly string[],
+  maximumItems: number
+): readonly string[] {
   if (!Array.isArray(value) || value.length < 1 || value.length > maximumItems) {
     throw sanitizedFireworksError("invalid_request", "Fireworks retrieval input count is invalid.");
   }
@@ -803,7 +901,10 @@ function validateRetrievalInputs(value: readonly string[], maximumItems: number)
 
 function validateTokenEstimate(value: number, maximum: number): void {
   if (!Number.isSafeInteger(value) || value < 1 || value > maximum) {
-    throw sanitizedFireworksError("invalid_request", "Fireworks input token estimate exceeds its task limit.");
+    throw sanitizedFireworksError(
+      "invalid_request",
+      "Fireworks input token estimate exceeds its task limit."
+    );
   }
 }
 
@@ -819,9 +920,15 @@ function activationFailure(
   options: ResolvedFireworksGatewayOptions,
   task: FireworksTask | null,
   now: Date
-): { readonly status: "not_configured" | "policy_blocked" | "disabled"; readonly code: string } | null {
+): {
+  readonly status: "not_configured" | "policy_blocked" | "disabled";
+  readonly code: string;
+} | null {
   const activation = options.activation;
-  if (!activation.serviceAccountSecretRef || !validSecretReference(activation.serviceAccountSecretRef)) {
+  if (
+    !activation.serviceAccountSecretRef ||
+    !validSecretReference(activation.serviceAccountSecretRef)
+  ) {
     return { status: "not_configured", code: "service_account_secret_ref_missing" };
   }
   if (!activation.serviceAccountId || !validServiceAccountId(activation.serviceAccountId)) {
@@ -863,11 +970,11 @@ function readinessResult(
     checkedAt,
     secretReferenceConfigured: Boolean(
       options.activation.serviceAccountSecretRef &&
-        validSecretReference(options.activation.serviceAccountSecretRef)
+      validSecretReference(options.activation.serviceAccountSecretRef)
     ),
     serviceAccountConfigured: Boolean(
       options.activation.serviceAccountId &&
-        validServiceAccountId(options.activation.serviceAccountId)
+      validServiceAccountId(options.activation.serviceAccountId)
     ),
     tasks: Object.freeze(
       FIREWORKS_TASKS.map((task) =>
@@ -903,7 +1010,10 @@ function validateActivationShape(value: FireworksGatewayOptions["activation"]): 
     JSON.stringify(availabilityKeys) !== JSON.stringify(expected) ||
     JSON.stringify(evaluationKeys) !== JSON.stringify(expected)
   ) {
-    throw sanitizedFireworksError("not_configured", "Fireworks activation task approvals are incomplete.");
+    throw sanitizedFireworksError(
+      "not_configured",
+      "Fireworks activation task approvals are incomplete."
+    );
   }
 }
 
@@ -954,7 +1064,9 @@ function validSecretReference(value: string): boolean {
     value.length >= 1 &&
     value.length <= 512 &&
     !/[\s\0\r\n]/u.test(value) &&
-    (/^arn:aws(?:-[a-z]+)?:secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+$/u.test(value) ||
+    (/^arn:aws(?:-[a-z]+)?:secretsmanager:[a-z0-9-]+:\d{12}:secret:[A-Za-z0-9/_+=.@-]+$/u.test(
+      value
+    ) ||
       /^[A-Za-z0-9/_+=.@-]+$/u.test(value))
   );
 }
@@ -974,9 +1086,7 @@ function normalizeProviderError(error: unknown): FireworksGatewayError {
 async function markReservationUncertain(
   reservation: FireworksUsageReservation,
   reason:
-    | "transport_outcome_unknown"
-    | "provider_response_usage_unknown"
-    | "completion_outcome_unknown"
+    "transport_outcome_unknown" | "provider_response_usage_unknown" | "completion_outcome_unknown"
 ): Promise<void> {
   try {
     await reservation.markUncertain({ reason });
@@ -985,7 +1095,9 @@ async function markReservationUncertain(
   }
 }
 
-function providerRequestIdDigest(headers: Readonly<Record<string, string | undefined>>): string | null {
+function providerRequestIdDigest(
+  headers: Readonly<Record<string, string | undefined>>
+): string | null {
   const requestId = headers["x-request-id"] ?? headers["request-id"];
   return requestId && requestId.length <= 512 ? digest(requestId) : null;
 }

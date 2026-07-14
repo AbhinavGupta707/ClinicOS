@@ -81,6 +81,10 @@ const emptyStringToUndefined = (value: unknown) => {
 
 const requiredString = z.preprocess(emptyStringToUndefined, z.string().trim().min(1));
 const optionalString = z.preprocess(emptyStringToUndefined, z.string().trim().min(1).optional());
+const optionalBoundedJsonString = z.preprocess(
+  emptyStringToUndefined,
+  z.string().trim().min(2).max(200_000).optional()
+);
 const requiredUrl = z.preprocess(emptyStringToUndefined, z.string().trim().url());
 const optionalUrl = z.preprocess(emptyStringToUndefined, z.string().trim().url().optional());
 
@@ -220,6 +224,8 @@ const runtimeEnvSchema = z
     FIREWORKS_TRANSCRIPTION_MODEL_LOW_LATENCY: requiredString.default(
       fireworksModelDefaults.speechLowLatency
     ),
+    FIREWORKS_MODEL_AVAILABILITY_EVIDENCE_JSON: optionalBoundedJsonString,
+    FIREWORKS_CLINICAL_EVALUATION_EVIDENCE_JSON: optionalBoundedJsonString,
     OPENAI_API_KEY: optionalString,
 
     TRANSCRIPTION_PROVIDER: z.enum(transcriptionProviders).default("simulator"),
@@ -229,6 +235,9 @@ const runtimeEnvSchema = z
     CLINIC_OS_AI_LIVE_CALLS_ENABLED: booleanFromEnv.default(false),
     CLINIC_OS_AI_KILL_SWITCH: booleanFromEnv.default(true),
     CLINIC_OS_AI_PROVIDER_CONTRACT_APPROVED: booleanFromEnv.default(false),
+    CLINIC_OS_AI_SERVICE_ACCOUNT_APPROVED: booleanFromEnv.default(false),
+    CLINIC_OS_AI_DPA_APPROVED: booleanFromEnv.default(false),
+    CLINIC_OS_AI_HEALTHCARE_CONTRACT_APPROVED: booleanFromEnv.default(false),
     CLINIC_OS_AI_NO_TRAINING_APPROVED: booleanFromEnv.default(false),
     CLINIC_OS_AI_ZERO_RETENTION_APPROVED: booleanFromEnv.default(false),
     CLINIC_OS_AI_DATA_RESIDENCY_APPROVED: booleanFromEnv.default(false),
@@ -624,6 +633,9 @@ const runtimeEnvSchema = z
 
       const approvals = [
         "CLINIC_OS_AI_PROVIDER_CONTRACT_APPROVED",
+        "CLINIC_OS_AI_SERVICE_ACCOUNT_APPROVED",
+        "CLINIC_OS_AI_DPA_APPROVED",
+        "CLINIC_OS_AI_HEALTHCARE_CONTRACT_APPROVED",
         "CLINIC_OS_AI_NO_TRAINING_APPROVED",
         "CLINIC_OS_AI_ZERO_RETENTION_APPROVED",
         "CLINIC_OS_AI_DATA_RESIDENCY_APPROVED",
@@ -658,6 +670,17 @@ const runtimeEnvSchema = z
             "Live AI/STT activation requires non-zero account and per-clinic budget ceilings."
         });
       }
+      requireFields(
+        context,
+        env,
+        true,
+        [
+          "FIREWORKS_MODEL_AVAILABILITY_EVIDENCE_JSON",
+          "FIREWORKS_CLINICAL_EVALUATION_EVIDENCE_JSON",
+          "CLINIC_OS_CP16_PAYLOAD_KMS_KEY_ID"
+        ],
+        "Live AI/STT activation requires fresh model/evaluation evidence and the CP16 payload KMS key."
+      );
     }
 
     requireFields(
@@ -763,6 +786,8 @@ export type ClinicOsConfig = {
           speechQuality: string;
           speechLowLatency: string;
         };
+        modelAvailabilityEvidenceJson?: string | undefined;
+        clinicalEvaluationEvidenceJson?: string | undefined;
       };
       openaiApiKey?: string | undefined;
       transcriptionProvider: TranscriptionProvider;
@@ -773,6 +798,9 @@ export type ClinicOsConfig = {
         liveCallsEnabled: boolean;
         killSwitch: boolean;
         providerContractApproved: boolean;
+        serviceAccountApproved: boolean;
+        dataProcessingAgreementApproved: boolean;
+        healthcareContractApproved: boolean;
         noTrainingApproved: boolean;
         zeroRetentionApproved: boolean;
         dataResidencyApproved: boolean;
@@ -935,7 +963,9 @@ function toConfig(env: RuntimeEnv): ClinicOsConfig {
             retrievalRerank: env.FIREWORKS_MODEL_RETRIEVAL_RERANK,
             speechQuality: env.FIREWORKS_TRANSCRIPTION_MODEL_QUALITY,
             speechLowLatency: env.FIREWORKS_TRANSCRIPTION_MODEL_LOW_LATENCY
-          }
+          },
+          modelAvailabilityEvidenceJson: env.FIREWORKS_MODEL_AVAILABILITY_EVIDENCE_JSON,
+          clinicalEvaluationEvidenceJson: env.FIREWORKS_CLINICAL_EVALUATION_EVIDENCE_JSON
         },
         openaiApiKey: env.OPENAI_API_KEY,
         transcriptionProvider: env.TRANSCRIPTION_PROVIDER,
@@ -946,6 +976,9 @@ function toConfig(env: RuntimeEnv): ClinicOsConfig {
           liveCallsEnabled: env.CLINIC_OS_AI_LIVE_CALLS_ENABLED,
           killSwitch: env.CLINIC_OS_AI_KILL_SWITCH,
           providerContractApproved: env.CLINIC_OS_AI_PROVIDER_CONTRACT_APPROVED,
+          serviceAccountApproved: env.CLINIC_OS_AI_SERVICE_ACCOUNT_APPROVED,
+          dataProcessingAgreementApproved: env.CLINIC_OS_AI_DPA_APPROVED,
+          healthcareContractApproved: env.CLINIC_OS_AI_HEALTHCARE_CONTRACT_APPROVED,
           noTrainingApproved: env.CLINIC_OS_AI_NO_TRAINING_APPROVED,
           zeroRetentionApproved: env.CLINIC_OS_AI_ZERO_RETENTION_APPROVED,
           dataResidencyApproved: env.CLINIC_OS_AI_DATA_RESIDENCY_APPROVED,

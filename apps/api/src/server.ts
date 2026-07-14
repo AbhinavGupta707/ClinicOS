@@ -229,6 +229,7 @@ import {
 } from "./features/cp16-interoperability/index.ts";
 import {
   AwsKmsCp16ProtectedPayloadCodec,
+  createCp16FireworksRuntime,
   PostgresInteroperabilityClinicalSource,
   PostgresInteroperabilityConsent,
   PostgresInteroperabilityReconciliation,
@@ -874,6 +875,24 @@ function createRuntimeComposition(
     serverOptions.providerOperationsRegistry = new PostgresProviderOperationsRegistry(
       repositorySet.pool
     );
+    const fireworksRuntime = createCp16FireworksRuntime({
+      config: parsed.data,
+      unitOfWork: {
+        run: (callback) =>
+          repositorySet.operationsUnitOfWork.run(({ auditSink, sqlClient }) =>
+            callback({ auditSink, ...(sqlClient ? { sqlClient } : {}) })
+          )
+      },
+      metrics: observabilityRuntime?.metrics,
+      now: () => systemClock.now()
+    });
+    if (fireworksRuntime) {
+      serverOptions.aiGatewayProvider = fireworksRuntime.provider;
+      serverOptions.dependencyProbes = [
+        ...(serverOptions.dependencyProbes ?? []),
+        ...fireworksRuntime.probes
+      ];
+    }
     if (parsed.data.interoperability?.fhirR4Enabled) {
       const keyId = parsed.data.interoperability.payloadKmsKeyId;
       if (!keyId) {

@@ -10,7 +10,7 @@ export * from "./cp16/fireworks/transport.js";
 export * from "./cp16/fireworks/types.js";
 
 export type AiGatewayProviderKey = "simulator" | "unconfigured" | "live_disabled";
-export type AiGatewayProviderMode = "simulator" | "unconfigured" | "live_disabled";
+export type AiGatewayProviderMode = "simulator" | "unconfigured" | "live_disabled" | "live";
 export type UUID = string;
 export interface AiGatewayTranscriptSegment {
   readonly id: UUID;
@@ -26,10 +26,12 @@ export interface AiGatewayDraftRequest {
   readonly clinicId: UUID;
   readonly patientId: UUID;
   readonly encounterId: UUID;
+  readonly actorUserId: UUID;
   readonly sessionId: UUID;
   readonly segments: readonly AiGatewayTranscriptSegment[];
   readonly sourceAnchorIds: readonly UUID[];
   readonly correlationId: string;
+  readonly idempotencyKey: string;
 }
 
 export interface AiGatewayDraftResult {
@@ -124,13 +126,14 @@ export class DeterministicAiGatewaySimulator implements AiGatewayProvider {
       status: "available",
       checkedAt: this.#now().toISOString(),
       capabilities: [],
-      message:
-        "Deterministic local AI simulator is active. No live AI/STT provider calls are made."
+      message: "Deterministic local AI simulator is active. No live AI/STT provider calls are made."
     };
   }
 
   async generateDrafts(request: AiGatewayDraftRequest): Promise<AiGatewayDraftResult> {
-    const orderedSegments = [...request.segments].sort((left, right) => left.sequence - right.sequence);
+    const orderedSegments = [...request.segments].sort(
+      (left, right) => left.sequence - right.sequence
+    );
     if (orderedSegments.length === 0) {
       throw new AiGatewayProviderError({
         providerKey: this.providerKey,
@@ -140,11 +143,17 @@ export class DeterministicAiGatewaySimulator implements AiGatewayProvider {
     }
 
     const allText = orderedSegments.map((segment) => segment.text.trim()).join(" ");
-    const primaryAnchorIds = request.sourceAnchorIds.slice(0, Math.max(1, request.sourceAnchorIds.length));
+    const primaryAnchorIds = request.sourceAnchorIds.slice(
+      0,
+      Math.max(1, request.sourceAnchorIds.length)
+    );
     const firstAnchor = primaryAnchorIds[0];
     const lower = allText.toLowerCase();
     const toothNumber = lower.includes("36") ? "36" : lower.includes("46") ? "46" : "16";
-    const complaint = sentenceOrDefault(orderedSegments[0]?.text, "Patient reported dental discomfort.");
+    const complaint = sentenceOrDefault(
+      orderedSegments[0]?.text,
+      "Patient reported dental discomfort."
+    );
     const findingText = lower.includes("caries")
       ? "Caries mentioned in the consultation transcript."
       : "Tooth-level concern mentioned in the consultation transcript.";
@@ -256,16 +265,18 @@ export class UnavailableAiGatewayProvider implements AiGatewayProvider {
   }
 }
 
-export function createAiGatewayProvider(input: {
-  llmProvider?: string | null;
-  transcriptionProvider?: string | null;
-  liveCallsEnabled?: boolean;
-  openaiApiKey?: string | null;
-  fireworksApiKey?: string | null;
-  deepgramApiKey?: string | null;
-  dataResidencyApproved?: boolean;
-  now?: () => Date;
-} = {}): AiGatewayProvider {
+export function createAiGatewayProvider(
+  input: {
+    llmProvider?: string | null;
+    transcriptionProvider?: string | null;
+    liveCallsEnabled?: boolean;
+    openaiApiKey?: string | null;
+    fireworksApiKey?: string | null;
+    deepgramApiKey?: string | null;
+    dataResidencyApproved?: boolean;
+    now?: () => Date;
+  } = {}
+): AiGatewayProvider {
   const llmProvider = input.llmProvider ?? "simulator";
   const transcriptionProvider = input.transcriptionProvider ?? "simulator";
 

@@ -1,7 +1,7 @@
 import type { ClinicalNoteContent } from "./clinical.ts";
 import type { UUID } from "./ids.ts";
 
-export const AI_PROVIDER_MODES = ["simulator", "unconfigured", "live_disabled"] as const;
+export const AI_PROVIDER_MODES = ["simulator", "unconfigured", "live_disabled", "live"] as const;
 export type AiProviderMode = (typeof AI_PROVIDER_MODES)[number];
 
 export const AI_SESSION_STATUSES = [
