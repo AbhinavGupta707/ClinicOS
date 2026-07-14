@@ -76,14 +76,14 @@ npx expo prebuild --no-install --platform android
 
 Use synthetic clinic records only. Record device model, OS/build, app commit, EAS build ID, tester, UTC time, expected/actual result, and evidence link for every row.
 
-| Platform | Required device/build | Required scenarios |
-|---|---|---|
-| iOS minimum | Physical iPhone on iOS 16.4, internal development build | Fresh install; camera/microphone grant, deny, permanent deny, Settings recovery; photo/audio capture; app-switcher privacy; screen capture blocked; locked-device SecureStore behavior |
-| iOS current | Physical iPhone on the current clinic-supported iOS release, signed preview build | Phone call/Siri/audio interruption; foreground/background; force quit; reboot; offline-to-online replay; consent revocation; logout file/key purge; low-disk policy |
-| Android minimum | Physical Android API 24 device, signed preview build | Fresh install; runtime permission grant/deny/don’t-ask-again; no shared-media permission; airplane mode; force-stop; reboot; upload retry and purge |
-| Android current | Physical device on the EAS-generated target SDK/current Play-required release | Camera/microphone interruption; process death; network handoff; app-switcher/screenshot protection; `noBackupFilesDir`; logout DB/WAL/SHM/blob/key purge |
+| Platform           | Required device/build                                                                    | Required scenarios                                                                                                                                                                             |
+| ------------------ | ---------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| iOS minimum        | Physical iPhone on iOS 16.4, internal development build                                  | Fresh install; camera/microphone grant, deny, permanent deny, Settings recovery; photo/audio capture; app-switcher privacy; screen capture blocked; locked-device SecureStore behavior         |
+| iOS current        | Physical iPhone on the current clinic-supported iOS release, signed preview build        | Phone call/Siri/audio interruption; foreground/background; force quit; reboot; offline-to-online replay; consent revocation; logout file/key purge; low-disk policy                            |
+| Android minimum    | Physical Android API 24 device, signed preview build                                     | Fresh install; runtime permission grant/deny/don’t-ask-again; no shared-media permission; airplane mode; force-stop; reboot; upload retry and purge                                            |
+| Android current    | Physical device on the EAS-generated target SDK/current Play-required release            | Camera/microphone interruption; process death; network handoff; app-switcher/screenshot protection; `noBackupFilesDir`; logout DB/WAL/SHM/blob/key purge                                       |
 | Lost/admin revoked | One physical iOS and one physical Android device enrolled in the approved admin/MDM path | Queue media offline; revoke the official session; confirm offline device does not claim purge; reconnect; confirm 401-triggered token/data/key purge; separately execute and evidence MDM wipe |
-| Distribution | TestFlight/internal Play or approved EAS internal distribution | Install/upgrade/rollback policy, signature/provenance, environment origin, privacy disclosures, crash-free cold start, no Expo Go dependency |
+| Distribution       | TestFlight/internal Play or approved EAS internal distribution                           | Install/upgrade/rollback policy, signature/provenance, environment origin, privacy disclosures, crash-free cold start, no Expo Go dependency                                                   |
 
 Credentialed build commands (an authorized release owner must run them; no result is claimed here):
 
