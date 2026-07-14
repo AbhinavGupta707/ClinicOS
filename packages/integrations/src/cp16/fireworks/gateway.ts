@@ -138,7 +138,7 @@ export class FireworksGateway implements FireworksGatewayPort {
       ),
       circuitFailureThreshold: boundedInteger(options.circuitFailureThreshold ?? 3, 1, 20),
       circuitOpenMs: boundedInteger(options.circuitOpenMs ?? 30_000, 1_000, 10 * 60_000),
-      now: options.now ?? (() => new Date()),
+      now: options.now,
       random: options.random ?? Math.random,
       sleep:
         options.sleep ??

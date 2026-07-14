@@ -1,4 +1,8 @@
-import { boundedRetryDelayMs, productionCaptureQueuePolicy, type CaptureQueuePolicy } from "./policy.ts";
+import {
+  boundedRetryDelayMs,
+  productionCaptureQueuePolicy,
+  type CaptureQueuePolicy
+} from "./policy.ts";
 import type {
   CaptureAuthorization,
   CaptureDigestProvider,
@@ -13,6 +17,7 @@ import type {
   UploadQueueItem,
   UploadQueueRepository
 } from "./types.ts";
+import { mobileSystemClock } from "../../lib/clock.ts";
 
 export class CaptureQueueError extends Error {
   readonly code: QueueDiagnosticCode;
@@ -74,7 +79,7 @@ export class DurableCaptureQueue {
     this.#authorization = options.authorization;
     this.#network = options.network;
     this.#diagnostics = options.diagnostics;
-    this.#clock = options.clock ?? { now: () => new Date() };
+    this.#clock = options.clock ?? mobileSystemClock;
     this.#policy = options.policy ?? productionCaptureQueuePolicy;
     this.#randomUnit = options.randomUnit ?? Math.random;
     this.#onEvent = options.onEvent;
@@ -298,7 +303,10 @@ export class DurableCaptureQueue {
         updatedAt: this.#nowIso()
       });
       this.#record("LOCAL_PURGE_FAILED", item);
-      throw new CaptureQueueError("LOCAL_PURGE_FAILED", "Protected local deletion did not complete.");
+      throw new CaptureQueueError(
+        "LOCAL_PURGE_FAILED",
+        "Protected local deletion did not complete."
+      );
     }
   }
 
@@ -312,7 +320,10 @@ export class DurableCaptureQueue {
     }
     await this.#blobs.purgeAll().catch((error) => failures.push(error));
     if (failures.length > 0) {
-      throw new CaptureQueueError("LOCAL_PURGE_FAILED", "One or more protected captures could not be purged.");
+      throw new CaptureQueueError(
+        "LOCAL_PURGE_FAILED",
+        "One or more protected captures could not be purged."
+      );
     }
   }
 
@@ -357,7 +368,10 @@ export class DurableCaptureQueue {
       };
       await this.#repository.update(quarantined);
       this.#record("CAPTURE_CORRUPT", item);
-      throw new CaptureQueueError("CAPTURE_CORRUPT", "Encrypted capture integrity verification failed.");
+      throw new CaptureQueueError(
+        "CAPTURE_CORRUPT",
+        "Encrypted capture integrity verification failed."
+      );
     }
   }
 
@@ -398,7 +412,8 @@ export class DurableCaptureQueue {
     if (typed?.code === "CAPTURE_CORRUPT") return this.#repository.get(current.id);
 
     const attempts = current.attempts;
-    const manual = typed?.outcomeUncertain || !typed?.retryable || attempts >= this.#policy.maxAutomaticAttempts;
+    const manual =
+      typed?.outcomeUncertain || !typed?.retryable || attempts >= this.#policy.maxAutomaticAttempts;
     const code: QueueDiagnosticCode = typed?.outcomeUncertain
       ? "UPLOAD_OUTCOME_UNCERTAIN"
       : manual
@@ -501,11 +516,7 @@ function assertDraft(draft: CaptureDraft, policy: CaptureQueuePolicy): void {
   }
 }
 
-function reservationUsable(
-  item: UploadQueueItem,
-  now: Date,
-  safetyMs: number
-): boolean {
+function reservationUsable(item: UploadQueueItem, now: Date, safetyMs: number): boolean {
   if (!item.reservation) return false;
   const expiresAt = Date.parse(item.reservation.target.expiresAt);
   return Number.isFinite(expiresAt) && expiresAt - safetyMs > now.getTime();

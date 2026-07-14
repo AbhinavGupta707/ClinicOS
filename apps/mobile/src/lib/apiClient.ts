@@ -1,3 +1,5 @@
+import { mobileSystemClock, type MobileClock } from "./clock.ts";
+
 export type UUID = string;
 
 export interface MobileSession {
@@ -110,6 +112,7 @@ export interface ClinicOsApiClientOptions {
   tokenProvider?: AuthTokenProvider;
   devSubject?: string | null;
   requestTimeoutMs?: number;
+  clock?: MobileClock;
 }
 
 export class ClinicOsApiError extends Error {
@@ -117,12 +120,7 @@ export class ClinicOsApiError extends Error {
   readonly code: string;
   readonly details: unknown;
 
-  constructor(
-    message: string,
-    status: number,
-    code: string,
-    details: unknown = null
-  ) {
+  constructor(message: string, status: number, code: string, details: unknown = null) {
     super(message);
     this.name = "ClinicOsApiError";
     this.status = status;
@@ -137,6 +135,7 @@ export class ClinicOsApiClient {
   readonly #tokenProvider: AuthTokenProvider | undefined;
   readonly #devSubject: string | null;
   readonly #requestTimeoutMs: number;
+  readonly #clock: MobileClock;
   #clinicId: UUID | null = null;
 
   constructor(options: ClinicOsApiClientOptions) {
@@ -145,6 +144,7 @@ export class ClinicOsApiClient {
     this.#tokenProvider = options.tokenProvider;
     this.#devSubject = options.devSubject ?? null;
     this.#requestTimeoutMs = options.requestTimeoutMs ?? 30_000;
+    this.#clock = options.clock ?? mobileSystemClock;
   }
 
   setClinicId(clinicId: UUID | null): void {
@@ -178,7 +178,11 @@ export class ClinicOsApiClient {
     );
     const encounter = recordValue(payload, "encounter");
     if (!isEncounterSummary(encounter)) {
-      throw new ClinicOsApiError("Encounter response did not match the mobile contract.", 0, "BAD_PAYLOAD");
+      throw new ClinicOsApiError(
+        "Encounter response did not match the mobile contract.",
+        0,
+        "BAD_PAYLOAD"
+      );
     }
     return encounter;
   }
@@ -190,22 +194,29 @@ export class ClinicOsApiClient {
     );
     const state = recordValue(payload, "enforcementState");
     if (!isConsentEnforcementState(state)) {
-      throw new ClinicOsApiError("Consent response did not match the mobile contract.", 0, "BAD_PAYLOAD");
+      throw new ClinicOsApiError(
+        "Consent response did not match the mobile contract.",
+        0,
+        "BAD_PAYLOAD"
+      );
     }
     return state;
   }
 
-  async reserveMediaUpload(input: {
-    patientId: UUID;
-    encounterId: UUID | null;
-    mediaType: "intraoral_photo" | "audio_chunk";
-    originalFilename: string;
-    mimeType: string;
-    fileSizeBytes: number;
-    sha256Digest: string | null;
-    tags: string[];
-    provenance: Record<string, unknown>;
-  }, options: { idempotencyKey: string; signal: AbortSignal }): Promise<{ upload: MediaUploadReservation; uploadTarget: MediaUploadTarget }> {
+  async reserveMediaUpload(
+    input: {
+      patientId: UUID;
+      encounterId: UUID | null;
+      mediaType: "intraoral_photo" | "audio_chunk";
+      originalFilename: string;
+      mimeType: string;
+      fileSizeBytes: number;
+      sha256Digest: string | null;
+      tags: string[];
+      provenance: Record<string, unknown>;
+    },
+    options: { idempotencyKey: string; signal: AbortSignal }
+  ): Promise<{ upload: MediaUploadReservation; uploadTarget: MediaUploadTarget }> {
     const payload = await this.#jsonRequest<unknown>("/v1/media/upload-urls", {
       method: "POST",
       headers: { "idempotency-key": options.idempotencyKey },
@@ -215,7 +226,11 @@ export class ClinicOsApiClient {
     const upload = recordValue(payload, "upload");
     const uploadTarget = recordValue(payload, "uploadTarget");
     if (!isMediaUploadReservation(upload) || !isMediaUploadTarget(uploadTarget)) {
-      throw new ClinicOsApiError("Media reservation response did not match the mobile contract.", 0, "BAD_PAYLOAD");
+      throw new ClinicOsApiError(
+        "Media reservation response did not match the mobile contract.",
+        0,
+        "BAD_PAYLOAD"
+      );
     }
     assertNoPrivateMediaReferences(payload);
     return { upload, uploadTarget };
@@ -228,9 +243,13 @@ export class ClinicOsApiClient {
     options: { idempotencyKey: string; signal: AbortSignal }
   ): Promise<void> {
     if (bytes.byteLength > target.maxBytes) {
-      throw new ClinicOsApiError("Upload exceeds the reserved byte limit.", 0, "UPLOAD_TARGET_INVALID");
+      throw new ClinicOsApiError(
+        "Upload exceeds the reserved byte limit.",
+        0,
+        "UPLOAD_TARGET_INVALID"
+      );
     }
-    if (Date.parse(target.expiresAt) <= Date.now()) {
+    if (Date.parse(target.expiresAt) <= this.#clock.now().getTime()) {
       throw new ClinicOsApiError("Upload reservation expired.", 409, "UPLOAD_TARGET_EXPIRED");
     }
     const url = resolveUploadUrl(this.baseUrl, target.uploadUrl);
@@ -242,7 +261,11 @@ export class ClinicOsApiClient {
         )
       )
     ) {
-      throw new ClinicOsApiError("Upload target requested a prohibited credential header.", 0, "UPLOAD_TARGET_INVALID");
+      throw new ClinicOsApiError(
+        "Upload target requested a prohibited credential header.",
+        0,
+        "UPLOAD_TARGET_INVALID"
+      );
     }
     if (!headers.has("Content-Type")) headers.set("Content-Type", mimeType);
     const sameOrigin = new URL(url).origin === new URL(this.baseUrl).origin;
@@ -270,14 +293,17 @@ export class ClinicOsApiClient {
     }
   }
 
-  async completeMediaUpload(input: {
-    uploadId: UUID;
-    patientId: UUID;
-    encounterId: UUID | null;
-    contentLength: number;
-    sha256Digest: string | null;
-    mimeType: string;
-  }, options: { idempotencyKey: string; signal: AbortSignal }): Promise<PublicMediaAsset> {
+  async completeMediaUpload(
+    input: {
+      uploadId: UUID;
+      patientId: UUID;
+      encounterId: UUID | null;
+      contentLength: number;
+      sha256Digest: string | null;
+      mimeType: string;
+    },
+    options: { idempotencyKey: string; signal: AbortSignal }
+  ): Promise<PublicMediaAsset> {
     const payload = await this.#jsonRequest<unknown>(
       `/v1/media/uploads/${encodeURIComponent(input.uploadId)}/complete`,
       {
@@ -295,7 +321,11 @@ export class ClinicOsApiClient {
     );
     const mediaAsset = recordValue(payload, "mediaAsset");
     if (!isPublicMediaAsset(mediaAsset)) {
-      throw new ClinicOsApiError("Media completion response did not match the mobile contract.", 0, "BAD_PAYLOAD");
+      throw new ClinicOsApiError(
+        "Media completion response did not match the mobile contract.",
+        0,
+        "BAD_PAYLOAD"
+      );
     }
     assertNoPrivateMediaReferences(payload);
     return mediaAsset;
@@ -320,11 +350,7 @@ export class ClinicOsApiClient {
         init.signal ?? null
       );
     } catch {
-      throw new ClinicOsApiError(
-        "ClinicOS could not reach the live service.",
-        0,
-        "NETWORK_ERROR"
-      );
+      throw new ClinicOsApiError("ClinicOS could not reach the live service.", 0, "NETWORK_ERROR");
     }
 
     const payload = await response.json().catch(() => null);
@@ -346,7 +372,10 @@ export class ClinicOsApiClient {
     upstream: AbortSignal | null
   ): Promise<Response> {
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(new Error("REQUEST_TIMEOUT")), this.#requestTimeoutMs);
+    const timer = setTimeout(
+      () => controller.abort(new Error("REQUEST_TIMEOUT")),
+      this.#requestTimeoutMs
+    );
     const abort = () => controller.abort(upstream?.reason);
     upstream?.addEventListener("abort", abort, { once: true });
     try {
@@ -360,7 +389,9 @@ export class ClinicOsApiClient {
 
 export function assertNoPrivateMediaReferences(payload: unknown): void {
   const serialized = JSON.stringify(payload);
-  if (/objectKey|storageProvider|storageRegion|tenants\/|patients\/[^"]*\/media\//i.test(serialized)) {
+  if (
+    /objectKey|storageProvider|storageRegion|tenants\/|patients\/[^"]*\/media\//i.test(serialized)
+  ) {
     throw new ClinicOsApiError(
       "Media response exposed a private storage reference.",
       0,
@@ -371,14 +402,24 @@ export function assertNoPrivateMediaReferences(payload: unknown): void {
 
 function parseSession(payload: unknown): MobileSession {
   if (!isRecord(payload)) {
-    throw new ClinicOsApiError("Session response did not match the mobile contract.", 0, "BAD_PAYLOAD");
+    throw new ClinicOsApiError(
+      "Session response did not match the mobile contract.",
+      0,
+      "BAD_PAYLOAD"
+    );
   }
   const user = recordValue(payload, "user");
   const tenant = recordValue(payload, "tenant");
   const clinics = arrayFromPayload(payload, "clinics").filter(isRecord);
-  const permissions = arrayFromPayload(payload, "permissions").filter((item): item is string => typeof item === "string");
+  const permissions = arrayFromPayload(payload, "permissions").filter(
+    (item): item is string => typeof item === "string"
+  );
   if (!isRecord(user) || !isRecord(tenant)) {
-    throw new ClinicOsApiError("Session response did not match the mobile contract.", 0, "BAD_PAYLOAD");
+    throw new ClinicOsApiError(
+      "Session response did not match the mobile contract.",
+      0,
+      "BAD_PAYLOAD"
+    );
   }
   return {
     user: {
@@ -400,7 +441,9 @@ function parseSession(payload: unknown): MobileSession {
       slug: requiredStringFrom(clinic, "slug"),
       displayName: requiredStringFrom(clinic, "displayName"),
       timezone: requiredStringFrom(clinic, "timezone"),
-      roleSlugs: arrayFromPayload(clinic, "roleSlugs").filter((item): item is string => typeof item === "string")
+      roleSlugs: arrayFromPayload(clinic, "roleSlugs").filter(
+        (item): item is string => typeof item === "string"
+      )
     })),
     permissions
   };
@@ -454,9 +497,10 @@ function isMediaUploadReservation(value: unknown): value is MediaUploadReservati
 }
 
 function isMediaUploadTarget(value: unknown): value is MediaUploadTarget {
-  const expiresAt = isRecord(value) && typeof value.expiresAt === "string"
-    ? Date.parse(value.expiresAt)
-    : Number.NaN;
+  const expiresAt =
+    isRecord(value) && typeof value.expiresAt === "string"
+      ? Date.parse(value.expiresAt)
+      : Number.NaN;
   return (
     isRecord(value) &&
     value.method === "PUT" &&
@@ -504,7 +548,11 @@ function readNullableString(payload: Record<string, unknown>, key: string): stri
 function requiredStringFrom(payload: Record<string, unknown>, key: string): string {
   const value = payload[key];
   if (typeof value !== "string") {
-    throw new ClinicOsApiError("Session response did not match the mobile contract.", 0, "BAD_PAYLOAD");
+    throw new ClinicOsApiError(
+      "Session response did not match the mobile contract.",
+      0,
+      "BAD_PAYLOAD"
+    );
   }
   return value;
 }
@@ -516,24 +564,32 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function validateBaseUrl(input: string): string {
   const value = input.trim().replace(/\/+$/, "");
   const url = new URL(value);
-  const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
+  const loopback =
+    url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
   if (url.protocol !== "https:" && !(typeof __DEV__ !== "undefined" && __DEV__ && loopback)) {
     throw new TypeError("ClinicOS mobile API origin must use HTTPS outside local development.");
   }
   if (url.username || url.password || url.search || url.hash || url.pathname !== "/") {
-    throw new TypeError("ClinicOS mobile API origin must not contain credentials, path, query, or fragment.");
+    throw new TypeError(
+      "ClinicOS mobile API origin must not contain credentials, path, query, or fragment."
+    );
   }
   return value;
 }
 
 function resolveUploadUrl(baseUrl: string, target: string): string {
   const url = new URL(target, `${baseUrl}/`);
-  const loopback = url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
+  const loopback =
+    url.hostname === "127.0.0.1" || url.hostname === "localhost" || url.hostname === "::1";
   if (url.protocol !== "https:" && !(typeof __DEV__ !== "undefined" && __DEV__ && loopback)) {
     throw new ClinicOsApiError("Upload target must use HTTPS.", 0, "UPLOAD_TARGET_INVALID");
   }
   if (url.username || url.password) {
-    throw new ClinicOsApiError("Upload target contains prohibited URL credentials.", 0, "UPLOAD_TARGET_INVALID");
+    throw new ClinicOsApiError(
+      "Upload target contains prohibited URL credentials.",
+      0,
+      "UPLOAD_TARGET_INVALID"
+    );
   }
   return url.toString();
 }
@@ -542,11 +598,16 @@ function safeHttpMessage(status: number): string {
   if (status === 401) return "The device session is no longer authorized.";
   if (status === 403) return "This session is not authorized for the selected clinic action.";
   if (status === 409) return "The workflow changed or the previous upload outcome is uncertain.";
-  if (status === 429) return "The live service is rate-limiting uploads; the queue will retry later.";
+  if (status === 429)
+    return "The live service is rate-limiting uploads; the queue will retry later.";
   if (status >= 500) return "The live service is temporarily unavailable.";
   return `ClinicOS request failed (${status}).`;
 }
 
 function safeHttpError(status: number): ClinicOsApiError {
-  return new ClinicOsApiError(safeHttpMessage(status), status, status === 401 ? "SESSION_REVOKED" : status === 409 ? "OUTCOME_UNCERTAIN" : "HTTP_ERROR");
+  return new ClinicOsApiError(
+    safeHttpMessage(status),
+    status,
+    status === 401 ? "SESSION_REVOKED" : status === 409 ? "OUTCOME_UNCERTAIN" : "HTTP_ERROR"
+  );
 }

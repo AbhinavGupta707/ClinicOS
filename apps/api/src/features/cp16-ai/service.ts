@@ -62,12 +62,12 @@ export class Cp16AiService {
     readonly gateway: FireworksGatewayPort;
     readonly processingPolicy: Cp16AiProcessingPolicyGate;
     readonly persistence: Cp16AiInvocationPersistencePort;
-    readonly now?: () => Date;
+    readonly now: () => Date;
   }) {
     this.#gateway = input.gateway;
     this.#processingPolicy = input.processingPolicy;
     this.#persistence = input.persistence;
-    this.#now = input.now ?? (() => new Date());
+    this.#now = input.now;
   }
 
   async createReviewedClinicalDraft(
@@ -161,7 +161,7 @@ export class Cp16AiService {
       scope: input,
       requestFingerprint: transcriptionFingerprint(input),
       invoke: () => this.#gateway.transcribe(input),
-      disposition: (value) => value.reviewOnly === true ? "review_only_ready" : "blocked"
+      disposition: (value) => (value.reviewOnly === true ? "review_only_ready" : "blocked")
     });
   }
 
@@ -214,10 +214,16 @@ export class Cp16AiService {
       );
     }
     if (claim.outcome === "in_progress") {
-      throw new Cp16AiApplicationError("INVOCATION_IN_PROGRESS", "AI invocation is already in progress.");
+      throw new Cp16AiApplicationError(
+        "INVOCATION_IN_PROGRESS",
+        "AI invocation is already in progress."
+      );
     }
     if (claim.outcome === "idempotency_conflict") {
-      throw new Cp16AiApplicationError("IDEMPOTENCY_CONFLICT", "AI idempotency key conflicts with its original request.");
+      throw new Cp16AiApplicationError(
+        "IDEMPOTENCY_CONFLICT",
+        "AI idempotency key conflicts with its original request."
+      );
     }
     if (claim.outcome === "provider_succeeded_persistence_uncertain") {
       throw persistenceUncertain();
@@ -249,7 +255,10 @@ export class Cp16AiService {
 
     if (claim.outcome === "completed") {
       if (claim.result.kind !== input.kind) {
-        throw new Cp16AiApplicationError("IDEMPOTENCY_CONFLICT", "AI persisted result type is inconsistent.");
+        throw new Cp16AiApplicationError(
+          "IDEMPOTENCY_CONFLICT",
+          "AI persisted result type is inconsistent."
+        );
       }
       if (claim.disposition === "blocked") throw unsafeOutput();
       return claim.result.value as ValueFor<K>;
@@ -273,10 +282,7 @@ export class Cp16AiService {
         );
         throw persistenceUncertain();
       }
-      if (
-        error instanceof FireworksGatewayError &&
-        error.code === "provider_outcome_uncertain"
-      ) {
+      if (error instanceof FireworksGatewayError && error.code === "provider_outcome_uncertain") {
         await this.#safeProviderOutcomeUncertain(
           identity,
           claim.invocationId,
@@ -450,39 +456,45 @@ function invocationIdentity(
 }
 
 function structuredFingerprint(input: FireworksStructuredRequest): string {
-  return digest(JSON.stringify({
-    task: input.task,
-    clinicalScopeDigest: clinicalScopeDigest(input),
-    sourceDigest: digest(input.sourceText),
-    sourceAnchorIds: input.sourceAnchorIds,
-    estimatedInputTokens: input.estimatedInputTokens
-  }));
+  return digest(
+    JSON.stringify({
+      task: input.task,
+      clinicalScopeDigest: clinicalScopeDigest(input),
+      sourceDigest: digest(input.sourceText),
+      sourceAnchorIds: input.sourceAnchorIds,
+      estimatedInputTokens: input.estimatedInputTokens
+    })
+  );
 }
 
 function transcriptionFingerprint(input: FireworksTranscriptionRequest): string {
-  return digest(JSON.stringify({
-    task: input.task,
-    clinicalScopeDigest: clinicalScopeDigest(input),
-    audioDigest: digest(input.bytes),
-    mimeType: input.mimeType,
-    durationMs: input.durationMs,
-    durationVerified: input.durationVerified,
-    language: input.language ?? null,
-    medicalTermHintDigests: (input.medicalTermHints ?? []).map((term) => digest(term))
-  }));
+  return digest(
+    JSON.stringify({
+      task: input.task,
+      clinicalScopeDigest: clinicalScopeDigest(input),
+      audioDigest: digest(input.bytes),
+      mimeType: input.mimeType,
+      durationMs: input.durationMs,
+      durationVerified: input.durationVerified,
+      language: input.language ?? null,
+      medicalTermHintDigests: (input.medicalTermHints ?? []).map((term) => digest(term))
+    })
+  );
 }
 
 function retrievalFingerprint(
   input: FireworksEmbeddingRequest | FireworksRerankRequest,
   values: readonly string[]
 ): string {
-  return digest(JSON.stringify({
-    task: input.task,
-    clinicalScopeDigest: clinicalScopeDigest(input),
-    valueDigests: values.map((value) => digest(value)),
-    estimatedInputTokens: input.estimatedInputTokens,
-    topN: "topN" in input ? input.topN : null
-  }));
+  return digest(
+    JSON.stringify({
+      task: input.task,
+      clinicalScopeDigest: clinicalScopeDigest(input),
+      valueDigests: values.map((value) => digest(value)),
+      estimatedInputTokens: input.estimatedInputTokens,
+      topN: "topN" in input ? input.topN : null
+    })
+  );
 }
 
 function provenanceOf(value: ValueFor<PersistedResultKind>): FireworksRequestProvenance {
@@ -490,13 +502,15 @@ function provenanceOf(value: ValueFor<PersistedResultKind>): FireworksRequestPro
 }
 
 function clinicalScopeDigest(scope: FireworksClinicalScope): string {
-  return digest(JSON.stringify({
-    tenantId: scope.tenantId,
-    clinicId: scope.clinicId,
-    patientId: scope.patientId,
-    encounterId: scope.encounterId,
-    actorUserId: scope.actorUserId
-  }));
+  return digest(
+    JSON.stringify({
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      patientId: scope.patientId,
+      encounterId: scope.encounterId,
+      actorUserId: scope.actorUserId
+    })
+  );
 }
 
 function validIdentifier(value: string, field: string, maximum: number): string {

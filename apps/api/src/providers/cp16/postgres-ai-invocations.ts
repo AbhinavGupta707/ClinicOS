@@ -61,11 +61,11 @@ export class PostgresCp16AiInvocationPersistence implements Cp16AiInvocationPers
   constructor(input: {
     readonly unitOfWork: Cp16AiUnitOfWork;
     readonly payloads: Cp16ProtectedPayloadCodec;
-    readonly now?: () => Date;
+    readonly now: () => Date;
   }) {
     this.#unitOfWork = input.unitOfWork;
     this.#payloads = input.payloads;
-    this.#now = input.now ?? (() => new Date());
+    this.#now = input.now;
   }
 
   async claimInvocation(identity: Cp16AiInvocationIdentity): Promise<Cp16AiInvocationClaim> {

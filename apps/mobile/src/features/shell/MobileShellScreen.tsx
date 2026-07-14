@@ -30,7 +30,11 @@ import {
   type PatientSummary,
   type QueueEntrySummary
 } from "../../lib/apiClient";
-import { ClinicOsCaptureAuthorization, ClinicOsCaptureTransport } from "../capture/adapters/clinicOsCaptureTransport";
+import { mobileSystemClock } from "../../lib/clock";
+import {
+  ClinicOsCaptureAuthorization,
+  ClinicOsCaptureTransport
+} from "../capture/adapters/clinicOsCaptureTransport";
 import { ExpoEncryptedCaptureBlobStore } from "../capture/adapters/encryptedBlobStore";
 import { ExpoCaptureDigestProvider } from "../capture/adapters/expoCrypto";
 import { ExpoNetworkReachability } from "../capture/adapters/networkReachability";
@@ -90,8 +94,11 @@ export function MobileShellScreen() {
   const [queueItems, setQueueItems] = useState<readonly UploadQueueItem[]>([]);
   const [action, setAction] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [cameraPermission, requestCameraPermission, refreshCameraPermission] = useCameraPermissions();
-  const [microphonePermission, setMicrophonePermission] = useState<PermissionState>({ state: "checking" });
+  const [cameraPermission, requestCameraPermission, refreshCameraPermission] =
+    useCameraPermissions();
+  const [microphonePermission, setMicrophonePermission] = useState<PermissionState>({
+    state: "checking"
+  });
   const [showCamera, setShowCamera] = useState(false);
   const cameraRef = useRef<CameraView | null>(null);
   const recorder = useAudioRecorder(RecordingPresets.HIGH_QUALITY);
@@ -102,7 +109,7 @@ export function MobileShellScreen() {
 
   const selectedClinic =
     session.status === "loaded"
-      ? session.data.clinics.find((clinic) => clinic.id === clinicId) ?? null
+      ? (session.data.clinics.find((clinic) => clinic.id === clinicId) ?? null)
       : null;
   const binding: CaptureBinding | null =
     session.status === "loaded" && selectedClinic && patientId
@@ -175,7 +182,10 @@ export function MobileShellScreen() {
         setPatientId(null);
         setEncounter(null);
         setConsent(undefined);
-        setSession({ status: "failed", message: "This device session was revoked. Official sign-in is required." });
+        setSession({
+          status: "failed",
+          message: "This device session was revoked. Official sign-in is required."
+        });
         setQueueItems([]);
         setAction(
           sessionTokensCleared && localStorageDeleted && captureKeysDestroyed
@@ -243,11 +253,16 @@ export function MobileShellScreen() {
       if (state !== "active") {
         queue.abortActive();
         if (recorder.isRecording) {
-          interruptionMessage.current = "Recording was interrupted when ClinicOS left the foreground.";
+          interruptionMessage.current =
+            "Recording was interrupted when ClinicOS left the foreground.";
           void stopAndProtectAudio(true);
         }
       } else {
-        if (api) void queue.drain().then(refreshProtectedQueue).catch(() => undefined);
+        if (api)
+          void queue
+            .drain()
+            .then(refreshProtectedQueue)
+            .catch(() => undefined);
         if (interruptionMessage.current) {
           setAction(interruptionMessage.current);
           interruptionMessage.current = null;
@@ -260,7 +275,10 @@ export function MobileShellScreen() {
     });
     const networkSubscription = Network.addNetworkStateListener((state) => {
       if (api && state.isConnected && state.isInternetReachable !== false) {
-        void queue.drain().then(refreshProtectedQueue).catch(() => undefined);
+        void queue
+          .drain()
+          .then(refreshProtectedQueue)
+          .catch(() => undefined);
       }
     });
     return () => {
@@ -355,7 +373,11 @@ export function MobileShellScreen() {
     setAction(null);
     let temporary: File | null = null;
     try {
-      const picture = await cameraRef.current.takePictureAsync({ quality: 0.85, base64: false, exif: false });
+      const picture = await cameraRef.current.takePictureAsync({
+        quality: 0.85,
+        base64: false,
+        exif: false
+      });
       temporary = new File(picture.uri);
       const bytes = await temporary.bytes();
       await runtime.queue.enqueue({
@@ -363,11 +385,13 @@ export function MobileShellScreen() {
         binding,
         bytes,
         mimeType: picture.format === "png" ? "image/png" : "image/jpeg",
-        capturedAt: new Date().toISOString(),
+        capturedAt: mobileSystemClock.now().toISOString(),
         durationMs: null
       });
       setShowCamera(false);
-      setAction("Photo encrypted and queued. No upload is claimed until server completion confirms it.");
+      setAction(
+        "Photo encrypted and queued. No upload is claimed until server completion confirms it."
+      );
       await runtime.queue.drain();
     } catch (error) {
       setAction(safeMessage(error));
@@ -379,7 +403,8 @@ export function MobileShellScreen() {
   }
 
   async function startAudio() {
-    if (!audioDecision.enabled || !binding || !binding.encounterId || runtime.status !== "ready") return;
+    if (!audioDecision.enabled || !binding || !binding.encounterId || runtime.status !== "ready")
+      return;
     setBusy(true);
     setAction(null);
     try {
@@ -411,7 +436,9 @@ export function MobileShellScreen() {
       await protectAudioFile(uri, durationMs, interrupted);
     } catch (error) {
       if (!interrupted) setAction(safeMessage(error));
-      else interruptionMessage.current = "Interrupted recording could not be safely queued and was discarded.";
+      else
+        interruptionMessage.current =
+          "Interrupted recording could not be safely queued and was discarded.";
     } finally {
       await setAudioModeAsync({ allowsRecording: false }).catch(() => undefined);
       await refreshProtectedQueue().catch(() => undefined);
@@ -430,7 +457,7 @@ export function MobileShellScreen() {
         binding: capturedBinding,
         bytes,
         mimeType: "audio/mp4",
-        capturedAt: new Date().toISOString(),
+        capturedAt: mobileSystemClock.now().toISOString(),
         durationMs
       });
       setAction(
@@ -454,7 +481,9 @@ export function MobileShellScreen() {
     if (runtime.status !== "ready") return;
     await runQueueAction(async () => {
       await runtime.queue.drain(10);
-      setAction("Queue processing finished. Items remain unless server completion and local purge both succeeded.");
+      setAction(
+        "Queue processing finished. Items remain unless server completion and local purge both succeeded."
+      );
     });
   }
 
@@ -484,7 +513,8 @@ export function MobileShellScreen() {
     const result = await performSecureSignOut({
       clearSessionTokens: () => runtime.keys.clearSessionTokens(),
       shutdownAndDeleteLocalState: () => runtime.queue.shutdownAndDeleteLocalState(),
-      destroyCaptureKeysAfterVerifiedPurge: () => runtime.keys.destroyCaptureKeysAfterVerifiedPurge()
+      destroyCaptureKeysAfterVerifiedPurge: () =>
+        runtime.keys.destroyCaptureKeysAfterVerifiedPurge()
     });
     setQueueItems([]);
     setBusy(false);
@@ -517,7 +547,8 @@ export function MobileShellScreen() {
           <Text style={styles.eyebrow}>ClinicOS · protected native capture</Text>
           <Text style={styles.title}>Chairside media, encrypted before it joins the queue.</Text>
           <Text style={styles.body}>
-            Capture is fail-closed on session, clinic, patient, consent, permission, and native secure-storage checks.
+            Capture is fail-closed on session, clinic, patient, consent, permission, and native
+            secure-storage checks.
           </Text>
         </View>
 
@@ -528,14 +559,23 @@ export function MobileShellScreen() {
         </Notice>
         {Platform.OS === "web" ? (
           <Notice tone="warning">
-            Web is supplemental smoke only. Camera, microphone, SecureStore, SQLCipher, and app-private file guarantees require a native development or internal build.
+            Web is supplemental smoke only. Camera, microphone, SecureStore, SQLCipher, and
+            app-private file guarantees require a native development or internal build.
           </Notice>
         ) : null}
-        {runtime.status === "starting" ? <Notice tone="neutral">Verifying SQLCipher and protected device storage…</Notice> : null}
-        {runtime.status === "failed" ? <Notice tone="danger">Secure capture unavailable: {runtime.message}</Notice> : null}
+        {runtime.status === "starting" ? (
+          <Notice tone="neutral">Verifying SQLCipher and protected device storage…</Notice>
+        ) : null}
+        {runtime.status === "failed" ? (
+          <Notice tone="danger">Secure capture unavailable: {runtime.message}</Notice>
+        ) : null}
 
         <Section title="1. Session and clinic">
-          <StateLine state={session} idle="No session loaded." loaded={(value) => `${value.user.displayName} · ${value.tenant.displayName}`} />
+          <StateLine
+            state={session}
+            idle="No session loaded."
+            loaded={(value) => `${value.user.displayName} · ${value.tenant.displayName}`}
+          />
           {session.status === "loaded" ? (
             <View style={styles.chips}>
               {session.data.clinics.map((clinic) => (
@@ -554,41 +594,84 @@ export function MobileShellScreen() {
               ))}
             </View>
           ) : null}
-          <Button disabled={!api || !selectedClinic || busy} label="Refresh patient worklist" onPress={() => void refreshWorklist()} />
+          <Button
+            disabled={!api || !selectedClinic || busy}
+            label="Refresh patient worklist"
+            onPress={() => void refreshWorklist()}
+          />
         </Section>
 
         <Section title="2. Patient, consent, and encounter">
-          <StateLine state={patients} idle="Refresh the worklist to select a patient." loaded={(value) => `${value.length} patient record(s) available.`} />
-          {patients.status === "loaded" ? patients.data.slice(0, 8).map((patient) => (
-            <Pressable key={patient.id} style={[styles.listRow, patient.id === patientId && styles.selected]} onPress={() => void selectPatient(patient.id)}>
-              <View style={styles.grow}>
-                <Text style={styles.itemTitle}>{patientLabel(patient)}</Text>
-                <Text style={styles.meta}>{patient.status ?? "Patient record"}</Text>
-              </View>
-              <Text style={styles.badge}>{patient.id === patientId ? "Selected" : "Choose"}</Text>
-            </Pressable>
-          )) : null}
-          <StateLine state={worklist} idle="Today’s queue has not been loaded." loaded={(value) => `${value.length} worklist item(s) for the clinic-local date.`} />
-          {worklist.status === "loaded" ? worklist.data.slice(0, 8).map((entry) => (
-            <Pressable key={entry.id} style={styles.listRow} onPress={() => void selectPatient(entry.patientId)}>
-              <Text style={styles.itemTitle}>Queue status: {entry.status}</Text>
-              <Text style={styles.badge}>Select patient</Text>
-            </Pressable>
-          )) : null}
+          <StateLine
+            state={patients}
+            idle="Refresh the worklist to select a patient."
+            loaded={(value) => `${value.length} patient record(s) available.`}
+          />
+          {patients.status === "loaded"
+            ? patients.data.slice(0, 8).map((patient) => (
+                <Pressable
+                  key={patient.id}
+                  style={[styles.listRow, patient.id === patientId && styles.selected]}
+                  onPress={() => void selectPatient(patient.id)}
+                >
+                  <View style={styles.grow}>
+                    <Text style={styles.itemTitle}>{patientLabel(patient)}</Text>
+                    <Text style={styles.meta}>{patient.status ?? "Patient record"}</Text>
+                  </View>
+                  <Text style={styles.badge}>
+                    {patient.id === patientId ? "Selected" : "Choose"}
+                  </Text>
+                </Pressable>
+              ))
+            : null}
+          <StateLine
+            state={worklist}
+            idle="Today’s queue has not been loaded."
+            loaded={(value) => `${value.length} worklist item(s) for the clinic-local date.`}
+          />
+          {worklist.status === "loaded"
+            ? worklist.data.slice(0, 8).map((entry) => (
+                <Pressable
+                  key={entry.id}
+                  style={styles.listRow}
+                  onPress={() => void selectPatient(entry.patientId)}
+                >
+                  <Text style={styles.itemTitle}>Queue status: {entry.status}</Text>
+                  <Text style={styles.badge}>Select patient</Text>
+                </Pressable>
+              ))
+            : null}
           <Text style={styles.label}>Encounter UUID</Text>
           <TextInput
             autoCapitalize="none"
             autoCorrect={false}
             editable={Boolean(patientId) && !busy}
-            onChangeText={(value) => { setEncounterInput(value); setEncounter(null); }}
+            onChangeText={(value) => {
+              setEncounterInput(value);
+              setEncounter(null);
+            }}
             placeholder="Verify an active encounter"
             style={styles.input}
             value={encounterInput}
           />
-          <Button disabled={!api || !patientId || !encounterInput.trim() || busy} label="Verify encounter" onPress={() => void verifyEncounter()} />
-          <Text style={encounter ? styles.good : styles.meta}>{encounter ? `Verified · ${encounter.status}` : "Audio remains disabled until verification succeeds."}</Text>
+          <Button
+            disabled={!api || !patientId || !encounterInput.trim() || busy}
+            label="Verify encounter"
+            onPress={() => void verifyEncounter()}
+          />
+          <Text style={encounter ? styles.good : styles.meta}>
+            {encounter
+              ? `Verified · ${encounter.status}`
+              : "Audio remains disabled until verification succeeds."}
+          </Text>
           <Text style={photoConsentReady ? styles.good : styles.warningText}>
-            {consent === undefined ? "Checking consent…" : consent === null ? "Consent unavailable; capture is disabled." : photoConsentReady ? "Photo capture consent active." : "Photo capture consent missing or revoked."}
+            {consent === undefined
+              ? "Checking consent…"
+              : consent === null
+                ? "Consent unavailable; capture is disabled."
+                : photoConsentReady
+                  ? "Photo capture consent active."
+                  : "Photo capture consent missing or revoked."}
           </Text>
         </Section>
 
@@ -606,12 +689,20 @@ export function MobileShellScreen() {
           ) : null}
           <View style={styles.actions}>
             <Button
-              disabled={!binding || !nativeReady || !photoConsentReady || !cameraPermission?.granted || busy}
+              disabled={
+                !binding || !nativeReady || !photoConsentReady || !cameraPermission?.granted || busy
+              }
               label={showCamera ? "Close camera" : "Open camera"}
               onPress={() => setShowCamera((value) => !value)}
               secondary
             />
-            {showCamera ? <Button disabled={busy} label="Capture and encrypt" onPress={() => void capturePhoto()} /> : null}
+            {showCamera ? (
+              <Button
+                disabled={busy}
+                label="Capture and encrypt"
+                onPress={() => void capturePhoto()}
+              />
+            ) : null}
           </View>
         </Section>
 
@@ -619,43 +710,89 @@ export function MobileShellScreen() {
           <Text style={styles.itemTitle}>{audioDecision.title}</Text>
           <Text style={styles.body}>{audioDecision.detail}</Text>
           <PermissionLine label="Microphone" state={microphonePermission} />
-          {audioDecision.reason === "permission_required" ? <Button label="Allow microphone" onPress={() => void requestMicrophone()} /> : null}
-          {microphonePermission.state === "denied" ? <Button label="Open system settings" onPress={() => void Linking.openSettings()} /> : null}
+          {audioDecision.reason === "permission_required" ? (
+            <Button label="Allow microphone" onPress={() => void requestMicrophone()} />
+          ) : null}
+          {microphonePermission.state === "denied" ? (
+            <Button label="Open system settings" onPress={() => void Linking.openSettings()} />
+          ) : null}
           {recorderState.isRecording ? (
-            <Notice tone="danger">Recording · {Math.ceil(recorderState.durationMillis / 1000)}s of 900s maximum. Leaving the foreground stops recording.</Notice>
+            <Notice tone="danger">
+              Recording · {Math.ceil(recorderState.durationMillis / 1000)}s of 900s maximum. Leaving
+              the foreground stops recording.
+            </Notice>
           ) : null}
           <Button
-            disabled={busy || (!recorderState.isRecording && (!audioDecision.enabled || !nativeReady))}
+            disabled={
+              busy || (!recorderState.isRecording && (!audioDecision.enabled || !nativeReady))
+            }
             label={recorderState.isRecording ? "Stop, encrypt, and queue" : "Start clinical audio"}
             onPress={() => void (recorderState.isRecording ? stopAndProtectAudio() : startAudio())}
           />
         </Section>
 
         <Section title="5. Protected offline queue">
-          <Text style={styles.body}>Queue bindings and signed targets live only in SQLCipher. Media is separately AES-256-GCM sealed with authenticated metadata.</Text>
+          <Text style={styles.body}>
+            Queue bindings and signed targets live only in SQLCipher. Media is separately
+            AES-256-GCM sealed with authenticated metadata.
+          </Text>
           <View style={styles.actions}>
-            <Button disabled={!nativeReady || busy || !api} label="Process due items" onPress={() => void processQueue()} />
-            <Button disabled={!nativeReady || busy} label="Purge and log out" onPress={() => void purgeAndLogout()} secondary />
+            <Button
+              disabled={!nativeReady || busy || !api}
+              label="Process due items"
+              onPress={() => void processQueue()}
+            />
+            <Button
+              disabled={!nativeReady || busy}
+              label="Purge and log out"
+              onPress={() => void purgeAndLogout()}
+              secondary
+            />
           </View>
-          {queueItems.length === 0 ? <Text style={styles.meta}>No protected captures are queued.</Text> : queueItems.map((item) => (
-            <View key={item.id} style={styles.queueRow}>
-              <View style={styles.grow}>
-                <Text style={styles.itemTitle}>{item.kind === "audio" ? "Clinical audio" : "Photo"} · {queueStatusLabel(item)}</Text>
-                <Text style={styles.meta}>{item.byteLength.toLocaleString()} bytes · attempt {item.attempts}</Text>
+          {queueItems.length === 0 ? (
+            <Text style={styles.meta}>No protected captures are queued.</Text>
+          ) : (
+            queueItems.map((item) => (
+              <View key={item.id} style={styles.queueRow}>
+                <View style={styles.grow}>
+                  <Text style={styles.itemTitle}>
+                    {item.kind === "audio" ? "Clinical audio" : "Photo"} · {queueStatusLabel(item)}
+                  </Text>
+                  <Text style={styles.meta}>
+                    {item.byteLength.toLocaleString()} bytes · attempt {item.attempts}
+                  </Text>
+                </View>
+                <View style={styles.queueActions}>
+                  {item.status === "manual_retry_required" ? (
+                    <SmallButton
+                      label="Retry upload"
+                      onPress={() => void retryQueueItem(item.id)}
+                    />
+                  ) : item.status === "purge_failed" ? (
+                    <SmallButton
+                      label="Retry delete"
+                      onPress={() => void purgeQueueItem(item.id)}
+                    />
+                  ) : null}
+                  <SmallButton label="Purge" onPress={() => void purgeQueueItem(item.id)} />
+                </View>
               </View>
-              <View style={styles.queueActions}>
-                {item.status === "manual_retry_required" ? (
-                  <SmallButton label="Retry upload" onPress={() => void retryQueueItem(item.id)} />
-                ) : item.status === "purge_failed" ? (
-                  <SmallButton label="Retry delete" onPress={() => void purgeQueueItem(item.id)} />
-                ) : null}
-                <SmallButton label="Purge" onPress={() => void purgeQueueItem(item.id)} />
-              </View>
-            </View>
-          ))}
+            ))
+          )}
         </Section>
 
-        {action ? <Notice tone={action.toLowerCase().includes("failed") || action.toLowerCase().includes("unavailable") ? "danger" : "neutral"}>{action}</Notice> : null}
+        {action ? (
+          <Notice
+            tone={
+              action.toLowerCase().includes("failed") ||
+              action.toLowerCase().includes("unavailable")
+                ? "danger"
+                : "neutral"
+            }
+          >
+            {action}
+          </Notice>
+        ) : null}
       </ScrollView>
     </SafeAreaView>
   );
@@ -682,14 +819,18 @@ function dateInTimeZone(timeZone: string): string {
     year: "numeric",
     month: "2-digit",
     day: "2-digit"
-  }).formatToParts(new Date());
-  const value = (type: Intl.DateTimeFormatPartTypes) => parts.find((part) => part.type === type)?.value;
+  }).formatToParts(mobileSystemClock.now());
+  const value = (type: Intl.DateTimeFormatPartTypes) =>
+    parts.find((part) => part.type === type)?.value;
   return `${value("year")}-${value("month")}-${value("day")}`;
 }
 
 function safeMessage(error: unknown): string {
   if (error instanceof CaptureQueueError) return error.message;
-  if (error instanceof Error && !/token|authorization|object.?key|file:\/|https?:\/\//i.test(error.message)) {
+  if (
+    error instanceof Error &&
+    !/token|authorization|object.?key|file:\/|https?:\/\//i.test(error.message)
+  ) {
     return error.message.slice(0, 240);
   }
   return "The protected operation failed without a reportable diagnostic.";
@@ -707,7 +848,10 @@ function queueStatusLabel(item: UploadQueueItem): string {
     uploading: "upload in progress",
     completing: "awaiting server confirmation",
     retry_wait: "retry scheduled",
-    manual_retry_required: item.lastErrorCode === "UPLOAD_OUTCOME_UNCERTAIN" ? "outcome uncertain" : "manual retry required",
+    manual_retry_required:
+      item.lastErrorCode === "UPLOAD_OUTCOME_UNCERTAIN"
+        ? "outcome uncertain"
+        : "manual retry required",
     quarantined: "integrity quarantine",
     purging: "deletion in progress",
     purge_failed: "deletion not confirmed"
@@ -716,14 +860,43 @@ function queueStatusLabel(item: UploadQueueItem): string {
 }
 
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  return <View style={styles.panel}><Text style={styles.panelTitle}>{title}</Text>{children}</View>;
+  return (
+    <View style={styles.panel}>
+      <Text style={styles.panelTitle}>{title}</Text>
+      {children}
+    </View>
+  );
 }
 
-function Notice({ tone, children }: { tone: "neutral" | "warning" | "danger"; children: React.ReactNode }) {
-  return <View style={[styles.notice, tone === "warning" && styles.noticeWarning, tone === "danger" && styles.noticeDanger]}><Text style={styles.noticeText}>{children}</Text></View>;
+function Notice({
+  tone,
+  children
+}: {
+  tone: "neutral" | "warning" | "danger";
+  children: React.ReactNode;
+}) {
+  return (
+    <View
+      style={[
+        styles.notice,
+        tone === "warning" && styles.noticeWarning,
+        tone === "danger" && styles.noticeDanger
+      ]}
+    >
+      <Text style={styles.noticeText}>{children}</Text>
+    </View>
+  );
 }
 
-function StateLine<T>({ state, idle, loaded }: { state: LoadState<T>; idle: string; loaded: (value: T) => string }) {
+function StateLine<T>({
+  state,
+  idle,
+  loaded
+}: {
+  state: LoadState<T>;
+  idle: string;
+  loaded: (value: T) => string;
+}) {
   if (state.status === "idle") return <Text style={styles.meta}>{idle}</Text>;
   if (state.status === "loading") return <Text style={styles.meta}>Loading live records…</Text>;
   if (state.status === "failed") return <Text style={styles.warningText}>{state.message}</Text>;
@@ -731,60 +904,178 @@ function StateLine<T>({ state, idle, loaded }: { state: LoadState<T>; idle: stri
 }
 
 function PermissionLine({ label, state }: { label: string; state: PermissionState }) {
-  const value = state.state === "denied" ? (state.canAskAgain ? "denied; may request again" : "denied in system settings") : state.state;
-  return <Text style={state.state === "granted" ? styles.good : styles.warningText}>{label}: {value}</Text>;
+  const value =
+    state.state === "denied"
+      ? state.canAskAgain
+        ? "denied; may request again"
+        : "denied in system settings"
+      : state.state;
+  return (
+    <Text style={state.state === "granted" ? styles.good : styles.warningText}>
+      {label}: {value}
+    </Text>
+  );
 }
 
-function Button({ label, onPress, disabled = false, secondary = false }: { label: string; onPress: () => void; disabled?: boolean; secondary?: boolean }) {
-  return <Pressable accessibilityRole="button" accessibilityState={{ disabled }} disabled={disabled} onPress={onPress} style={[styles.button, secondary && styles.buttonSecondary, disabled && styles.buttonDisabled]}><Text style={[styles.buttonText, secondary && styles.buttonSecondaryText]}>{label}</Text></Pressable>;
+function Button({
+  label,
+  onPress,
+  disabled = false,
+  secondary = false
+}: {
+  label: string;
+  onPress: () => void;
+  disabled?: boolean;
+  secondary?: boolean;
+}) {
+  return (
+    <Pressable
+      accessibilityRole="button"
+      accessibilityState={{ disabled }}
+      disabled={disabled}
+      onPress={onPress}
+      style={[
+        styles.button,
+        secondary && styles.buttonSecondary,
+        disabled && styles.buttonDisabled
+      ]}
+    >
+      <Text style={[styles.buttonText, secondary && styles.buttonSecondaryText]}>{label}</Text>
+    </Pressable>
+  );
 }
 
 function SmallButton({ label, onPress }: { label: string; onPress: () => void }) {
-  return <Pressable accessibilityRole="button" onPress={onPress} style={styles.smallButton}><Text style={styles.smallButtonText}>{label}</Text></Pressable>;
+  return (
+    <Pressable accessibilityRole="button" onPress={onPress} style={styles.smallButton}>
+      <Text style={styles.smallButtonText}>{label}</Text>
+    </Pressable>
+  );
 }
 
-function Chip({ label, selected, onPress }: { label: string; selected: boolean; onPress: () => void }) {
-  return <Pressable onPress={onPress} style={[styles.chip, selected && styles.chipSelected]}><Text style={[styles.chipText, selected && styles.chipSelectedText]}>{label}</Text></Pressable>;
+function Chip({
+  label,
+  selected,
+  onPress
+}: {
+  label: string;
+  selected: boolean;
+  onPress: () => void;
+}) {
+  return (
+    <Pressable onPress={onPress} style={[styles.chip, selected && styles.chipSelected]}>
+      <Text style={[styles.chipText, selected && styles.chipSelectedText]}>{label}</Text>
+    </Pressable>
+  );
 }
 
 const styles = StyleSheet.create({
   safeArea: { backgroundColor: "#eef4f1", flex: 1 },
-  container: { alignSelf: "center", gap: 14, maxWidth: 880, padding: 18, paddingBottom: 60, width: "100%" },
+  container: {
+    alignSelf: "center",
+    gap: 14,
+    maxWidth: 880,
+    padding: 18,
+    paddingBottom: 60,
+    width: "100%"
+  },
   hero: { backgroundColor: "#12382f", borderRadius: 24, gap: 10, padding: 24 },
-  eyebrow: { color: "#9ed3bd", fontSize: 12, fontWeight: "800", letterSpacing: 1.1, textTransform: "uppercase" },
+  eyebrow: {
+    color: "#9ed3bd",
+    fontSize: 12,
+    fontWeight: "800",
+    letterSpacing: 1.1,
+    textTransform: "uppercase"
+  },
   title: { color: "#f7fbf9", fontSize: 28, fontWeight: "800", lineHeight: 34 },
   body: { color: "#456159", fontSize: 14, lineHeight: 21 },
-  panel: { backgroundColor: "#ffffff", borderColor: "#d9e4df", borderRadius: 18, borderWidth: 1, gap: 11, padding: 18 },
+  panel: {
+    backgroundColor: "#ffffff",
+    borderColor: "#d9e4df",
+    borderRadius: 18,
+    borderWidth: 1,
+    gap: 11,
+    padding: 18
+  },
   panelTitle: { color: "#163b31", fontSize: 18, fontWeight: "800" },
   notice: { backgroundColor: "#dcebe5", borderRadius: 12, padding: 13 },
   noticeWarning: { backgroundColor: "#fff0c9" },
   noticeDanger: { backgroundColor: "#f9d8d3" },
   noticeText: { color: "#263e37", fontSize: 13, lineHeight: 19 },
   chips: { flexDirection: "row", flexWrap: "wrap", gap: 8 },
-  chip: { borderColor: "#aac0b7", borderRadius: 999, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8 },
+  chip: {
+    borderColor: "#aac0b7",
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 12,
+    paddingVertical: 8
+  },
   chipSelected: { backgroundColor: "#1b604e", borderColor: "#1b604e" },
   chipText: { color: "#284b41", fontWeight: "700" },
   chipSelectedText: { color: "#ffffff" },
-  button: { alignItems: "center", alignSelf: "flex-start", backgroundColor: "#1b604e", borderRadius: 12, minHeight: 44, paddingHorizontal: 16, paddingVertical: 12 },
+  button: {
+    alignItems: "center",
+    alignSelf: "flex-start",
+    backgroundColor: "#1b604e",
+    borderRadius: 12,
+    minHeight: 44,
+    paddingHorizontal: 16,
+    paddingVertical: 12
+  },
   buttonSecondary: { backgroundColor: "#e5efeb" },
   buttonDisabled: { opacity: 0.42 },
   buttonText: { color: "#ffffff", fontSize: 14, fontWeight: "800" },
   buttonSecondaryText: { color: "#1c4b3f" },
-  smallButton: { backgroundColor: "#e5efeb", borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8 },
+  smallButton: {
+    backgroundColor: "#e5efeb",
+    borderRadius: 8,
+    paddingHorizontal: 10,
+    paddingVertical: 8
+  },
   smallButtonText: { color: "#1c4b3f", fontSize: 12, fontWeight: "800" },
   actions: { alignItems: "center", flexDirection: "row", flexWrap: "wrap", gap: 10 },
-  listRow: { alignItems: "center", borderColor: "#dfe8e4", borderRadius: 12, borderWidth: 1, flexDirection: "row", gap: 10, minHeight: 54, padding: 12 },
+  listRow: {
+    alignItems: "center",
+    borderColor: "#dfe8e4",
+    borderRadius: 12,
+    borderWidth: 1,
+    flexDirection: "row",
+    gap: 10,
+    minHeight: 54,
+    padding: 12
+  },
   selected: { backgroundColor: "#e5f2ed", borderColor: "#64a48e" },
   grow: { flex: 1 },
   itemTitle: { color: "#183c32", fontSize: 14, fontWeight: "700" },
   meta: { color: "#6d817a", fontSize: 12, lineHeight: 18 },
   badge: { color: "#23624f", fontSize: 11, fontWeight: "800" },
   label: { color: "#29483f", fontSize: 12, fontWeight: "800", marginTop: 4 },
-  input: { backgroundColor: "#f5f8f7", borderColor: "#cddbd5", borderRadius: 10, borderWidth: 1, color: "#173b31", minHeight: 46, paddingHorizontal: 12 },
+  input: {
+    backgroundColor: "#f5f8f7",
+    borderColor: "#cddbd5",
+    borderRadius: 10,
+    borderWidth: 1,
+    color: "#173b31",
+    minHeight: 46,
+    paddingHorizontal: 12
+  },
   good: { color: "#177050", fontSize: 13, fontWeight: "700", lineHeight: 19 },
   warningText: { color: "#9c4f17", fontSize: 13, fontWeight: "600", lineHeight: 19 },
-  cameraFrame: { aspectRatio: 4 / 3, backgroundColor: "#102821", borderRadius: 16, overflow: "hidden", width: "100%" },
+  cameraFrame: {
+    aspectRatio: 4 / 3,
+    backgroundColor: "#102821",
+    borderRadius: 16,
+    overflow: "hidden",
+    width: "100%"
+  },
   camera: { flex: 1 },
-  queueRow: { alignItems: "center", borderTopColor: "#e2e9e6", borderTopWidth: 1, flexDirection: "row", gap: 10, paddingTop: 12 },
+  queueRow: {
+    alignItems: "center",
+    borderTopColor: "#e2e9e6",
+    borderTopWidth: 1,
+    flexDirection: "row",
+    gap: 10,
+    paddingTop: 12
+  },
   queueActions: { flexDirection: "row", gap: 6 }
 });

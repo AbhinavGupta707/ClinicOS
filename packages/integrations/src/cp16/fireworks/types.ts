@@ -342,7 +342,7 @@ export interface FireworksGatewayOptions {
   readonly modelAvailabilityMaximumAgeMs?: number;
   readonly circuitFailureThreshold?: number;
   readonly circuitOpenMs?: number;
-  readonly now?: () => Date;
+  readonly now: () => Date;
   readonly random?: () => number;
   readonly sleep?: (milliseconds: number) => Promise<void>;
 }

@@ -88,7 +88,7 @@ export class PostgresFireworksUsageGuard implements FireworksUsageGuard {
     readonly monthlyBudgetCents: number;
     readonly perClinicDailyBudgetCents: number;
     readonly maximumClinicConcurrency?: number;
-    readonly now?: () => Date;
+    readonly now: () => Date;
   }) {
     this.#unitOfWork = input.unitOfWork;
     this.#catalog = input.catalog;
@@ -99,7 +99,7 @@ export class PostgresFireworksUsageGuard implements FireworksUsageGuard {
       "clinic concurrency",
       64
     );
-    this.#now = input.now ?? (() => new Date());
+    this.#now = input.now;
   }
 
   async reserve(input: FireworksUsageRequest): Promise<FireworksUsageReservation> {

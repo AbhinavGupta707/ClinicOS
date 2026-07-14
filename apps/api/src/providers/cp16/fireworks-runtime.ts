@@ -38,7 +38,7 @@ export function createCp16FireworksRuntime(input: {
   readonly config: ClinicOsConfig;
   readonly unitOfWork: Cp16AiUnitOfWork;
   readonly metrics?: MetricRecorder;
-  readonly now?: () => Date;
+  readonly now: () => Date;
 }): Cp16FireworksRuntime | null {
   const configuration = input.config.providers.ai;
   if (!configuration.activation.liveCallsEnabled) return null;
@@ -51,7 +51,7 @@ export function createCp16FireworksRuntime(input: {
   const keyId = input.config.interoperability?.payloadKmsKeyId;
   if (!keyId) throw new Error("CP16 live AI requires the protected-payload KMS key.");
 
-  const now = input.now ?? (() => new Date());
+  const now = input.now;
   const catalog = configuredCatalog(input.config);
   const activation = activationConfiguration(input.config, catalog);
   const kms = new KMSClient({ region: input.config.storage.region });
