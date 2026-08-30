@@ -200,6 +200,7 @@ Before connector-specific MVP1 code begins, obtain:
 - 2026-08-30: the WSL local stack, all 22 migrations, synthetic seed, database
   verification, migration/repository suites, worker persistence, API readiness,
   workspace checks, web tests/build, root build, and secret scan passed.
-- 2026-08-30: MVP0 technical recovery is green. Checkpoint exit remains blocked
-  on explicit authority for a current-lock clean reinstall and on the real source
-  contract plus deidentified samples required to define MVP1 without guessing.
+- 2026-08-30: the current lockfile clean install and every post-install gate
+  passed. MVP0 engineering is complete; formal checkpoint exit now waits only
+  for the real source contract and deidentified samples required to define MVP1
+  without guessing.

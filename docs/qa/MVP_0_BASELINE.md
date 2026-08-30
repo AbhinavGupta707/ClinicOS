@@ -1,15 +1,15 @@
 # ClinicOS MVP0 Baseline Evidence
 
-Status: technical baseline green; checkpoint exit blocked on explicit inputs
+Status: technical baseline complete; checkpoint exit awaiting clinic-source inputs
 Evidence tier: E3 durable local integration
-Executed at: 2026-08-30T18:20:33Z
+Executed at: 2026-08-30T18:33:47Z
 Authoritative root: `/home/abhinav/code/ClinicOS`
 Branch: `codex/integration/mvp-0`
 Starting commit: `2a4cd31f57d892810c5dfb692266b3965412aff2`
 
 ## Claim
 
-The WSL repository can be installed, compiled, tested, built, migrated, seeded,
+The WSL repository can be cleanly installed, compiled, tested, built, migrated, seeded,
 and exercised against the local service stack. The clean-checkout check-ordering
 defect is repaired, and the web application now uses an exact patched Next.js
 version. No clinic integration is claimed: MVP1 still requires an approved source
@@ -45,6 +45,7 @@ data. No production PHI, provider credential, or live clinic endpoint was used.
 
 | Gate | Result | Evidence summary |
 | --- | --- | --- |
+| `npm ci --prefer-offline --no-audit` | PASS | Recreated 1,247 packages from the committed lockfile |
 | Local dependency stack | PASS | PostgreSQL, Redis, and Keycloak healthy; Temporal services running |
 | `npm run db:migrate:validate` | PASS | 22 migrations validated |
 | `npm run db:seed:local` | PASS | Idempotent synthetic seed completed |
@@ -86,22 +87,18 @@ No `npm audit fix --force` or incompatible major upgrade was applied. Remaining
 advisories require a separately authorized, compatibility-tested dependency lane;
 they do not justify weakening lockfile reproducibility or provider correctness.
 
-## Known limitations and explicit blockers
+## Known limitations and remaining blocker
 
-1. A current-lock clean `npm ci --prefer-offline --no-audit` was not executed
-   after the dependency change because the environment correctly required fresh
-   user authorization. The earlier baseline clean install passed, and every
-   post-change compile, test, and build gate above passed.
-2. MVP1 cannot be designed honestly until the owner supplies the target clinic
+1. MVP1 cannot be designed honestly until the owner supplies the target clinic
    system/vendor and version, authorized access method, sample export or webhook
    payloads, timezone and identifiers, update/cancellation semantics, expected
    volume, and desired import cadence.
-3. No browser smoke was required because MVP0 changes no rendered workflow.
-4. This is local E3 evidence, not deployed-cloud, physical-device, live-provider,
+2. No browser smoke was required because MVP0 changes no rendered workflow.
+3. This is local E3 evidence, not deployed-cloud, physical-device, live-provider,
    security-assessment, compliance, or production-release evidence.
 
 ## MVP0 decision
 
-The coding baseline is suitable for source-specific MVP1 implementation once the
-two blockers above are resolved. MVP0 is not marked complete, MVP1 is not started,
-and no claim of live clinic interoperability is made.
+The MVP0 engineering baseline is complete and suitable for source-specific MVP1
+implementation. Formal checkpoint exit awaits the source contract above. MVP1 is
+not started, and no claim of live clinic interoperability is made.
