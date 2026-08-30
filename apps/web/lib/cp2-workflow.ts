@@ -142,6 +142,7 @@ export interface PatientCreateInput {
 
 export interface LeadCreateInput {
   contactName: string;
+  externalReference?: string;
   messageSnippet: string;
   phone: string;
   source: WorkflowSource;
@@ -556,6 +557,7 @@ export async function createLiveLead(input: LeadCreateInput, signal?: AbortSigna
       primaryContact: input.phone,
       source: input.source,
       sourceDetail: {
+        externalRef: input.externalReference?.trim() || undefined,
         patientName: input.contactName,
         rawNotificationText: input.messageSnippet
       },
@@ -659,6 +661,7 @@ export function applyFixtureCreateLead(data: Cp2WorkflowData, input: LeadCreateI
     attribution: {
       capturedAt: new Date().toISOString(),
       detail: "Captured in local CP2 workflow fixture",
+      externalRef: input.externalReference?.trim() || undefined,
       source: input.source
     },
     contactName: input.contactName.trim(),

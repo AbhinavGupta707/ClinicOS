@@ -22703,7 +22703,9 @@
             "application/json": {
               "schema": {
                 "additionalProperties": false,
-                "anyOf": [
+                "description": "Line items, prices, tax, discounts and totals are not writable. The server derives them from accepted procedure evidence.",
+                "maxProperties": 4,
+                "oneOf": [
                   {
                     "additionalProperties": true,
                     "required": [
@@ -22719,8 +22721,6 @@
                     "type": "object"
                   }
                 ],
-                "description": "Line items, prices, tax, discounts and totals are not writable. The server derives them from accepted procedure evidence.",
-                "maxProperties": 4,
                 "properties": {
                   "dueAt": {
                     "format": "date-time",
@@ -31642,7 +31642,7 @@
         ]
       },
       "post": {
-        "description": "Create a bounded patient migration batch for review. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "description": "Create a bounded patient, practitioner-link, or appointment migration batch. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
         "operationId": "createMigrationBatch",
         "parameters": [
           {
@@ -31683,7 +31683,8 @@
             "application/json": {
               "schema": {
                 "additionalProperties": false,
-                "anyOf": [
+                "maxProperties": 6,
+                "oneOf": [
                   {
                     "additionalProperties": true,
                     "required": [
@@ -31699,26 +31700,24 @@
                     "type": "object"
                   }
                 ],
-                "maxProperties": 6,
                 "properties": {
                   "csv": {
                     "maxLength": 900000,
                     "minLength": 1,
-                    "type": [
-                      "string",
-                      "null"
-                    ]
+                    "type": "string"
                   },
                   "importType": {
                     "enum": [
-                      "patients"
+                      "patients",
+                      "practitioners",
+                      "appointments"
                     ]
                   },
                   "rows": {
                     "items": {
                       "$ref": "#/components/schemas/WritableJsonObject"
                     },
-                    "maxItems": 10000,
+                    "maxItems": 100,
                     "minItems": 1,
                     "type": "array"
                   },
@@ -31761,7 +31760,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": false,
-                  "maxProperties": 3,
+                  "maxProperties": 5,
                   "properties": {
                     "batch": {
                       "$ref": "#/components/schemas/PublicJsonObject"
@@ -31772,6 +31771,14 @@
                       },
                       "maxItems": 100,
                       "type": "array"
+                    },
+                    "conflictsTruncated": {
+                      "type": "boolean"
+                    },
+                    "returnedConflictCount": {
+                      "maximum": 2147483647,
+                      "minimum": 0,
+                      "type": "integer"
                     },
                     "rows": {
                       "items": {
@@ -31784,7 +31791,9 @@
                   "required": [
                     "batch",
                     "rows",
-                    "conflicts"
+                    "conflicts",
+                    "returnedConflictCount",
+                    "conflictsTruncated"
                   ],
                   "type": "object"
                 }
@@ -32043,7 +32052,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "Create a bounded patient migration batch for review",
+        "summary": "Create a bounded patient, practitioner-link, or appointment migration batch",
         "tags": [
           "Migration"
         ],
@@ -32116,7 +32125,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": false,
-                  "maxProperties": 3,
+                  "maxProperties": 5,
                   "properties": {
                     "batch": {
                       "$ref": "#/components/schemas/PublicJsonObject"
@@ -32127,6 +32136,14 @@
                       },
                       "maxItems": 100,
                       "type": "array"
+                    },
+                    "conflictsTruncated": {
+                      "type": "boolean"
+                    },
+                    "returnedConflictCount": {
+                      "maximum": 2147483647,
+                      "minimum": 0,
+                      "type": "integer"
                     },
                     "rows": {
                       "items": {
@@ -32139,7 +32156,9 @@
                   "required": [
                     "batch",
                     "rows",
-                    "conflicts"
+                    "conflicts",
+                    "returnedConflictCount",
+                    "conflictsTruncated"
                   ],
                   "type": "object"
                 }

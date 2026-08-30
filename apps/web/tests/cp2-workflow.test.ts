@@ -66,12 +66,14 @@ describe("CP2 frontend workflow", () => {
     const data = createFixtureWorkflowData("2026-07-07");
     const result = applyFixtureCreateLead(data, {
       contactName: "Synthetic Web Lead",
+      externalReference: "google-booking-404",
       messageSnippet: "Synthetic local lead capture",
       phone: "+910000000404",
       source: "google"
     });
 
     expect(result.lead.attribution.source).toBe("google");
+    expect(result.lead.attribution.externalRef).toBe("google-booking-404");
     expect(result.data.leads[0]?.contactName).toBe("Synthetic Web Lead");
   });
 
@@ -200,7 +202,10 @@ describe("CP2 frontend workflow", () => {
     const fetchMock = vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
       expect(JSON.parse(String(init?.body))).toMatchObject({
         primaryContact: "+919876543210",
-        sourceDetail: { patientName: "Rhea Synthetic" }
+        sourceDetail: {
+          externalRef: "practo-booking-707",
+          patientName: "Rhea Synthetic"
+        }
       });
       return jsonResponse(
         {
@@ -208,7 +213,10 @@ describe("CP2 frontend workflow", () => {
             id: "lead-1",
             rowVersion: 1,
             source: "practo",
-            sourceDetail: { patientName: "Rhea Synthetic" },
+            sourceDetail: {
+              externalRef: "practo-booking-707",
+              patientName: "Rhea Synthetic"
+            },
             primaryContact: "+919876543210",
             intent: "appointment_request",
             status: "new",
@@ -236,6 +244,7 @@ describe("CP2 frontend workflow", () => {
 
     const result = await createLiveLead({
       contactName: "Rhea Synthetic",
+      externalReference: "practo-booking-707",
       messageSnippet: "Needs an appointment",
       phone: "+919876543210",
       source: "practo"
@@ -243,6 +252,7 @@ describe("CP2 frontend workflow", () => {
 
     expect(result.lead.id).toBe("lead-1");
     expect(result.lead.contactName).toBe("Rhea Synthetic");
+    expect(result.lead.attribution.externalRef).toBe("practo-booking-707");
     expect(result.patientMatchSuggestions).toEqual([
       expect.objectContaining({
         matchedOn: "phone",

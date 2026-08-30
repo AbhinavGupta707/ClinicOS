@@ -140,6 +140,7 @@ export function AssistantWorkflow({
   });
   const [leadForm, setLeadForm] = useState<LeadCreateInput>({
     contactName: "",
+    externalReference: "",
     messageSnippet: "",
     phone: "",
     source: "whatsapp"
@@ -375,7 +376,6 @@ export function AssistantWorkflow({
         const result = applyFixtureCreateLead(data, leadForm);
         setReadyData(result.data);
         setSelectedLeadId(result.lead.id);
-        setLeadForm({ contactName: "", messageSnippet: "", phone: "", source: leadForm.source });
         setActionMessage({
           text: "Synthetic source-attributed lead captured.",
           tone: "success"
@@ -396,6 +396,13 @@ export function AssistantWorkflow({
           tone: "success"
         });
       }
+      setLeadForm({
+        contactName: "",
+        externalReference: "",
+        messageSnippet: "",
+        phone: "",
+        source: leadForm.source
+      });
     } catch (error) {
       handleActionError(error, "Lead capture failed.");
     } finally {
@@ -1089,6 +1096,16 @@ function LeadInboxPanel({
               value={leadForm.messageSnippet}
               onChange={(event) =>
                 onLeadFormChange({ ...leadForm, messageSnippet: event.target.value })
+              }
+            />
+          </label>
+          <label>
+            <span>External booking/reference (optional)</span>
+            <input
+              maxLength={200}
+              value={leadForm.externalReference ?? ""}
+              onChange={(event) =>
+                onLeadFormChange({ ...leadForm, externalReference: event.target.value })
               }
             />
           </label>

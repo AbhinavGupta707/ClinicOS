@@ -2142,7 +2142,7 @@ function cp5Operations(): HttpOperationContract[] {
         },
         [],
         {
-          anyOf: [
+          oneOf: [
             { type: "object", required: ["treatmentPlanId"], additionalProperties: true },
             { type: "object", required: ["procedurePerformedIds"], additionalProperties: true }
           ],
@@ -3149,27 +3149,35 @@ function cp7Operations(): HttpOperationContract[] {
       checkpoint: "CP7",
       method: "POST",
       path: "/v1/migration-batches",
-      summary: "Create a bounded patient migration batch for review",
+      summary: "Create a bounded patient, practitioner-link, or appointment migration batch",
       tags: ["Migration"],
       phi: "write",
       body: bodySchema(
         {
-          importType: schema.enum(["patients"]),
+          importType: schema.enum(["patients", "practitioners", "appointments"]),
           sourceSystem: shortText,
           sourceFileName: nullableText,
           sourceChecksum: schema.nullable(schema.sha256({ minLength: 64, maxLength: 64 })),
-          csv: schema.nullable(schema.string({ minLength: 1, maxLength: 900_000 })),
-          rows: schema.array(WRITABLE_JSON_SCHEMA, { minItems: 1, maxItems: 10_000 })
+          csv: schema.string({ minLength: 1, maxLength: 900_000 }),
+          rows: schema.array(WRITABLE_JSON_SCHEMA, { minItems: 1, maxItems: 100 })
         },
         ["importType"],
         {
-          anyOf: [
+          oneOf: [
             { type: "object", required: ["csv"], additionalProperties: true },
             { type: "object", required: ["rows"], additionalProperties: true }
           ]
         }
       ),
-      success: { 201: responseSchema({ batch: entity, rows: entities, conflicts: entities }) }
+      success: {
+        201: responseSchema({
+          batch: entity,
+          rows: entities,
+          conflicts: entities,
+          returnedConflictCount: nonNegativeInteger,
+          conflictsTruncated: schema.boolean()
+        })
+      }
     }),
     operation({
       operationId: "getMigrationBatch",
@@ -3181,7 +3189,15 @@ function cp7Operations(): HttpOperationContract[] {
       phi: "read",
       pathProperties: { batchId: uuid },
       mutation: false,
-      success: { 200: responseSchema({ batch: entity, rows: entities, conflicts: entities }) }
+      success: {
+        200: responseSchema({
+          batch: entity,
+          rows: entities,
+          conflicts: entities,
+          returnedConflictCount: nonNegativeInteger,
+          conflictsTruncated: schema.boolean()
+        })
+      }
     }),
     operation({
       operationId: "listMigrationBatchRows",

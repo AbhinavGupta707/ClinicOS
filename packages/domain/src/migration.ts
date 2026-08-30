@@ -6,9 +6,12 @@ import type {
 } from "./patient.ts";
 import { buildPatientDuplicateSuggestions, normalizePhone } from "./patient.ts";
 import type { UUID } from "./ids.ts";
+import type { AppointmentRecord, AppointmentStatus } from "./appointment.ts";
+import type { LeadSource } from "./lead.ts";
 
 export const MIGRATION_IMPORT_TYPES = [
   "patients",
+  "practitioners",
   "appointments",
   "invoices",
   "payments",
@@ -125,7 +128,40 @@ export interface PatientMigrationNormalizedRecord {
   sourceDetail: Record<string, unknown>;
 }
 
-export type MigrationNormalizedRecord = PatientMigrationNormalizedRecord;
+export interface PractitionerMigrationNormalizedRecord {
+  recordType: "provider_user";
+  externalReference: string;
+  displayName: string;
+  email: string | null;
+  phone: string | null;
+  sourceDetail: Record<string, unknown>;
+}
+
+export type ImportableAppointmentStatus = Exclude<
+  AppointmentStatus,
+  "checked_in" | "in_consult"
+>;
+
+export interface AppointmentMigrationNormalizedRecord {
+  recordType: "appointment";
+  externalReference: string;
+  patientExternalReference: string;
+  providerExternalReference: string;
+  appointmentTypeCode: string;
+  chairCode: string | null;
+  startAt: string;
+  endAt: string;
+  status: ImportableAppointmentStatus;
+  source: LeadSource;
+  reason: null;
+  notes: null;
+  sourceDetail: Record<string, unknown>;
+}
+
+export type MigrationNormalizedRecord =
+  | PatientMigrationNormalizedRecord
+  | PractitionerMigrationNormalizedRecord
+  | AppointmentMigrationNormalizedRecord;
 
 export interface MigrationConflictRecord {
   id: UUID;
@@ -256,6 +292,47 @@ export interface PatientImportValidationResult {
   validationErrors: MigrationValidationIssue[];
 }
 
+export interface PractitionerImportRowDraft {
+  rowNumber: number;
+  rawPayload: Record<string, unknown>;
+  externalReference: string;
+  displayName: string;
+  email: string | null;
+  phone: string | null;
+  sourceDetail: Record<string, unknown>;
+}
+
+export interface PractitionerImportValidationResult {
+  rowNumber: number;
+  rawPayload: Record<string, unknown>;
+  externalReference: string;
+  normalizedRecord: PractitionerMigrationNormalizedRecord | null;
+  validationErrors: MigrationValidationIssue[];
+}
+
+export interface AppointmentImportRowDraft {
+  rowNumber: number;
+  rawPayload: Record<string, unknown>;
+  externalReference: string;
+  patientExternalReference: string;
+  providerExternalReference: string;
+  appointmentTypeCode: string;
+  chairCode: string | null;
+  startAt: string;
+  endAt: string;
+  status: string;
+  source: string;
+  sourceDetail: Record<string, unknown>;
+}
+
+export interface AppointmentImportValidationResult {
+  rowNumber: number;
+  rawPayload: Record<string, unknown>;
+  externalReference: string;
+  normalizedRecord: AppointmentMigrationNormalizedRecord | null;
+  validationErrors: MigrationValidationIssue[];
+}
+
 const PATIENT_IMPORT_SOURCES = new Set<PatientSource>([
   "manual",
   "whatsapp",
@@ -273,6 +350,27 @@ const PATIENT_IMPORT_SOURCES = new Set<PatientSource>([
 ]);
 
 const PATIENT_GENDERS = new Set<PatientGender>(["female", "male", "other", "unknown"]);
+const APPOINTMENT_IMPORT_STATUSES = new Set<ImportableAppointmentStatus>([
+  "requested",
+  "booked",
+  "confirmed",
+  "completed",
+  "cancelled",
+  "no_show"
+]);
+const APPOINTMENT_IMPORT_SOURCES = new Set<LeadSource>([
+  "manual",
+  "whatsapp",
+  "phone",
+  "call",
+  "walkin",
+  "practo",
+  "google",
+  "website",
+  "instagram",
+  "referral",
+  "recall_campaign"
+]);
 
 export function isMigrationImportType(value: unknown): value is MigrationImportType {
   return typeof value === "string" && MIGRATION_IMPORT_TYPES.includes(value as MigrationImportType);
@@ -387,6 +485,199 @@ export function validatePatientImportRow(
   };
 }
 
+export function parsePractitionerMigrationCsv(csv: string): PractitionerImportRowDraft[] {
+  return parseMigrationCsv(csv, coercePractitionerImportRow);
+}
+
+export function coercePractitionerImportRows(
+  rows: readonly Record<string, unknown>[]
+): PractitionerImportRowDraft[] {
+  return rows.map((row, index) => coercePractitionerImportRow(row, index + 1));
+}
+
+export function validatePractitionerImportRow(
+  draft: PractitionerImportRowDraft
+): PractitionerImportValidationResult {
+  const validationErrors: MigrationValidationIssue[] = [];
+  if (!draft.externalReference.trim()) {
+    validationErrors.push({
+      field: "externalReference",
+      code: "required",
+      message: "Practitioner externalReference is required."
+    });
+  }
+  if (!draft.displayName.trim()) {
+    validationErrors.push({
+      field: "displayName",
+      code: "required",
+      message: "Practitioner displayName is required for operator review."
+    });
+  }
+  if (draft.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(draft.email)) {
+    validationErrors.push({
+      field: "email",
+      code: "invalid_email",
+      message: "Email must be a valid address when provided."
+    });
+  }
+  if (draft.phone && normalizePhone(draft.phone).replace(/\D/g, "").length < 10) {
+    validationErrors.push({
+      field: "phone",
+      code: "invalid_phone",
+      message: "Practitioner phone must include at least 10 digits when provided."
+    });
+  }
+
+  return {
+    rowNumber: draft.rowNumber,
+    rawPayload: draft.rawPayload,
+    externalReference: draft.externalReference.trim(),
+    normalizedRecord:
+      validationErrors.length > 0
+        ? null
+        : {
+            recordType: "provider_user",
+            externalReference: draft.externalReference.trim(),
+            displayName: draft.displayName.trim(),
+            email: normalizedNullableText(draft.email),
+            phone: normalizedNullableText(draft.phone),
+            sourceDetail: draft.sourceDetail
+          },
+    validationErrors
+  };
+}
+
+export function parseAppointmentMigrationCsv(csv: string): AppointmentImportRowDraft[] {
+  return parseMigrationCsv(csv, coerceAppointmentImportRow);
+}
+
+export function coerceAppointmentImportRows(
+  rows: readonly Record<string, unknown>[]
+): AppointmentImportRowDraft[] {
+  return rows.map((row, index) => coerceAppointmentImportRow(row, index + 1));
+}
+
+export function validateAppointmentImportRow(
+  draft: AppointmentImportRowDraft
+): AppointmentImportValidationResult {
+  const validationErrors: MigrationValidationIssue[] = [];
+  for (const [field, value] of [
+    ["externalReference", draft.externalReference],
+    ["patientExternalReference", draft.patientExternalReference],
+    ["providerExternalReference", draft.providerExternalReference],
+    ["appointmentTypeCode", draft.appointmentTypeCode],
+    ["startAt", draft.startAt],
+    ["endAt", draft.endAt]
+  ] as const) {
+    if (!value.trim()) {
+      validationErrors.push({ field, code: "required", message: `${field} is required.` });
+    }
+  }
+
+  const startAt = normalizeIsoInstant(draft.startAt);
+  const endAt = normalizeIsoInstant(draft.endAt);
+  if (draft.startAt.trim() && !startAt) {
+    validationErrors.push({
+      field: "startAt",
+      code: "invalid_instant",
+      message: "startAt must be an ISO-8601 instant with Z or an explicit UTC offset."
+    });
+  }
+  if (draft.endAt.trim() && !endAt) {
+    validationErrors.push({
+      field: "endAt",
+      code: "invalid_instant",
+      message: "endAt must be an ISO-8601 instant with Z or an explicit UTC offset."
+    });
+  }
+  if (startAt && endAt) {
+    const duration = Date.parse(endAt) - Date.parse(startAt);
+    if (duration <= 0 || duration > 86_400_000) {
+      validationErrors.push({
+        field: "endAt",
+        code: "invalid_window",
+        message: "Appointment endAt must be after startAt and no more than 24 hours later."
+      });
+    }
+  }
+  if (!APPOINTMENT_IMPORT_STATUSES.has(draft.status as ImportableAppointmentStatus)) {
+    validationErrors.push({
+      field: "status",
+      code: "unsupported_status",
+      message:
+        "Appointment status must be requested, booked, confirmed, completed, cancelled, or no_show."
+    });
+  }
+  if (!APPOINTMENT_IMPORT_SOURCES.has(draft.source as LeadSource)) {
+    validationErrors.push({
+      field: "source",
+      code: "unsupported_source",
+      message: "Appointment source must use a canonical ClinicOS source value."
+    });
+  }
+
+  return {
+    rowNumber: draft.rowNumber,
+    rawPayload: draft.rawPayload,
+    externalReference: draft.externalReference.trim(),
+    normalizedRecord:
+      validationErrors.length > 0 || !startAt || !endAt
+        ? null
+        : {
+            recordType: "appointment",
+            externalReference: draft.externalReference.trim(),
+            patientExternalReference: draft.patientExternalReference.trim(),
+            providerExternalReference: draft.providerExternalReference.trim(),
+            appointmentTypeCode: draft.appointmentTypeCode.trim(),
+            chairCode: normalizedNullableText(draft.chairCode),
+            startAt,
+            endAt,
+            status: draft.status as ImportableAppointmentStatus,
+            source: draft.source as LeadSource,
+            reason: null,
+            notes: null,
+            sourceDetail: draft.sourceDetail
+          },
+    validationErrors
+  };
+}
+
+export function differingAppointmentImportFields(
+  normalizedRecord: AppointmentMigrationNormalizedRecord,
+  appointment: Pick<
+    AppointmentRecord,
+    | "patientId"
+    | "providerUserId"
+    | "appointmentTypeId"
+    | "chairId"
+    | "startAt"
+    | "endAt"
+    | "status"
+    | "source"
+  >,
+  resolved: {
+    patientId: UUID;
+    providerUserId: UUID;
+    appointmentTypeId: UUID;
+    chairId: UUID | null;
+  }
+): string[] {
+  const fields: string[] = [];
+  if (appointment.patientId !== resolved.patientId) fields.push("patientExternalReference");
+  if (appointment.providerUserId !== resolved.providerUserId) {
+    fields.push("providerExternalReference");
+  }
+  if (appointment.appointmentTypeId !== resolved.appointmentTypeId) {
+    fields.push("appointmentTypeCode");
+  }
+  if (appointment.chairId !== resolved.chairId) fields.push("chairCode");
+  if (appointment.startAt !== normalizedRecord.startAt) fields.push("startAt");
+  if (appointment.endAt !== normalizedRecord.endAt) fields.push("endAt");
+  if (appointment.status !== normalizedRecord.status) fields.push("status");
+  if (appointment.source !== normalizedRecord.source) fields.push("source");
+  return fields;
+}
+
 export function duplicateCandidatesForPatientImport(
   normalizedRecord: PatientMigrationNormalizedRecord,
   existingPatients: Parameters<typeof buildPatientDuplicateSuggestions>[1]
@@ -473,6 +764,103 @@ function coercePatientImportRow(
   };
 }
 
+function coercePractitionerImportRow(
+  row: Record<string, unknown>,
+  rowNumber: number
+): PractitionerImportRowDraft {
+  return {
+    rowNumber,
+    rawPayload: { ...row },
+    externalReference: pickString(row, [
+      "externalReference",
+      "external_reference",
+      "externalId",
+      "external_id",
+      "practitionerId",
+      "practitioner_id",
+      "providerId",
+      "provider_id"
+    ]),
+    displayName: pickString(row, [
+      "displayName",
+      "display_name",
+      "name",
+      "practitionerName",
+      "practitioner_name",
+      "providerName",
+      "provider_name"
+    ]),
+    email: pickNullableString(row, ["email"]) ?? null,
+    phone: pickNullableString(row, ["phone", "mobile"]) ?? null,
+    sourceDetail: {}
+  };
+}
+
+function coerceAppointmentImportRow(
+  row: Record<string, unknown>,
+  rowNumber: number
+): AppointmentImportRowDraft {
+  const source = pickString(row, ["source", "bookingSource", "booking_source"]);
+  const status = pickString(row, ["status", "appointmentStatus", "appointment_status"]);
+  return {
+    rowNumber,
+    rawPayload: { ...row },
+    externalReference: pickString(row, [
+      "externalReference",
+      "external_reference",
+      "externalId",
+      "external_id",
+      "appointmentId",
+      "appointment_id"
+    ]),
+    patientExternalReference: pickString(row, [
+      "patientExternalReference",
+      "patient_external_reference",
+      "patientExternalId",
+      "patient_external_id"
+    ]),
+    providerExternalReference: pickString(row, [
+      "providerExternalReference",
+      "provider_external_reference",
+      "practitionerExternalReference",
+      "practitioner_external_reference",
+      "providerExternalId",
+      "provider_external_id"
+    ]),
+    appointmentTypeCode: pickString(row, [
+      "appointmentTypeCode",
+      "appointment_type_code",
+      "typeCode",
+      "type_code"
+    ]),
+    chairCode: pickNullableString(row, ["chairCode", "chair_code", "roomCode", "room_code"]),
+    startAt: pickString(row, ["startAt", "start_at", "startsAt", "starts_at"]),
+    endAt: pickString(row, ["endAt", "end_at", "endsAt", "ends_at"]),
+    status,
+    source,
+    sourceDetail: { rawSource: source, rawStatus: status }
+  };
+}
+
+function parseMigrationCsv<T>(
+  csv: string,
+  coerce: (row: Record<string, unknown>, rowNumber: number) => T
+): T[] {
+  const records = parseCsvRecords(csv);
+  if (records.length === 0) return [];
+  const [headers, ...rows] = records;
+  const normalizedHeaders = headers.map(normalizeHeader);
+  return rows
+    .filter((row) => row.some((cell) => cell.trim().length > 0))
+    .map((row, index) => {
+      const rawPayload: Record<string, unknown> = {};
+      for (let column = 0; column < normalizedHeaders.length; column += 1) {
+        rawPayload[normalizedHeaders[column] || `column_${column + 1}`] = row[column] ?? "";
+      }
+      return coerce(rawPayload, index + 2);
+    });
+}
+
 function pickString(row: Record<string, unknown>, keys: readonly string[]): string {
   return pickNullableString(row, keys) ?? "";
 }
@@ -553,4 +941,43 @@ function isIsoDate(value: string): boolean {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(`${value}T00:00:00.000Z`);
   return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
+function normalizeIsoInstant(value: string): string | null {
+  const trimmed = value.trim();
+  const match = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-](\d{2}):(\d{2}))$/u.exec(
+    trimmed
+  );
+  if (!match) return null;
+
+  const [, yearText, monthText, dayText, hourText, minuteText, secondText, offsetHourText, offsetMinuteText] =
+    match;
+  const year = Number(yearText);
+  const month = Number(monthText);
+  const day = Number(dayText);
+  const hour = Number(hourText);
+  const minute = Number(minuteText);
+  const second = Number(secondText);
+  const offsetHour = offsetHourText === undefined ? 0 : Number(offsetHourText);
+  const offsetMinute = offsetMinuteText === undefined ? 0 : Number(offsetMinuteText);
+  const leapYear = year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0);
+  const daysInMonth = [31, leapYear ? 29 : 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31][
+    month - 1
+  ];
+  if (
+    year === 0 ||
+    !daysInMonth ||
+    day < 1 ||
+    day > daysInMonth ||
+    hour > 23 ||
+    minute > 59 ||
+    second > 59 ||
+    offsetHour > 23 ||
+    offsetMinute > 59
+  ) {
+    return null;
+  }
+
+  const parsed = new Date(trimmed);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }

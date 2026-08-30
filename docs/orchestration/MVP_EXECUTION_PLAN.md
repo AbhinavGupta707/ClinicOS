@@ -227,3 +227,30 @@ Before connector-specific MVP1 code begins, obtain:
   with explicit truncation, confirmation is never inferred from check-in state,
   and simultaneous external-reference commits serialize and reconcile. Real
   Postgres now exercises the concurrent commit path and cleanup.
+- 2026-08-30: the source-independent contract expanded to link-only
+  practitioners and dependency-resolved appointments. Exact replay, changed
+  evidence, deterministic in-batch overlap rejection, canonical evidence
+  digests, and dependency-safe rollback are implemented in API, fixture, and
+  Postgres repository code. Migration 0023 and generated API contracts are
+  ready, but applying 0023 and claiming live-Postgres verification remain
+  deferred because the owner's original no-migrations instruction is still in
+  force.
+- 2026-08-30: final adversarial repair added migration-batch row locking,
+  row-version-guarded rollback, broad downstream-dependency detection, bounded
+  100-row requests and conflict projections, null-safe/link-only SQL checks,
+  stale-doctor rejection, durable mapping-digest reaffirmation, and idempotent
+  blocked-rollback evidence. The full workspace check, typecheck, lint, fixture
+  and static tests, and production build pass. Real migration 0023 execution and
+  its already-coded Postgres probes remain a separate authorization gate.
+- 2026-08-30: follow-up adversarial review found three release-blocking evidence
+  defects. Patient source-only changes and missing legacy digests now require
+  explicit review; reaffirmation records actor/batch/row provenance and is
+  truthfully non-automatically-reversible; canonical mappings cannot roll back
+  while later reconciliations depend on them; and appointment timestamps now
+  require strict RFC3339 syntax plus valid Gregorian calendar components.
+- 2026-08-30: re-review found a cross-batch replay/rollback race and an
+  over-inclusive reaffirmation inference. Rollback now acquires the same sorted
+  external-reference locks as commit before re-reading dependencies; migration
+  rows persist explicit reaffirmation state; exact explicitly-linked replays stay
+  rollbackable; and a real-Postgres concurrency regression is coded for the
+  migration-authorization gate.
