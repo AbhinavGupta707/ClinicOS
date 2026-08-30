@@ -271,3 +271,11 @@ Before connector-specific MVP1 code begins, obtain:
   payloads, actionable server errors, bounded run-history viewport, desktop and
   mobile Playwright proof, full workspace gates, and final Postgres probes now
   pass. This completes the source-independent manual import operator slice.
+- 2026-08-31: the source-independent clinic trial now guides an operator through
+  patient, practitioner, and appointment commits using one source key, lists
+  only active clinic-eligible doctors by name, and opens the canonical CP13
+  Today page with the imported patient, practitioner, visit, chair, source,
+  status, clinic-local time, and freshness. Real API/Postgres browser acceptance
+  proves the complete loop and reverse-order cleanup at desktop and mobile
+  widths. This closes the local guided-trial product seam; it does not prove a
+  Practo API/export adapter, source freshness, recurring sync, or writeback.

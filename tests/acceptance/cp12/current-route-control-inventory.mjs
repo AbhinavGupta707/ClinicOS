@@ -198,6 +198,7 @@ const operationRoutes = [
   ["POST", "/v1/appointments", "createAppointment", ["schedule.write"]],
   ["GET", "/v1/appointment-types", "listAppointmentTypes", ["schedule.read"]],
   ["GET", "/v1/chairs", "listChairs", ["schedule.read"]],
+  ["GET", "/v1/clinic-doctors", "listClinicDoctors", ["schedule.read"]],
   ["GET", "/v1/provider-schedules", "listProviderSchedules", ["schedule.read"], ["providerId"]],
   ["GET", "/v1/pricebook/procedures", "listPricebookProcedures", ["billing.read"]],
   [

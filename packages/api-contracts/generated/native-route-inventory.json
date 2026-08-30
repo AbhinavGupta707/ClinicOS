@@ -644,6 +644,30 @@
       },
       "method": "GET",
       "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listClinicDoctors",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/clinic-doctors",
+      "phi": "none"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP2",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
       "operationId": "listProviderSchedules",
       "pagination": {
         "cursor": false,
@@ -3419,7 +3443,7 @@
       "phi": "write"
     }
   ],
-  "activeOperationCount": 135,
+  "activeOperationCount": 136,
   "deferred": [
     {
       "activationGate": "Register a complete messaging request workflow with provider state, audit, outbox and parity tests, or keep it absent.",

@@ -17,6 +17,7 @@ export const CP13_FRONT_OFFICE_OPERATION_IDS = Object.freeze([
   "markAppointmentNoShow",
   "listAppointmentTypes",
   "listChairs",
+  "listClinicDoctors",
   "listProviderSchedules",
   "listQueue",
   "updateQueueEntry",

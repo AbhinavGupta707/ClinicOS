@@ -21,6 +21,7 @@ const gridStyle = {
 
 export function FrontOfficeDayPanel(props: {
   readonly state: FrontOfficeLoadState<FrontOfficeDayData>;
+  readonly timeZone?: string;
 }) {
   if (props.state.status === "loading") {
     return (
@@ -37,16 +38,26 @@ export function FrontOfficeDayPanel(props: {
   }
 
   const { dashboard, queue, leads, intakeTemplates } = props.state.data;
+  const appointments = dashboard.clinicDayAppointments;
   return (
     <section
       aria-label="Front-office clinic day"
+      className="cp13-day"
       style={shellStyle}
       data-testid="cp13-front-office-day"
     >
-      <header>
-        <p>Clinic day</p>
+      <header className="cp13-day__summary">
+        <p className="eyebrow">Today</p>
         <h2>{dashboard.date}</h2>
-        <p aria-label="Last refreshed">Durable data refreshed {props.state.refreshedAt}</p>
+        <p aria-label="Data freshness">
+          Loaded {formatClinicTimestamp(props.state.refreshedAt, props.timeZone)}.{" "}
+          {dashboard.dataAsOf
+            ? `Latest appointment update ${formatClinicTimestamp(
+                dashboard.dataAsOf,
+                props.timeZone
+              )}.`
+            : "No appointment updates have been recorded yet."}
+        </p>
       </header>
       <div style={gridStyle}>
         <FrontOfficeMetric label="Appointments" value={dashboard.totalAppointments} />
@@ -54,13 +65,75 @@ export function FrontOfficeDayPanel(props: {
         <FrontOfficeMetric label="Open leads" value={leads.length} />
         <FrontOfficeMetric label="Active intake forms" value={intakeTemplates.length} />
       </div>
+      <article className="cp13-day__appointments">
+        <header className="cp13-day__section-header">
+          <div>
+            <p className="eyebrow">Schedule</p>
+            <h3>Today&apos;s appointments</h3>
+          </div>
+          <strong>{appointments.length} shown</strong>
+        </header>
+        {dashboard.appointmentsTruncated ? (
+          <p className="cp13-day__notice" role="status">
+            Only the first 500 appointments are shown. Narrow the clinic-day query before making
+            completeness-sensitive decisions.
+          </p>
+        ) : null}
+        {appointments.length === 0 ? (
+          <div className="cp13-day__empty">
+            <strong>No appointments recorded for this clinic day.</strong>
+            <p>Import or create an appointment, then refresh Today.</p>
+          </div>
+        ) : (
+          <ol className="cp13-appointment-list" data-testid="cp13-clinic-day-appointments">
+            {appointments.map((appointment) => (
+              <li key={appointment.id}>
+                <article
+                  className="cp13-appointment-card"
+                  data-testid={`cp13-clinic-day-appointment-${appointment.id}`}
+                >
+                  <div className="cp13-appointment-card__time">
+                    <time dateTime={appointment.startAt}>
+                      {formatClinicTimeRange(
+                        appointment.startAt,
+                        appointment.endAt,
+                        props.timeZone
+                      )}
+                    </time>
+                    <span>{humanize(appointment.status)}</span>
+                  </div>
+                  <div className="cp13-appointment-card__patient">
+                    <h4>{appointment.patientName}</h4>
+                    <p>{appointment.patientKind === "new" ? "New patient" : "Returning patient"}</p>
+                  </div>
+                  <dl className="cp13-appointment-card__details">
+                    <div>
+                      <dt>Practitioner</dt>
+                      <dd>{appointment.providerName}</dd>
+                    </div>
+                    <div>
+                      <dt>Visit</dt>
+                      <dd>{appointment.appointmentTypeName}</dd>
+                    </div>
+                    <div>
+                      <dt>Chair</dt>
+                      <dd>{appointment.chairName ?? "Not assigned"}</dd>
+                    </div>
+                    <div>
+                      <dt>Source</dt>
+                      <dd>{humanize(appointment.source)}</dd>
+                    </div>
+                  </dl>
+                </article>
+              </li>
+            ))}
+          </ol>
+        )}
+      </article>
       <div style={gridStyle}>
-        <FrontOfficeRecordList
-          title="Unconfirmed appointments"
-          records={dashboard.unconfirmedAppointments}
-        />
         <FrontOfficeRecordList title="Queue" records={queue} />
         <FrontOfficeRecordList title="Open tasks" records={dashboard.openTasks} />
+        <FrontOfficeRecordList title="Unconfirmed" records={dashboard.unconfirmedAppointments} />
       </div>
     </section>
   );
@@ -167,4 +240,50 @@ function displayField(
 ): string {
   const value = record[key];
   return typeof value === "string" && value.trim().length > 0 ? value : fallback;
+}
+
+function formatClinicTimeRange(startAt: string, endAt: string, timeZone?: string): string {
+  return `${formatClinicDateTime(startAt, timeZone, "time")}–${formatClinicDateTime(
+    endAt,
+    timeZone,
+    "time"
+  )}`;
+}
+
+function formatClinicTimestamp(value: string, timeZone?: string): string {
+  return formatClinicDateTime(value, timeZone, "timestamp");
+}
+
+function formatClinicDateTime(
+  value: string,
+  timeZone: string | undefined,
+  mode: "time" | "timestamp"
+): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "unknown time";
+
+  const options: Intl.DateTimeFormatOptions =
+    mode === "time"
+      ? { hour: "numeric", minute: "2-digit" }
+      : {
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+          month: "short",
+          year: "numeric"
+        };
+  try {
+    return new Intl.DateTimeFormat("en-IN", {
+      ...options,
+      ...(timeZone ? { timeZone } : {})
+    }).format(date);
+  } catch {
+    return new Intl.DateTimeFormat("en-IN", options).format(date);
+  }
+}
+
+function humanize(value: string): string {
+  if (value === "walkin") return "Walk-in";
+  const words = value.replaceAll("_", " ");
+  return `${words.charAt(0).toUpperCase()}${words.slice(1)}`;
 }

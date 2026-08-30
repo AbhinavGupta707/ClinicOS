@@ -1,11 +1,11 @@
 # MVP1/MVP2 Source-Independent Slice Evidence
 
 Status: patient, practitioner-link, and appointment paths verified in real
-Postgres through migration 0023; manual canonical-CSV operations UI verified
-through the real local web/API/Postgres stack at desktop and mobile widths;
-Practo adapter and recurring sync are not complete
+Postgres through migration 0023; guided canonical-CSV trial and canonical Today
+verified through the real local web/API/Postgres stack at desktop and mobile
+widths; Practo adapter and recurring sync are not complete
 
-Date: 2026-08-30
+Date: 2026-08-31
 
 ## What this slice proves
 
@@ -87,6 +87,15 @@ Date: 2026-08-30
   without confirmation evidence.
 - Provider health says Practo Ray is not configured and does not imply API
   access, background sync, scraping, or writeback.
+- The operator flow guides one source key through patient, practitioner, and
+  appointment commits. Progress counts only durable committed rows for that
+  source and excludes rolled-back batches.
+- Practitioner resolution lists active, clinic-scoped ClinicOS doctors by name;
+  the browser never asks the operator to paste a provider UUID.
+- The completion action opens the canonical CP13 Today surface. Its appointment
+  cards show clinic-local time, patient, practitioner, visit type, chair, source,
+  status, and explicit loaded/latest-update freshness from the joined clinic-day
+  projection.
 
 ## Executable evidence
 
@@ -97,16 +106,18 @@ Date: 2026-08-30
 | Repository/Postgres | Patient replay, simultaneous-commit serialization, clinic-day SQL projection, practitioner→patient→appointment commit/rollback, resolution guards, and the cross-batch replay-commit/original-rollback race all pass against migration 0023 |
 | Schema | Migration 0023 adds practitioner import types, null-safe normalized-record checks, link-only practitioner constraints, normalized/link target-type consistency checks, and explicit evidence-reaffirmation state |
 | Contract | Generated OpenAPI/client drift check exposes only patient, practitioner, and appointment batch types |
-| Web | Joined Today, bounded/truncated state, on-demand search, honest Practo status, optional source booking/reference capture, and a manual canonical-CSV stage/review/commit/best-effort-rollback workflow proven without request interception at 1280px and 390px |
+| Web | Guided patient→practitioner→appointment import, named eligible-doctor mapping, joined canonical Today, bounded/truncated state, on-demand search, honest Practo status, optional source booking/reference capture, and best-effort rollback proven without request interception at 1280px and 390px |
 
 Migration 0023 is applied locally. Flyway validation, database verification,
 migration lifecycle tests, and the complete repository/Postgres suite pass
 across all 23 migrations. Repository consistency, typecheck, lint, every
 workspace test, production builds, environment checks, and the secret scan pass.
-Playwright also proves synthetic patient staging, durable commit, imported-link
-creation, patient search visibility, explicit safe rollback, rolled-back link
+Playwright also proves synthetic patient staging, durable commit, named-doctor
+mapping, practitioner and appointment link creation, visibility on canonical
+Today and patient search, explicit reverse-order rollback, rolled-back link
 state, patient removal, console health, and mobile horizontal-overflow behavior
-against the real local API/Postgres stack without network interception.
+against the real local API/Postgres stack without network interception. All
+three guarded real-stack scenarios pass.
 
 The real-stack spec is a guarded local acceptance recipe, not a default-suite
 claim. It was explicitly run with the API and web processes connected to local
@@ -138,10 +149,12 @@ last-success status remain required after the source contract is known.
 
 ## Next executable checkpoint
 
-1. Map a clinic-authorized deidentified Ray export or documented API payload to
+1. Turn the verified browser path into a short clinic-run recipe with canonical
+   CSV templates, preflight checks, recovery guidance, and an evidence checklist.
+2. Map a clinic-authorized deidentified Ray export or documented API payload to
    the now-frozen generic contracts; do not change the core ingestion semantics
    to fit guessed vendor fields.
-2. Confirm the clinic's first-trial operator, Ray edition/export path, timezone,
+3. Confirm the clinic's first-trial operator, Ray edition/export path, timezone,
    representative volumes, and update/cancellation semantics.
-3. Run the same manual browser recipe with the representative deidentified
-   source sample before designing recurring sync.
+4. Run the same recipe with the representative deidentified source sample before
+   designing recurring sync.

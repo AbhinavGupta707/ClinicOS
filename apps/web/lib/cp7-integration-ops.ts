@@ -164,6 +164,11 @@ export interface MigrationRollbackOutcome {
   state: MigrationBatchStatus | null;
 }
 
+export interface EligibleClinicDoctor {
+  displayName: string;
+  providerUserId: string;
+}
+
 export interface Cp7TimelineItem {
   at: string;
   detail: string;
@@ -190,6 +195,7 @@ export interface Cp7IntegrationOpsData {
     environment?: string;
     requestIds: string[];
   };
+  clinicDoctors: EligibleClinicDoctor[];
   deadLetters: DeadLetterEvent[];
   migrationBatches: MigrationBatch[];
   providers: ProviderHealthCard[];
@@ -237,6 +243,7 @@ interface EndpointFailure extends Cp7EndpointIssue {
 
 export const CP7_REQUIRED_ENDPOINTS = [
   "GET /v1/provider-health",
+  "GET /v1/clinic-doctors",
   "GET /v1/dead-letter-events?status=unreviewed",
   "POST /v1/dead-letter-events/{deadLetterEventId}/replay",
   "GET /v1/migration-batches",
@@ -315,6 +322,46 @@ export function getCanonicalMigrationCsvTemplate(importType: MigrationImportType
   return CANONICAL_MIGRATION_CSV_TEMPLATES[importType];
 }
 
+const MIGRATION_TRIAL_ORDER: readonly MigrationImportType[] = [
+  "patients",
+  "practitioners",
+  "appointments"
+];
+
+export type MigrationTrialStepState = "complete" | "current" | "upcoming";
+
+export function getMigrationTrialStepStates(
+  batches: readonly MigrationBatch[],
+  sourceSystem: string
+): Record<MigrationImportType, MigrationTrialStepState> {
+  const normalizedSource = sourceSystem.trim();
+  const committedTypes = new Set(
+    batches
+      .filter(
+        (batch) =>
+          normalizedSource.length > 0 &&
+          batch.sourceSystem === normalizedSource &&
+          batch.status === "committed" &&
+          batch.counts.committed > 0
+      )
+      .map((batch) => batch.importType)
+  );
+  const firstIncomplete = MIGRATION_TRIAL_ORDER.findIndex(
+    (importType) => !committedTypes.has(importType)
+  );
+
+  return Object.fromEntries(
+    MIGRATION_TRIAL_ORDER.map((importType, index) => [
+      importType,
+      committedTypes.has(importType)
+        ? "complete"
+        : firstIncomplete === index
+          ? "current"
+          : "upcoming"
+    ])
+  ) as Record<MigrationImportType, MigrationTrialStepState>;
+}
+
 const FIXTURE_ENVIRONMENTS = new Set(["development", "dev", "local", "test"]);
 
 export function getCp7TodayInputValue(now = new Date()) {
@@ -339,6 +386,12 @@ export function createFixtureCp7IntegrationOpsData(
       environment: "local synthetic CP7 fixture",
       requestIds: ["fixture-cp7-integration-ops"]
     },
+    clinicDoctors: [
+      {
+        displayName: "Dr Kabir Doctor",
+        providerUserId: "10000000-0000-4000-8000-000000001002"
+      }
+    ],
     deadLetters: [
       {
         attempts: 3,
@@ -676,7 +729,8 @@ export async function loadLiveCp7IntegrationOps(
   const results = await Promise.allSettled([
     fetchEndpoint("/v1/provider-health", {}, signal),
     fetchEndpoint("/v1/dead-letter-events", { status: "unreviewed" }, signal),
-    fetchEndpoint("/v1/migration-batches", {}, signal)
+    fetchEndpoint("/v1/migration-batches", {}, signal),
+    fetchEndpoint("/v1/clinic-doctors", {}, signal)
   ]);
   const failures = results
     .filter((result): result is PromiseRejectedResult => result.status === "rejected")
@@ -707,19 +761,22 @@ export async function loadLiveCp7IntegrationOps(
   const providerResponse = fulfilledResponses[0];
   const deadLetterResponse = fulfilledResponses[1];
   const migrationResponse = fulfilledResponses[2];
+  const clinicDoctorsResponse = fulfilledResponses[3];
 
-  if (!providerResponse || !deadLetterResponse || !migrationResponse) {
+  if (!providerResponse || !deadLetterResponse || !migrationResponse || !clinicDoctorsResponse) {
     throw new Error("CP7 endpoint result missing after route checks.");
   }
 
   const normalized = normalizeCp7LivePayload({
+    clinicDoctorsPayload: clinicDoctorsResponse.payload,
     deadLettersPayload: deadLetterResponse.payload,
     migrationPayload: migrationResponse.payload,
     providerPayload: providerResponse.payload,
     requestIds: [
       providerResponse.requestId,
       deadLetterResponse.requestId,
-      migrationResponse.requestId
+      migrationResponse.requestId,
+      clinicDoctorsResponse.requestId
     ].filter((requestId): requestId is string => Boolean(requestId)),
     today
   });
@@ -1079,6 +1136,7 @@ export function getUnresolvedMigrationConflictCount(data: Cp7IntegrationOpsData)
 }
 
 function normalizeCp7LivePayload(input: {
+  clinicDoctorsPayload: unknown;
   deadLettersPayload: unknown;
   migrationPayload: unknown;
   providerPayload: unknown;
@@ -1099,8 +1157,14 @@ function normalizeCp7LivePayload(input: {
   ])
     .map(normalizeLiveMigrationBatch)
     .filter((batch): batch is MigrationBatch => Boolean(batch));
+  const clinicDoctors = normalizeClinicDoctors(input.clinicDoctorsPayload);
 
-  if (providers.length === 0 || !Array.isArray(deadLetters) || !Array.isArray(migrationBatches)) {
+  if (
+    providers.length === 0 ||
+    !Array.isArray(deadLetters) ||
+    !Array.isArray(migrationBatches) ||
+    clinicDoctors === null
+  ) {
     return {
       code: "CONTRACT_MISMATCH",
       endpoints: CP7_REQUIRED_ENDPOINTS.map((endpoint) => ({
@@ -1117,6 +1181,7 @@ function normalizeCp7LivePayload(input: {
       environment: "live boundary",
       requestIds: input.requestIds
     },
+    clinicDoctors,
     deadLetters,
     migrationBatches,
     providers,
@@ -1133,6 +1198,22 @@ function normalizeCp7LivePayload(input: {
     ],
     today: input.today
   };
+}
+
+function normalizeClinicDoctors(payload: unknown): EligibleClinicDoctor[] | null {
+  if (!isRecord(payload) || !Array.isArray(payload.clinicDoctors)) return null;
+
+  const doctors = payload.clinicDoctors.map((value) => {
+    if (!isRecord(value)) return null;
+    const providerUserId = readString(value, ["providerUserId"]);
+    const displayName = readString(value, ["displayName"]);
+    return providerUserId && displayName ? { displayName, providerUserId } : null;
+  });
+  if (doctors.some((doctor) => doctor === null)) return null;
+
+  return doctors
+    .filter((doctor): doctor is EligibleClinicDoctor => doctor !== null)
+    .sort((left, right) => left.displayName.localeCompare(right.displayName));
 }
 
 function deriveReadiness(

@@ -3,18 +3,22 @@
 import { Button } from "@clinic-os/ui";
 import {
   AlertTriangle,
+  CheckCircle2,
   DatabaseBackup,
   FileUp,
   RefreshCw,
   RotateCcw
 } from "lucide-react";
+import Link from "next/link";
 import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState } from "react";
 
 import {
   getCanonicalMigrationCsvTemplate,
+  getMigrationTrialStepStates,
   MIGRATION_BATCH_STATUS_LABELS,
   MIGRATION_IMPORT_TYPE_LABELS,
   type CreateMigrationBatchRequest,
+  type EligibleClinicDoctor,
   type MigrationBatch,
   type MigrationBatchStatus,
   type MigrationConflict,
@@ -27,6 +31,7 @@ import {
 interface MigrationOperationsPanelProps {
   actionBusy: boolean;
   batches: MigrationBatch[];
+  eligibleDoctors: EligibleClinicDoctor[];
   fixtureMode: boolean;
   onCommit: (batch: MigrationBatch) => Promise<void>;
   onCreate: (input: CreateMigrationBatchRequest) => Promise<void>;
@@ -52,6 +57,7 @@ const RESOLVABLE_STATES = new Set<MigrationBatchStatus>([
 export function MigrationOperationsPanel({
   actionBusy,
   batches,
+  eligibleDoctors,
   fixtureMode,
   onCommit,
   onCreate,
@@ -77,6 +83,10 @@ export function MigrationOperationsPanel({
         ? batches
         : batches.filter((batch) => batch.status === statusFilter),
     [batches, statusFilter]
+  );
+  const trialStepStates = useMemo(
+    () => getMigrationTrialStepStates(batches, sourceSystem),
+    [batches, sourceSystem]
   );
   const selectedBatch =
     filteredBatches.find((batch) => batch.id === selectedBatchId) ?? filteredBatches[0] ?? null;
@@ -121,6 +131,14 @@ export function MigrationOperationsPanel({
           value={lastCommittedAt ? formatTimestamp(lastCommittedAt) : "No successful commit"}
         />
       </section>
+
+      <TrialGuide
+        actionBusy={actionBusy}
+        importType={importType}
+        onSelectImportType={handleImportTypeChange}
+        sourceSystem={sourceSystem}
+        states={trialStepStates}
+      />
 
       <section className="work-panel" aria-labelledby="migration-stage-title">
         <div className="panel-heading">
@@ -173,7 +191,9 @@ export function MigrationOperationsPanel({
                 required
                 value={sourceSystem}
               />
-              <small>Stable identity such as manual_trial; this is not a vendor success claim.</small>
+              <small>
+                Stable identity such as manual_trial; this is not a vendor success claim.
+              </small>
             </label>
             <label>
               <span>CSV file name</span>
@@ -204,8 +224,8 @@ export function MigrationOperationsPanel({
                 value={csv}
               />
               <small>
-                Appointment source means acquisition channel; keep it explicit rather than
-                inferring it from the source-system key.
+                Appointment source means acquisition channel; keep it explicit rather than inferring
+                it from the source-system key.
               </small>
             </label>
             <div className="surface-actions migration-import-form__actions">
@@ -291,9 +311,7 @@ export function MigrationOperationsPanel({
                     <strong>{MIGRATION_IMPORT_TYPE_LABELS[batch.importType]}</strong>
                     <small>{batch.sourceSystem}</small>
                   </span>
-                  <span className="state-pill">
-                    {MIGRATION_BATCH_STATUS_LABELS[batch.status]}
-                  </span>
+                  <span className="state-pill">{MIGRATION_BATCH_STATUS_LABELS[batch.status]}</span>
                   <small>
                     {batch.counts.total} rows · updated {formatTimestamp(batch.updatedAt)}
                   </small>
@@ -304,6 +322,7 @@ export function MigrationOperationsPanel({
               <BatchDetail
                 actionBusy={actionBusy}
                 batch={selectedBatch}
+                eligibleDoctors={eligibleDoctors}
                 fixtureMode={fixtureMode}
                 onCommit={onCommit}
                 onResolve={onResolve}
@@ -324,6 +343,7 @@ export function MigrationOperationsPanel({
 function BatchDetail({
   actionBusy,
   batch,
+  eligibleDoctors,
   fixtureMode,
   onCommit,
   onResolve,
@@ -335,6 +355,7 @@ function BatchDetail({
 }: {
   actionBusy: boolean;
   batch: MigrationBatch;
+  eligibleDoctors: EligibleClinicDoctor[];
   fixtureMode: boolean;
   onCommit: MigrationOperationsPanelProps["onCommit"];
   onResolve: MigrationOperationsPanelProps["onResolve"];
@@ -397,6 +418,7 @@ function BatchDetail({
                   actionBusy={actionBusy}
                   batch={batch}
                   conflict={conflict}
+                  eligibleDoctors={eligibleDoctors}
                   fixtureMode={fixtureMode}
                   onResolve={onResolve}
                   row={row}
@@ -462,6 +484,7 @@ function RowResolution({
   actionBusy,
   batch,
   conflict,
+  eligibleDoctors,
   fixtureMode,
   onResolve,
   row,
@@ -471,6 +494,7 @@ function RowResolution({
   actionBusy: boolean;
   batch: MigrationBatch;
   conflict: MigrationConflict;
+  eligibleDoctors: EligibleClinicDoctor[];
   fixtureMode: boolean;
   onResolve: MigrationOperationsPanelProps["onResolve"];
   row: MigrationRow;
@@ -480,8 +504,7 @@ function RowResolution({
   targetRecordId: string;
 }) {
   const targetRecordType =
-    conflict.targetRecordType ??
-    (row.target === "practitioner" ? "provider_user" : row.target);
+    conflict.targetRecordType ?? (row.target === "practitioner" ? "provider_user" : row.target);
   const canCreate = row.target === "patient" && conflict.conflictType === "duplicate_patient";
   const canLink = row.target !== "appointment" || Boolean(conflict.targetRecordId);
 
@@ -504,17 +527,47 @@ function RowResolution({
         <label>
           <span>
             {row.target === "practitioner"
-              ? "Eligible ClinicOS doctor ID"
+              ? "Eligible ClinicOS doctor"
               : "Existing " + row.target + " ID"}
           </span>
-          <input
-            disabled={actionBusy || Boolean(conflict.targetRecordId)}
-            onChange={(event) =>
-              setTargetRecordIds((current) => ({ ...current, [row.id]: event.target.value }))
-            }
-            placeholder="UUID"
-            value={targetRecordId}
-          />
+          {row.target === "practitioner" ? (
+            <>
+              <select
+                data-testid="migration-eligible-doctor"
+                disabled={
+                  actionBusy || Boolean(conflict.targetRecordId) || eligibleDoctors.length === 0
+                }
+                onChange={(event) =>
+                  setTargetRecordIds((current) => ({
+                    ...current,
+                    [row.id]: event.target.value
+                  }))
+                }
+                value={targetRecordId}
+              >
+                <option value="">Select an active clinic doctor</option>
+                {eligibleDoctors.map((doctor) => (
+                  <option key={doctor.providerUserId} value={doctor.providerUserId}>
+                    {doctor.displayName}
+                  </option>
+                ))}
+              </select>
+              <small>
+                {eligibleDoctors.length > 0
+                  ? "Only active doctors with current clinic membership and role eligibility are listed."
+                  : "No eligible ClinicOS doctor is configured for this clinic. Add or reactivate a doctor before linking this row."}
+              </small>
+            </>
+          ) : (
+            <input
+              disabled={actionBusy || Boolean(conflict.targetRecordId)}
+              onChange={(event) =>
+                setTargetRecordIds((current) => ({ ...current, [row.id]: event.target.value }))
+              }
+              placeholder="UUID"
+              value={targetRecordId}
+            />
+          )}
         </label>
       ) : (
         <small>
@@ -554,6 +607,109 @@ function RowResolution({
         </Button>
       </div>
     </div>
+  );
+}
+
+const TRIAL_STEPS: ReadonlyArray<{
+  description: string;
+  importType: MigrationImportType;
+  label: string;
+}> = [
+  {
+    description: "Create or reconcile the patient identity link used by later appointments.",
+    importType: "patients",
+    label: "Patient"
+  },
+  {
+    description: "Map the source practitioner to an active ClinicOS doctor; no user is created.",
+    importType: "practitioners",
+    label: "Practitioner"
+  },
+  {
+    description: "Resolve both source links plus active type and chair codes, then verify Today.",
+    importType: "appointments",
+    label: "Appointment"
+  }
+];
+
+function TrialGuide({
+  actionBusy,
+  importType,
+  onSelectImportType,
+  sourceSystem,
+  states
+}: {
+  actionBusy: boolean;
+  importType: MigrationImportType;
+  onSelectImportType: (importType: MigrationImportType) => void;
+  sourceSystem: string;
+  states: Record<MigrationImportType, "complete" | "current" | "upcoming">;
+}) {
+  const appointmentComplete = states.appointments === "complete";
+
+  return (
+    <section className="work-panel migration-trial-guide" aria-labelledby="migration-trial-title">
+      <div className="panel-heading">
+        <div>
+          <p className="eyebrow">Guided clinic trial</p>
+          <h2 id="migration-trial-title">Build one appointment from source evidence</h2>
+          <p>
+            Use one stable source-system key across all three steps. Progress reflects committed
+            rows in the visible durable import history; exact references are revalidated when the
+            appointment is staged.
+          </p>
+        </div>
+        <span className="state-pill">{sourceSystem.trim() || "Enter a source key"}</span>
+      </div>
+      <div className="migration-trial-steps">
+        {TRIAL_STEPS.map((step, index) => {
+          const state = states[step.importType];
+          return (
+            <article
+              className={
+                importType === step.importType
+                  ? "migration-trial-step migration-trial-step--selected"
+                  : "migration-trial-step"
+              }
+              data-state={state}
+              key={step.importType}
+            >
+              <div className="migration-trial-step__heading">
+                <span>{state === "complete" ? <CheckCircle2 size={18} /> : index + 1}</span>
+                <strong>{step.label}</strong>
+                <small>
+                  {state === "complete" ? "Committed" : state === "current" ? "Next" : "Later"}
+                </small>
+              </div>
+              <p>{step.description}</p>
+              <Button
+                data-testid={`migration-trial-step-${step.importType}`}
+                disabled={actionBusy}
+                onClick={() => onSelectImportType(step.importType)}
+                size="sm"
+                variant={importType === step.importType ? "primary" : "secondary"}
+              >
+                Prepare {step.label.toLowerCase()}
+              </Button>
+            </article>
+          );
+        })}
+      </div>
+      {appointmentComplete ? (
+        <div className="migration-trial-complete" data-testid="migration-trial-complete">
+          <CheckCircle2 size={20} aria-hidden="true" />
+          <div>
+            <strong>Committed appointment evidence is ready for product verification.</strong>
+            <span>
+              Open Today and confirm the patient, practitioner, time, and source are visible.
+            </span>
+          </div>
+          <Link className="button-link button-link--primary" href="/">
+            Open Today
+          </Link>
+        </div>
+      ) : null}
+    </section>
   );
 }
 

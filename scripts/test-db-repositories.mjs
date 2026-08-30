@@ -78,6 +78,20 @@ try {
     clock: fixedClock,
     dueGenerationCursorSecret: "repository-test-cursor-signing-secret-000000000001"
   });
+  const tenantAClinicDoctors = await repository.listClinicDoctors(tenantA);
+  assert.deepEqual(tenantAClinicDoctors, [
+    {
+      tenantId: tenantA.tenantId,
+      clinicId: tenantA.clinicId,
+      providerUserId: CHECKPOINT1_SEED_IDS.users.doctor,
+      displayName: "Dr Kabir Doctor"
+    }
+  ]);
+  assert.deepEqual(
+    await repository.listClinicDoctors(tenantBScope),
+    [],
+    "clinic doctor lookup must not cross tenant or clinic scope"
+  );
   const tenantAPatients = await repository.listPatients(tenantA);
   const tenantBPatients = await repository.listPatients(tenantBScope);
   assert.equal(

@@ -25,6 +25,7 @@ import type {
   ClinicalNoteVersionRecord,
   Clinic,
   ClinicAssignment,
+  ClinicDoctorRecord,
   ClinicUser,
   ClinicDayAppointmentReadModel,
   ConsentCaptureMethod,
@@ -1484,6 +1485,7 @@ export interface ClinicOperationsRepository {
 
   listAppointmentTypes(scope: RepositoryScope): Promise<AppointmentTypeRecord[]>;
   listChairs(scope: RepositoryScope): Promise<ChairOrRoomRecord[]>;
+  listClinicDoctors(scope: RepositoryScope): Promise<ClinicDoctorRecord[]>;
   listProviderSchedules(
     scope: RepositoryScope,
     providerUserId?: UUID | null

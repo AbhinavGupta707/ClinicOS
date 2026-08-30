@@ -61,12 +61,19 @@ export function Cp13Workspace(props: {
   if (props.profile.roles.includes("accountant")) {
     return <TreatmentBillingRuntime client={client} />;
   }
-  return <FrontOfficeRuntime client={client} allowPatientSelection={props.activeSurfaceId === "patients"} />;
+  return (
+    <FrontOfficeRuntime
+      allowPatientSelection={props.activeSurfaceId === "patients"}
+      client={client}
+      timeZone={props.profile.clinic.timezone}
+    />
+  );
 }
 
 function FrontOfficeRuntime(props: {
   readonly client: ClinicOsApiClient;
   readonly allowPatientSelection: boolean;
+  readonly timeZone?: string;
 }) {
   const [patientId, setPatientId] = useState<string | null>(null);
   const [dayState, setDayState] = useState<FrontOfficeLoadState<FrontOfficeDayData>>({
@@ -110,7 +117,7 @@ function FrontOfficeRuntime(props: {
           <FrontOfficePatientWorkspacePanel state={patientState} />
         </>
       ) : (
-        <FrontOfficeDayPanel state={dayState} />
+        <FrontOfficeDayPanel state={dayState} timeZone={props.timeZone} />
       )}
     </section>
   );

@@ -2251,7 +2251,8 @@ button.duplicate-item {
 .migration-import-form select,
 .migration-import-form textarea,
 .migration-filter select,
-.migration-resolution input {
+.migration-resolution input,
+.migration-resolution select {
   background: #fff;
   border: 1px solid var(--border-strong);
   border-radius: 8px;
@@ -2281,6 +2282,88 @@ button.duplicate-item {
 .migration-import-form__csv,
 .migration-import-form__actions {
   grid-column: 1 / -1;
+}
+
+.migration-trial-guide {
+  overflow: hidden;
+}
+
+.migration-trial-steps {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.migration-trial-step {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  display: grid;
+  gap: var(--space-2);
+  min-width: 0;
+  padding: 14px;
+}
+
+.migration-trial-step--selected {
+  border-color: var(--mint);
+  box-shadow: inset 0 3px 0 var(--mint);
+}
+
+.migration-trial-step[data-state="complete"] {
+  background: #f0fdf4;
+  border-color: #86c9a2;
+}
+
+.migration-trial-step__heading {
+  align-items: center;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+}
+
+.migration-trial-step__heading > span {
+  align-items: center;
+  background: var(--paper);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  display: inline-flex;
+  font-size: 0.76rem;
+  font-weight: 900;
+  height: 28px;
+  justify-content: center;
+  width: 28px;
+}
+
+.migration-trial-step__heading small,
+.migration-trial-step p,
+.migration-trial-complete span {
+  color: var(--ink-soft);
+}
+
+.migration-trial-step p {
+  font-size: 0.84rem;
+  line-height: 1.45;
+  margin: 0;
+}
+
+.migration-trial-step .ui-button {
+  justify-self: start;
+}
+
+.migration-trial-complete {
+  align-items: center;
+  background: #f0fdf4;
+  border: 1px solid #86c9a2;
+  border-radius: 10px;
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  padding: 12px 14px;
+}
+
+.migration-trial-complete > div {
+  display: grid;
+  gap: 3px;
 }
 
 .migration-run-layout {
@@ -2632,6 +2715,142 @@ button.cp6-card:hover {
   margin: 4px 0 0;
 }
 
+.cp13-day {
+  display: grid;
+  gap: var(--space-4);
+}
+
+.cp13-day__summary,
+.cp13-day__appointments {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  min-width: 0;
+  padding: 18px;
+}
+
+.cp13-day__summary {
+  background: radial-gradient(circle at top right, rgb(28 133 111 / 12%), transparent 34%), #fff;
+}
+
+.cp13-day__summary h2,
+.cp13-day__summary p,
+.cp13-day__section-header h3,
+.cp13-day__section-header p,
+.cp13-day__empty p,
+.cp13-appointment-card h4,
+.cp13-appointment-card p {
+  margin: 0;
+}
+
+.cp13-day__summary h2 {
+  font-size: clamp(1.45rem, 3vw, 2rem);
+  margin-block: 5px 8px;
+}
+
+.cp13-day__summary > p:last-child,
+.cp13-day__empty p,
+.cp13-appointment-card__patient p {
+  color: var(--ink-soft);
+}
+
+.cp13-day__section-header {
+  align-items: center;
+  display: flex;
+  gap: var(--space-3);
+  justify-content: space-between;
+  margin-bottom: var(--space-3);
+}
+
+.cp13-day__section-header > strong {
+  background: var(--mint-soft);
+  border-radius: 999px;
+  color: var(--brand-deep);
+  font-size: 0.78rem;
+  padding: 6px 10px;
+  white-space: nowrap;
+}
+
+.cp13-day__notice {
+  background: #fff8e6;
+  border: 1px solid #e8c76a;
+  border-radius: 8px;
+  color: #654b04;
+  margin: 0 0 var(--space-3);
+  padding: 10px 12px;
+}
+
+.cp13-day__empty {
+  background: #f8fafc;
+  border: 1px dashed var(--border-strong);
+  border-radius: 10px;
+  display: grid;
+  gap: 4px;
+  padding: 20px;
+}
+
+.cp13-appointment-list {
+  display: grid;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.cp13-appointment-card {
+  align-items: start;
+  background: #fff;
+  border: 1px solid var(--border);
+  border-left: 4px solid var(--brand);
+  border-radius: 10px;
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: minmax(8rem, 0.8fr) minmax(12rem, 1fr) minmax(20rem, 2fr);
+  min-width: 0;
+  padding: 14px;
+}
+
+.cp13-appointment-card__time {
+  display: grid;
+  gap: 6px;
+}
+
+.cp13-appointment-card__time time {
+  font-size: 1rem;
+  font-weight: 900;
+}
+
+.cp13-appointment-card__time span {
+  color: var(--brand-deep);
+  font-size: 0.76rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.cp13-appointment-card__patient {
+  display: grid;
+  gap: 4px;
+}
+
+.cp13-appointment-card__patient h4 {
+  font-size: 1rem;
+}
+
+.cp13-appointment-card__details {
+  margin: 0;
+}
+
+.cp13-appointment-card__details dt {
+  color: var(--ink-soft);
+  font-size: 0.7rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.cp13-runtime .cp13-appointment-card__details dd {
+  font-size: 0.86rem;
+}
+
 @media (max-width: 980px) {
   .migration-run-layout {
     grid-template-columns: 1fr;
@@ -2697,9 +2916,29 @@ button.cp6-card:hover {
 }
 
 @media (max-width: 760px) {
-  .migration-import-form,
-  .migration-ops__readiness {
+  .cp13-appointment-card {
     grid-template-columns: 1fr;
+  }
+
+  .cp13-day__section-header {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .migration-import-form,
+  .migration-ops__readiness,
+  .migration-trial-steps {
+    grid-template-columns: 1fr;
+  }
+
+  .migration-trial-complete {
+    align-items: start;
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+
+  .migration-trial-complete .button-link {
+    grid-column: 1 / -1;
+    width: 100%;
   }
 
   .clinic-topbar {

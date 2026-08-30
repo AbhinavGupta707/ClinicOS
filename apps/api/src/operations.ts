@@ -1960,6 +1960,15 @@ export async function listChairs(
   return ok({ chairs });
 }
 
+export async function listClinicDoctors(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "schedule.read" });
+  const clinicDoctors = await dependencies.repository.listClinicDoctors(scopeFrom(context));
+  return ok({ clinicDoctors });
+}
+
 export async function listProviderSchedules(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,

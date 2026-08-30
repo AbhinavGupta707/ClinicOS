@@ -199,6 +199,8 @@ export type ListAppointmentTypesRequest = Readonly<Record<string, never>>;
 export type ListAppointmentTypesResponse = { readonly appointmentTypes: readonly (PublicJsonObject)[] };
 export type ListChairsRequest = Readonly<Record<string, never>>;
 export type ListChairsResponse = { readonly chairs: readonly (PublicJsonObject)[] };
+export type ListClinicDoctorsRequest = Readonly<Record<string, never>>;
+export type ListClinicDoctorsResponse = { readonly clinicDoctors: readonly (PublicJsonObject)[] };
 export type ListProviderSchedulesRequest = { readonly query?: { readonly providerId?: string } };
 export type ListProviderSchedulesResponse = { readonly providerSchedules: readonly (PublicJsonObject)[] };
 export type ListQueueRequest = { readonly query?: { readonly date?: string; readonly limit?: number } };
@@ -446,6 +448,7 @@ export interface ClinicOsNativeOperationMap {
   readonly markAppointmentNoShow: { readonly request: MarkAppointmentNoShowRequest; readonly response: MarkAppointmentNoShowResponse };
   readonly listAppointmentTypes: { readonly request: ListAppointmentTypesRequest; readonly response: ListAppointmentTypesResponse };
   readonly listChairs: { readonly request: ListChairsRequest; readonly response: ListChairsResponse };
+  readonly listClinicDoctors: { readonly request: ListClinicDoctorsRequest; readonly response: ListClinicDoctorsResponse };
   readonly listProviderSchedules: { readonly request: ListProviderSchedulesRequest; readonly response: ListProviderSchedulesResponse };
   readonly listQueue: { readonly request: ListQueueRequest; readonly response: ListQueueResponse };
   readonly updateQueueEntry: { readonly request: UpdateQueueEntryRequest; readonly response: UpdateQueueEntryResponse };
@@ -1198,6 +1201,30 @@ export class ClinicOsApiClient {
     return this.executeWithMetadata<ListChairsResponse>({
       method: "GET",
       pathTemplate: "/v1/chairs",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listClinicDoctors(input?: ListClinicDoctorsRequest): Promise<ListClinicDoctorsResponse> {
+    return this.execute<ListClinicDoctorsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/clinic-doctors",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listClinicDoctorsWithMetadata(input?: ListClinicDoctorsRequest): Promise<ClinicOsApiResponse<ListClinicDoctorsResponse>> {
+    return this.executeWithMetadata<ListClinicDoctorsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/clinic-doctors",
       auth: "bearer",
       contentType: null,
       bodyEncoding: "json",

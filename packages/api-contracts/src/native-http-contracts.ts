@@ -1442,6 +1442,16 @@ function cp2Operations(): HttpOperationContract[] {
       success: { 200: entityList("chairs") }
     }),
     operation({
+      operationId: "listClinicDoctors",
+      checkpoint: "CP2",
+      method: "GET",
+      path: "/v1/clinic-doctors",
+      summary: "List active doctors eligible for clinic assignment",
+      tags: ["Appointments", "Configuration"],
+      mutation: false,
+      success: { 200: entityList("clinicDoctors") }
+    }),
+    operation({
       operationId: "listProviderSchedules",
       checkpoint: "CP2",
       method: "GET",

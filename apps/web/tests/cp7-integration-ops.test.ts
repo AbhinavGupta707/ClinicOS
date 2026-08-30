@@ -9,6 +9,7 @@ import {
   createLiveMigrationBatch,
   createFixtureCp7IntegrationOpsData,
   getCanonicalMigrationCsvTemplate,
+  getMigrationTrialStepStates,
   loadCp7IntegrationOps,
   loadLiveCp7IntegrationOps,
   replayLiveDeadLetterEvent,
@@ -94,8 +95,47 @@ describe("CP7 integration ops workflow", () => {
 
     expect(committedBatch.status).toBe("committed");
     expect(committedBatch.commit.committedRows).toBe(2);
-    expect(committedBatch.rows.find((row) => row.id === "cp7MigrationRowRejectedPatient")).toMatchObject({
+    expect(
+      committedBatch.rows.find((row) => row.id === "cp7MigrationRowRejectedPatient")
+    ).toMatchObject({
       status: "rejected"
+    });
+  });
+
+  it("derives guided progress only from committed rows for the current source key", () => {
+    const fixture = createFixtureCp7IntegrationOpsData("2026-07-07");
+    const baseBatch = fixture.migrationBatches[0]!;
+    const batches = [
+      {
+        ...baseBatch,
+        id: "committedPatient",
+        importType: "patients" as const,
+        sourceSystem: "trial_a",
+        status: "committed" as const,
+        counts: { ...baseBatch.counts, committed: 1 }
+      },
+      {
+        ...baseBatch,
+        id: "rolledBackPractitioner",
+        importType: "practitioners" as const,
+        sourceSystem: "trial_a",
+        status: "rolled_back" as const,
+        counts: { ...baseBatch.counts, committed: 1 }
+      },
+      {
+        ...baseBatch,
+        id: "otherSourceAppointment",
+        importType: "appointments" as const,
+        sourceSystem: "trial_b",
+        status: "committed" as const,
+        counts: { ...baseBatch.counts, committed: 1 }
+      }
+    ];
+
+    expect(getMigrationTrialStepStates(batches, "trial_a")).toEqual({
+      appointments: "upcoming",
+      patients: "complete",
+      practitioners: "current"
     });
   });
 
@@ -190,7 +230,8 @@ describe("CP7 integration ops workflow", () => {
                   id: "cp7ConflictDuplicatePatient",
                   rowId: "cp7MigrationRowDuplicatePatient",
                   status: "open",
-                  summary: "Existing verified ClinicOS patient with same phone; keep existing record.",
+                  summary:
+                    "Existing verified ClinicOS patient with same phone; keep existing record.",
                   targetRecordId: "cp7ExistingPatient",
                   targetRecordType: "patient"
                 }
@@ -236,6 +277,20 @@ describe("CP7 integration ops workflow", () => {
                   status: "needs_review"
                 }
               ]
+            }
+          ]
+        });
+      }
+
+      if (url === "http://localhost/v1/clinic-doctors") {
+        expect(init?.method).toBeUndefined();
+        return jsonResponse({
+          clinicDoctors: [
+            {
+              clinicId: "clinic-1",
+              displayName: "Dr Kabir Doctor",
+              providerUserId: "10000000-0000-4000-8000-000000001002",
+              tenantId: "tenant-1"
             }
           ]
         });
@@ -307,9 +362,7 @@ describe("CP7 integration ops workflow", () => {
 
     expect(loaded.status).toBe("ready");
     expect(
-      "data" in loaded
-        ? loaded.data.providers.find((provider) => provider.id === "razorpay")
-        : null
+      "data" in loaded ? loaded.data.providers.find((provider) => provider.id === "razorpay") : null
     ).toMatchObject({
       activationState: "sandbox_verified",
       lastReconciledAt: "2026-07-07T10:12:00+05:30",
@@ -328,6 +381,12 @@ describe("CP7 integration ops workflow", () => {
     expect("data" in loaded ? loaded.data.migrationBatches[1]?.rows[0]?.target : null).toBe(
       "practitioner"
     );
+    expect("data" in loaded ? loaded.data.clinicDoctors : null).toEqual([
+      {
+        displayName: "Dr Kabir Doctor",
+        providerUserId: "10000000-0000-4000-8000-000000001002"
+      }
+    ]);
     expect(created.batchId).toBe("createdMigrationBatch");
     expect(rollback).toMatchObject({
       blockedCount: 1,
@@ -338,6 +397,7 @@ describe("CP7 integration ops workflow", () => {
       "http://localhost/v1/provider-health",
       "http://localhost/v1/dead-letter-events?status=unreviewed",
       "http://localhost/v1/migration-batches",
+      "http://localhost/v1/clinic-doctors",
       "http://localhost/v1/dead-letter-events/cp7DeadLetterWhatsappStatus/replay",
       "http://localhost/v1/migration-batches/cp7MigrationBatchRayPatients/rows/cp7MigrationRowDuplicatePatient/resolve",
       "http://localhost/v1/migration-batches/cp7MigrationBatchRayPatients/commit",
@@ -345,13 +405,13 @@ describe("CP7 integration ops workflow", () => {
       "http://localhost/v1/migration-batches/cp7MigrationBatchRayPatients/rollback"
     ]);
 
-    const replayBody = JSON.parse(fetchMock.mock.calls[3]?.[1]?.body as string);
+    const replayBody = JSON.parse(fetchMock.mock.calls[4]?.[1]?.body as string);
     expect(replayBody).toEqual({ reason: "Reviewed failed provider event." });
 
-    const commitBody = JSON.parse(fetchMock.mock.calls[5]?.[1]?.body as string);
+    const commitBody = JSON.parse(fetchMock.mock.calls[6]?.[1]?.body as string);
     expect(commitBody).toEqual({});
 
-    const resolveBody = JSON.parse(fetchMock.mock.calls[4]?.[1]?.body as string);
+    const resolveBody = JSON.parse(fetchMock.mock.calls[5]?.[1]?.body as string);
     expect(resolveBody).toEqual({
       action: "link_existing",
       note: "Keep existing verified ClinicOS record.",
@@ -359,14 +419,14 @@ describe("CP7 integration ops workflow", () => {
       targetRecordType: "patient"
     });
 
-    const createBody = JSON.parse(fetchMock.mock.calls[6]?.[1]?.body as string);
+    const createBody = JSON.parse(fetchMock.mock.calls[7]?.[1]?.body as string);
     expect(createBody).toMatchObject({
       importType: "patients",
       sourceFileName: "trial.csv",
       sourceSystem: "authorized_manual_contract"
     });
 
-    const rollbackBody = JSON.parse(fetchMock.mock.calls[7]?.[1]?.body as string);
+    const rollbackBody = JSON.parse(fetchMock.mock.calls[8]?.[1]?.body as string);
     expect(rollbackBody).toEqual({});
   });
 

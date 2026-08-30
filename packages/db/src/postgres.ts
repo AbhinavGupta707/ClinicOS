@@ -20,6 +20,7 @@ import type {
   ClinicalNoteVersionRecord,
   Clinic,
   ClinicAssignment,
+  ClinicDoctorRecord,
   ClinicUser,
   ClinicDayAppointmentReadModel,
   Clock,
@@ -2879,6 +2880,43 @@ export class PostgresClinicOperationsRepository
         [scope.tenantId, scope.clinicId]
       );
       return result.rows.map(mapChairRow);
+    });
+  }
+
+  async listClinicDoctors(scope: RepositoryScope): Promise<ClinicDoctorRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<ClinicDoctorRow>(
+        `
+          select distinct
+            memberships.tenant_id,
+            clinic_user_assignments.clinic_id,
+            users.id as provider_user_id,
+            users.display_name
+          from users
+          join memberships
+            on memberships.user_id = users.id
+           and memberships.tenant_id = $1
+           and memberships.status = 'active'
+          join clinic_user_assignments
+            on clinic_user_assignments.user_id = users.id
+           and clinic_user_assignments.tenant_id = memberships.tenant_id
+           and clinic_user_assignments.clinic_id = $2
+           and clinic_user_assignments.status = 'active'
+          join user_role_assignments
+            on user_role_assignments.user_id = users.id
+           and user_role_assignments.tenant_id = memberships.tenant_id
+           and user_role_assignments.clinic_id = clinic_user_assignments.clinic_id
+           and user_role_assignments.revoked_at is null
+          join roles
+            on roles.id = user_role_assignments.role_id
+           and roles.tenant_id = user_role_assignments.tenant_id
+           and roles.slug = 'doctor'
+          where users.status = 'active'
+          order by users.display_name, users.id
+        `,
+        [scope.tenantId, scope.clinicId]
+      );
+      return result.rows.map(mapClinicDoctorRow);
     });
   }
 
@@ -13465,6 +13503,13 @@ interface ChairRow {
   active: boolean;
 }
 
+interface ClinicDoctorRow {
+  tenant_id: UUID;
+  clinic_id: UUID;
+  provider_user_id: UUID;
+  display_name: string;
+}
+
 interface ProviderScheduleRow {
   id: UUID;
   tenant_id: UUID;
@@ -15326,6 +15371,15 @@ function mapChairRow(row: ChairRow): ChairOrRoomRecord {
     code: row.code,
     displayName: row.display_name,
     active: row.active
+  };
+}
+
+function mapClinicDoctorRow(row: ClinicDoctorRow): ClinicDoctorRecord {
+  return {
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    providerUserId: row.provider_user_id,
+    displayName: row.display_name
   };
 }
 

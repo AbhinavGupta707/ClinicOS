@@ -1,6 +1,9 @@
 import { ClinicOsApiClient } from "@clinic-os/api-client-generated";
 
+import { isDevFixtureAllowed } from "./dev-fixture";
+
 const TOKEN_PROVIDER_KEY = "__clinicOsAccessTokenProvider" as const;
+const LOCAL_DEV_ACCESS_TOKEN = "local-synthetic-fixture";
 
 export type ClinicOsAccessTokenProvider = () => string | null | Promise<string | null>;
 
@@ -22,7 +25,8 @@ export class ClinicOsSessionUnavailableError extends Error {
 /**
  * Registration boundary for the authenticated web session runtime. The provider owns its token;
  * CP13 never copies it into a URL, browser storage, a public environment variable, or component
- * state. If no provider is registered, generated-client operations fail closed.
+ * state. If no provider is registered, generated-client operations fail closed unless the
+ * explicitly enabled local development identity fixture is active.
  */
 export function registerClinicOsAccessTokenProvider(
   provider: ClinicOsAccessTokenProvider
@@ -51,7 +55,10 @@ export function isClinicOsSessionUnavailable(
 
 async function getVerifiedAccessToken(): Promise<string> {
   const provider = window[TOKEN_PROVIDER_KEY];
-  if (!provider) throw new ClinicOsSessionUnavailableError();
+  if (!provider) {
+    if (isDevFixtureAllowed()) return LOCAL_DEV_ACCESS_TOKEN;
+    throw new ClinicOsSessionUnavailableError();
+  }
   const token = await provider();
   if (typeof token !== "string" || token.trim().length === 0) {
     throw new ClinicOsSessionUnavailableError(

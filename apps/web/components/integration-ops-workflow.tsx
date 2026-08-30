@@ -280,9 +280,7 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
       const outcome = await rollbackLiveMigrationBatch(batch.id);
       await reloadWorkflow(batch.id);
       const reasons =
-        outcome.blockedReasons.length > 0
-          ? " " + outcome.blockedReasons.join(" ")
-          : "";
+        outcome.blockedReasons.length > 0 ? " " + outcome.blockedReasons.join(" ") : "";
       setActionMessage({
         text:
           outcome.blockedCount > 0
@@ -391,6 +389,7 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
               <MigrationOperationsPanel
                 actionBusy={actionBusy}
                 batches={loadState.data.migrationBatches}
+                eligibleDoctors={loadState.data.clinicDoctors}
                 fixtureMode={loadState.data.source === "cp7_fixture"}
                 onCommit={handleCommitBatch}
                 onCreate={handleCreateBatch}

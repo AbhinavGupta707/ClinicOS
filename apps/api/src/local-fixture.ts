@@ -163,6 +163,7 @@ import {
   type AttributionTouchRecord,
   type BreakGlassAccessRecord,
   type ChairOrRoomRecord,
+  type ClinicDoctorRecord,
   type ClinicDayAppointmentReadModel,
   type Clock,
   type ClinicalNoteVersionRecord,
@@ -2323,6 +2324,28 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
   async listChairs(scope: RepositoryScope): Promise<ChairOrRoomRecord[]> {
     return this.chairs.filter((chair) => matchesScope(chair, scope) && chair.active);
+  }
+
+  async listClinicDoctors(scope: RepositoryScope): Promise<ClinicDoctorRecord[]> {
+    const doctor = CHECKPOINT1_SEED_USERS.find((candidate) => candidate.key === "doctor");
+    const providerUserId = CHECKPOINT1_SEED_IDS.users.doctor;
+    if (
+      !doctor ||
+      scope.tenantId !== CHECKPOINT1_SEED_IDS.tenantId ||
+      scope.clinicId !== CHECKPOINT1_SEED_IDS.clinicId ||
+      this.ineligibleProviderUserIds.has(providerUserId)
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        providerUserId,
+        displayName: doctor.displayName
+      }
+    ];
   }
 
   async listProviderSchedules(
