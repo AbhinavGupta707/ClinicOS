@@ -1,6 +1,6 @@
 # MVP Source Integration Intake
 
-Status: awaiting owner/clinic input
+Status: source identified; product/access confirmation and samples pending
 
 Data policy: attach only synthetic or de-identified samples unless separately approved
 
@@ -10,10 +10,14 @@ explicitly approved fallback.
 
 ## Clinic and source
 
-- Clinic name or non-sensitive identifier: pending
-- Clinic country/timezone: pending
-- Source software/vendor: pending
-- Product edition/version: pending
+- Clinic name or non-sensitive identifier: Healthy Roots Family Dental Studio,
+  Girgaon (owner supplied; clinic confirmation pending)
+- Clinic country/timezone: India; expected `Asia/Kolkata` (clinic confirmation
+  pending)
+- Source software/vendor: Practo (owner supplied)
+- Product edition/version: pending confirmation that the operational system is
+  Practo Ray, and whether the account uses Ray v6, Ray v7, or another edition;
+  using Practo Profile/Prime alone is not equivalent to using Ray
 - Clinic contact who can verify source behavior: pending
 - Expected patient count: pending
 - Expected practitioner count: pending
@@ -29,16 +33,46 @@ Choose one and attach the relevant documentation:
 - [ ] explicit manual handoff
 - [ ] other official/authorized mechanism
 
+Recommended initial route: a clinic-authorized Practo Ray export-to-email of
+Contacts and Appointments, followed by an import-once dry run. This route is
+pending confirmation that the clinic uses Ray and can access the export screen.
+
 Required details:
 
-- Documentation URL or supplied document: pending
-- Sandbox/test account available: pending
-- Authentication method: pending
-- Rate/pagination limits: pending
-- Export generation procedure: pending
+- Documentation URL or supplied document:
+  - https://help.practo.com/practo-ray/settings/understanding-the-settings-of-your-practo-ray-account/
+  - https://help.practo.com/partner-api/practo-api-program-terms-and-conditions/
+  - https://help.practo.com/practo-ray/settings/how-do-i-sync-my-calendar-to-other-calendar-apps/
+- Sandbox/test account available: not applicable to the manual-export route;
+  no Ray clinic-data API sandbox is publicly documented
+- Authentication method: clinic staff use their own authorized Ray account;
+  ClinicOS must not receive or store the staff member's Ray password
+- Rate/pagination limits: not applicable to the manual-export route; unknown for
+  any future Practo-authorized API
+- Export generation procedure: in Ray Settings, open `Import/Export data`, select
+  `Contact` and `Appointments`, enter a clinic-controlled correspondence email,
+  and use `Export to email`
 - File encoding/delimiter/workbook sheets: pending
 - Access authorization confirmed by: pending
 - Date confirmed: pending
+
+## Research-backed access decision
+
+- Practo's official Ray help states that Ray can export Contact, Treatment,
+  Expenses, and Appointments data to email at any time.
+- Practo's public API programme is contract-gated and describes searching,
+  booking, and managing appointments across Practo's OPD network. Public terms do
+  not establish an API for exporting this clinic's private Ray patient database.
+- Ray documents per-doctor calendar subscription links. These may help with
+  appointment freshness later, but are insufficient as the primary source for
+  patient identity, practitioner mapping, status reconciliation, and replay.
+- No public official documentation was found for Ray patient/appointment
+  webhooks or scheduled clinic-data exports. Practo support must confirm whether
+  either capability is available to this clinic's account.
+- Therefore MVP1 must start with the official manual export, not undocumented
+  endpoints, browser automation, reverse engineering, or scraping. A recurring
+  operator-triggered export remains an acceptable MVP2 fallback if Practo does
+  not offer an authorized clinic-data API.
 
 ## Representative de-identified samples
 
@@ -46,7 +80,8 @@ Store approved fixtures under a vendor-specific test-fixture path, never in this
 document.
 
 - Patient sample path: pending
-- Practitioner sample path: pending
+- Practitioner sample path: pending; if Ray supplies no staff export, obtain a
+  clinic-prepared list of active practitioners and their Ray display names
 - Appointment sample path: pending
 - At least one changed appointment sample: pending
 - At least one cancellation/no-show sample: pending
@@ -70,11 +105,11 @@ document.
 
 ## Trial mode
 
-- Initial mode: import-once / operator-triggered / scheduled (pending)
+- Initial mode: import-once recommended; clinic confirmation pending
 - Desired cadence: pending
 - Maximum acceptable data staleness: pending
-- Read-only confirmed: pending
-- Writeback explicitly excluded for MVP1: pending
+- Read-only confirmed: yes for the owner-approved MVP programme
+- Writeback explicitly excluded for MVP1: yes
 - Success window and clinic trial date: pending
 
 ## Acceptance dataset counts
@@ -92,8 +127,13 @@ Record expected counts before running the first import:
 
 ## Decisions and sign-off
 
-- Unverified source behavior and chosen conservative fallback: pending
-- Fields intentionally not imported: pending
+- Unverified source behavior and chosen conservative fallback: use clinic-run Ray
+  exports; do not assume API access, scheduled export, webhook semantics, or
+  undocumented columns
+- Fields intentionally not imported: Treatment and Expenses remain outside MVP1
+  unless a verified identity field required for patient/appointment linkage is
+  available only in the Treatment export
 - Known data-quality limitations: pending
-- Owner approval to begin MVP1: pending
+- Owner approval to begin MVP1: programme approved; source-specific coding remains
+  gated on product confirmation, clinic authorization, and de-identified samples
 - Approval date: pending

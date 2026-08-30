@@ -204,3 +204,8 @@ Before connector-specific MVP1 code begins, obtain:
   passed. MVP0 engineering is complete; formal checkpoint exit now waits only
   for the real source contract and deidentified samples required to define MVP1
   without guessing.
+- 2026-08-30: the owner identified Healthy Roots Family Dental Studio, Girgaon,
+  and Practo as the pilot clinic/source. Official research supports a Ray
+  export-to-email path, but the clinic must still confirm that its operational
+  product is Practo Ray, its edition, authorized export access, and representative
+  deidentified samples before connector code begins.
