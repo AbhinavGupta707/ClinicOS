@@ -9,7 +9,7 @@
     "packages/*"
   ],
   "scripts": {
-    "check": "node scripts/check-workspace.mjs && npm run check:clock && node --test tests/acceptance/cp11-typecheck-gate.test.mjs && npm run check:env && npm run format:check",
+    "check": "node scripts/check-workspace.mjs && npm run check:clock && npm run build --workspace @clinic-os/domain && node --test tests/acceptance/cp11-typecheck-gate.test.mjs && npm run check:env && npm run format:check",
     "check:clock": "node scripts/check-clock-usage.mjs",
     "check:env": "npm --workspace @clinic-os/config run build && node scripts/validate-env-template.mjs",
     "ci": "npm run check && npm run typecheck && npm run lint && npm run test && npm run build && npm run security:audit && npm run security:secrets",

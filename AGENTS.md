@@ -1,5 +1,27 @@
 # ClinicOS Agent Instructions
 
+## Active Owner-Approved MVP Programme (2026-08-30)
+
+- The current execution programme is the integration-first MVP defined in
+  `docs/orchestration/MVP_EXECUTION_PLAN.md`. It is the authoritative scope and
+  sequencing document until the owner explicitly closes or replaces it.
+- The authoritative WSL project root is `/home/abhinav/code/ClinicOS`. Historical
+  Mac paths such as `/Users/abhinavgupta/Desktop/ClinicOS` are not valid project
+  roots in this environment.
+- Preserve the blue-sky specifications as the long-term product direction, but
+  reduce present scope to fewer complete vertical slices that prove real clinic
+  interoperability and daily usefulness. Enterprise-scale cloud, compliance,
+  provider breadth, and operational assurance remain deferred unless required
+  for the safety or correctness of a slice being built now.
+- The owner has explicitly authorized the `orchestrate-subagents` workflow for
+  bounded read-only exploration, contract review, verification, and suitably
+  isolated implementation. Apply its model-routing guidance. Use the
+  `orchestrate-worktrees` workflow only when its independence gate passes and
+  concurrent isolated implementation will materially shorten delivery.
+- MVP work must still use official APIs, authorized exports/imports, signed
+  webhooks, or explicit clinic-approved manual workflows. Do not use scraping or
+  browser automation as a product integration.
+
 ## Production-Grade Scope
 
 - Build for the blue-sky production system, not a throwaway MVP, demo, or bootstrap.
