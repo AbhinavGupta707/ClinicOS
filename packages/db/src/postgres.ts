@@ -2038,6 +2038,23 @@ export class PostgresClinicOperationsRepository
       if (existingRow.normalizedRecord?.recordType === "provider_user" && input.action === "create_new") {
         return null;
       }
+      if (existingRow.normalizedRecord?.recordType === "appointment" && input.action === "create_new") {
+        const openConflict = await client.query<{ present: boolean }>(
+          `
+            select exists (
+              select 1
+              from migration_conflicts
+              where tenant_id = $1
+                and clinic_id = $2
+                and batch_id = $3
+                and row_id = $4
+                and status = 'open'
+            ) as present
+          `,
+          [scope.tenantId, scope.clinicId, batchId, rowId]
+        );
+        if (openConflict.rows[0]?.present) return null;
+      }
 
       if (input.action === "link_existing") {
         if (!input.targetRecordId || (input.targetRecordType ?? expectedTargetType) !== expectedTargetType) {
@@ -2058,9 +2075,28 @@ export class PostgresClinicOperationsRepository
         }
         if (
           expectedTargetType === "appointment" &&
-          !(await this.#findAppointmentByIdInTransaction(client, scope, input.targetRecordId))
+          existingRow.normalizedRecord?.recordType === "appointment"
         ) {
-          return null;
+          const [appointment, references] = await Promise.all([
+            this.#findAppointmentByIdInTransaction(client, scope, input.targetRecordId),
+            this.#resolveImportedAppointmentReferencesInTransaction(
+              client,
+              scope,
+              batch.sourceSystem,
+              existingRow
+            )
+          ]);
+          if (
+            !appointment ||
+            !references ||
+            differingAppointmentImportFields(
+              existingRow.normalizedRecord,
+              appointment,
+              references
+            ).length > 0
+          ) {
+            return null;
+          }
         }
       }
 

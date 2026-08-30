@@ -2202,6 +2202,179 @@ button.duplicate-item {
   color: var(--danger) !important;
 }
 
+.sr-only {
+  height: 1px;
+  margin: -1px;
+  overflow: hidden;
+  padding: 0;
+  position: absolute;
+  width: 1px;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+}
+
+.migration-ops,
+.migration-batch-detail,
+.migration-resolution,
+.migration-rollback {
+  display: grid;
+  gap: var(--space-3);
+  min-width: 0;
+}
+
+.migration-ops__readiness {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.migration-import-form {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.migration-import-form label,
+.migration-resolution label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+
+.migration-import-form label > span,
+.migration-resolution label > span {
+  color: var(--ink-soft);
+  font-size: 0.75rem;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.migration-import-form input,
+.migration-import-form select,
+.migration-import-form textarea,
+.migration-filter select,
+.migration-resolution input {
+  background: #fff;
+  border: 1px solid var(--border-strong);
+  border-radius: 8px;
+  color: var(--ink);
+  min-height: 40px;
+  min-width: 0;
+  padding: 9px 10px;
+  width: 100%;
+}
+
+.migration-import-form textarea {
+  font-family: var(--font-mono);
+  font-size: 0.78rem;
+  line-height: 1.5;
+  resize: vertical;
+}
+
+.migration-import-form small,
+.migration-resolution small,
+.migration-run-card small,
+.migration-batch-detail small {
+  color: var(--ink-soft);
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.migration-import-form__csv,
+.migration-import-form__actions {
+  grid-column: 1 / -1;
+}
+
+.migration-run-layout {
+  align-items: start;
+  display: grid;
+  gap: var(--space-4);
+  grid-template-columns: minmax(240px, 0.42fr) minmax(0, 1fr);
+  min-width: 0;
+}
+
+.migration-run-list {
+  align-content: start;
+  display: grid;
+  gap: var(--space-2);
+  max-height: 52rem;
+  min-width: 0;
+  overflow-y: auto;
+  padding-right: 4px;
+  scrollbar-gutter: stable;
+}
+
+.migration-run-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  color: inherit;
+  cursor: pointer;
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: minmax(0, 1fr) auto;
+  min-width: 0;
+  padding: 12px;
+  text-align: left;
+}
+
+.migration-run-card > small {
+  grid-column: 1 / -1;
+}
+
+.migration-run-card span:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.migration-run-card--active,
+.migration-run-card:hover {
+  border-color: var(--mint);
+  box-shadow: inset 3px 0 0 var(--mint);
+}
+
+.migration-count-grid {
+  display: grid;
+  gap: var(--space-2);
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.migration-count-grid .workflow-metric {
+  min-height: 82px;
+}
+
+.migration-resolution {
+  background: #f8fafc;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.migration-resolution p {
+  color: var(--ink-soft);
+  font-size: 0.84rem;
+  margin: 0;
+}
+
+.migration-batch-actions {
+  margin-top: var(--space-2);
+}
+
+.migration-rollback {
+  border-top: 1px solid var(--border);
+  padding-top: var(--space-3);
+}
+
+.migration-rollback label {
+  align-items: start;
+  display: grid;
+  gap: 8px;
+  grid-template-columns: auto minmax(0, 1fr);
+}
+
+.migration-rollback input {
+  margin-top: 3px;
+}
+
 .cp8-draft-card {
   background: #fff;
   border: 1px solid var(--border);
@@ -2460,6 +2633,10 @@ button.cp6-card:hover {
 }
 
 @media (max-width: 980px) {
+  .migration-run-layout {
+    grid-template-columns: 1fr;
+  }
+
   .clinic-shell {
     grid-template-columns: 1fr;
   }
@@ -2520,6 +2697,11 @@ button.cp6-card:hover {
 }
 
 @media (max-width: 760px) {
+  .migration-import-form,
+  .migration-ops__readiness {
+    grid-template-columns: 1fr;
+  }
+
   .clinic-topbar {
     align-items: flex-start;
     flex-direction: column;
@@ -2655,6 +2837,10 @@ button.cp6-card:hover {
 }
 
 @media (max-width: 560px) {
+  .migration-run-list {
+    max-height: 28rem;
+  }
+
   .boot-screen,
   .clinic-main {
     padding: 14px;
@@ -2707,6 +2893,15 @@ button.cp6-card:hover {
   .patient-switcher,
   .prescription-grid {
     grid-template-columns: 1fr;
+  }
+
+  .migration-count-grid,
+  .migration-run-card {
+    grid-template-columns: 1fr;
+  }
+
+  .migration-run-card > small {
+    grid-column: 1;
   }
 
   .cp3-workflow .workflow-tabs,

@@ -1,8 +1,9 @@
 # MVP1/MVP2 Source-Independent Slice Evidence
 
-Status: patient path verified in real Postgres; practitioner-link and appointment
-paths implemented and fixture/static verified; migration 0023 awaits explicit
-authorization to apply locally; Practo adapter and recurring sync are not complete
+Status: patient, practitioner-link, and appointment paths verified in real
+Postgres through migration 0023; manual canonical-CSV operations UI verified
+through the real local web/API/Postgres stack at desktop and mobile widths;
+Practo adapter and recurring sync are not complete
 
 Date: 2026-08-30
 
@@ -93,17 +94,30 @@ Date: 2026-08-30
 | --- | --- |
 | Domain | Patient, practitioner, and appointment parsing, strict RFC3339/calendar validation, canonical status/source, and replay-difference tests |
 | API/fixture | Practitioner review/mapping, appointment dependency resolution, exact replay, changed/missing-evidence review and backfill, no row-order overlap winner, and dependency/reaffirmation-blocked rollback |
-| Repository/Postgres | Existing patient cross-batch replay, simultaneous-commit serialization, and clinic-day SQL projection; new practitioner→patient→appointment, same-batch commit/rollback, and cross-batch replay-commit/original-rollback race probes are coded but deferred until migration 0023 is authorized |
+| Repository/Postgres | Patient replay, simultaneous-commit serialization, clinic-day SQL projection, practitioner→patient→appointment commit/rollback, resolution guards, and the cross-batch replay-commit/original-rollback race all pass against migration 0023 |
 | Schema | Migration 0023 adds practitioner import types, null-safe normalized-record checks, link-only practitioner constraints, normalized/link target-type consistency checks, and explicit evidence-reaffirmation state |
 | Contract | Generated OpenAPI/client drift check exposes only patient, practitioner, and appointment batch types |
-| Web | Joined Today, bounded/truncated state, on-demand search, honest Practo status, and optional source booking/reference capture |
+| Web | Joined Today, bounded/truncated state, on-demand search, honest Practo status, optional source booking/reference capture, and a manual canonical-CSV stage/review/commit/best-effort-rollback workflow proven without request interception at 1280px and 390px |
 
-The repository consistency check, workspace typecheck, lint, complete fixture and
-static test suite, production build, generated OpenAPI/client drift check, route
-inventory, and secret scan pass for this checkpoint. The new migration has not
-been applied and its live-Postgres behavior has not been claimed: the original
-instruction not to run migrations remains active until the owner explicitly
-revokes it. The earlier patient/concurrency Postgres evidence remains valid.
+Migration 0023 is applied locally. Flyway validation, database verification,
+migration lifecycle tests, and the complete repository/Postgres suite pass
+across all 23 migrations. Repository consistency, typecheck, lint, every
+workspace test, production builds, environment checks, and the secret scan pass.
+Playwright also proves synthetic patient staging, durable commit, imported-link
+creation, patient search visibility, explicit safe rollback, rolled-back link
+state, patient removal, console health, and mobile horizontal-overflow behavior
+against the real local API/Postgres stack without network interception.
+
+The real-stack spec is a guarded local acceptance recipe, not a default-suite
+claim. It was explicitly run with the API and web processes connected to local
+Postgres:
+
+```sh
+CLINICOS_MVP_IMPORT_E2E_ENABLED=true \
+CLINICOS_WEB_BASE_URL=http://127.0.0.1:3000 \
+npx playwright test tests/e2e/mvp-manual-import-real-stack.spec.ts \
+  --reporter=line --workers=1
+```
 
 The dependency audit is not green: the current lockfile reports 12 high and 10
 moderate advisories, including transitive Next/Expo build dependencies. No
@@ -124,10 +138,10 @@ last-success status remain required after the source contract is known.
 
 ## Next executable checkpoint
 
-1. Obtain explicit authorization to apply local migration 0023.
-2. Run Flyway migrate/validate, database verification, and the real repository
-   suite, including the already-coded practitioner/appointment replay, rollback,
-   and concurrent same-batch commit/rollback probes.
-3. Map a clinic-authorized deidentified Ray export or documented API payload to
+1. Map a clinic-authorized deidentified Ray export or documented API payload to
    the now-frozen generic contracts; do not change the core ingestion semantics
    to fit guessed vendor fields.
+2. Confirm the clinic's first-trial operator, Ray edition/export path, timezone,
+   representative volumes, and update/cancellation semantics.
+3. Run the same manual browser recipe with the representative deidentified
+   source sample before designing recurring sync.

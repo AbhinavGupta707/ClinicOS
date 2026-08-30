@@ -83,6 +83,13 @@ export type MigrationRowStatus =
   | "skipped"
   | "valid";
 export type MigrationConflictStatus = "resolved" | "unresolved";
+export type MigrationConflictType =
+  | "duplicate_patient"
+  | "field_conflict"
+  | "invalid_reference"
+  | "verified_record_overlap";
+export type MigrationImportType = "appointments" | "patients" | "practitioners";
+export type MigrationResolutionAction = "create_new" | "link_existing" | "skip";
 
 export interface MigrationRow {
   externalReference: string;
@@ -91,11 +98,12 @@ export interface MigrationRow {
   preview: string;
   rowNumber: number;
   status: MigrationRowStatus;
-  target: "appointment" | "invoice" | "patient";
+  target: "appointment" | "patient" | "practitioner";
 }
 
 export interface MigrationConflict {
   candidateSummary: string;
+  conflictType: MigrationConflictType;
   id: string;
   resolution?: "keep_existing_verified_record" | "import_as_unverified";
   resolutionAction?: "create_new" | "link_existing" | "skip" | null;
@@ -116,11 +124,44 @@ export interface MigrationCommitState {
 export interface MigrationBatch {
   commit: MigrationCommitState;
   conflicts: MigrationConflict[];
+  counts: {
+    committed: number;
+    conflicts: number;
+    failed: number;
+    invalid: number;
+    ready: number;
+    rolledBack: number;
+    total: number;
+  };
   id: string;
+  importType: MigrationImportType;
   rows: MigrationRow[];
-  sourceSystem: "ray_csv_export" | "synthetic_csv";
+  sourceFileName?: string | null;
+  sourceSystem: string;
   status: MigrationBatchStatus;
   uploadedAt: string;
+  updatedAt: string;
+}
+
+export interface CreateMigrationBatchRequest {
+  csv: string;
+  importType: MigrationImportType;
+  sourceFileName?: string | null;
+  sourceSystem: string;
+}
+
+export interface ResolveMigrationRowRequest {
+  action: MigrationResolutionAction;
+  actorName: string;
+  notes: string;
+  targetRecordId?: string | null;
+  targetRecordType?: string | null;
+}
+
+export interface MigrationRollbackOutcome {
+  blockedCount: number;
+  blockedReasons: string[];
+  state: MigrationBatchStatus | null;
 }
 
 export interface Cp7TimelineItem {
@@ -198,10 +239,12 @@ export const CP7_REQUIRED_ENDPOINTS = [
   "GET /v1/provider-health",
   "GET /v1/dead-letter-events?status=unreviewed",
   "POST /v1/dead-letter-events/{deadLetterEventId}/replay",
-  "GET /v1/migration-batches?status=needs_review",
+  "GET /v1/migration-batches",
+  "POST /v1/migration-batches",
   "GET /v1/migration-batches/{migrationBatchId}",
   "POST /v1/migration-batches/{migrationBatchId}/rows/{rowId}/resolve",
-  "POST /v1/migration-batches/{migrationBatchId}/commit"
+  "POST /v1/migration-batches/{migrationBatchId}/commit",
+  "POST /v1/migration-batches/{migrationBatchId}/rollback"
 ] as const;
 
 export const PROVIDER_STATUS_LABELS: Record<ProviderHealthStatus, string> = {
@@ -246,6 +289,31 @@ export const DEAD_LETTER_STATUS_LABELS: Record<DeadLetterStatus, string> = {
   replayed: "Replayed",
   unreviewed: "Unreviewed"
 };
+
+export const MIGRATION_IMPORT_TYPE_LABELS: Record<MigrationImportType, string> = {
+  appointments: "Appointments",
+  patients: "Patients",
+  practitioners: "Practitioner mappings"
+};
+
+const CANONICAL_MIGRATION_CSV_TEMPLATES: Record<MigrationImportType, string> = {
+  appointments: [
+    "external_reference,patient_external_reference,provider_external_reference,appointment_type_code,chair_code,start_at,end_at,status,source",
+    "trial-appointment-001,trial-patient-001,trial-practitioner-001,consultation,op-1,2026-09-01T09:00:00.000Z,2026-09-01T09:30:00.000Z,booked,practo"
+  ].join("\n"),
+  patients: [
+    "external_reference,full_name,phone,email,date_of_birth,gender,source_type",
+    "trial-patient-001,Synthetic Trial Patient,+91 99900 01001,trial.patient@example.test,1990-01-01,unknown,practo"
+  ].join("\n"),
+  practitioners: [
+    "external_reference,display_name,email,phone",
+    "trial-practitioner-001,Synthetic Trial Doctor,trial.doctor@example.test,+91 99900 01002"
+  ].join("\n")
+};
+
+export function getCanonicalMigrationCsvTemplate(importType: MigrationImportType) {
+  return CANONICAL_MIGRATION_CSV_TEMPLATES[importType];
+}
 
 const FIXTURE_ENVIRONMENTS = new Set(["development", "dev", "local", "test"]);
 
@@ -305,16 +373,29 @@ export function createFixtureCp7IntegrationOpsData(
           committedRows: 0,
           state: "blocked"
         },
+        counts: {
+          committed: 0,
+          conflicts: 1,
+          failed: 0,
+          invalid: 1,
+          ready: 1,
+          rolledBack: 0,
+          total: 3
+        },
         conflicts: [
           {
             candidateSummary: "Existing verified ClinicOS patient with same phone; keep existing record.",
+            conflictType: "duplicate_patient",
             id: "cp7ConflictDuplicatePatient",
             rowId: "cp7MigrationRowDuplicatePatient",
             status: "unresolved",
+            targetRecordId: "cp7ExistingPatient",
+            targetRecordType: "patient",
             type: "possible_duplicate"
           }
         ],
         id: "cp7MigrationBatchRayPatients",
+        importType: "patients",
         rows: [
           {
             externalReference: "ray-patient-001",
@@ -345,7 +426,8 @@ export function createFixtureCp7IntegrationOpsData(
         ],
         sourceSystem: "ray_csv_export",
         status: "needs_review",
-        uploadedAt: `${today}T08:30:00+05:30`
+        uploadedAt: `${today}T08:30:00+05:30`,
+        updatedAt: `${today}T08:30:00+05:30`
       }
     ],
     providers: [
@@ -594,7 +676,7 @@ export async function loadLiveCp7IntegrationOps(
   const results = await Promise.allSettled([
     fetchEndpoint("/v1/provider-health", {}, signal),
     fetchEndpoint("/v1/dead-letter-events", { status: "unreviewed" }, signal),
-    fetchEndpoint("/v1/migration-batches", { status: "needs_review" }, signal)
+    fetchEndpoint("/v1/migration-batches", {}, signal)
   ]);
   const failures = results
     .filter((result): result is PromiseRejectedResult => result.status === "rejected")
@@ -737,6 +819,11 @@ export function applyFixtureResolveMigrationConflict(
         state: hasOpenConflicts ? ("blocked" as const) : ("ready" as const),
         ...(hasOpenConflicts ? { blockedReason: "Resolve duplicate review before committing." } : {})
       },
+      counts: {
+        ...candidate.counts,
+        conflicts: hasOpenConflicts ? candidate.counts.conflicts : 0,
+        ready: hasOpenConflicts ? candidate.counts.ready : candidate.counts.ready + 1
+      },
       conflicts,
       rows: candidate.rows.map((row) =>
         row.id === conflict.rowId
@@ -747,7 +834,8 @@ export function applyFixtureResolveMigrationConflict(
             }
           : row
       ),
-      status: hasOpenConflicts ? candidate.status : ("ready_to_commit" as const)
+      status: hasOpenConflicts ? candidate.status : ("ready_to_commit" as const),
+      updatedAt: resolvedAt
     };
   });
 
@@ -798,6 +886,11 @@ export function applyFixtureCommitMigrationBatch(
               committedRows,
               state: "committed" as const
             },
+            counts: {
+              ...candidate.counts,
+              committed: committedRows,
+              ready: 0
+            },
             rows: candidate.rows.map((row) =>
               ["ready_to_commit", "valid"].includes(row.status)
                 ? {
@@ -806,7 +899,8 @@ export function applyFixtureCommitMigrationBatch(
                   }
                 : row
             ),
-            status: "committed" as const
+            status: "committed" as const,
+            updatedAt: committedAt
           }
         : candidate
     ),
@@ -826,66 +920,96 @@ export function applyFixtureCommitMigrationBatch(
 
 export async function replayLiveDeadLetterEvent(
   deadLetterEventId: string,
-  input: { actorName: string; reason: string },
+  input: { reason: string },
   signal?: AbortSignal
 ) {
   return postEndpoint(
     `/v1/dead-letter-events/${encodeURIComponent(deadLetterEventId)}/replay`,
-    {
-      reason: input.reason,
-      reviewedByName: input.actorName,
-      source: "cp7_integration_ops_surface"
-    },
+    { reason: input.reason },
     signal
   );
 }
 
 export async function resolveLiveMigrationConflict(
   batchId: string,
-  conflict: Pick<
-    MigrationConflict,
-    "id" | "rowId" | "targetRecordId" | "targetRecordType"
-  >,
-  input: {
-    actorName: string;
-    notes: string;
-    resolution: MigrationConflict["resolution"];
-  },
+  rowId: string,
+  input: Omit<ResolveMigrationRowRequest, "actorName">,
   signal?: AbortSignal
 ) {
-  const action = input.resolution === "keep_existing_verified_record" ? "link_existing" : "create_new";
   return postEndpoint(
     `/v1/migration-batches/${encodeURIComponent(batchId)}/rows/${encodeURIComponent(
-      conflict.rowId
+      rowId
     )}/resolve`,
     {
-      action,
+      action: input.action,
       note: input.notes,
-      ...(action === "link_existing"
+      ...(input.action === "link_existing"
         ? {
-            targetRecordId: conflict.targetRecordId,
-            targetRecordType: conflict.targetRecordType ?? "patient"
+            targetRecordId: input.targetRecordId,
+            targetRecordType: input.targetRecordType
           }
-        : {}),
-      reviewedByName: input.actorName
+        : {})
     },
     signal
   );
 }
 
+export async function createLiveMigrationBatch(
+  input: CreateMigrationBatchRequest,
+  signal?: AbortSignal
+): Promise<{ batchId: string }> {
+  const payload = await postEndpoint(
+    "/v1/migration-batches",
+    {
+      csv: input.csv,
+      importType: input.importType,
+      sourceFileName: input.sourceFileName?.trim() || null,
+      sourceSystem: input.sourceSystem.trim()
+    },
+    signal
+  );
+  if (!isRecord(payload) || !isRecord(payload.batch)) {
+    throw new Error("The migration API created a batch without returning its identity.");
+  }
+  const batchId = readString(payload.batch, ["id"]);
+  if (!batchId) {
+    throw new Error("The migration API created a batch without returning its identity.");
+  }
+  return { batchId };
+}
+
 export async function commitLiveMigrationBatch(
   batchId: string,
-  input: { actorName: string },
   signal?: AbortSignal
 ) {
   return postEndpoint(
     `/v1/migration-batches/${encodeURIComponent(batchId)}/commit`,
-    {
-      committedByName: input.actorName,
-      safetyConfirmation: "reviewed_rows_only_no_silent_overwrite"
-    },
+    {},
     signal
   );
+}
+
+export async function rollbackLiveMigrationBatch(
+  batchId: string,
+  signal?: AbortSignal
+): Promise<MigrationRollbackOutcome> {
+  const payload = await postEndpoint(
+    `/v1/migration-batches/${encodeURIComponent(batchId)}/rollback`,
+    {},
+    signal
+  );
+  const blockedLinks = readArray(payload, ["blockedLinks"]);
+  const batch = isRecord(payload) && isRecord(payload.batch) ? payload.batch : {};
+  return {
+    blockedCount: blockedLinks.length,
+    blockedReasons: blockedLinks
+      .map((link) => {
+        if (!isRecord(link) || !isRecord(link.metadata)) return null;
+        return readString(link.metadata, ["rollbackBlockedReason"]);
+      })
+      .filter((reason): reason is string => Boolean(reason)),
+    state: normalizeOptionalMigrationBatchStatus(readString(batch, ["state", "status"]))
+  };
 }
 
 export function classifyCp7EndpointFailures(
@@ -1076,6 +1200,7 @@ function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
   const openConflicts = normalizedConflicts.some((conflict) => conflict.status === "unresolved");
   const committedRows = readNumber(batch, ["committedRowCount"]) ?? 0;
   const readyRows = readNumber(batch, ["readyRowCount"]) ?? 0;
+  const uploadedAt = readString(batch, ["createdAt", "uploadedAt"]) ?? new Date().toISOString();
 
   return {
     commit: {
@@ -1094,11 +1219,23 @@ function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
               : "unavailable"
     },
     conflicts: normalizedConflicts,
+    counts: {
+      committed: committedRows,
+      conflicts: readNumber(batch, ["conflictRowCount"]) ?? normalizedConflicts.length,
+      failed: readNumber(batch, ["failedRowCount"]) ?? 0,
+      invalid: readNumber(batch, ["invalidRowCount"]) ?? 0,
+      ready: readyRows,
+      rolledBack: readNumber(batch, ["rolledBackRowCount"]) ?? 0,
+      total: readNumber(batch, ["rowCount"]) ?? normalizedRows.length
+    },
     id,
+    importType: normalizeMigrationImportType(readString(batch, ["importType"])),
     rows: normalizedRows,
-    sourceSystem: normalizeMigrationSourceSystem(readString(batch, ["sourceSystem"])),
+    sourceFileName: readString(batch, ["sourceFileName"]),
+    sourceSystem: readString(batch, ["sourceSystem"]) ?? "unknown_source",
     status: state,
-    uploadedAt: readString(batch, ["createdAt", "uploadedAt"]) ?? new Date().toISOString()
+    uploadedAt,
+    updatedAt: readString(batch, ["updatedAt"]) ?? uploadedAt
   };
 }
 
@@ -1122,11 +1259,18 @@ function normalizeLiveMigrationRow(value: unknown): MigrationRow | null {
     readString(normalizedRecord ?? {}, ["externalReference"]) ??
     id;
   const fullName = readString(normalizedRecord ?? {}, ["fullName"]);
+  const displayName = readString(normalizedRecord ?? {}, ["displayName"]);
   const phone = readString(normalizedRecord ?? {}, ["phone", "normalizedPhone"]);
+  const startAt = readString(normalizedRecord ?? {}, ["startAt"]);
+  const endAt = readString(normalizedRecord ?? {}, ["endAt"]);
   const preview =
     fullName && phone
       ? `${fullName}, phone ${phone}`
-      : fullName ?? externalReference ?? `Import row ${rowNumber}`;
+      : fullName ??
+        displayName ??
+        (startAt && endAt ? `${startAt} to ${endAt}` : null) ??
+        externalReference ??
+        `Import row ${rowNumber}`;
 
   return {
     externalReference,
@@ -1152,6 +1296,7 @@ function normalizeLiveMigrationConflict(value: unknown): MigrationConflict | nul
   const conflictType = readString(value, ["conflictType", "type"]);
   return {
     candidateSummary: readString(value, ["summary", "candidateSummary"]) ?? "Migration row needs review.",
+    conflictType: normalizeMigrationConflictType(conflictType),
     id,
     resolutionAction: normalizeResolutionAction(readString(value, ["resolutionAction"])),
     rowId,
@@ -1163,6 +1308,18 @@ function normalizeLiveMigrationConflict(value: unknown): MigrationConflict | nul
         ? "verified_record_conflict"
         : "possible_duplicate"
   };
+}
+
+function normalizeMigrationConflictType(value: string | null): MigrationConflictType {
+  if (
+    value === "duplicate_patient" ||
+    value === "field_conflict" ||
+    value === "invalid_reference" ||
+    value === "verified_record_overlap"
+  ) {
+    return value;
+  }
+  return "field_conflict";
 }
 
 function normalizeMigrationRowStatus(
@@ -1188,14 +1345,19 @@ function normalizeResolutionAction(value: string | null): MigrationConflict["res
   return null;
 }
 
-function normalizeMigrationSourceSystem(value: string | null): MigrationBatch["sourceSystem"] {
-  return value === "synthetic_csv" ? "synthetic_csv" : "ray_csv_export";
-}
-
 function migrationTargetFromImportType(value: string | null): MigrationRow["target"] {
   if (value === "appointments") return "appointment";
-  if (value === "invoices" || value === "payments") return "invoice";
+  if (value === "practitioners") return "practitioner";
   return "patient";
+}
+
+function normalizeMigrationImportType(value: string | null): MigrationImportType {
+  if (value === "appointments" || value === "practitioners") return value;
+  return "patients";
+}
+
+function normalizeOptionalMigrationBatchStatus(value: string | null): MigrationBatchStatus | null {
+  return value && isMigrationBatchStatus(value) ? value : null;
 }
 
 function readNumber(record: Record<string, unknown>, keys: string[]) {
@@ -1399,13 +1561,16 @@ function endpointFailureFromResponse(
   response: Response,
   payload: unknown
 ): EndpointFailure {
-  return {
-    endpoint: `${method} ${path}`,
-    isEndpointFailure: true,
-    message: readErrorMessage(payload) ?? `HTTP ${response.status}`,
-    requestId: getRequestId(response, payload),
-    status: response.status
-  };
+  return Object.assign(
+    new Error(readErrorMessage(payload) ?? `HTTP ${response.status}`),
+    {
+      endpoint: `${method} ${path}`,
+      isEndpointFailure: true,
+      message: readErrorMessage(payload) ?? `HTTP ${response.status}`,
+      requestId: getRequestId(response, payload),
+      status: response.status
+    } as const
+  );
 }
 
 function isEndpointFailure(value: unknown): value is EndpointFailure {

@@ -108,7 +108,8 @@ Acceptance:
 
 - first representative de-identified import succeeds;
 - exact replay produces no duplicate domain records;
-- changed appointments update the correctly linked record;
+- changed appointment evidence is linked to the correct record and quarantined
+  for explicit review until verified source update/cancellation semantics exist;
 - cancellation and missing-source states remain honest;
 - malformed/ambiguous rows cannot corrupt committed rows;
 - tenant isolation and durable retry are proven;
@@ -254,3 +255,19 @@ Before connector-specific MVP1 code begins, obtain:
   rows persist explicit reaffirmation state; exact explicitly-linked replays stay
   rollbackable; and a real-Postgres concurrency regression is coded for the
   migration-authorization gate.
+- 2026-08-30: the owner authorized execution to continue. Migration 0023 is now
+  applied, all 23 migrations validate, database verification and migration
+  lifecycle tests pass, and the complete repository/Postgres suite proves the
+  practitioner and appointment paths, rollback, replay, and concurrency guards.
+- 2026-08-30: the next operator slice is a truthful manual canonical-CSV
+  stage/review/commit/best-effort-rollback workflow. It does not claim a Practo
+  API, scheduled sync, source freshness, or writeback. A server-side guard also
+  prevents generic appointment resolution from bypassing unresolved patient,
+  practitioner, appointment-type, or chair conflicts.
+- 2026-08-30: real-stack browser acceptance found and repaired two integration
+  defects: CP7 mutation payloads contained fields forbidden by the generated
+  contract, and accumulated import history produced duplicate diagnostic keys
+  plus an unusably tall page. The local Next.js API proxy, exact contract
+  payloads, actionable server errors, bounded run-history viewport, desktop and
+  mobile Playwright proof, full workspace gates, and final Postgres probes now
+  pass. This completes the source-independent manual import operator slice.

@@ -668,6 +668,67 @@ async function sourceIndependentMigrationProbe(repository, scope) {
   );
   assert.equal(practitionerCommit?.importedRecordLinks[0]?.linkType, "linked_existing");
 
+  const unresolvedAppointmentRecord = {
+    recordType: "appointment",
+    externalReference: `unresolved-${appointmentExternalId}`,
+    patientExternalReference: patientExternalId,
+    providerExternalReference: practitionerExternalId,
+    appointmentTypeCode: "consultation",
+    chairCode: null,
+    startAt: "2099-01-31T09:00:00.000Z",
+    endAt: "2099-01-31T09:30:00.000Z",
+    status: "booked",
+    source: "practo",
+    reason: null,
+    notes: null,
+    sourceDetail: { originalSource: "practo" }
+  };
+  const unresolvedAppointmentBatch = await repository.createMigrationBatch(scope, {
+    importType: "appointments",
+    sourceSystem,
+    sourceFileName: "synthetic-unresolved-appointment.json",
+    sourceChecksum: sha256({ token, type: "unresolved-appointment" }),
+    state: "needs_review",
+    rows: [
+      {
+        ...migrationReadyRow(
+          "appointments",
+          unresolvedAppointmentRecord.externalReference,
+          unresolvedAppointmentRecord
+        ),
+        status: "needs_review",
+        matchStatus: "conflict",
+        conflicts: [
+          {
+            conflictType: "invalid_reference",
+            severity: "blocking",
+            targetRecordType: "patient",
+            fieldName: "patientExternalReference",
+            summary: "The appointment patient reference has no active ClinicOS patient mapping."
+          }
+        ]
+      }
+    ]
+  });
+  assert.equal(
+    await repository.resolveMigrationRow(
+      scope,
+      unresolvedAppointmentBatch.batch.id,
+      unresolvedAppointmentBatch.rows[0].id,
+      {
+        action: "create_new",
+        targetRecordType: null,
+        targetRecordId: null,
+        note: "A generic action must not bypass unresolved appointment dependencies."
+      }
+    ),
+    null
+  );
+  assert.equal(
+    (await repository.listMigrationRows(scope, unresolvedAppointmentBatch.batch.id))[0]?.status,
+    "needs_review"
+  );
+
   const phone = phoneForToken(token);
   const patientRecord = {
     recordType: "patient",

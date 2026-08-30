@@ -1814,6 +1814,20 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     if (expectedTargetRecordType === "provider_user" && input.action === "create_new") {
       return null;
     }
+    const openConflicts = this.migrationConflicts.filter(
+      (candidate) =>
+        matchesScope(candidate, scope) &&
+        candidate.batchId === batchId &&
+        candidate.rowId === rowId &&
+        candidate.status === "open"
+    );
+    if (
+      expectedTargetRecordType === "appointment" &&
+      input.action === "create_new" &&
+      openConflicts.length > 0
+    ) {
+      return null;
+    }
 
     if (input.action === "link_existing") {
       if (
@@ -1829,6 +1843,17 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
             ? this.#providerIsEligible(scope, input.targetRecordId)
             : Boolean(await this.findAppointmentById(scope, input.targetRecordId));
       if (!targetExists) return null;
+      if (
+        expectedTargetRecordType === "appointment" &&
+        !(await this.#appointmentMatchesImport(
+          scope,
+          batch.sourceSystem,
+          row,
+          input.targetRecordId
+        ))
+      ) {
+        return null;
+      }
       row.resolutionTargetRecordType = expectedTargetRecordType;
       row.resolutionTargetRecordId = input.targetRecordId;
     } else {

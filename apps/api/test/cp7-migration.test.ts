@@ -436,6 +436,39 @@ test("source-independent practitioner and appointment imports require exact mapp
     CHECKPOINT1_SEED_IDS.users.doctor
   );
 
+  const unresolvedAppointment = await createMigrationBatch(assistant, dependencies, {
+    importType: "appointments",
+    sourceSystem,
+    rows: [
+      {
+        externalReference: "appointment-before-patient",
+        patientExternalReference: "patient-not-mapped",
+        providerExternalReference: "ray-doctor-1",
+        appointmentTypeCode: "consultation",
+        startAt: "2026-09-01T08:00:00.000Z",
+        endAt: "2026-09-01T08:30:00.000Z",
+        status: "booked",
+        source: "practo"
+      }
+    ]
+  });
+  assert.equal(unresolvedAppointment.body.batch.state, "needs_review");
+  await assert.rejects(
+    () =>
+      resolveMigrationBatchRow(
+        assistant,
+        dependencies,
+        unresolvedAppointment.body.batch.id,
+        unresolvedAppointment.body.rows[0].id,
+        {
+          action: "create_new",
+          note: "Must not bypass unresolved dependencies."
+        }
+      ),
+    /not found or resolution target is unavailable/
+  );
+  assert.equal(unresolvedAppointment.body.rows[0].status, "needs_review");
+
   const changedPractitioner = await createMigrationBatch(assistant, dependencies, {
     importType: "practitioners",
     sourceSystem,
