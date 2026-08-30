@@ -15,7 +15,7 @@ import {
   UserPlus,
   UsersRound
 } from "lucide-react";
-import { type FormEvent, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 
 import {
   APPOINTMENT_STATUS_LABELS,
@@ -41,6 +41,7 @@ import {
   getTodayInputValue,
   loadCp2Workflow,
   matchLiveLeadToPatient,
+  searchLivePatients,
   sourceLabel,
   summarizeDashboard,
   type AppointmentCreateInput,
@@ -70,6 +71,11 @@ type LoadState = Cp2WorkflowLoadState | { status: "loading" };
 type ActionMessage = {
   tone: "error" | "info" | "success";
   text: string;
+};
+
+type LeadDuplicateReview = {
+  status: "failed" | "loading" | "ready";
+  suggestions: DuplicateSuggestion[];
 };
 
 type WorkflowMode = "appointments" | "lead-inbox" | "patients" | "today";
@@ -118,6 +124,14 @@ export function AssistantWorkflow({
   const [selectedPatientId, setSelectedPatientId] = useState<string | null>(null);
   const [leadFilter, setLeadFilter] = useState<LeadStatus | "all">("all");
   const [actionBusy, setActionBusy] = useState<string | null>(null);
+  const [patientSearchQuery, setPatientSearchQuery] = useState("");
+  const [patientSearchResults, setPatientSearchResults] = useState<PatientSummary[]>([]);
+  const [leadDuplicateReviews, setLeadDuplicateReviews] = useState<
+    Record<string, LeadDuplicateReview>
+  >({});
+  const [duplicateReviewClearedLeadIds, setDuplicateReviewClearedLeadIds] = useState<Set<string>>(
+    new Set()
+  );
   const [actionMessage, setActionMessage] = useState<ActionMessage | null>(null);
   const [patientForm, setPatientForm] = useState<PatientCreateInput>({
     displayName: "",
@@ -177,15 +191,23 @@ export function AssistantWorkflow({
     [data, patientForm.displayName, patientForm.phone]
   );
   const selectedLeadSuggestions = useMemo(
-    () =>
-      data && selectedLead
-        ? findDuplicateSuggestions(data.patients, {
+    () => {
+      if (!data || !selectedLead) return [];
+      if (data.source === "api") {
+        const review = leadDuplicateReviews[selectedLead.id];
+        return review?.status === "ready" ? review.suggestions : [];
+      }
+      return findDuplicateSuggestions(data.patients, {
             displayName: selectedLead.contactName,
             phone: selectedLead.phone
-          })
-        : [],
-    [data, selectedLead]
+          });
+    },
+    [data, leadDuplicateReviews, selectedLead]
   );
+  const selectedLeadDuplicateReviewStatus =
+    !data || !selectedLead || data.source === "cp2_fixture"
+      ? "ready"
+      : (leadDuplicateReviews[selectedLead.id]?.status ?? "loading");
 
   useEffect(() => {
     if (!selectedLeadId && selectedLead) {
@@ -206,6 +228,53 @@ export function AssistantWorkflow({
       tone: "error"
     });
   };
+
+  const reviewLeadDuplicates = useCallback(async (lead: LeadSummary) => {
+    setDuplicateReviewClearedLeadIds((current) => {
+      const next = new Set(current);
+      next.delete(lead.id);
+      return next;
+    });
+    setLeadDuplicateReviews((current) => ({
+      ...current,
+      [lead.id]: { status: "loading", suggestions: [] }
+    }));
+    try {
+      const patients = await searchLivePatients(lead.phone);
+      setLeadDuplicateReviews((current) => ({
+        ...current,
+        [lead.id]: {
+          status: "ready",
+          suggestions: patients.map((patient) => ({
+            matchedOn: "phone",
+            patient,
+            score: 100
+          }))
+        }
+      }));
+    } catch (error) {
+      setLeadDuplicateReviews((current) => ({
+        ...current,
+        [lead.id]: { status: "failed", suggestions: [] }
+      }));
+      setActionMessage({
+        text: formatActionError(error, "Duplicate review failed. Retry before creating a patient."),
+        tone: "error"
+      });
+    }
+  }, []);
+
+  useEffect(() => {
+    if (
+      !data ||
+      data.source !== "api" ||
+      !selectedLead ||
+      leadDuplicateReviews[selectedLead.id]
+    ) {
+      return;
+    }
+    void reviewLeadDuplicates(selectedLead);
+  }, [data, leadDuplicateReviews, reviewLeadDuplicates, selectedLead]);
 
   const handleCreatePatient = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -249,6 +318,41 @@ export function AssistantWorkflow({
     }
   };
 
+  const handlePatientSearch = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (!data) return;
+    const query = patientSearchQuery.trim();
+    if (query.length < 2) {
+      setActionMessage({
+        text: "Enter at least 2 characters, or a full phone number, before searching.",
+        tone: "error"
+      });
+      return;
+    }
+    setActionBusy("patient-search");
+    try {
+      const patients =
+        data.source === "cp2_fixture"
+          ? data.patients.filter((patient) =>
+              `${patient.displayName} ${patient.phone}`.toLowerCase().includes(query.toLowerCase())
+            )
+          : await searchLivePatients(query);
+      setPatientSearchResults(patients);
+      setSelectedPatientId(null);
+      setActionMessage({
+        text:
+          patients.length > 0
+            ? `${patients.length} matching patient${patients.length === 1 ? "" : "s"} found.`
+            : "No matching patients found. Confirm the identity details before creating a new record.",
+        tone: "info"
+      });
+    } catch (error) {
+      handleActionError(error, "Patient search failed.");
+    } finally {
+      setActionBusy(null);
+    }
+  };
+
   const handleCreateLead = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
@@ -277,7 +381,15 @@ export function AssistantWorkflow({
           tone: "success"
         });
       } else {
-        await createLiveLead(leadForm);
+        const result = await createLiveLead(leadForm);
+        setLeadDuplicateReviews((current) => ({
+          ...current,
+          [result.lead.id]: {
+            status: "ready",
+            suggestions: result.patientMatchSuggestions
+          }
+        }));
+        setSelectedLeadId(result.lead.id);
         reloadWorkflow();
         setActionMessage({
           text: "Lead capture request sent to /v1/leads.",
@@ -518,7 +630,37 @@ export function AssistantWorkflow({
                 </span>
               </div>
             </section>
-          ) : null}
+          ) : loadState.data.api?.appointmentsTruncated ? (
+            <section className="inline-alert" aria-label="Clinic-day data truncated">
+              <AlertCircle size={18} aria-hidden="true" />
+              <div>
+                <strong>Clinic-day view is truncated</strong>
+                <span>
+                  The API returned the first 500 appointments. Narrow the operational date or use a
+                  paginated schedule view before relying on complete-day counts.
+                </span>
+              </div>
+            </section>
+          ) : loadState.data.api?.dataAsOf ? (
+            <section className="inline-alert" aria-label="Clinic-day data freshness">
+              <CheckCircle2 size={18} aria-hidden="true" />
+              <div>
+                <strong>Durable clinic-day data</strong>
+                <span>
+                  Patient, practitioner, appointment type, chair, and queue identity were joined by
+                  the API. Latest appointment update: {formatDateTime(loadState.data.api.dataAsOf)}.
+                </span>
+              </div>
+            </section>
+          ) : (
+            <section className="inline-alert" aria-label="No clinic-day data">
+              <AlertCircle size={18} aria-hidden="true" />
+              <div>
+                <strong>No clinic-day appointments</strong>
+                <span>The durable API returned no appointments for this clinic date.</span>
+              </div>
+            </section>
+          )}
 
           {actionMessage ? (
             <section
@@ -557,6 +699,10 @@ export function AssistantWorkflow({
               bookingForm={bookingForm}
               canCreatePatients={canCreatePatients}
               data={loadState.data}
+              duplicateReviewCleared={
+                selectedLead ? duplicateReviewClearedLeadIds.has(selectedLead.id) : false
+              }
+              duplicateReviewStatus={selectedLeadDuplicateReviewStatus}
               duplicateSuggestions={selectedLeadSuggestions}
               leadForm={leadForm}
               leadFilter={leadFilter}
@@ -564,12 +710,16 @@ export function AssistantWorkflow({
               onCreateLead={handleCreateLead}
               onCreateFromLead={handleCreateFromLead}
               onLeadFilterChange={setLeadFilter}
+              onClearDuplicateReview={(leadId) =>
+                setDuplicateReviewClearedLeadIds((current) => new Set(current).add(leadId))
+              }
               onMatchLead={handleMatchLead}
               onSelectLead={(leadId) => {
                 setSelectedLeadId(leadId);
                 setSelectedPatientId(null);
               }}
               onSelectPatient={setSelectedPatientId}
+              onRetryDuplicateReview={(lead) => void reviewLeadDuplicates(lead)}
               onLeadFormChange={setLeadForm}
               selectedLead={selectedLead}
               selectedPatientId={selectedPatientId}
@@ -590,12 +740,15 @@ export function AssistantWorkflow({
             <PatientsPanel
               actionBusy={actionBusy}
               canCreatePatients={canCreatePatients}
-              data={loadState.data}
               duplicateSuggestions={duplicateSuggestions}
               onCreatePatient={handleCreatePatient}
+              onPatientSearch={handlePatientSearch}
               onPatientFormChange={setPatientForm}
               onSelectPatient={setSelectedPatientId}
               patientForm={patientForm}
+              patientSearchQuery={patientSearchQuery}
+              patientSearchResults={patientSearchResults}
+              setPatientSearchQuery={setPatientSearchQuery}
               selectedPatientId={selectedPatientId}
             />
           ) : null}
@@ -809,6 +962,8 @@ function LeadInboxPanel({
   bookingForm,
   canCreatePatients,
   data,
+  duplicateReviewCleared,
+  duplicateReviewStatus,
   duplicateSuggestions,
   leadFilter,
   leadForm,
@@ -817,9 +972,11 @@ function LeadInboxPanel({
   onCreateFromLead,
   onLeadFormChange,
   onLeadFilterChange,
+  onClearDuplicateReview,
   onMatchLead,
   onSelectLead,
   onSelectPatient,
+  onRetryDuplicateReview,
   selectedLead,
   selectedPatientId,
   setBookingForm
@@ -834,6 +991,8 @@ function LeadInboxPanel({
   };
   canCreatePatients: boolean;
   data: Cp2WorkflowData;
+  duplicateReviewCleared: boolean;
+  duplicateReviewStatus: LeadDuplicateReview["status"];
   duplicateSuggestions: DuplicateSuggestion[];
   leadFilter: LeadStatus | "all";
   leadForm: LeadCreateInput;
@@ -842,9 +1001,11 @@ function LeadInboxPanel({
   onCreateFromLead: (lead: LeadSummary) => void;
   onLeadFormChange: (input: LeadCreateInput) => void;
   onLeadFilterChange: (status: LeadStatus | "all") => void;
+  onClearDuplicateReview: (leadId: string) => void;
   onMatchLead: (lead: LeadSummary, patientId: string) => void;
   onSelectLead: (leadId: string) => void;
   onSelectPatient: (patientId: string) => void;
+  onRetryDuplicateReview: (lead: LeadSummary) => void;
   selectedLead: LeadSummary | null;
   selectedPatientId: string | null;
   setBookingForm: (value: {
@@ -858,10 +1019,7 @@ function LeadInboxPanel({
   const leads =
     leadFilter === "all" ? data.leads : data.leads.filter((lead) => lead.status === leadFilter);
   const patientIdForMatch =
-    selectedPatientId ??
-    selectedLead?.matchedPatientId ??
-    duplicateSuggestions[0]?.patient.id ??
-    null;
+    selectedPatientId ?? selectedLead?.matchedPatientId ?? null;
   const matchedPatient = patientIdForMatch
     ? (data.patients.find((patient) => patient.id === patientIdForMatch) ?? null)
     : null;
@@ -985,13 +1143,23 @@ function LeadInboxPanel({
 
             <div className="subsection">
               <h3>Duplicate suggestions</h3>
-              <DuplicateSuggestionList
-                onSelect={onSelectPatient}
-                selectedPatientId={
-                  selectedPatientId ?? selectedLead.matchedPatientId ?? patientIdForMatch
-                }
-                suggestions={duplicateSuggestions}
-              />
+              {duplicateReviewStatus === "loading" ? (
+                <div className="empty-inline">
+                  <Loader2 className="spin" size={16} aria-hidden="true" />
+                  <span>Checking the patient registry before creation…</span>
+                </div>
+              ) : duplicateReviewStatus === "failed" ? (
+                <div className="empty-inline">
+                  <AlertCircle size={16} aria-hidden="true" />
+                  <span>Duplicate review is unavailable. Retry before creating a patient.</span>
+                </div>
+              ) : (
+                <DuplicateSuggestionList
+                  onSelect={onSelectPatient}
+                  selectedPatientId={selectedPatientId ?? selectedLead.matchedPatientId ?? null}
+                  suggestions={duplicateSuggestions}
+                />
+              )}
               <div className="action-row">
                 {canCreatePatients && patientIdForMatch ? (
                   <Button
@@ -1008,10 +1176,36 @@ function LeadInboxPanel({
                     Match selected patient
                   </Button>
                 ) : null}
+                {duplicateReviewStatus === "failed" ? (
+                  <Button
+                    onClick={() => onRetryDuplicateReview(selectedLead)}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    Retry duplicate review
+                  </Button>
+                ) : null}
+                {duplicateReviewStatus === "ready" &&
+                duplicateSuggestions.length > 0 &&
+                !duplicateReviewCleared &&
+                !patientIdForMatch ? (
+                  <Button
+                    onClick={() => onClearDuplicateReview(selectedLead.id)}
+                    size="sm"
+                    variant="secondary"
+                  >
+                    None of these match
+                  </Button>
+                ) : null}
                 {canCreatePatients ? (
                   <Button
                     data-testid="cp2-create-patient-from-lead"
-                    disabled={actionBusy === `lead-create-${selectedLead.id}`}
+                    disabled={
+                      actionBusy === `lead-create-${selectedLead.id}` ||
+                      duplicateReviewStatus !== "ready" ||
+                      Boolean(patientIdForMatch) ||
+                      (duplicateSuggestions.length > 0 && !duplicateReviewCleared)
+                    }
                     icon={<UserPlus size={16} />}
                     onClick={() => onCreateFromLead(selectedLead)}
                     size="sm"
@@ -1182,23 +1376,29 @@ function AppointmentsPanel({
 function PatientsPanel({
   actionBusy,
   canCreatePatients,
-  data,
   duplicateSuggestions,
   onCreatePatient,
+  onPatientSearch,
   onPatientFormChange,
   onSelectPatient,
   patientForm,
-  selectedPatientId
+  patientSearchQuery,
+  patientSearchResults,
+  selectedPatientId,
+  setPatientSearchQuery
 }: {
   actionBusy: string | null;
   canCreatePatients: boolean;
-  data: Cp2WorkflowData;
   duplicateSuggestions: DuplicateSuggestion[];
   onCreatePatient: (event: FormEvent<HTMLFormElement>) => void;
+  onPatientSearch: (event: FormEvent<HTMLFormElement>) => void;
   onPatientFormChange: (input: PatientCreateInput) => void;
   onSelectPatient: (patientId: string) => void;
   patientForm: PatientCreateInput;
+  patientSearchQuery: string;
+  patientSearchResults: PatientSummary[];
   selectedPatientId: string | null;
+  setPatientSearchQuery: (query: string) => void;
 }) {
   return (
     <div className="workflow-grid workflow-grid--split">
@@ -1279,14 +1479,39 @@ function PatientsPanel({
       <section className="work-panel" aria-labelledby="patient-registry-title">
         <div className="panel-heading">
           <div>
-            <h2 id="patient-registry-title">Patient registry preview</h2>
-            <p>Loaded through the patient API boundary or the local CP2 fixture.</p>
+            <h2 id="patient-registry-title">Find a patient</h2>
+            <p>Search first by name or full phone number; ClinicOS does not load the full registry.</p>
           </div>
         </div>
-        <div className="workflow-list">
-          {data.patients.map((patient) => (
-            <PatientRow key={patient.id} patient={patient} />
-          ))}
+        <form className="form-grid" onSubmit={onPatientSearch}>
+          <label>
+            <span>Name or phone</span>
+            <input
+              autoComplete="off"
+              data-testid="cp2-patient-search-input"
+              placeholder="e.g. Rhea or +91…"
+              value={patientSearchQuery}
+              onChange={(event) => setPatientSearchQuery(event.target.value)}
+            />
+          </label>
+          <Button
+            className="form-submit"
+            disabled={actionBusy === "patient-search"}
+            icon={<Search size={16} />}
+            type="submit"
+            variant="primary"
+          >
+            Search patients
+          </Button>
+        </form>
+        <div className="workflow-list" data-testid="cp2-patient-search-results">
+          {patientSearchResults.length > 0 ? (
+            patientSearchResults.map((patient) => (
+              <PatientRow key={patient.id} patient={patient} showKind={false} />
+            ))
+          ) : (
+            <EmptyState text="Search results will appear here." />
+          )}
         </div>
       </section>
     </div>
@@ -1332,6 +1557,7 @@ function AppointmentList({
               data-testid={`cp2-confirm-appointment-${appointment.id}`}
               disabled={
                 appointment.confirmationState === "confirmed" ||
+                !["requested", "booked"].includes(appointment.status) ||
                 actionBusy === `confirm-${appointment.id}`
               }
               onClick={() => onConfirm(appointment)}
@@ -1389,7 +1615,13 @@ function LeadRow({
   );
 }
 
-function PatientRow({ patient }: { patient: PatientSummary }) {
+function PatientRow({
+  patient,
+  showKind = true
+}: {
+  patient: PatientSummary;
+  showKind?: boolean;
+}) {
   const firstAttribution = patient.attribution[0];
 
   return (
@@ -1397,7 +1629,8 @@ function PatientRow({ patient }: { patient: PatientSummary }) {
       <div>
         <strong>{patient.displayName}</strong>
         <span>
-          {patient.phone} · {formatPatientKind(patient.kind)}
+          {patient.phone}
+          {showKind ? ` · ${formatPatientKind(patient.kind)}` : ""}
         </span>
       </div>
       {firstAttribution ? (
@@ -1532,6 +1765,15 @@ function formatTime(value: string) {
   return new Intl.DateTimeFormat("en-IN", {
     hour: "2-digit",
     minute: "2-digit"
+  }).format(date);
+}
+
+function formatDateTime(value: string) {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "time unavailable";
+  return new Intl.DateTimeFormat("en-IN", {
+    dateStyle: "medium",
+    timeStyle: "short"
   }).format(date);
 }
 

@@ -140,6 +140,141 @@ test("CP7 migration import separates invalid rows, resolves duplicates, commits 
   );
 });
 
+test("CP7 patient import reconciles exact cross-batch replay and reviews changed linked records", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const auditSink = new InMemoryAuditSink();
+  const dependencies: OperationsDependencies = { repository, auditSink };
+  const assistant = await operationsContext("seed-assistant", "cp7-cross-batch-replay");
+  const sourceSystem = "canonical_patient_import";
+  const originalRow = {
+    externalReference: "stable-patient-1",
+    fullName: "Replay Synthetic",
+    phone: "+91 99900 04444",
+    email: "replay.original@example.test",
+    dateOfBirth: "1990-04-05",
+    gender: "female"
+  };
+
+  const initial = await createMigrationBatch(assistant, dependencies, {
+    importType: "patients",
+    sourceSystem,
+    rows: [originalRow]
+  });
+  const initialCommit = await commitMigrationBatch(
+    { ...assistant, idempotencyKey: "cp7-initial-import" },
+    dependencies,
+    initial.body.batch.id,
+    {}
+  );
+  const linkedPatientId = initialCommit.body.rows[0].committedRecordId;
+  assert.ok(linkedPatientId);
+  assert.equal(repository.patients.length, 2);
+
+  const exactReplay = await createMigrationBatch(assistant, dependencies, {
+    importType: "patients",
+    sourceSystem,
+    rows: [originalRow]
+  });
+  assert.equal(exactReplay.body.rows[0].status, "ready_to_commit");
+  assert.equal(exactReplay.body.rows[0].matchStatus, "resolved");
+  assert.equal(exactReplay.body.rows[0].conflicts.length, 0);
+
+  const replayCommit = await commitMigrationBatch(
+    { ...assistant, idempotencyKey: "cp7-exact-replay" },
+    dependencies,
+    exactReplay.body.batch.id,
+    {}
+  );
+  assert.equal(replayCommit.body.rows[0].committedRecordId, linkedPatientId);
+  assert.equal(replayCommit.body.commit.summary.reconciledRows, 1);
+  assert.equal(replayCommit.body.importedRecordLinks.length, 0);
+  assert.equal(repository.patients.length, 2);
+
+  const replayRollback = await rollbackMigrationBatch(
+    { ...assistant, idempotencyKey: "cp7-exact-replay-rollback" },
+    dependencies,
+    exactReplay.body.batch.id,
+    {}
+  );
+  assert.equal(replayRollback.body.batch.state, "rolled_back");
+  assert.equal(replayRollback.body.rows[0].status, "rolled_back");
+  assert.equal(repository.patients.length, 2);
+  assert.ok(repository.patients.some((patient) => patient.id === linkedPatientId));
+
+  const changedReplay = await createMigrationBatch(assistant, dependencies, {
+    importType: "patients",
+    sourceSystem,
+    rows: [{ ...originalRow, email: "replay.changed@example.test" }]
+  });
+  assert.equal(changedReplay.body.batch.state, "needs_review");
+  assert.equal(changedReplay.body.rows[0].matchStatus, "conflict");
+  assert.equal(changedReplay.body.rows[0].conflicts[0].conflictType, "verified_record_overlap");
+  assert.deepEqual(changedReplay.body.rows[0].conflicts[0].evidence.differingFields, ["email"]);
+  assert.equal(
+    JSON.stringify(changedReplay.body.rows[0].conflicts[0].evidence).includes(
+      "replay.original@example.test"
+    ),
+    false
+  );
+
+  const resolved = await resolveMigrationBatchRow(
+    assistant,
+    dependencies,
+    changedReplay.body.batch.id,
+    changedReplay.body.rows[0].id,
+    {
+      action: "link_existing",
+      targetRecordId: linkedPatientId,
+      note: "Confirmed identity; preserve the current ClinicOS demographic value for review."
+    }
+  );
+  assert.equal(resolved.body.row.status, "ready_to_commit");
+  const changedCommit = await commitMigrationBatch(
+    { ...assistant, idempotencyKey: "cp7-changed-replay" },
+    dependencies,
+    changedReplay.body.batch.id,
+    {}
+  );
+  assert.equal(changedCommit.body.rows[0].committedRecordId, linkedPatientId);
+  assert.equal(changedCommit.body.commit.summary.reconciledRows, 1);
+  assert.equal(repository.patients.length, 2);
+  assert.equal(
+    repository.patients.find((patient) => patient.id === linkedPatientId)?.email,
+    originalRow.email
+  );
+});
+
+test("CP7 patient import blocks duplicate external references inside one batch", async () => {
+  const dependencies: OperationsDependencies = {
+    repository: new LocalFixtureClinicOperationsRepository(),
+    auditSink: new InMemoryAuditSink()
+  };
+  const assistant = await operationsContext("seed-assistant", "cp7-duplicate-external-ref");
+  const created = await createMigrationBatch(assistant, dependencies, {
+    importType: "patients",
+    sourceSystem: "canonical_patient_import",
+    rows: [
+      {
+        externalReference: "duplicate-external-1",
+        fullName: "First Synthetic",
+        phone: "+91 99900 05551"
+      },
+      {
+        externalReference: "duplicate-external-1",
+        fullName: "Second Synthetic",
+        phone: "+91 99900 05552"
+      }
+    ]
+  });
+
+  assert.equal(created.body.batch.state, "needs_review");
+  assert.equal(created.body.rows[0].status, "ready_to_commit");
+  assert.equal(created.body.rows[1].status, "needs_review");
+  assert.equal(created.body.rows[1].conflicts[0].conflictType, "field_conflict");
+  assert.equal(created.body.rows[1].conflicts[0].fieldName, "externalReference");
+  assert.equal(created.body.rows[1].conflicts[0].evidence.firstRowNumber, 1);
+});
+
 test("CP7 integration ops API surfaces provider health, dead-letter replay requests, and migration collection reads", async () => {
   const repository = new LocalFixtureClinicOperationsRepository();
   const auditSink = new InMemoryAuditSink();
@@ -174,6 +309,11 @@ test("CP7 integration ops API surfaces provider health, dead-letter replay reque
   assert.equal(health.status, 200);
   assert.ok(health.body.providers.some((provider) => provider.providerKey === "whatsapp_cloud"));
   assert.ok(health.body.providers.some((provider) => provider.providerKey === "manual_import"));
+  assert.ok(
+    health.body.providers.some(
+      (provider) => provider.providerKey === "practo" && provider.status === "not_configured"
+    )
+  );
   assert.equal(JSON.stringify(health.body).includes("Provider success confirmed"), false);
 
   const listedDeadLetters = await listDeadLetterEvents(owner, dependencies, {

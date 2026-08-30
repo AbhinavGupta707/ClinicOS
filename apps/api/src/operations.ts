@@ -114,6 +114,7 @@ import {
   isLabReconciliationStatus,
   isPatientInstructionChannel,
   coercePatientImportRows,
+  differingPatientImportFields,
   duplicateCandidatesForPatientImport,
   isMigrationImportType,
   isMigrationResolutionAction,
@@ -173,6 +174,7 @@ import {
   type PaymentRequestRecord,
   type PaymentRequestType,
   type PaymentTransactionRecord,
+  type PatientRecord,
   type PatientRecordExportRecord,
   type PatientTimelineItem as DomainPatientTimelineItem,
   type PatientInstructionRecord,
@@ -1099,6 +1101,22 @@ export async function listProviderHealth(
         manualProviderCard({
           checkedAt: nowIso(dependencies),
           activationChecks: [
+            "The clinic has identified Practo Ray, but no official clinic-data API agreement, credentials, or payload documentation are configured.",
+            "A clinic-authorized Contact and Appointment export remains the supported MVP access path once its schema is supplied.",
+            "No background sync, scraping, browser automation, or Practo writeback is active."
+          ],
+          category: "source",
+          evidence:
+            "Practo access is awaiting an authorized export sample or a separately documented official clinic-data API contract.",
+          id: "practo-source",
+          label: "Practo Ray",
+          mode: "awaiting authorized access contract",
+          providerKey: "practo",
+          status: "not_configured"
+        }),
+        manualProviderCard({
+          checkedAt: nowIso(dependencies),
+          activationChecks: [
             "No official telephony provider has been selected or registered.",
             "Manual missed-call capture remains the only enabled path.",
             "No telephony credentials, callbacks, recordings or provider state are implied."
@@ -1176,6 +1194,22 @@ export async function listProviderHealth(
         label: "Telephony",
         mode: telephonyProviderMode(config, telephonyHealth),
         providerKey: "exotel"
+      }),
+      manualProviderCard({
+        checkedAt: nowIso(dependencies),
+        activationChecks: [
+          "The clinic has identified Practo Ray, but no official clinic-data API agreement, credentials, or payload documentation are configured.",
+          "A clinic-authorized Contact and Appointment export remains the supported MVP access path once its schema is supplied.",
+          "No background sync, scraping, browser automation, or Practo writeback is active."
+        ],
+        category: "source",
+        evidence:
+          "Practo access is awaiting an authorized export sample or a separately documented official clinic-data API contract.",
+        id: "practo-source",
+        label: "Practo Ray",
+        mode: "awaiting authorized access contract",
+        providerKey: "practo",
+        status: "not_configured"
       }),
       manualProviderCard({
         checkedAt: nowIso(dependencies),
@@ -6024,6 +6058,24 @@ async function parseCreateMigrationBatchInput(
     throw validation("Migration batch must include at least one row.", {});
   }
 
+  const externalRecordIds = rowDrafts
+    .map((draft) => draft.externalReference?.trim() ?? "")
+    .filter((value) => value.length > 0);
+  const existingLinks = await dependencies.repository.listImportedRecordLinksByExternalIds(scope, {
+    sourceSystem,
+    targetRecordType: "patient",
+    externalRecordIds
+  });
+  const existingPatients = new Map<UUID, PatientRecord | null>();
+  for (const patientId of new Set(existingLinks.map((link) => link.targetRecordId))) {
+    existingPatients.set(patientId, await dependencies.repository.findPatientById(scope, patientId));
+  }
+  const existingLinksByExternalId = new Map(
+    existingLinks.flatMap((link) =>
+      link.externalRecordId ? [[link.externalRecordId, link] as const] : []
+    )
+  );
+  const seenExternalReferences = new Map<string, number>();
   const migrationRows: CreateMigrationBatchInput["rows"] = [];
   for (const draft of rowDrafts) {
     const validationResult = validatePatientImportRow(draft);
@@ -6032,27 +6084,89 @@ async function parseCreateMigrationBatchInput(
     let matchStatus: MigrationRowRecord["matchStatus"] = "none";
 
     if (validationResult.normalizedRecord) {
-      const existingPatients = await dependencies.repository.findPatientDuplicateCandidates(scope, {
-        fullName: validationResult.normalizedRecord.fullName,
-        phone: validationResult.normalizedRecord.phone
-      });
-      const duplicateCandidates = duplicateCandidatesForPatientImport(
-        validationResult.normalizedRecord,
-        existingPatients
-      );
-      for (const candidate of duplicateCandidates) {
+      const externalReference = validationResult.externalReference?.trim() ?? null;
+      const firstRowNumber = externalReference
+        ? seenExternalReferences.get(externalReference)
+        : undefined;
+      if (externalReference && firstRowNumber !== undefined) {
         conflicts.push({
-          conflictType: "duplicate_patient" as const,
+          conflictType: "field_conflict" as const,
           severity: "blocking" as const,
           targetRecordType: "patient",
-          targetRecordId: candidate.patient.id,
-          summary: `Potential duplicate patient: ${candidate.patient.fullName}`,
-          evidence: { candidate }
+          fieldName: "externalReference",
+          summary: "The external patient reference occurs more than once in this import batch.",
+          evidence: { firstRowNumber }
         });
+        status = "needs_review";
+        matchStatus = "conflict";
+      } else if (externalReference) {
+        seenExternalReferences.set(externalReference, validationResult.rowNumber);
       }
 
-      status = duplicateCandidates.length > 0 ? "needs_review" : "ready_to_commit";
-      matchStatus = duplicateCandidates.length > 0 ? "duplicate_candidate" : "none";
+      const existingLink = externalReference
+        ? existingLinksByExternalId.get(externalReference)
+        : undefined;
+      const linkedPatient = existingLink
+        ? existingPatients.get(existingLink.targetRecordId) ?? null
+        : null;
+      if (existingLink && !linkedPatient) {
+        conflicts.push({
+          conflictType: "invalid_reference" as const,
+          severity: "blocking" as const,
+          targetRecordType: "patient",
+          targetRecordId: existingLink.targetRecordId,
+          summary: "The external patient reference points to a missing ClinicOS patient.",
+          evidence: { existingLinkId: existingLink.id }
+        });
+        status = "needs_review";
+        matchStatus = "conflict";
+      } else if (existingLink && linkedPatient) {
+        const differingFields = differingPatientImportFields(
+          validationResult.normalizedRecord,
+          linkedPatient
+        );
+        if (differingFields.length > 0) {
+          conflicts.push({
+            conflictType: "verified_record_overlap" as const,
+            severity: "blocking" as const,
+            targetRecordType: "patient",
+            targetRecordId: linkedPatient.id,
+            summary:
+              "The imported patient differs from the patient already linked to this external reference.",
+            evidence: { differingFields, existingLinkId: existingLink.id }
+          });
+          status = "needs_review";
+          matchStatus = "conflict";
+        } else if (conflicts.length === 0) {
+          status = "ready_to_commit";
+          matchStatus = "resolved";
+        }
+      } else if (conflicts.length === 0) {
+        const duplicatePatients = await dependencies.repository.findPatientDuplicateCandidates(
+          scope,
+          {
+            fullName: validationResult.normalizedRecord.fullName,
+            phone: validationResult.normalizedRecord.phone
+          }
+        );
+        const duplicateCandidates = duplicateCandidatesForPatientImport(
+          validationResult.normalizedRecord,
+          duplicatePatients
+        );
+        for (const candidate of duplicateCandidates) {
+          conflicts.push({
+            conflictType: "duplicate_patient" as const,
+            severity: "blocking" as const,
+            targetRecordType: "patient",
+            targetRecordId: candidate.patient.id,
+            summary: "Potential duplicate patient requires identity review.",
+            evidence: { matchReasons: candidate.reasons, score: candidate.score }
+          });
+        }
+
+        status = duplicateCandidates.length > 0 ? "needs_review" : "ready_to_commit";
+        matchStatus = duplicateCandidates.length > 0 ? "duplicate_candidate" : "none";
+      }
     }
 
     migrationRows.push({
@@ -6613,7 +6727,12 @@ function manualProviderCard(input: {
   label: string;
   mode: string;
   providerKey:
-    "exotel" | "google_business_profile" | "manual_import" | "razorpay" | "whatsapp_cloud";
+    | "exotel"
+    | "google_business_profile"
+    | "manual_import"
+    | "practo"
+    | "razorpay"
+    | "whatsapp_cloud";
   status: "available" | "degraded" | "not_configured" | "unavailable";
 }) {
   return {

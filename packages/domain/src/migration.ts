@@ -1,4 +1,9 @@
-import type { PatientDuplicateCandidate, PatientGender, PatientSource } from "./patient.ts";
+import type {
+  PatientDuplicateCandidate,
+  PatientGender,
+  PatientRecord,
+  PatientSource
+} from "./patient.ts";
 import { buildPatientDuplicateSuggestions, normalizePhone } from "./patient.ts";
 import type { UUID } from "./ids.ts";
 
@@ -395,6 +400,33 @@ export function duplicateCandidatesForPatientImport(
   );
 }
 
+export function differingPatientImportFields(
+  normalizedRecord: PatientMigrationNormalizedRecord,
+  patient: Pick<PatientRecord, "fullName" | "phone" | "email" | "dateOfBirth" | "gender">
+): Array<"fullName" | "phone" | "email" | "dateOfBirth" | "gender"> {
+  const differingFields: Array<
+    "fullName" | "phone" | "email" | "dateOfBirth" | "gender"
+  > = [];
+
+  if (normalizedRecord.fullName.trim() !== patient.fullName.trim()) {
+    differingFields.push("fullName");
+  }
+  if (normalizedRecord.normalizedPhone !== normalizePhone(patient.phone ?? "")) {
+    differingFields.push("phone");
+  }
+  if (normalizedNullableText(normalizedRecord.email) !== normalizedNullableText(patient.email)) {
+    differingFields.push("email");
+  }
+  if (normalizedRecord.dateOfBirth !== patient.dateOfBirth) {
+    differingFields.push("dateOfBirth");
+  }
+  if (normalizedRecord.gender !== patient.gender) {
+    differingFields.push("gender");
+  }
+
+  return differingFields;
+}
+
 export function summarizeMigrationBatchState(input: {
   totalRows: number;
   invalidRows: number;
@@ -443,6 +475,11 @@ function coercePatientImportRow(
 
 function pickString(row: Record<string, unknown>, keys: readonly string[]): string {
   return pickNullableString(row, keys) ?? "";
+}
+
+function normalizedNullableText(value: string | null): string | null {
+  const normalized = value?.trim() ?? "";
+  return normalized.length > 0 ? normalized : null;
 }
 
 function pickNullableString(row: Record<string, unknown>, keys: readonly string[]): string | null {

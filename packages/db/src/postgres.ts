@@ -21,6 +21,7 @@ import type {
   Clinic,
   ClinicAssignment,
   ClinicUser,
+  ClinicDayAppointmentReadModel,
   Clock,
   ConsentEnforcementState,
   ConsentRecord,
@@ -251,6 +252,7 @@ import type {
   LeadSearchFilter,
   BreakGlassAccessSearchFilter,
   IntegrationDeadLetterSearchFilter,
+  ImportedRecordLinkLookup,
   MigrationBatchSearchFilter,
   MigrationRowsFilter,
   OutboxEventInput,
@@ -1887,6 +1889,40 @@ export class PostgresClinicOperationsRepository
     );
   }
 
+  async listImportedRecordLinksByExternalIds(
+    scope: RepositoryScope,
+    lookup: ImportedRecordLinkLookup
+  ): Promise<ImportedRecordLinkRecord[]> {
+    const externalRecordIds = [...new Set(lookup.externalRecordIds.map((value) => value.trim()))]
+      .filter((value) => value.length > 0);
+    if (externalRecordIds.length === 0) return [];
+
+    return this.#withRls(scope, async (client) =>
+      (
+        await client.query<ImportedRecordLinkRow>(
+          `
+            select *
+            from imported_record_links
+            where tenant_id = $1
+              and clinic_id = $2
+              and source_system = $3
+              and target_record_type = $4
+              and external_record_id = any($5::text[])
+              and verification_status <> 'rolled_back'
+            order by created_at
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            lookup.sourceSystem,
+            lookup.targetRecordType,
+            externalRecordIds
+          ]
+        )
+      ).rows.map(mapImportedRecordLinkRow)
+    );
+  }
+
   async listMigrationRows(
     scope: RepositoryScope,
     batchId: UUID,
@@ -2045,6 +2081,22 @@ export class PostgresClinicOperationsRepository
         )
       ).rows.map((row) => mapMigrationRowRow(row, []));
 
+      let reconciledRows = 0;
+      const externalReferences = [
+        ...new Set(
+          readyRows.flatMap((row) => (row.externalRecordId ? [row.externalRecordId] : []))
+        )
+      ].sort();
+      for (const externalRecordId of externalReferences) {
+        await this.#lockImportedRecordReferenceInTransaction(
+          client,
+          scope,
+          batch.sourceSystem,
+          externalRecordId,
+          "patient"
+        );
+      }
+
       for (const row of readyRows) {
         if (!row.normalizedRecord || row.normalizedRecord.recordType !== "patient") {
           await this.#markMigrationRowFailed(
@@ -2053,6 +2105,40 @@ export class PostgresClinicOperationsRepository
             row.id,
             "Only patient import rows can be committed in CP7."
           );
+          continue;
+        }
+
+        const existingExternalLink = row.externalRecordId
+          ? await this.#findImportedRecordLinkByExternalIdInTransaction(
+              client,
+              scope,
+              batch.sourceSystem,
+              row.externalRecordId,
+              "patient"
+            )
+          : null;
+        if (existingExternalLink) {
+          if (
+            row.resolutionAction === "create_new" ||
+            (row.resolutionAction === "link_existing" &&
+              row.resolutionTargetRecordId !== existingExternalLink.targetRecordId)
+          ) {
+            await this.#markMigrationRowFailed(
+              client,
+              scope,
+              row.id,
+              "The external patient reference is already linked to a different ClinicOS record."
+            );
+            continue;
+          }
+          await this.#markMigrationRowCommitted(
+            client,
+            scope,
+            row.id,
+            "patient",
+            existingExternalLink.targetRecordId
+          );
+          reconciledRows += 1;
           continue;
         }
 
@@ -2124,6 +2210,7 @@ export class PostgresClinicOperationsRepository
         input.idempotencyKey ?? null,
         {
           committedRows: counts.committedRowCount,
+          reconciledRows,
           invalidRows: counts.invalidRowCount,
           failedRows: counts.failedRowCount
         },
@@ -2270,6 +2357,26 @@ export class PostgresClinicOperationsRepository
           [scope.tenantId, scope.clinicId, link.rowId]
         );
       }
+
+      await client.query(
+        `
+          update migration_rows
+          set status = 'rolled_back', error_message = null
+          where tenant_id = $1
+            and clinic_id = $2
+            and batch_id = $3
+            and status = 'committed'
+            and not exists (
+              select 1
+              from imported_record_links
+              where imported_record_links.tenant_id = migration_rows.tenant_id
+                and imported_record_links.clinic_id = migration_rows.clinic_id
+                and imported_record_links.row_id = migration_rows.id
+                and imported_record_links.verification_status <> 'rolled_back'
+            )
+        `,
+        [scope.tenantId, scope.clinicId, batchId]
+      );
 
       const counts = await this.#refreshMigrationBatchCountsInTransaction(client, scope, batchId);
       const finalState = blockedLinks.length > 0 ? "partially_committed" : "rolled_back";
@@ -4478,7 +4585,7 @@ export class PostgresClinicOperationsRepository
   async loadDashboardData(scope: RepositoryScope, date: string): Promise<DashboardDataSet> {
     return this.#withRls(scope, async (client) => {
       const { timezone } = await this.#clinicCalendar(client, scope);
-      const appointments = (
+      const appointmentRows = (
         await client.query<AppointmentRow>(
           `
             select *
@@ -4487,11 +4594,72 @@ export class PostgresClinicOperationsRepository
               and clinic_id = $2
               and start_at >= ($3::date::timestamp at time zone $4)
               and start_at < (($3::date + 1)::timestamp at time zone $4)
-            order by start_at
+            order by start_at, id
+            limit 501
           `,
           [scope.tenantId, scope.clinicId, date, timezone]
         )
-      ).rows.map(mapAppointmentRow);
+      ).rows;
+      const appointmentsTruncated = appointmentRows.length > 500;
+      const appointments = appointmentRows.slice(0, 500).map(mapAppointmentRow);
+      const clinicDayAppointments = (
+        await client.query<ClinicDayAppointmentRow>(
+          `
+            select
+              appointments.id,
+              appointments.row_version,
+              appointments.patient_id,
+              patients.full_name as patient_name,
+              patients.phone as patient_phone,
+              case when exists (
+                select 1
+                from appointments as prior_appointments
+                where prior_appointments.tenant_id = appointments.tenant_id
+                  and prior_appointments.clinic_id = appointments.clinic_id
+                  and prior_appointments.patient_id = appointments.patient_id
+                  and prior_appointments.start_at < ($3::date::timestamp at time zone $4)
+              ) then true else false end as is_returning_patient,
+              appointments.provider_user_id,
+              users.display_name as provider_name,
+              appointments.appointment_type_id,
+              appointment_types.display_name as appointment_type_name,
+              appointments.chair_id,
+              chairs_or_rooms.display_name as chair_name,
+              appointments.status,
+              appointments.start_at,
+              appointments.end_at,
+              appointments.source,
+              appointments.reason,
+              queue_entries.id as queue_entry_id,
+              queue_entries.status as queue_status,
+              queue_entries.position as queue_position,
+              queue_entries.checked_in_at,
+              appointments.updated_at
+            from appointments
+            join patients
+              on patients.tenant_id = appointments.tenant_id
+             and patients.id = appointments.patient_id
+            join users on users.id = appointments.provider_user_id
+            join appointment_types
+              on appointment_types.tenant_id = appointments.tenant_id
+             and appointment_types.id = appointments.appointment_type_id
+            left join chairs_or_rooms
+              on chairs_or_rooms.tenant_id = appointments.tenant_id
+             and chairs_or_rooms.id = appointments.chair_id
+            left join queue_entries
+              on queue_entries.tenant_id = appointments.tenant_id
+             and queue_entries.clinic_id = appointments.clinic_id
+             and queue_entries.appointment_id = appointments.id
+            where appointments.tenant_id = $1
+              and appointments.clinic_id = $2
+              and appointments.start_at >= ($3::date::timestamp at time zone $4)
+              and appointments.start_at < (($3::date + 1)::timestamp at time zone $4)
+            order by appointments.start_at, appointments.id
+            limit 500
+          `,
+          [scope.tenantId, scope.clinicId, date, timezone]
+        )
+      ).rows.map(mapClinicDayAppointmentRow);
       const leads = (
         await client.query<LeadRow>(
           `
@@ -4499,7 +4667,7 @@ export class PostgresClinicOperationsRepository
             from leads
             where tenant_id = $1 and clinic_id = $2 and status in ('new', 'contacted', 'matched')
             order by last_activity_at desc
-            limit 50
+            limit 500
           `,
           [scope.tenantId, scope.clinicId]
         )
@@ -4514,7 +4682,7 @@ export class PostgresClinicOperationsRepository
               and status in ('open', 'in_progress')
               and (due_at is null or due_at < (($3::date + 1)::timestamp at time zone $4))
             order by due_at nulls last, created_at desc
-            limit 50
+            limit 500
           `,
           [scope.tenantId, scope.clinicId, date, timezone]
         )
@@ -4529,28 +4697,23 @@ export class PostgresClinicOperationsRepository
               and checked_in_at >= ($3::date::timestamp at time zone $4)
               and checked_in_at < (($3::date + 1)::timestamp at time zone $4)
             order by position, checked_in_at
+            limit 500
           `,
           [scope.tenantId, scope.clinicId, date, timezone]
         )
       ).rows.map(mapQueueEntryRow);
-      const returningRows = await client.query<{ patient_id: UUID }>(
-        `
-          select patient_id
-          from appointments
-          where tenant_id = $1
-            and clinic_id = $2
-            and start_at < ($3::date::timestamp at time zone $4)
-          group by patient_id
-        `,
-        [scope.tenantId, scope.clinicId, date, timezone]
-      );
-
       return {
         appointments,
+        appointmentsTruncated,
+        clinicDayAppointments,
         leads,
         tasks,
         queue,
-        returningPatientIds: new Set(returningRows.rows.map((row) => row.patient_id))
+        returningPatientIds: new Set(
+          clinicDayAppointments
+            .filter((appointment) => appointment.patientKind === "returning")
+            .map((appointment) => appointment.patientId)
+        )
       };
     });
   }
@@ -9985,16 +10148,17 @@ export class PostgresClinicOperationsRepository
     }>(
       `
         select
-          count(*) as row_count,
-          count(*) filter (where status <> 'invalid') as valid_row_count,
-          count(*) filter (where status = 'invalid') as invalid_row_count,
+          count(distinct migration_rows.id) as row_count,
+          count(distinct migration_rows.id) filter (where migration_rows.status <> 'invalid') as valid_row_count,
+          count(distinct migration_rows.id) filter (where migration_rows.status = 'invalid') as invalid_row_count,
           count(distinct migration_rows.id) filter (where migration_conflicts.status = 'open') as conflict_row_count,
-          count(*) filter (where migration_rows.status = 'ready_to_commit') as ready_row_count,
-          count(*) filter (where migration_rows.status = 'committed') as committed_row_count,
-          count(*) filter (where migration_rows.status = 'rolled_back') as rolled_back_row_count,
-          count(*) filter (where migration_rows.status = 'failed') as failed_row_count
+          count(distinct migration_rows.id) filter (where migration_rows.status = 'ready_to_commit') as ready_row_count,
+          count(distinct migration_rows.id) filter (where migration_rows.status = 'committed') as committed_row_count,
+          count(distinct migration_rows.id) filter (where migration_rows.status = 'rolled_back') as rolled_back_row_count,
+          count(distinct migration_rows.id) filter (where migration_rows.status = 'failed') as failed_row_count
         from migration_rows
         left join migration_conflicts on migration_conflicts.tenant_id = migration_rows.tenant_id
+          and migration_conflicts.clinic_id = migration_rows.clinic_id
           and migration_conflicts.row_id = migration_rows.id
         where migration_rows.tenant_id = $1 and migration_rows.clinic_id = $2 and migration_rows.batch_id = $3
       `,
@@ -10269,7 +10433,69 @@ export class PostgresClinicOperationsRepository
       `,
       [scope.tenantId, scope.clinicId, batch.id, row.id]
     );
-    return mapImportedRecordLinkRow(existing.rows[0]);
+    if (existing.rows[0]) return mapImportedRecordLinkRow(existing.rows[0]);
+
+    if (row.externalRecordId) {
+      const canonicalLink = await this.#findImportedRecordLinkByExternalIdInTransaction(
+        client,
+        scope,
+        batch.sourceSystem,
+        row.externalRecordId,
+        "patient"
+      );
+      if (canonicalLink) {
+        throw new Error(
+          "Concurrent import linked this external patient reference; retry migration reconciliation."
+        );
+      }
+    }
+
+    throw new Error("Imported record link was not persisted.");
+  }
+
+  async #findImportedRecordLinkByExternalIdInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    sourceSystem: string,
+    externalRecordId: string,
+    targetRecordType: string
+  ): Promise<ImportedRecordLinkRecord | null> {
+    const result = await client.query<ImportedRecordLinkRow>(
+      `
+        select *
+        from imported_record_links
+        where tenant_id = $1
+          and clinic_id = $2
+          and source_system = $3
+          and external_record_id = $4
+          and target_record_type = $5
+          and verification_status <> 'rolled_back'
+        order by created_at
+        limit 1
+      `,
+      [scope.tenantId, scope.clinicId, sourceSystem, externalRecordId, targetRecordType]
+    );
+    return result.rows[0] ? mapImportedRecordLinkRow(result.rows[0]) : null;
+  }
+
+  async #lockImportedRecordReferenceInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    sourceSystem: string,
+    externalRecordId: string,
+    targetRecordType: string
+  ): Promise<void> {
+    const lockKey = JSON.stringify([
+      scope.tenantId,
+      scope.clinicId,
+      sourceSystem,
+      externalRecordId,
+      targetRecordType
+    ]);
+    await client.query(
+      `select pg_advisory_xact_lock(hashtextextended($1::text, 0))`,
+      [lockKey]
+    );
   }
 
   async #markMigrationRowCommitted(
@@ -12386,6 +12612,31 @@ interface AppointmentRow {
   updated_at: Date | string;
 }
 
+interface ClinicDayAppointmentRow {
+  id: UUID;
+  row_version: number | string;
+  patient_id: UUID;
+  patient_name: string;
+  patient_phone: string | null;
+  is_returning_patient: boolean;
+  provider_user_id: UUID;
+  provider_name: string;
+  appointment_type_id: UUID;
+  appointment_type_name: string;
+  chair_id: UUID | null;
+  chair_name: string | null;
+  status: AppointmentStatus;
+  start_at: Date | string;
+  end_at: Date | string;
+  source: AppointmentRecord["source"];
+  reason: string | null;
+  queue_entry_id: UUID | null;
+  queue_status: QueueEntryRecord["status"] | null;
+  queue_position: number | null;
+  checked_in_at: Date | string | null;
+  updated_at: Date | string;
+}
+
 interface QueueEntryRow {
   id: UUID;
   tenant_id: UUID;
@@ -14149,6 +14400,35 @@ function mapAppointmentTypeRow(row: AppointmentTypeRow): AppointmentTypeRecord {
     defaultDurationMinutes: row.default_duration_minutes,
     color: row.color,
     active: row.active
+  };
+}
+
+function mapClinicDayAppointmentRow(
+  row: ClinicDayAppointmentRow
+): ClinicDayAppointmentReadModel {
+  return {
+    id: row.id,
+    rowVersion: positiveRowVersion(row.row_version),
+    patientId: row.patient_id,
+    patientName: row.patient_name,
+    patientPhone: row.patient_phone,
+    patientKind: row.is_returning_patient ? "returning" : "new",
+    providerUserId: row.provider_user_id,
+    providerName: row.provider_name,
+    appointmentTypeId: row.appointment_type_id,
+    appointmentTypeName: row.appointment_type_name,
+    chairId: row.chair_id,
+    chairName: row.chair_name,
+    status: row.status,
+    startAt: toIso(row.start_at),
+    endAt: toIso(row.end_at),
+    source: row.source,
+    reason: row.reason,
+    queueEntryId: row.queue_entry_id,
+    queueStatus: row.queue_status,
+    queuePosition: row.queue_position,
+    checkedInAt: row.checked_in_at ? toIso(row.checked_in_at) : null,
+    updatedAt: toIso(row.updated_at)
   };
 }
 

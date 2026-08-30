@@ -9,6 +9,7 @@ export const DATA_INTEGRATIONS_OPERATIONS = [
   "createMigrationBatch",
   "listMigrationBatches",
   "findMigrationBatchById",
+  "listImportedRecordLinksByExternalIds",
   "listMigrationRows",
   "resolveMigrationRow",
   "commitMigrationBatch",

@@ -26,6 +26,7 @@ import type {
   Clinic,
   ClinicAssignment,
   ClinicUser,
+  ClinicDayAppointmentReadModel,
   ConsentCaptureMethod,
   ConsentEnforcementState,
   ConsentPurpose,
@@ -75,6 +76,7 @@ import type {
   IntakeSubmissionSource,
   IntegrationDeadLetterRecord,
   IntegrationDeadLetterStatus,
+  ImportedRecordLinkRecord,
   MediaAssetRecord,
   MediaScanStatus,
   MediaStorageProviderKey,
@@ -314,6 +316,12 @@ export interface MigrationRowsFilter {
 export interface MigrationBatchSearchFilter {
   status?: MigrationBatchState | null;
   limit?: number | null;
+}
+
+export interface ImportedRecordLinkLookup {
+  sourceSystem: string;
+  targetRecordType: string;
+  externalRecordIds: string[];
 }
 
 export interface CommitMigrationBatchInput {
@@ -1332,6 +1340,8 @@ export interface AmendClinicalNoteResult {
 
 export interface DashboardDataSet {
   appointments: AppointmentRecord[];
+  appointmentsTruncated: boolean;
+  clinicDayAppointments: ClinicDayAppointmentReadModel[];
   leads: LeadRecord[];
   tasks: TaskRecord[];
   queue: QueueEntryRecord[];
@@ -1423,6 +1433,10 @@ export interface ClinicOperationsRepository {
     scope: RepositoryScope,
     batchId: UUID
   ): Promise<MigrationBatchDetail | null>;
+  listImportedRecordLinksByExternalIds(
+    scope: RepositoryScope,
+    lookup: ImportedRecordLinkLookup
+  ): Promise<ImportedRecordLinkRecord[]>;
   listMigrationRows(
     scope: RepositoryScope,
     batchId: UUID,

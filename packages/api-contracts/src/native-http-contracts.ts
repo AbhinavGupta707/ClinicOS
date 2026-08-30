@@ -310,20 +310,53 @@ const patientPrepSummarySchema = responseSchema({
   medicalHistoryChangePromptRequired: schema.boolean(),
   dataCoverage: entity
 });
+const morningDashboardVersionedEntities = schema.array(versionedEntity, { maxItems: 500 });
+const morningDashboardUuidList = schema.array(uuid, { maxItems: 500 });
 const morningDashboardSchema = responseSchema({
   date,
+  dataAsOf: schema.nullable(dateTime),
+  appointmentsTruncated: schema.boolean(),
   appointmentCounts: schema.object(
     Object.fromEntries(appointmentStatuses.map((status) => [status, nonNegativeInteger] as const)),
     appointmentStatuses
   ),
   totalAppointments: nonNegativeInteger,
-  unconfirmedAppointments: versionedEntities,
-  todaysAppointments: versionedEntities,
-  openLeads: versionedEntities,
-  openTasks: versionedEntities,
-  queue: versionedEntities,
-  newPatientAppointmentIds: uuidList,
-  returningPatientAppointmentIds: uuidList
+  clinicDayAppointments: schema.array(
+    responseSchema({
+      id: uuid,
+      rowVersion: positiveInteger,
+      patientId: uuid,
+      patientName: shortText,
+      patientPhone: schema.nullable(shortText),
+      patientKind: schema.enum(["new", "returning"]),
+      providerUserId: uuid,
+      providerName: shortText,
+      appointmentTypeId: uuid,
+      appointmentTypeName: shortText,
+      chairId: schema.nullable(uuid),
+      chairName: schema.nullable(shortText),
+      status: schema.enum(appointmentStatuses),
+      startAt: dateTime,
+      endAt: dateTime,
+      source: schema.enum(leadSources),
+      reason: nullableText,
+      queueEntryId: schema.nullable(uuid),
+      queueStatus: schema.nullable(
+        schema.enum(["waiting", "called", "in_consult", "completed", "cancelled"])
+      ),
+      queuePosition: schema.nullable(positiveInteger),
+      checkedInAt: schema.nullable(dateTime),
+      updatedAt: dateTime
+    }),
+    { maxItems: 500 }
+  ),
+  unconfirmedAppointments: morningDashboardVersionedEntities,
+  todaysAppointments: morningDashboardVersionedEntities,
+  openLeads: morningDashboardVersionedEntities,
+  openTasks: morningDashboardVersionedEntities,
+  queue: morningDashboardVersionedEntities,
+  newPatientAppointmentIds: morningDashboardUuidList,
+  returningPatientAppointmentIds: morningDashboardUuidList
 });
 const labCaseDetailSchema = responseSchema({
   labCase: versionedEntity,
@@ -3192,7 +3225,7 @@ function cp7Operations(): HttpOperationContract[] {
       pathProperties: { batchId: uuid, rowId: uuid },
       body: bodySchema(
         {
-          action: schema.enum(["import_new", "link_existing", "skip"]),
+          action: schema.enum(["create_new", "link_existing", "skip"]),
           targetRecordType: shortText,
           targetRecordId: optionalUuid,
           note: nullableText

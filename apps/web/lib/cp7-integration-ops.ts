@@ -15,6 +15,7 @@ export type Cp7ProviderKey =
   | "exotel"
   | "google_business_profile"
   | "manual_import"
+  | "practo"
   | "razorpay"
   | "whatsapp_cloud";
 
@@ -469,6 +470,35 @@ export function createFixtureCp7IntegrationOpsData(
         label: "Google Business Profile",
         mode: "manual/source only",
         providerKey: "google_business_profile",
+        status: "not_configured"
+      },
+      {
+        activationChecks: [
+          "The clinic has identified Practo Ray, but no official clinic-data API contract is configured.",
+          "An authorized export sample is still required before source-specific mapping.",
+          "No background sync, scraping, or Practo writeback is active."
+        ],
+        capabilities: [
+          {
+            detail: "Awaiting a clinic-authorized Contact and Appointment export sample.",
+            key: "authorized_export",
+            label: "Authorized export import",
+            status: "unavailable"
+          },
+          {
+            detail: "No Practo clinic-data API agreement, credentials, or payload documentation are configured.",
+            key: "official_clinic_data_api",
+            label: "Official clinic-data API",
+            status: "unavailable"
+          }
+        ],
+        category: "source",
+        checkedAt,
+        evidence: "Practo integration is awaiting authorized access evidence and a deidentified schema.",
+        id: "practo-source",
+        label: "Practo Ray",
+        mode: "awaiting authorized access contract",
+        providerKey: "practo",
         status: "not_configured"
       },
       {
@@ -1244,6 +1274,7 @@ function isCp7ProviderKey(value: unknown): value is Cp7ProviderKey {
     value === "exotel" ||
     value === "google_business_profile" ||
     value === "manual_import" ||
+    value === "practo" ||
     value === "razorpay" ||
     value === "whatsapp_cloud"
   );

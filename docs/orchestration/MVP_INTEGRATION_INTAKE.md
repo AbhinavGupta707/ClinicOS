@@ -1,6 +1,6 @@
 # MVP Source Integration Intake
 
-Status: source identified; product/access confirmation and samples pending
+Status: Ray and Profile identified; edition, access contract, and samples pending
 
 Data policy: attach only synthetic or de-identified samples unless separately approved
 
@@ -15,9 +15,8 @@ explicitly approved fallback.
 - Clinic country/timezone: India; expected `Asia/Kolkata` (clinic confirmation
   pending)
 - Source software/vendor: Practo (owner supplied)
-- Product edition/version: pending confirmation that the operational system is
-  Practo Ray, and whether the account uses Ray v6, Ray v7, or another edition;
-  using Practo Profile/Prime alone is not equivalent to using Ray
+- Product edition/version: owner confirms Practo Ray plus Practo Profile;
+  Ray v6, Ray v7, or another edition remains pending
 - Clinic contact who can verify source behavior: pending
 - Expected patient count: pending
 - Expected practitioner count: pending
@@ -34,8 +33,8 @@ Choose one and attach the relevant documentation:
 - [ ] other official/authorized mechanism
 
 Recommended initial route: a clinic-authorized Practo Ray export-to-email of
-Contacts and Appointments, followed by an import-once dry run. This route is
-pending confirmation that the clinic uses Ray and can access the export screen.
+Contacts and Appointments, followed by an import-once dry run. The clinic uses
+Ray, but access to the export screen and the resulting schema remain unconfirmed.
 
 Required details:
 
@@ -134,6 +133,7 @@ Record expected counts before running the first import:
   unless a verified identity field required for patient/appointment linkage is
   available only in the Treatment export
 - Known data-quality limitations: pending
-- Owner approval to begin MVP1: programme approved; source-specific coding remains
-  gated on product confirmation, clinic authorization, and de-identified samples
+- Owner approval to begin MVP1: programme approved; source-independent coding is
+  active, while the Practo-specific parser/mapping remains gated on clinic
+  authorization, authoritative documentation, and de-identified samples
 - Approval date: pending

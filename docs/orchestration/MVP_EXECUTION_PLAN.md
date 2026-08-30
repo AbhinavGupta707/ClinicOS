@@ -80,8 +80,11 @@ Exit gate:
 - dependency risks are fixed or classified for MVP exposure;
 - the target source contract and sample are available.
 
-MVP1 must not guess a vendor schema. Without the source contract, MVP0 is
-technically ready but connector work is blocked on owner/clinic input.
+MVP1 must not guess a vendor schema. Without the source contract, the
+Practo-specific parser and field mapping are blocked on owner/clinic input.
+Source-independent ClinicOS work may continue when it strengthens the same
+canonical migration, identity, read-model, and operator workflows the verified
+adapter will use.
 
 ## MVP1 — One-way clinic-system ingestion
 
@@ -209,3 +212,18 @@ Before connector-specific MVP1 code begins, obtain:
   export-to-email path, but the clinic must still confirm that its operational
   product is Practo Ray, its edition, authorized export access, and representative
   deidentified samples before connector code begins.
+- 2026-08-30: the owner confirmed that the clinic uses Practo Ray and Practo
+  Profile. The Ray edition, authorized clinic-data API entitlement, export
+  columns, identifiers, and deidentified samples remain unverified.
+- 2026-08-30: source-independent MVP1/MVP2 coding proceeded without inventing a
+  Practo schema. Patient external-reference replay now reconciles to the
+  canonical record without duplicate creation, real Postgres covers replay and
+  the joined clinic-day projection, Today consumes that joined projection
+  without bulk-loading the patient registry, patient lookup is search-first, and
+  provider health explicitly reports Practo as not configured. This is not a
+  completed Practo integration or repeatable sync.
+- 2026-08-30: independent review found and the master repaired four edge cases:
+  lead duplicate review now fails closed, busy clinic-day responses are bounded
+  with explicit truncation, confirmation is never inferred from check-in state,
+  and simultaneous external-reference commits serialize and reconcile. Real
+  Postgres now exercises the concurrent commit path and cleanup.

@@ -39,6 +39,10 @@ describe("CP7 integration ops workflow", () => {
       mode: "sandbox webhook URL missing",
       status: "degraded"
     });
+    expect(data.providers.find((provider) => provider.id === "practo-source")).toMatchObject({
+      mode: "awaiting authorized access contract",
+      status: "not_configured"
+    });
     expect(JSON.stringify(data)).not.toContain("Provider success confirmed");
   });
 

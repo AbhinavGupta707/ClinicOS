@@ -14,8 +14,11 @@ import type { TaskRecord, TaskStatus, TaskType } from "./continuity.ts";
 
 export interface MorningDashboardReadModel {
   date: string;
+  dataAsOf: string | null;
+  appointmentsTruncated: boolean;
   appointmentCounts: Record<AppointmentStatus, number>;
   totalAppointments: number;
+  clinicDayAppointments: ClinicDayAppointmentReadModel[];
   unconfirmedAppointments: AppointmentRecord[];
   todaysAppointments: AppointmentRecord[];
   openLeads: LeadRecord[];
@@ -25,9 +28,36 @@ export interface MorningDashboardReadModel {
   returningPatientAppointmentIds: UUID[];
 }
 
+export interface ClinicDayAppointmentReadModel {
+  id: UUID;
+  rowVersion: number;
+  patientId: UUID;
+  patientName: string;
+  patientPhone: string | null;
+  patientKind: "new" | "returning";
+  providerUserId: UUID;
+  providerName: string;
+  appointmentTypeId: UUID;
+  appointmentTypeName: string;
+  chairId: UUID | null;
+  chairName: string | null;
+  status: AppointmentStatus;
+  startAt: string;
+  endAt: string;
+  source: LeadSource;
+  reason: string | null;
+  queueEntryId: UUID | null;
+  queueStatus: QueueEntryRecord["status"] | null;
+  queuePosition: number | null;
+  checkedInAt: string | null;
+  updatedAt: string;
+}
+
 export function buildMorningDashboard(input: {
   date: string;
   appointments: readonly AppointmentRecord[];
+  appointmentsTruncated: boolean;
+  clinicDayAppointments: readonly ClinicDayAppointmentReadModel[];
   leads: readonly LeadRecord[];
   tasks: readonly TaskRecord[];
   queue: readonly QueueEntryRecord[];
@@ -57,10 +87,19 @@ export function buildMorningDashboard(input: {
     }
   }
 
+  const dataAsOf = input.clinicDayAppointments.reduce<string | null>(
+    (latest, appointment) =>
+      latest === null || appointment.updatedAt > latest ? appointment.updatedAt : latest,
+    null
+  );
+
   return {
     date: input.date,
+    dataAsOf,
+    appointmentsTruncated: input.appointmentsTruncated,
     appointmentCounts,
     totalAppointments: input.appointments.length,
+    clinicDayAppointments: [...input.clinicDayAppointments],
     unconfirmedAppointments: input.appointments.filter((appointment) =>
       ["requested", "booked"].includes(appointment.status)
     ),

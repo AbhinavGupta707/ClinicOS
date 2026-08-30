@@ -1,12 +1,12 @@
 # Practo MVP1 Integration Research
 
-Status: discovery complete; implementation awaits clinic confirmation and samples
+Status: products confirmed by owner; access contract and samples pending
 
 Date: 2026-08-30
 
 Pilot: Healthy Roots Family Dental Studio, Girgaon
 
-Source named by owner: Practo
+Source confirmed by owner: Practo Ray and Practo Profile
 
 ## Decision in one sentence
 
@@ -47,7 +47,7 @@ Official sources:
 
 | Question | Current truth | Required evidence |
 | --- | --- | --- |
-| Does the clinic use Practo Ray? | Unknown; the owner said Practo | Clinic opens the operational product and confirms its name/version |
+| Does the clinic use Practo Ray? | Yes; owner confirms Ray plus Practo Profile | Record the visible Ray edition/version |
 | Can Ray export contacts and appointments? | Yes, officially documented | Confirm the option exists for this account and plan |
 | What file format and columns are produced? | Unknown | Deidentified export or header-only file |
 | Does the export contain stable patient and appointment IDs? | Unknown | Sample columns and two repeated exports |
@@ -64,8 +64,8 @@ and the clinic provide authoritative evidence.
 
 ### MVP1: import once
 
-1. The clinic confirms that the operational product is Practo Ray and records the
-   visible edition/version.
+1. The clinic records the visible Practo Ray edition/version; the owner has
+   already confirmed that Ray and Practo Profile are in use.
 2. An authorized clinic administrator exports `Contact` and `Appointments` from
    Ray to a clinic-controlled email address.
 3. The clinic creates a deidentified representative copy that preserves column
@@ -144,9 +144,10 @@ should be forwarded to the ClinicOS repository.
 
 ## Coding gate and orchestration decision
 
-Source-specific implementation begins only after the product and sample schema are
-confirmed. Until then, generic connector code would encode guesses and risk a
-parallel architecture.
+Source-specific implementation begins only after the sample schema or an
+authoritative clinic-data API contract is confirmed. Source-independent work may
+continue in the existing canonical migration, external-link, dashboard, search,
+and provider-health boundaries; it must not encode guessed Practo fields.
 
 Once the schema is frozen, MVP1 should remain one sequential master lane through
 adapter contract, parser, normalization, identity, and staging design. A bounded

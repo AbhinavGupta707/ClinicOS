@@ -413,6 +413,8 @@ test("morning dashboard uses only the approved authoritative cross-domain read p
         requestedDate = date;
         return {
           appointments: [appointmentRecord()],
+          appointmentsTruncated: false,
+          clinicDayAppointments: [],
           leads: [leadRecord()],
           tasks: [
             {

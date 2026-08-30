@@ -9828,7 +9828,7 @@
                   "properties": {
                     "dashboard": {
                       "additionalProperties": false,
-                      "maxProperties": 10,
+                      "maxProperties": 13,
                       "properties": {
                         "appointmentCounts": {
                           "additionalProperties": false,
@@ -9887,6 +9887,221 @@
                           ],
                           "type": "object"
                         },
+                        "appointmentsTruncated": {
+                          "type": "boolean"
+                        },
+                        "clinicDayAppointments": {
+                          "items": {
+                            "additionalProperties": false,
+                            "maxProperties": 22,
+                            "properties": {
+                              "appointmentTypeId": {
+                                "format": "uuid",
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "type": "string"
+                              },
+                              "appointmentTypeName": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "chairId": {
+                                "format": "uuid",
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "chairName": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "checkedInAt": {
+                                "format": "date-time",
+                                "maxLength": 40,
+                                "minLength": 20,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "endAt": {
+                                "format": "date-time",
+                                "maxLength": 40,
+                                "minLength": 20,
+                                "type": "string"
+                              },
+                              "id": {
+                                "format": "uuid",
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "type": "string"
+                              },
+                              "patientId": {
+                                "format": "uuid",
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "type": "string"
+                              },
+                              "patientKind": {
+                                "enum": [
+                                  "new",
+                                  "returning"
+                                ]
+                              },
+                              "patientName": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "patientPhone": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "providerName": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "providerUserId": {
+                                "format": "uuid",
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "type": "string"
+                              },
+                              "queueEntryId": {
+                                "format": "uuid",
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "queuePosition": {
+                                "maximum": 2147483647,
+                                "minimum": 1,
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ]
+                              },
+                              "queueStatus": {
+                                "anyOf": [
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "enum": [
+                                  "waiting",
+                                  "called",
+                                  "in_consult",
+                                  "completed",
+                                  "cancelled"
+                                ]
+                              },
+                              "reason": {
+                                "maxLength": 4096,
+                                "minLength": 1,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "rowVersion": {
+                                "maximum": 2147483647,
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "source": {
+                                "enum": [
+                                  "manual",
+                                  "whatsapp",
+                                  "phone",
+                                  "call",
+                                  "walkin",
+                                  "practo",
+                                  "google",
+                                  "website",
+                                  "instagram",
+                                  "referral",
+                                  "recall_campaign"
+                                ]
+                              },
+                              "startAt": {
+                                "format": "date-time",
+                                "maxLength": 40,
+                                "minLength": 20,
+                                "type": "string"
+                              },
+                              "status": {
+                                "enum": [
+                                  "requested",
+                                  "booked",
+                                  "confirmed",
+                                  "checked_in",
+                                  "in_consult",
+                                  "completed",
+                                  "cancelled",
+                                  "no_show"
+                                ]
+                              },
+                              "updatedAt": {
+                                "format": "date-time",
+                                "maxLength": 40,
+                                "minLength": 20,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "rowVersion",
+                              "patientId",
+                              "patientName",
+                              "patientPhone",
+                              "patientKind",
+                              "providerUserId",
+                              "providerName",
+                              "appointmentTypeId",
+                              "appointmentTypeName",
+                              "chairId",
+                              "chairName",
+                              "status",
+                              "startAt",
+                              "endAt",
+                              "source",
+                              "reason",
+                              "queueEntryId",
+                              "queueStatus",
+                              "queuePosition",
+                              "checkedInAt",
+                              "updatedAt"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 500,
+                          "type": "array"
+                        },
+                        "dataAsOf": {
+                          "format": "date-time",
+                          "maxLength": 40,
+                          "minLength": 20,
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "date": {
                           "format": "date",
                           "maxLength": 10,
@@ -9900,28 +10115,28 @@
                             "minLength": 36,
                             "type": "string"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         },
                         "openLeads": {
                           "items": {
                             "$ref": "#/components/schemas/VersionedPublicResource"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         },
                         "openTasks": {
                           "items": {
                             "$ref": "#/components/schemas/VersionedPublicResource"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         },
                         "queue": {
                           "items": {
                             "$ref": "#/components/schemas/VersionedPublicResource"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         },
                         "returningPatientAppointmentIds": {
@@ -9931,14 +10146,14 @@
                             "minLength": 36,
                             "type": "string"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         },
                         "todaysAppointments": {
                           "items": {
                             "$ref": "#/components/schemas/VersionedPublicResource"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         },
                         "totalAppointments": {
@@ -9950,14 +10165,17 @@
                           "items": {
                             "$ref": "#/components/schemas/VersionedPublicResource"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         }
                       },
                       "required": [
                         "date",
+                        "dataAsOf",
+                        "appointmentsTruncated",
                         "appointmentCounts",
                         "totalAppointments",
+                        "clinicDayAppointments",
                         "unconfirmedAppointments",
                         "todaysAppointments",
                         "openLeads",
@@ -33413,7 +33631,7 @@
                 "properties": {
                   "action": {
                     "enum": [
-                      "import_new",
+                      "create_new",
                       "link_existing",
                       "skip"
                     ]

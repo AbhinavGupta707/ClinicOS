@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  differingPatientImportFields,
   parsePatientMigrationCsv,
   summarizeMigrationBatchState,
   validatePatientImportRow
@@ -26,6 +27,38 @@ test("patient migration CSV validation separates bad rows from good rows", () =>
   assert.deepEqual(
     invalid.validationErrors.map((error) => error.field),
     ["fullName", "phone", "email", "dateOfBirth"]
+  );
+});
+
+test("patient import replay comparison reports only changed canonical fields", () => {
+  const [draft] = parsePatientMigrationCsv(
+    [
+      "external_reference,full_name,phone,email,date_of_birth,gender",
+      "legacy-1,Asha Import,+91 98765 11111,asha@example.com,1984-02-03,female"
+    ].join("\n")
+  );
+  const normalized = validatePatientImportRow(draft).normalizedRecord;
+  assert.ok(normalized);
+
+  assert.deepEqual(
+    differingPatientImportFields(normalized, {
+      fullName: "Asha Import",
+      phone: "+919876511111",
+      email: "asha@example.com",
+      dateOfBirth: "1984-02-03",
+      gender: "female"
+    }),
+    []
+  );
+  assert.deepEqual(
+    differingPatientImportFields(normalized, {
+      fullName: "Asha Changed",
+      phone: "+919876511111",
+      email: null,
+      dateOfBirth: "1984-02-03",
+      gender: "female"
+    }),
+    ["fullName", "email"]
   );
 });
 

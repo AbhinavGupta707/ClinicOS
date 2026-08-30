@@ -54,6 +54,7 @@ import {
   type GenerateDueSopRunsInput,
   type GenerateDueSopRunsResult,
   type IntegrationDeadLetterSearchFilter,
+  type ImportedRecordLinkLookup,
   type BreakGlassAccessSearchFilter,
   type CreateInventoryCategoryInput,
   type CreateInventoryCheckRunInput,
@@ -160,6 +161,7 @@ import {
   type AttributionTouchRecord,
   type BreakGlassAccessRecord,
   type ChairOrRoomRecord,
+  type ClinicDayAppointmentReadModel,
   type Clock,
   type ClinicalNoteVersionRecord,
   type ConsentRecord,
@@ -1734,6 +1736,26 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return batch ? this.#migrationBatchDetail(scope, batch) : null;
   }
 
+  async listImportedRecordLinksByExternalIds(
+    scope: RepositoryScope,
+    lookup: ImportedRecordLinkLookup
+  ): Promise<ImportedRecordLinkRecord[]> {
+    const externalRecordIds = new Set(
+      lookup.externalRecordIds.map((value) => value.trim()).filter((value) => value.length > 0)
+    );
+    return this.importedRecordLinks
+      .filter(
+        (link) =>
+          matchesScope(link, scope) &&
+          link.sourceSystem === lookup.sourceSystem &&
+          link.targetRecordType === lookup.targetRecordType &&
+          link.externalRecordId !== null &&
+          externalRecordIds.has(link.externalRecordId) &&
+          link.verificationStatus !== "rolled_back"
+      )
+      .map((link) => ({ ...link }));
+  }
+
   async listMigrationBatches(
     scope: RepositoryScope,
     filter: MigrationBatchSearchFilter = {}
@@ -1834,11 +1856,43 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       (row) => matchesScope(row, scope) && row.batchId === batchId && row.status === "ready_to_commit"
     );
     const linksCreated: ImportedRecordLinkRecord[] = [];
+    let reconciledRows = 0;
 
     for (const row of readyRows) {
       if (!row.normalizedRecord || row.normalizedRecord.recordType !== "patient") {
         row.status = "failed";
         row.errorMessage = "Only patient import rows can be committed in CP7.";
+        continue;
+      }
+
+      const existingExternalLink = row.externalRecordId
+        ? this.importedRecordLinks.find(
+            (link) =>
+              matchesScope(link, scope) &&
+              link.sourceSystem === batch.sourceSystem &&
+              link.externalRecordId === row.externalRecordId &&
+              link.targetRecordType === "patient" &&
+              link.verificationStatus !== "rolled_back"
+          ) ?? null
+        : null;
+      if (existingExternalLink) {
+        if (
+          row.resolutionAction === "create_new" ||
+          (row.resolutionAction === "link_existing" &&
+            row.resolutionTargetRecordId !== existingExternalLink.targetRecordId)
+        ) {
+          row.status = "failed";
+          row.errorMessage =
+            "The external patient reference is already linked to a different ClinicOS record.";
+          row.updatedAt = this.#nowIso();
+          continue;
+        }
+        row.committedRecordType = "patient";
+        row.committedRecordId = existingExternalLink.targetRecordId;
+        row.status = "committed";
+        row.errorMessage = null;
+        row.updatedAt = this.#nowIso();
+        reconciledRows += 1;
         continue;
       }
 
@@ -1898,6 +1952,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       input.idempotencyKey ?? null,
       {
         committedRows: batch.committedRowCount,
+        reconciledRows,
         invalidRows: batch.invalidRowCount,
         failedRows: batch.failedRowCount,
         linksCreated: linksCreated.length
@@ -1968,6 +2023,25 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         row.status = "rolled_back";
         row.matchStatus = row.resolutionAction === "link_existing" ? "resolved" : row.matchStatus;
         row.updatedAt = link.updatedAt;
+      }
+    }
+
+    for (const row of this.migrationRows.filter(
+      (candidate) =>
+        matchesScope(candidate, scope) &&
+        candidate.batchId === batchId &&
+        candidate.status === "committed"
+    )) {
+      const hasActiveBatchLink = this.importedRecordLinks.some(
+        (link) =>
+          matchesScope(link, scope) &&
+          link.rowId === row.id &&
+          link.verificationStatus !== "rolled_back"
+      );
+      if (!hasActiveBatchLink) {
+        row.status = "rolled_back";
+        row.errorMessage = null;
+        row.updatedAt = this.#nowIso();
       }
     }
 
@@ -3836,24 +3910,80 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async loadDashboardData(scope: RepositoryScope, date: string): Promise<DashboardDataSet> {
-    const appointments = await this.listAppointments(scope, { date });
+    const allAppointments = await this.listAppointments(scope, { date });
+    const appointmentsTruncated = allAppointments.length > 500;
+    const appointments = allAppointments.slice(0, 500);
+    const returningPatientIds = new Set(
+      this.appointments
+        .filter(
+          (appointment) =>
+            matchesScope(appointment, scope) && appointment.startAt < `${date}T00:00:00.000Z`
+        )
+        .map((appointment) => appointment.patientId)
+    );
+    const clinicDayAppointments: ClinicDayAppointmentReadModel[] = appointments.map(
+      (appointment) => {
+        const patient = this.patients.find(
+          (candidate) => matchesScope(candidate, scope) && candidate.id === appointment.patientId
+        );
+        const appointmentType = this.appointmentTypes.find(
+          (candidate) =>
+            matchesScope(candidate, scope) && candidate.id === appointment.appointmentTypeId
+        );
+        const chair = appointment.chairId
+          ? this.chairs.find(
+              (candidate) => matchesScope(candidate, scope) && candidate.id === appointment.chairId
+            )
+          : null;
+        const providerKey = Object.entries(CHECKPOINT1_SEED_IDS.users).find(
+          ([, id]) => id === appointment.providerUserId
+        )?.[0];
+        const provider = CHECKPOINT1_SEED_USERS.find((candidate) => candidate.key === providerKey);
+        const queueEntry = this.queueEntries.find(
+          (candidate) =>
+            matchesScope(candidate, scope) && candidate.appointmentId === appointment.id
+        );
+        if (!patient || !appointmentType || !provider) {
+          throw new Error("Clinic-day fixture contains an appointment with unresolved identity data.");
+        }
+        return {
+          id: appointment.id,
+          rowVersion: appointment.rowVersion,
+          patientId: patient.id,
+          patientName: patient.fullName,
+          patientPhone: patient.phone,
+          patientKind: returningPatientIds.has(patient.id) ? "returning" : "new",
+          providerUserId: appointment.providerUserId,
+          providerName: provider.displayName,
+          appointmentTypeId: appointment.appointmentTypeId,
+          appointmentTypeName: appointmentType.displayName,
+          chairId: appointment.chairId,
+          chairName: chair?.displayName ?? null,
+          status: appointment.status,
+          startAt: appointment.startAt,
+          endAt: appointment.endAt,
+          source: appointment.source,
+          reason: appointment.reason,
+          queueEntryId: queueEntry?.id ?? null,
+          queueStatus: queueEntry?.status ?? null,
+          queuePosition: queueEntry?.position ?? null,
+          checkedInAt: queueEntry?.checkedInAt ?? null,
+          updatedAt: appointment.updatedAt
+        };
+      }
+    );
     return {
       appointments,
+      appointmentsTruncated,
+      clinicDayAppointments,
       leads: this.leads.filter(
         (lead) => matchesScope(lead, scope) && ["new", "contacted", "matched"].includes(lead.status)
-      ),
+      ).slice(0, 500),
       tasks: this.tasks.filter(
         (task) => matchesScope(task, scope) && ["open", "in_progress"].includes(task.status)
-      ),
-      queue: await this.listQueueEntries(scope, date),
-      returningPatientIds: new Set(
-        this.appointments
-          .filter(
-            (appointment) =>
-              matchesScope(appointment, scope) && appointment.startAt < `${date}T00:00:00.000Z`
-          )
-        .map((appointment) => appointment.patientId)
-      )
+      ).slice(0, 500),
+      queue: (await this.listQueueEntries(scope, date)).slice(0, 500),
+      returningPatientIds
     };
   }
 
