@@ -310,7 +310,7 @@ export const SURFACES: SurfaceRegistration[] = [
     href: "/surface/migration-review",
     icon: DatabaseBackup,
     id: "migration-review",
-    label: "Migration review",
+    label: "Import clinic data",
     requiredApis: [
       "GET /v1/migration-batches",
       "POST /v1/migration-batches",

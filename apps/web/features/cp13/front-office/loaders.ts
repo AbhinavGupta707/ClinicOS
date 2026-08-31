@@ -14,6 +14,7 @@ import {
   type ListIntakeFormTemplatesResponse,
   type ListLeadsResponse,
   type ListProviderSchedulesResponse,
+  type ListPatientsResponse,
   type ListQueueResponse,
   type SubmitPatientIntakeFormRequest,
   type SubmitPatientIntakeFormResponse
@@ -56,6 +57,18 @@ export interface FrontOfficePatientWorkspaceData {
   readonly prepSummary: GetPatientPrepSummaryResponse["prepSummary"];
 }
 
+export interface FrontOfficePatientSearchResult {
+  readonly id: string;
+  readonly fullName: string;
+  readonly phone: string | null;
+  readonly source: string | null;
+}
+
+export interface FrontOfficePatientSearchData {
+  readonly patients: readonly FrontOfficePatientSearchResult[];
+  readonly query: string;
+}
+
 export interface FrontOfficeSchedulingConfigurationData {
   readonly appointmentTypes: ListAppointmentTypesResponse["appointmentTypes"];
   readonly chairs: ListChairsResponse["chairs"];
@@ -74,6 +87,7 @@ export type FrontOfficeApiClient = Pick<
   | "listChairs"
   | "listIntakeFormTemplates"
   | "listLeads"
+  | "listPatients"
   | "listProviderSchedules"
   | "listQueue"
   | "submitPatientIntakeForm"
@@ -115,6 +129,44 @@ export async function refreshFrontOfficeDay(
 ): Promise<FrontOfficeLoadState<FrontOfficeDayData>> {
   // Refresh never returns stale ready data after a failed request.
   return loadFrontOfficeDay(client, input);
+}
+
+export async function searchFrontOfficePatients(
+  client: FrontOfficeApiClient,
+  query: string
+): Promise<FrontOfficeLoadState<FrontOfficePatientSearchData>> {
+  const normalizedQuery = query.trim();
+  if (normalizedQuery.length < 2) {
+    return {
+      status: "ready",
+      refreshedAt: new Date().toISOString(),
+      data: { patients: [], query: normalizedQuery }
+    };
+  }
+  try {
+    const response: ListPatientsResponse = await client.listPatients({
+      query: { limit: 25, query: normalizedQuery }
+    });
+    const patients = response.patients.flatMap((patient) => {
+      const fullName = typeof patient.fullName === "string" ? patient.fullName.trim() : "";
+      if (!fullName) return [];
+      return [
+        {
+          id: patient.id,
+          fullName,
+          phone: typeof patient.phone === "string" ? patient.phone : null,
+          source: typeof patient.source === "string" ? patient.source : null
+        }
+      ];
+    });
+    return {
+      status: "ready",
+      refreshedAt: new Date().toISOString(),
+      data: { patients, query: normalizedQuery }
+    };
+  } catch (error) {
+    return classifyFrontOfficeLoadFailure(error, { notFound: "endpoint" });
+  }
 }
 
 export async function loadFrontOfficePatientWorkspace(

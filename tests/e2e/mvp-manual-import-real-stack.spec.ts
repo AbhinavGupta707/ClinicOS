@@ -38,13 +38,13 @@ test.describe("MVP manual import real-stack acceptance", () => {
     await expect(page.getByText("Source freshness").locator("..")).toContainText("Unknown");
 
     await page.getByTestId("migration-source-system").fill(sourceSystem);
+    await page.getByTestId("migration-input-tab-paste").click();
     await page.getByTestId("migration-csv").fill(csv);
     await page.getByTestId("migration-stage-batch").click();
 
-    await expect(page.getByTestId("cp7-action-message")).toContainText(
-      "validated and staged"
-    );
+    await expect(page.getByTestId("cp7-action-message")).toContainText("validated and staged");
     await expect(page.getByTestId("migration-selected-batch")).toContainText(sourceSystem);
+    await resolvePatientDuplicateIfNeeded(page);
     await expect(page.getByTestId("cp7-migration-status")).toContainText("Ready to commit");
 
     const commitResponsePromise = page.waitForResponse(
@@ -91,9 +91,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
       path: "/tmp/clinicos-mvp-manual-import-committed.png"
     });
 
-    await page
-      .getByLabel(/I understand rollback is best-effort compensation/u)
-      .check();
+    await page.getByLabel(/I understand rollback is best-effort compensation/u).check();
     const rollbackResponsePromise = page.waitForResponse(
       (response) =>
         response.request().method() === "POST" &&
@@ -114,9 +112,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
       })
     );
 
-    await expect(page.getByTestId("cp7-action-message")).toContainText(
-      "Safe rollback completed"
-    );
+    await expect(page.getByTestId("cp7-action-message")).toContainText("Safe rollback completed");
     await expect(page.getByTestId("cp7-migration-status")).toContainText("Rolled back");
 
     const rolledBackPatientSearch = await page.request.get(
@@ -250,6 +246,26 @@ test.describe("MVP manual import real-stack acceptance", () => {
     });
   });
 
+  test("carries a searched patient into the clinical profile without URL state", async ({
+    page
+  }) => {
+    await page.goto("/surface/patients?scenario=mvp-patient-navigation-handoff");
+    await page.getByLabel("Search by name or phone").fill("Rhea Synthetic");
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+
+    const patientResult = page
+      .locator(".cp13-patient-search > ul button")
+      .filter({ hasText: "Rhea Synthetic" });
+    await expect(patientResult).toBeVisible();
+    await patientResult.click();
+    await expect(page.getByTestId("cp13-front-office-patient")).toContainText("Rhea Synthetic");
+
+    await page.getByRole("button", { name: "Open full profile" }).click();
+    await expect(page).toHaveURL(/\/surface\/patient-profile$/u);
+    await expect(page.getByTestId("cp13-clinical-runtime")).toBeVisible();
+    expect(new URL(page.url()).search).toBe("");
+  });
+
   test("keeps manual import controls usable on a narrow clinic device", async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/surface/migration-review?scenario=mvp-manual-import-real-stack-mobile");
@@ -276,12 +292,14 @@ async function stageAndCommitBatch(
   csv: string,
   committedBatchIds: string[]
 ) {
-  await page.getByTestId("migration-import-type").selectOption(importType);
+  await page.getByTestId("migration-trial-step-" + importType).click();
   const batchId = await stageBatch(page, csv);
+  if (importType === "patients") await resolvePatientDuplicateIfNeeded(page);
   await commitSelectedBatch(page, () => committedBatchIds.push(batchId));
 }
 
 async function stageBatch(page: Page, csv: string) {
+  await page.getByTestId("migration-input-tab-paste").click();
   await page.getByTestId("migration-csv").fill(csv);
   const createResponsePromise = page.waitForResponse(
     (response) =>
@@ -295,6 +313,18 @@ async function stageBatch(page: Page, csv: string) {
   expect(body.batch?.id).toBeTruthy();
   await expect(page.getByTestId("cp7-action-message")).toContainText("validated and staged");
   return body.batch!.id!;
+}
+
+async function resolvePatientDuplicateIfNeeded(page: Page) {
+  const status = page.getByTestId("cp7-migration-status");
+  if ((await status.textContent())?.includes("Needs review")) {
+    const createSeparatePatient = page.getByRole("button", {
+      name: "Create separate patient"
+    });
+    await expect(createSeparatePatient).toBeVisible();
+    await createSeparatePatient.click();
+    await expect(page.getByTestId("cp7-action-message")).toContainText("resolution was recorded");
+  }
 }
 
 async function commitSelectedBatch(page: Page, onCommitAccepted?: () => void) {

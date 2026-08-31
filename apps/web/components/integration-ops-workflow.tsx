@@ -308,15 +308,32 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
       setActionBusy(false);
     }
   };
+  const dedicatedImport = activeSurfaceId === "migration-review";
 
   return (
     <div data-testid="cp7-integration-ops-workspace">
       <div className="surface-stack cp7-workflow" data-testid={`cp7-surface-${activeSurfaceId}`}>
-        <section className="surface-hero surface-hero--integrations" aria-labelledby="cp7-title">
+        <section
+          className={
+            dedicatedImport ? "import-page-hero" : "surface-hero surface-hero--integrations"
+          }
+          aria-labelledby="cp7-title"
+        >
           <div>
-            <p className="eyebrow">Live integration operations</p>
+            <p className="eyebrow">
+              {dedicatedImport ? "Manual clinic onboarding" : "Live integration operations"}
+            </p>
             <h1 id="cp7-title">{titleForSurface(activeSurfaceId)}</h1>
             <p className="hero-subline">{descriptionForSurface(activeSurfaceId)}</p>
+            {dedicatedImport ? (
+              <div className="import-page-hero__truth">
+                <span>Manual file import</span>
+                <span aria-hidden="true">·</span>
+                <span>No Practo connection</span>
+                <span aria-hidden="true">·</span>
+                <span>Review before commit</span>
+              </div>
+            ) : null}
           </div>
           <div className="hero-status" aria-label="Workflow API mode">
             <span
@@ -375,7 +392,7 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
               </section>
             ) : null}
 
-            <WorkflowTabs mode={mode} setMode={setMode} />
+            {dedicatedImport ? null : <WorkflowTabs mode={mode} setMode={setMode} />}
 
             {mode === "providers" ? <ProviderDashboard data={loadState.data} /> : null}
             {mode === "replay" ? (
@@ -401,7 +418,14 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
               />
             ) : null}
 
-            <TimelinePanel data={loadState.data} />
+            {dedicatedImport ? (
+              <details className="import-technical-details">
+                <summary>Technical details and audit trail</summary>
+                <TimelinePanel data={loadState.data} />
+              </details>
+            ) : (
+              <TimelinePanel data={loadState.data} />
+            )}
           </>
         )}
       </div>
@@ -751,7 +775,7 @@ function modeForSurface(surfaceId: string): Cp7Mode {
 
 function titleForSurface(surfaceId: string) {
   if (surfaceId === "event-replay") return "Failed event replay";
-  if (surfaceId === "migration-review") return "Migration review";
+  if (surfaceId === "migration-review") return "Import clinic data";
 
   return "Provider health";
 }
@@ -761,7 +785,7 @@ function descriptionForSurface(surfaceId: string) {
     return "Review failed provider events and replay only through explicit, auditable routes.";
   }
   if (surfaceId === "migration-review") {
-    return "Inspect import conflicts and commit only reviewed, non-overwriting migration rows.";
+    return "Bring approved clinic records into ClinicOS with a guided file upload, row-by-row review, and an explicit final commit.";
   }
 
   return "Inspect WhatsApp, telephony, Google/source, Razorpay, and import capabilities without fake live success states.";

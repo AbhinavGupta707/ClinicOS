@@ -2,6 +2,7 @@
 
 import type { ClinicOsApiClient } from "@clinic-os/api-client-generated";
 import { Button } from "@clinic-os/ui";
+import { Search } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
 
 import { createCp13ApiClient } from "@/lib/cp13-api-client";
@@ -14,12 +15,18 @@ import {
   type ContinuityOperationsLoadState,
   type ContinuityOperationsScope
 } from "./continuity-operations/loader";
-import { FrontOfficeDayPanel, FrontOfficePatientWorkspacePanel } from "./front-office/components";
+import {
+  FrontOfficeDayPanel,
+  FrontOfficePatientSearchPanel,
+  FrontOfficePatientWorkspacePanel
+} from "./front-office/components";
 import {
   loadFrontOfficeDay,
   loadFrontOfficePatientWorkspace,
+  searchFrontOfficePatients,
   type FrontOfficeDayData,
   type FrontOfficeLoadState,
+  type FrontOfficePatientSearchData,
   type FrontOfficePatientWorkspaceData
 } from "./front-office/loaders";
 import { TreatmentBillingWorkspace } from "./treatment-billing/components";
@@ -38,7 +45,11 @@ import {
 
 export function Cp13Workspace(props: {
   readonly activeSurfaceId: string;
+  readonly onOpenPatient: (patientId: string) => void;
+  readonly onOpenPatientProfile: (patientId: string) => void;
+  readonly onSelectPatient: (patientId: string) => void;
   readonly profile: MeProfile;
+  readonly selectedPatientId: string | null;
 }) {
   const clinicId = props.profile.clinic.id;
   const client = useMemo(() => createCp13ApiClient(clinicId), [clinicId]);
@@ -47,7 +58,14 @@ export function Cp13Workspace(props: {
     return <TreatmentBillingRuntime client={client} />;
   }
   if (isCp13ClinicalSurface(props.activeSurfaceId)) {
-    return <ClinicalRuntime client={client} />;
+    return (
+      <ClinicalRuntime
+        client={client}
+        initialPatientId={
+          props.activeSurfaceId === "patient-profile" ? props.selectedPatientId : null
+        }
+      />
+    );
   }
   if (isCp13OperationsSurface(props.activeSurfaceId)) {
     return (
@@ -65,6 +83,10 @@ export function Cp13Workspace(props: {
     <FrontOfficeRuntime
       allowPatientSelection={props.activeSurfaceId === "patients"}
       client={client}
+      initialPatientId={props.activeSurfaceId === "patients" ? props.selectedPatientId : null}
+      onOpenPatient={props.onOpenPatient}
+      onOpenPatientProfile={props.onOpenPatientProfile}
+      onSelectPatient={props.onSelectPatient}
       timeZone={props.profile.clinic.timezone}
     />
   );
@@ -73,65 +95,107 @@ export function Cp13Workspace(props: {
 function FrontOfficeRuntime(props: {
   readonly client: ClinicOsApiClient;
   readonly allowPatientSelection: boolean;
+  readonly initialPatientId: string | null;
+  readonly onOpenPatient: (patientId: string) => void;
+  readonly onOpenPatientProfile: (patientId: string) => void;
+  readonly onSelectPatient: (patientId: string) => void;
   readonly timeZone?: string;
 }) {
-  const [patientId, setPatientId] = useState<string | null>(null);
+  const [patientId, setPatientId] = useState<string | null>(props.initialPatientId);
   const [dayState, setDayState] = useState<FrontOfficeLoadState<FrontOfficeDayData>>({
     status: "loading"
   });
   const [patientState, setPatientState] = useState<
     FrontOfficeLoadState<FrontOfficePatientWorkspaceData>
   >({ status: "loading" });
+  const [searchState, setSearchState] = useState<
+    FrontOfficeLoadState<FrontOfficePatientSearchData> | { status: "idle" }
+  >({ status: "idle" });
 
   const loadDay = useCallback(async () => {
     setDayState({ status: "loading" });
     setDayState(await loadFrontOfficeDay(props.client));
   }, [props.client]);
+
   const loadPatient = useCallback(async () => {
     if (!patientId) return;
     setPatientState({ status: "loading" });
     setPatientState(await loadFrontOfficePatientWorkspace(props.client, { patientId }));
   }, [patientId, props.client]);
 
-  useEffect(() => void (patientId ? loadPatient() : loadDay()), [loadDay, loadPatient, patientId]);
+  const searchPatients = useCallback(
+    async (query: string) => {
+      setSearchState({ status: "loading" });
+      setSearchState(await searchFrontOfficePatients(props.client, query));
+    },
+    [props.client]
+  );
+
+  useEffect(() => void loadDay(), [loadDay]);
+  useEffect(() => {
+    if (patientId) void loadPatient();
+  }, [loadPatient, patientId]);
+
+  if (!props.allowPatientSelection) {
+    return (
+      <section className="cp13-runtime" data-testid="cp13-front-office-runtime">
+        <FrontOfficeDayPanel
+          onOpenPatient={props.onOpenPatient}
+          onRefresh={loadDay}
+          state={dayState}
+          timeZone={props.timeZone}
+        />
+      </section>
+    );
+  }
 
   return (
-    <section className="cp13-runtime" data-testid="cp13-front-office-runtime">
-      <RuntimeHeader
-        eyebrow="Durable front office"
-        title={patientId ? "Patient preparation" : "Clinic day"}
-        onRefresh={patientId ? loadPatient : loadDay}
+    <section className="cp13-runtime cp13-patient-browser" data-testid="cp13-front-office-runtime">
+      <FrontOfficePatientSearchPanel
+        onSearch={searchPatients}
+        onSelect={(nextPatientId) => {
+          setPatientId(nextPatientId);
+          props.onSelectPatient(nextPatientId);
+        }}
+        selectedPatientId={patientId}
+        state={searchState}
       />
-      {props.allowPatientSelection ? (
-        <ResourceSelectionForm
-          field="patientId"
-          label={patientId ? "Open another patient" : "Open patient preparation"}
-          onSelect={(selection) => setPatientId(selection.primaryId)}
-        />
-      ) : null}
-      {patientId ? (
-        <>
-          <Button onClick={() => setPatientId(null)} variant="secondary">
-            Return to clinic day
-          </Button>
-          <FrontOfficePatientWorkspacePanel state={patientState} />
-        </>
-      ) : (
-        <FrontOfficeDayPanel state={dayState} timeZone={props.timeZone} />
-      )}
+      <div className="cp13-patient-browser__content">
+        {patientId ? (
+          <FrontOfficePatientWorkspacePanel
+            dayState={dayState}
+            onOpenFullProfile={props.onOpenPatientProfile}
+            state={patientState}
+          />
+        ) : (
+          <section className="cp13-patient-welcome" data-testid="cp13-patient-welcome">
+            <Search size={28} strokeWidth={1.5} aria-hidden="true" />
+            <h2>Find a patient</h2>
+            <p>
+              Search by name or phone to see today&apos;s operational context and open the durable
+              patient profile.
+            </p>
+          </section>
+        )}
+      </div>
     </section>
   );
 }
 
-function ClinicalRuntime(props: { readonly client: ClinicOsApiClient }) {
-  const [selection, setSelection] = useState<ResourceSelection | null>(null);
+function ClinicalRuntime(props: {
+  readonly client: ClinicOsApiClient;
+  readonly initialPatientId: string | null;
+}) {
+  const [selection, setSelection] = useState<ResourceSelection | null>(() =>
+    props.initialPatientId ? { primaryId: props.initialPatientId } : null
+  );
   if (!selection) {
     return (
       <section className="cp13-runtime" data-testid="cp13-clinical-selection">
         <RuntimeHeader eyebrow="Durable clinical record" title="Select an authorized patient" />
         <p>
-          Enter a runtime patient identifier. ClinicOS loads only the verified clinic-scoped
-          record and never substitutes or infers a patient.
+          Enter a runtime patient identifier. ClinicOS loads only the verified clinic-scoped record
+          and never substitutes or infers a patient.
         </p>
         <ResourceSelectionForm
           field="patientId"

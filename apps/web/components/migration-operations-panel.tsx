@@ -5,12 +5,23 @@ import {
   AlertTriangle,
   CheckCircle2,
   DatabaseBackup,
+  Download,
+  FileSpreadsheet,
   FileUp,
   RefreshCw,
-  RotateCcw
+  RotateCcw,
+  ShieldCheck,
+  UploadCloud
 } from "lucide-react";
 import Link from "next/link";
-import { type ChangeEvent, type FormEvent, useEffect, useMemo, useState } from "react";
+import {
+  type ChangeEvent,
+  type DragEvent,
+  type FormEvent,
+  useEffect,
+  useMemo,
+  useState
+} from "react";
 
 import {
   getCanonicalMigrationCsvTemplate,
@@ -47,6 +58,8 @@ interface MigrationOperationsPanelProps {
   selectedBatchId: string | null;
 }
 
+type ImportInputMode = "file" | "paste";
+
 const ALL_BATCH_STATES = "all";
 const RESOLVABLE_STATES = new Set<MigrationBatchStatus>([
   "needs_review",
@@ -71,9 +84,11 @@ export function MigrationOperationsPanel({
     ALL_BATCH_STATES
   );
   const [importType, setImportType] = useState<MigrationImportType>("patients");
+  const [inputMode, setInputMode] = useState<ImportInputMode>("file");
   const [sourceSystem, setSourceSystem] = useState("manual_trial");
   const [sourceFileName, setSourceFileName] = useState("synthetic-patients.csv");
   const [csv, setCsv] = useState(() => getCanonicalMigrationCsvTemplate("patients"));
+  const [hasSelectedFile, setHasSelectedFile] = useState(false);
   const [rollbackConfirmed, setRollbackConfirmed] = useState(false);
   const [targetRecordIds, setTargetRecordIds] = useState<Record<string, string>>({});
 
@@ -93,6 +108,9 @@ export function MigrationOperationsPanel({
   const lastCommittedAt = batches
     .flatMap((batch) => (batch.commit.committedAt ? [batch.commit.committedAt] : []))
     .sort((left, right) => right.localeCompare(left))[0];
+  const template = getCanonicalMigrationCsvTemplate(importType);
+  const templateHref = "data:text/csv;charset=utf-8," + encodeURIComponent(template);
+  const recordLabel = operatorRecordLabel(importType);
 
   useEffect(() => {
     setRollbackConfirmed(false);
@@ -102,13 +120,24 @@ export function MigrationOperationsPanel({
     setImportType(nextImportType);
     setSourceFileName("synthetic-" + nextImportType + ".csv");
     setCsv(getCanonicalMigrationCsvTemplate(nextImportType));
+    setHasSelectedFile(false);
+  };
+
+  const readFile = async (file: File) => {
+    setSourceFileName(file.name);
+    setCsv(await file.text());
+    setHasSelectedFile(true);
   };
 
   const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
-    if (!file) return;
-    setSourceFileName(file.name);
-    setCsv(await file.text());
+    if (file) await readFile(file);
+  };
+
+  const handleDrop = async (event: DragEvent<HTMLLabelElement>) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files[0];
+    if (file) await readFile(file);
   };
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
@@ -123,7 +152,7 @@ export function MigrationOperationsPanel({
 
   return (
     <div className="migration-ops" data-testid="cp7-migration-operations">
-      <section className="readiness-grid migration-ops__readiness" aria-label="Import readiness">
+      <section className="import-truth-strip" aria-label="Import readiness">
         <Metric label="Scheduled sync" value="Not configured" />
         <Metric label="Source freshness" value="Unknown" />
         <Metric
@@ -140,144 +169,218 @@ export function MigrationOperationsPanel({
         states={trialStepStates}
       />
 
-      <section className="work-panel" aria-labelledby="migration-stage-title">
-        <div className="panel-heading">
-          <div>
-            <p className="eyebrow">Manual trial path</p>
-            <h2 id="migration-stage-title">Stage a bounded canonical import</h2>
-            <p>
-              Use de-identified CSV until real-data handling is approved. This accepts ClinicOS
-              canonical columns, not an invented Practo export schema, and never writes back to the
-              source system.
-            </p>
-          </div>
-          <span className="state-pill">Maximum 100 rows</span>
+      <section className="import-stage" aria-labelledby="migration-stage-title">
+        <div className="import-stage__main">
+          <header className="import-stage__header">
+            <div>
+              <p className="eyebrow">Step {trialStepNumber(importType)} of 3</p>
+              <h2 id="migration-stage-title">Add {recordLabel} data</h2>
+              <p>
+                Upload a ClinicOS CSV template. We validate every row before anything can be added.
+              </p>
+            </div>
+            <span>Up to 100 rows</span>
+          </header>
+
+          {fixtureMode ? (
+            <div className="inline-alert">
+              <AlertTriangle size={18} aria-hidden="true" />
+              <div>
+                <strong>Preview mode</strong>
+                <span>Connect the local API and database to create a durable import.</span>
+              </div>
+            </div>
+          ) : (
+            <form className="migration-import-form import-form" onSubmit={handleSubmit}>
+              <div className="import-input-tabs" role="tablist" aria-label="How to add CSV data">
+                <button
+                  aria-controls="migration-file-panel"
+                  aria-selected={inputMode === "file"}
+                  data-testid="migration-input-tab-file"
+                  onClick={() => setInputMode("file")}
+                  role="tab"
+                  type="button"
+                >
+                  <FileSpreadsheet size={16} strokeWidth={1.75} aria-hidden="true" />
+                  Upload file
+                </button>
+                <button
+                  aria-controls="migration-paste-panel"
+                  aria-selected={inputMode === "paste"}
+                  data-testid="migration-input-tab-paste"
+                  onClick={() => setInputMode("paste")}
+                  role="tab"
+                  type="button"
+                >
+                  Paste CSV
+                </button>
+              </div>
+
+              {inputMode === "file" ? (
+                <div
+                  aria-labelledby="migration-file-tab"
+                  className="import-file-panel"
+                  id="migration-file-panel"
+                  role="tabpanel"
+                >
+                  <label
+                    className="import-dropzone"
+                    onDragOver={(event) => event.preventDefault()}
+                    onDrop={(event) => void handleDrop(event)}
+                  >
+                    <UploadCloud size={28} strokeWidth={1.5} aria-hidden="true" />
+                    <strong>{hasSelectedFile ? sourceFileName : "Drop your CSV here"}</strong>
+                    <span>
+                      {hasSelectedFile
+                        ? "File loaded and ready to validate"
+                        : "or choose a file from this device"}
+                    </span>
+                    <span className="import-dropzone__button">Choose CSV file</span>
+                    <input
+                      accept=".csv,text/csv"
+                      className="sr-only"
+                      data-testid="migration-file-input"
+                      disabled={actionBusy}
+                      onChange={(event) => void handleFile(event)}
+                      type="file"
+                    />
+                  </label>
+                  <a className="import-template-link" download={sourceFileName} href={templateHref}>
+                    <Download size={15} strokeWidth={1.75} aria-hidden="true" />
+                    Download {recordLabel} template
+                  </a>
+                </div>
+              ) : (
+                <label
+                  className="migration-import-form__csv import-paste-panel"
+                  id="migration-paste-panel"
+                  role="tabpanel"
+                >
+                  <span>Paste ClinicOS-formatted CSV</span>
+                  <textarea
+                    data-testid="migration-csv"
+                    disabled={actionBusy}
+                    onChange={(event) => setCsv(event.target.value)}
+                    required
+                    rows={8}
+                    value={csv}
+                  />
+                  <small>
+                    Use synthetic or explicitly approved clinic data. Appointment source is kept as
+                    its own field and is never inferred.
+                  </small>
+                </label>
+              )}
+
+              <label className="import-name-field">
+                <span>Import name</span>
+                <input
+                  data-testid="migration-source-system"
+                  disabled={actionBusy}
+                  maxLength={120}
+                  onChange={(event) => setSourceSystem(event.target.value)}
+                  placeholder="For example: Healthy Roots trial"
+                  required
+                  value={sourceSystem}
+                />
+                <small>Use the same name for patient, practitioner, and appointment steps.</small>
+              </label>
+
+              <details className="import-advanced">
+                <summary>Advanced options</summary>
+                <div>
+                  <label>
+                    <span>Record type</span>
+                    <select
+                      data-testid="migration-import-type"
+                      disabled={actionBusy}
+                      onChange={(event) =>
+                        handleImportTypeChange(event.target.value as MigrationImportType)
+                      }
+                      value={importType}
+                    >
+                      {Object.entries(MIGRATION_IMPORT_TYPE_LABELS).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
+                        </option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    <span>Source file name</span>
+                    <input
+                      disabled={actionBusy}
+                      maxLength={240}
+                      onChange={(event) => setSourceFileName(event.target.value)}
+                      value={sourceFileName}
+                    />
+                  </label>
+                </div>
+              </details>
+
+              <div className="surface-actions migration-import-form__actions">
+                <Button
+                  data-testid="migration-stage-batch"
+                  disabled={actionBusy || !sourceSystem.trim() || !csv.trim()}
+                  icon={<FileUp size={16} />}
+                  type="submit"
+                >
+                  Validate file
+                </Button>
+                <Button
+                  disabled={actionBusy}
+                  onClick={() => {
+                    setCsv(template);
+                    setHasSelectedFile(false);
+                  }}
+                  type="button"
+                  variant="ghost"
+                >
+                  Reset template
+                </Button>
+              </div>
+            </form>
+          )}
         </div>
 
-        {fixtureMode ? (
-          <div className="inline-alert">
-            <AlertTriangle size={18} aria-hidden="true" />
-            <div>
-              <strong>Fixture mode cannot create durable imports</strong>
-              <span>Disable the CP7 fixture flag and connect the local API/Postgres stack.</span>
-            </div>
-          </div>
-        ) : (
-          <form className="migration-import-form" onSubmit={handleSubmit}>
-            <label>
-              <span>Record type</span>
-              <select
-                data-testid="migration-import-type"
-                disabled={actionBusy}
-                onChange={(event) =>
-                  handleImportTypeChange(event.target.value as MigrationImportType)
-                }
-                value={importType}
-              >
-                {Object.entries(MIGRATION_IMPORT_TYPE_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              <span>Source system key</span>
-              <input
-                data-testid="migration-source-system"
-                disabled={actionBusy}
-                maxLength={120}
-                onChange={(event) => setSourceSystem(event.target.value)}
-                required
-                value={sourceSystem}
-              />
-              <small>
-                Stable identity such as manual_trial; this is not a vendor success claim.
-              </small>
-            </label>
-            <label>
-              <span>CSV file name</span>
-              <input
-                disabled={actionBusy}
-                maxLength={240}
-                onChange={(event) => setSourceFileName(event.target.value)}
-                value={sourceFileName}
-              />
-            </label>
-            <label>
-              <span>Choose CSV</span>
-              <input
-                accept=".csv,text/csv"
-                disabled={actionBusy}
-                onChange={(event) => void handleFile(event)}
-                type="file"
-              />
-            </label>
-            <label className="migration-import-form__csv">
-              <span>Canonical CSV preview</span>
-              <textarea
-                data-testid="migration-csv"
-                disabled={actionBusy}
-                onChange={(event) => setCsv(event.target.value)}
-                required
-                rows={7}
-                value={csv}
-              />
-              <small>
-                Appointment source means acquisition channel; keep it explicit rather than inferring
-                it from the source-system key.
-              </small>
-            </label>
-            <div className="surface-actions migration-import-form__actions">
-              <Button
-                data-testid="migration-stage-batch"
-                disabled={actionBusy || !sourceSystem.trim() || !csv.trim()}
-                icon={<FileUp size={16} />}
-                type="submit"
-              >
-                Validate and stage
-              </Button>
-              <Button
-                disabled={actionBusy}
-                onClick={() => setCsv(getCanonicalMigrationCsvTemplate(importType))}
-                type="button"
-                variant="ghost"
-              >
-                Restore synthetic template
-              </Button>
-            </div>
-          </form>
-        )}
+        <aside className="import-preflight" aria-labelledby="import-preflight-title">
+          <ShieldCheck size={21} strokeWidth={1.6} aria-hidden="true" />
+          <h3 id="import-preflight-title">Before you continue</h3>
+          <ul>
+            <li>
+              <CheckCircle2 size={16} aria-hidden="true" />
+              CSV format only
+            </li>
+            <li>
+              <CheckCircle2 size={16} aria-hidden="true" />
+              Maximum 100 rows
+            </li>
+            <li>
+              <CheckCircle2 size={16} aria-hidden="true" />
+              Duplicates are flagged for review
+            </li>
+            <li>
+              <CheckCircle2 size={16} aria-hidden="true" />
+              Nothing changes until you commit
+            </li>
+          </ul>
+          <p>
+            This is a manual import. ClinicOS is not connected to Practo and does not write back to
+            it.
+          </p>
+        </aside>
       </section>
 
-      <section className="work-panel" aria-labelledby="migration-runs-title">
-        <div className="panel-heading">
-          <div>
-            <h2 id="migration-runs-title">Import runs</h2>
-            <p>Select any durable batch state; actions reload server truth after completion.</p>
-          </div>
-          <div className="surface-actions">
-            <label className="migration-filter">
-              <span className="sr-only">Filter import runs</span>
-              <select
-                disabled={actionBusy}
-                onChange={(event) =>
-                  setStatusFilter(
-                    event.target.value as MigrationBatchStatus | typeof ALL_BATCH_STATES
-                  )
-                }
-                value={statusFilter}
-              >
-                <option value={ALL_BATCH_STATES}>All states</option>
-                {Object.entries(MIGRATION_BATCH_STATUS_LABELS).map(([value, label]) => (
-                  <option key={value} value={value}>
-                    {label}
-                  </option>
-                ))}
-              </select>
-            </label>
+      {selectedBatch ? (
+        <section className="import-review-panel" aria-labelledby="migration-review-title">
+          <header className="import-review-panel__header">
+            <div>
+              <p className="eyebrow">Review before commit</p>
+              <h2 id="migration-review-title">Validated import</h2>
+              <p>Resolve flagged rows, then commit only the records marked ready.</p>
+            </div>
             <Button
-              aria-label="Refresh import runs"
+              aria-label="Refresh import review"
               disabled={actionBusy}
               icon={<RefreshCw size={16} />}
               onClick={() => void onRefresh()}
@@ -286,58 +389,111 @@ export function MigrationOperationsPanel({
             >
               Refresh
             </Button>
-          </div>
-        </div>
+          </header>
+          <BatchDetail
+            actionBusy={actionBusy}
+            batch={selectedBatch}
+            eligibleDoctors={eligibleDoctors}
+            fixtureMode={fixtureMode}
+            onCommit={onCommit}
+            onResolve={onResolve}
+            onRollback={onRollback}
+            rollbackConfirmed={rollbackConfirmed}
+            setRollbackConfirmed={setRollbackConfirmed}
+            setTargetRecordIds={setTargetRecordIds}
+            targetRecordIds={targetRecordIds}
+          />
+        </section>
+      ) : (
+        <section className="import-review-empty">
+          <FileSpreadsheet size={24} strokeWidth={1.5} aria-hidden="true" />
+          <strong>Your validated rows will appear here.</strong>
+          <span>Upload a file to begin the review.</span>
+        </section>
+      )}
 
+      <details className="import-history">
+        <summary>
+          <span>Import history</span>
+          <span>
+            {filteredBatches.length} run{filteredBatches.length === 1 ? "" : "s"}
+          </span>
+        </summary>
+        <div className="import-history__controls">
+          <label className="migration-filter">
+            <span className="sr-only">Filter import runs</span>
+            <select
+              disabled={actionBusy}
+              onChange={(event) =>
+                setStatusFilter(
+                  event.target.value as MigrationBatchStatus | typeof ALL_BATCH_STATES
+                )
+              }
+              value={statusFilter}
+            >
+              <option value={ALL_BATCH_STATES}>All states</option>
+              {Object.entries(MIGRATION_BATCH_STATUS_LABELS).map(([value, label]) => (
+                <option key={value} value={value}>
+                  {label}
+                </option>
+              ))}
+            </select>
+          </label>
+          <Button
+            aria-label="Refresh import runs"
+            disabled={actionBusy}
+            icon={<RefreshCw size={16} />}
+            onClick={() => void onRefresh()}
+            size="sm"
+            variant="ghost"
+          >
+            Refresh
+          </Button>
+        </div>
         {filteredBatches.length === 0 ? (
           <div className="empty-state">
             <span>No import runs match this state.</span>
           </div>
         ) : (
-          <div className="migration-run-layout">
-            <div className="migration-run-list" aria-label="Import runs">
-              {filteredBatches.map((batch) => (
-                <button
-                  className={
-                    batch.id === selectedBatch?.id
-                      ? "migration-run-card migration-run-card--active"
-                      : "migration-run-card"
-                  }
-                  key={batch.id}
-                  onClick={() => onSelectBatch(batch.id)}
-                  type="button"
-                >
-                  <span>
-                    <strong>{MIGRATION_IMPORT_TYPE_LABELS[batch.importType]}</strong>
-                    <small>{batch.sourceSystem}</small>
-                  </span>
-                  <span className="state-pill">{MIGRATION_BATCH_STATUS_LABELS[batch.status]}</span>
-                  <small>
-                    {batch.counts.total} rows · updated {formatTimestamp(batch.updatedAt)}
-                  </small>
-                </button>
-              ))}
-            </div>
-            {selectedBatch ? (
-              <BatchDetail
-                actionBusy={actionBusy}
-                batch={selectedBatch}
-                eligibleDoctors={eligibleDoctors}
-                fixtureMode={fixtureMode}
-                onCommit={onCommit}
-                onResolve={onResolve}
-                onRollback={onRollback}
-                rollbackConfirmed={rollbackConfirmed}
-                setRollbackConfirmed={setRollbackConfirmed}
-                setTargetRecordIds={setTargetRecordIds}
-                targetRecordIds={targetRecordIds}
-              />
-            ) : null}
+          <div className="migration-run-list" aria-label="Import runs">
+            {filteredBatches.map((batch) => (
+              <button
+                className={
+                  batch.id === selectedBatch?.id
+                    ? "migration-run-card migration-run-card--active"
+                    : "migration-run-card"
+                }
+                key={batch.id}
+                onClick={() => onSelectBatch(batch.id)}
+                type="button"
+              >
+                <span>
+                  <strong>{MIGRATION_IMPORT_TYPE_LABELS[batch.importType]}</strong>
+                  <small>{batch.sourceSystem}</small>
+                </span>
+                <span className="state-pill">{MIGRATION_BATCH_STATUS_LABELS[batch.status]}</span>
+                <small>
+                  {batch.counts.total} rows · updated {formatTimestamp(batch.updatedAt)}
+                </small>
+              </button>
+            ))}
           </div>
         )}
-      </section>
+      </details>
     </div>
   );
+}
+
+function operatorRecordLabel(importType: MigrationImportType) {
+  if (importType === "patients") return "patient";
+  if (importType === "practitioners") return "practitioner";
+  return "appointment";
+}
+
+function trialStepNumber(importType: MigrationImportType) {
+  if (importType === "patients") return 1;
+  if (importType === "practitioners") return 2;
+  return 3;
 }
 
 function BatchDetail({
@@ -375,7 +531,7 @@ function BatchDetail({
   );
 
   return (
-    <div className="migration-batch-detail" data-testid="migration-selected-batch">
+    <div className="migration-batch-detail import-review" data-testid="migration-selected-batch">
       <div className="cp7-card__heading">
         <div>
           <strong>{MIGRATION_IMPORT_TYPE_LABELS[batch.importType]}</strong>
@@ -397,7 +553,7 @@ function BatchDetail({
         <Metric label="Failed" value={String(batch.counts.failed)} />
       </div>
 
-      <div className="cp7-card-list">
+      <div className="cp7-card-list import-review__rows" aria-label="Validated import rows">
         {batch.rows.map((row) => {
           const conflict = openConflictsByRow.get(row.id);
           return (
@@ -431,7 +587,7 @@ function BatchDetail({
         })}
       </div>
 
-      <aside className="activation-card migration-batch-actions">
+      <aside className="activation-card migration-batch-actions import-commit-gate">
         <DatabaseBackup size={20} aria-hidden="true" />
         <strong>Reviewed commit gate</strong>
         <p>
@@ -648,19 +804,15 @@ function TrialGuide({
   const appointmentComplete = states.appointments === "complete";
 
   return (
-    <section className="work-panel migration-trial-guide" aria-labelledby="migration-trial-title">
-      <div className="panel-heading">
+    <section className="migration-trial-guide" aria-labelledby="migration-trial-title">
+      <header className="migration-trial-guide__header">
         <div>
           <p className="eyebrow">Guided clinic trial</p>
-          <h2 id="migration-trial-title">Build one appointment from source evidence</h2>
-          <p>
-            Use one stable source-system key across all three steps. Progress reflects committed
-            rows in the visible durable import history; exact references are revalidated when the
-            appointment is staged.
-          </p>
+          <h2 id="migration-trial-title">Build one working appointment</h2>
+          <p>Import in this order so ClinicOS can connect each record safely.</p>
         </div>
-        <span className="state-pill">{sourceSystem.trim() || "Enter a source key"}</span>
-      </div>
+        <span>{sourceSystem.trim() || "Name this import"}</span>
+      </header>
       <div className="migration-trial-steps">
         {TRIAL_STEPS.map((step, index) => {
           const state = states[step.importType];
@@ -687,9 +839,9 @@ function TrialGuide({
                 disabled={actionBusy}
                 onClick={() => onSelectImportType(step.importType)}
                 size="sm"
-                variant={importType === step.importType ? "primary" : "secondary"}
+                variant={importType === step.importType ? "primary" : "ghost"}
               >
-                Prepare {step.label.toLowerCase()}
+                {importType === step.importType ? "Current step" : "Open step"}
               </Button>
             </article>
           );

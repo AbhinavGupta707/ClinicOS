@@ -1,8 +1,20 @@
 "use client";
 
 import { Button } from "@clinic-os/ui";
-import { Menu, RefreshCw, X } from "lucide-react";
+import {
+  CalendarDays,
+  CheckCircle2,
+  Leaf,
+  Menu,
+  MoreHorizontal,
+  Plus,
+  RefreshCw,
+  Search,
+  UsersRound,
+  X
+} from "lucide-react";
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useState } from "react";
 
 import { AiReviewWorkflow, isCp8WorkflowSurface } from "@/components/ai-review-workflow";
@@ -28,8 +40,14 @@ import {
   canAccessSurface,
   getSurface,
   getSurfaceStateLabel,
-  getVisibleSurfaces
+  getVisibleSurfaces,
+  type SurfaceRegistration
 } from "@/lib/navigation";
+import {
+  readPatientNavigationHandoff,
+  rememberPatientNavigation,
+  type PatientNavigationHandoff
+} from "@/lib/patient-navigation-handoff";
 import { ROLE_LABELS } from "@/lib/roles";
 
 interface ClinicShellProps {
@@ -43,10 +61,49 @@ function isAuthenticatedState(state: ShellMeState): state is AuthenticatedMeStat
   return state.status === "authenticated";
 }
 
+const NAVIGATION_GROUPS: ReadonlyArray<{
+  readonly label: string;
+  readonly surfaceIds: readonly string[];
+}> = [
+  { label: "Today", surfaceIds: ["today"] },
+  { label: "Patients", surfaceIds: ["patients", "patient-profile", "intake", "consent"] },
+  { label: "Schedule", surfaceIds: ["appointments", "returning-prep", "encounter"] },
+  { label: "Inbox", surfaceIds: ["lead-inbox", "tasks"] },
+  {
+    label: "Operations",
+    surfaceIds: [
+      "checkout",
+      "lab",
+      "operations",
+      "integrations",
+      "migration-review",
+      "owner-control"
+    ]
+  }
+];
+
+function groupNavigationSurfaces(surfaces: readonly SurfaceRegistration[]) {
+  const surfaceById = new Map(surfaces.map((surface) => [surface.id, surface]));
+  const groupedIds = new Set(NAVIGATION_GROUPS.flatMap((group) => group.surfaceIds));
+  const groups = NAVIGATION_GROUPS.map((group) => ({
+    label: group.label,
+    surfaces: group.surfaceIds.flatMap((surfaceId) => {
+      const surface = surfaceById.get(surfaceId);
+      return surface ? [surface] : [];
+    })
+  })).filter((group) => group.surfaces.length > 0);
+  const remaining = surfaces.filter((surface) => !groupedIds.has(surface.id));
+  return remaining.length > 0 ? [...groups, { label: "More", surfaces: remaining }] : groups;
+}
+
 export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
+  const router = useRouter();
   const [meState, setMeState] = useState<ShellMeState>({ status: "loading" });
   const [activeSurfaceId, setActiveSurfaceId] = useState(initialSurfaceId);
   const [navOpen, setNavOpen] = useState(false);
+  const [patientHandoff, setPatientHandoff] = useState<PatientNavigationHandoff | null>(() =>
+    readPatientNavigationHandoff()
+  );
 
   const refreshMe = () => {
     setMeState({ status: "loading" });
@@ -75,6 +132,11 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
     return getVisibleSurfaces(meState.profile.roles);
   }, [meState]);
 
+  const navigationGroups = useMemo(
+    () => groupNavigationSurfaces(visibleSurfaces),
+    [visibleSurfaces]
+  );
+
   if (meState.status === "loading") {
     return <ShellLoading />;
   }
@@ -91,6 +153,11 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
 
   const profile = meState.profile;
   const roleLabels = profile.roles.map((role) => ROLE_LABELS[role]);
+  const selectedPatientId =
+    patientHandoff?.clinicId === profile.clinic.id ? patientHandoff.patientId : null;
+  const rememberSelectedPatient = (patientId: string) => {
+    setPatientHandoff(rememberPatientNavigation(profile.clinic.id, patientId));
+  };
 
   return (
     <div className="clinic-shell">
@@ -100,13 +167,7 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
       >
         <div className="nav-brand">
           <Link className="brand-mark" href="/" onClick={() => setActiveSurfaceId("today")}>
-            <span className="brand-mark__symbol" aria-hidden="true">
-              C
-            </span>
-            <span>
-              <strong>ClinicOS</strong>
-              <small>{profile.clinic.name}</small>
-            </span>
+            <strong>ClinicOS</strong>
           </Link>
           <Button
             aria-label="Close navigation"
@@ -121,30 +182,45 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
         </div>
 
         <nav className="nav-list">
-          {visibleSurfaces.map((surface) => {
-            const Icon = surface.icon;
-            const active = surface.id === activeSurface.id;
+          {navigationGroups.map((group) => (
+            <section className="nav-section" key={group.label} aria-label={group.label}>
+              <p className="nav-section__label">{group.label}</p>
+              {group.surfaces.map((surface) => {
+                const Icon = surface.icon;
+                const active = surface.id === activeSurface.id;
 
-            return (
-              <Link
-                aria-current={active ? "page" : undefined}
-                className={active ? "nav-item nav-item--active" : "nav-item"}
-                href={surface.href}
-                key={surface.id}
-                onClick={() => {
-                  setActiveSurfaceId(surface.id);
-                  setNavOpen(false);
-                }}
-              >
-                <Icon size={18} aria-hidden="true" />
-                <span>{surface.label}</span>
-                {surface.availability !== "active" ? (
-                  <span className="nav-status">{getSurfaceStateLabel(surface)}</span>
-                ) : null}
-              </Link>
-            );
-          })}
+                return (
+                  <Link
+                    aria-current={active ? "page" : undefined}
+                    className={active ? "nav-item nav-item--active" : "nav-item"}
+                    href={surface.href}
+                    key={surface.id}
+                    onClick={() => {
+                      setActiveSurfaceId(surface.id);
+                      setNavOpen(false);
+                    }}
+                  >
+                    <Icon size={18} strokeWidth={1.75} aria-hidden="true" />
+                    <span>{surface.label}</span>
+                    {surface.availability !== "active" ? (
+                      <span className="nav-status" title={getSurfaceStateLabel(surface)}>
+                        Unavailable
+                      </span>
+                    ) : null}
+                  </Link>
+                );
+              })}
+            </section>
+          ))}
         </nav>
+
+        <footer className="nav-profile">
+          <span aria-hidden="true">{profile.user.displayName.slice(0, 1).toUpperCase()}</span>
+          <div>
+            <strong>{profile.user.displayName}</strong>
+            <small>{roleLabels[0] ?? "Clinic team"}</small>
+          </div>
+        </footer>
       </aside>
 
       <div className="clinic-frame">
@@ -160,26 +236,36 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
             >
               Menu
             </Button>
-            <div>
-              <p className="topbar-kicker">{profile.tenant.name}</p>
-              <h2>{activeSurface.label}</h2>
+            <div className="clinic-context">
+              <Leaf size={22} strokeWidth={1.65} aria-hidden="true" />
+              <strong>{profile.clinic.name}</strong>
             </div>
           </div>
           <div className="topbar-right">
-            <div className="role-chips" aria-label="Current roles">
-              {roleLabels.map((label) => (
-                <span key={label}>{label}</span>
-              ))}
+            <div className="session-freshness" aria-label="Clinic session status">
+              <CheckCircle2 size={17} strokeWidth={1.75} aria-hidden="true" />
+              <span>Clinic session active</span>
             </div>
             <Button
               aria-label="Refresh session context"
               icon={<RefreshCw size={16} />}
               onClick={refreshMe}
               size="sm"
-              variant="secondary"
+              variant="ghost"
             >
-              Refresh
+              <span className="sr-only">Refresh</span>
             </Button>
+            <Link
+              className="button-link button-link--primary topbar-action"
+              href="/surface/appointments"
+            >
+              <Plus size={17} strokeWidth={1.75} aria-hidden="true" />
+              New appointment
+            </Link>
+            <Link className="button-link topbar-action" href="/surface/patients">
+              <Search size={17} strokeWidth={1.75} aria-hidden="true" />
+              Find patient
+            </Link>
           </div>
         </header>
 
@@ -189,8 +275,20 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
           ) : isCp13WorkspaceSurface(activeSurface.id) ? (
             <Cp13Workspace
               activeSurfaceId={activeSurface.id}
-              key={activeSurface.id}
+              key={activeSurface.id + ":" + (selectedPatientId ?? "")}
+              onOpenPatient={(patientId) => {
+                rememberSelectedPatient(patientId);
+                setActiveSurfaceId("patients");
+                router.push("/surface/patients");
+              }}
+              onOpenPatientProfile={(patientId) => {
+                rememberSelectedPatient(patientId);
+                setActiveSurfaceId("patient-profile");
+                router.push("/surface/patient-profile");
+              }}
+              onSelectPatient={rememberSelectedPatient}
               profile={profile}
+              selectedPatientId={selectedPatientId}
             />
           ) : isCp2WorkflowSurface(activeSurface.id) ? (
             <AssistantWorkflow
@@ -220,6 +318,38 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
             <SurfaceView profile={profile} surface={activeSurface} />
           )}
         </main>
+
+        <nav className="mobile-bottom-nav" aria-label="Primary mobile navigation">
+          <Link aria-current={activeSurface.id === "today" ? "page" : undefined} href="/">
+            <CalendarDays size={21} strokeWidth={1.75} aria-hidden="true" />
+            <span>Today</span>
+          </Link>
+          <Link
+            aria-current={activeSurface.id === "patients" ? "page" : undefined}
+            href="/surface/patients"
+          >
+            <UsersRound size={21} strokeWidth={1.75} aria-hidden="true" />
+            <span>Patients</span>
+          </Link>
+          <Link
+            aria-current={activeSurface.id === "appointments" ? "page" : undefined}
+            href="/surface/appointments"
+          >
+            <CalendarDays size={21} strokeWidth={1.75} aria-hidden="true" />
+            <span>Schedule</span>
+          </Link>
+          <Link
+            aria-current={activeSurface.id === "lead-inbox" ? "page" : undefined}
+            href="/surface/lead-inbox"
+          >
+            <Search size={21} strokeWidth={1.75} aria-hidden="true" />
+            <span>Inbox</span>
+          </Link>
+          <button onClick={() => setNavOpen(true)} type="button">
+            <MoreHorizontal size={22} strokeWidth={1.75} aria-hidden="true" />
+            <span>More</span>
+          </button>
+        </nav>
       </div>
     </div>
   );
