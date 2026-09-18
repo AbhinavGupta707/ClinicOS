@@ -13,6 +13,19 @@ import {
   validatePatientImportRow
 } from "../src/index.ts";
 
+test("patient migration requires a stable external reference", () => {
+  const [draft] = parsePatientMigrationCsv(
+    ["external_reference,full_name,phone", ",Asha Import,+91 98765 11111"].join("\n")
+  );
+
+  const invalid = validatePatientImportRow(draft);
+  assert.equal(invalid.normalizedRecord, null);
+  assert.deepEqual(
+    invalid.validationErrors.map((issue) => issue.field),
+    ["externalReference"]
+  );
+});
+
 test("patient migration CSV validation separates bad rows from good rows", () => {
   const rows = parsePatientMigrationCsv(
     [

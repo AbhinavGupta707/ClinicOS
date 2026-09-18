@@ -161,7 +161,11 @@ import {
   type ScopedApiRequestGuardsPort
 } from "./api-request-guards.ts";
 import { createRepositoryPortTransactionLease } from "./modules/core/scoped-repository-port.ts";
-import { DueGenerationConfigurationError, DueGenerationInputError } from "./repositories.ts";
+import {
+  assertStableMigrationExternalReferences,
+  DueGenerationConfigurationError,
+  DueGenerationInputError
+} from "./repositories.ts";
 
 const DEFAULT_DUE_GENERATION_BATCH_SIZE = 25;
 const MAX_DUE_GENERATION_BATCH_SIZE = 25;
@@ -1792,6 +1796,7 @@ export class PostgresClinicOperationsRepository
     scope: RepositoryScope,
     input: CreateMigrationBatchInput
   ): Promise<MigrationBatchDetail> {
+    assertStableMigrationExternalReferences(input);
     return this.#withRls(scope, async (client) => {
       const batchResult = await client.query<MigrationBatchRow>(
         `
@@ -2257,9 +2262,37 @@ export class PostgresClinicOperationsRepository
           readyRows.flatMap((row) => {
             if (conflictingAppointmentRowIds.has(row.id)) return [];
             const targetRecordType = migrationTargetRecordType(row.normalizedRecord);
-            return row.externalRecordId && targetRecordType
-              ? [[`${targetRecordType}\u0000${row.externalRecordId}`, { externalRecordId: row.externalRecordId, targetRecordType }] as const]
-              : [];
+            const references: Array<
+              readonly [
+                string,
+                { externalRecordId: string; targetRecordType: MigrationTargetRecordType }
+              ]
+            > = [];
+            if (row.externalRecordId && targetRecordType) {
+              references.push([
+                `${targetRecordType}\u0000${row.externalRecordId}`,
+                { externalRecordId: row.externalRecordId, targetRecordType }
+              ]);
+            }
+            if (row.normalizedRecord?.recordType === "appointment") {
+              references.push(
+                [
+                  `patient\u0000${row.normalizedRecord.patientExternalReference}`,
+                  {
+                    externalRecordId: row.normalizedRecord.patientExternalReference,
+                    targetRecordType: "patient"
+                  }
+                ],
+                [
+                  `provider_user\u0000${row.normalizedRecord.providerExternalReference}`,
+                  {
+                    externalRecordId: row.normalizedRecord.providerExternalReference,
+                    targetRecordType: "provider_user"
+                  }
+                ]
+              );
+            }
+            return references;
           })
         ).values()
       ].sort(compareImportedRecordReferenceLocks);
@@ -2508,8 +2541,17 @@ export class PostgresClinicOperationsRepository
             batchId,
             link
           );
+        const hasCommittedAppointmentDependency =
+          link.targetRecordType === "provider_user" &&
+          (await this.#providerLinkHasCommittedAppointmentDependencyInTransaction(
+            client,
+            scope,
+            batchId,
+            link
+          ));
         const rollbackBlocked =
           hasLaterReconciliation ||
+          hasCommittedAppointmentDependency ||
           (link.linkType === "created_from_import" &&
             (link.targetRecordType === "appointment"
               ? await this.#appointmentHasRollbackBlockingDependenciesInTransaction(
@@ -2528,6 +2570,8 @@ export class PostgresClinicOperationsRepository
           const rollbackBlockedReason =
             hasLaterReconciliation
               ? "A later committed migration reconciliation depends on this canonical external mapping."
+              : hasCommittedAppointmentDependency
+                ? "A committed imported appointment depends on this practitioner mapping."
               : link.targetRecordType === "appointment"
               ? "Imported appointment has been changed or has downstream operational dependencies."
               : link.targetRecordType === "patient"
@@ -11424,6 +11468,42 @@ export class PostgresClinicOperationsRepository
         link.targetRecordType,
         link.targetRecordId
       ]
+    );
+    return result.rows[0]?.has_dependency === true;
+  }
+
+  async #providerLinkHasCommittedAppointmentDependencyInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batchId: UUID,
+    link: ImportedRecordLinkRecord
+  ): Promise<boolean> {
+    const result = await client.query<{ has_dependency: boolean }>(
+      `
+        select exists (
+          select 1
+          from migration_rows
+          join migration_batches
+            on migration_batches.tenant_id = migration_rows.tenant_id
+           and migration_batches.clinic_id = migration_rows.clinic_id
+           and migration_batches.id = migration_rows.batch_id
+          join imported_record_links as appointment_link
+            on appointment_link.tenant_id = migration_rows.tenant_id
+           and appointment_link.clinic_id = migration_rows.clinic_id
+           and appointment_link.source_system = migration_batches.source_system
+           and appointment_link.external_record_id = migration_rows.external_record_id
+           and appointment_link.target_record_type = 'appointment'
+           and appointment_link.verification_status <> 'rolled_back'
+          where migration_rows.tenant_id = $1
+            and migration_rows.clinic_id = $2
+            and migration_rows.batch_id <> $3
+            and migration_rows.status = 'committed'
+            and migration_batches.source_system = $4
+            and migration_rows.normalized_record ->> 'recordType' = 'appointment'
+            and migration_rows.normalized_record ->> 'providerExternalReference' = $5
+        ) as has_dependency
+      `,
+      [scope.tenantId, scope.clinicId, batchId, link.sourceSystem, link.externalRecordId]
     );
     return result.rows[0]?.has_dependency === true;
   }

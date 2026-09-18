@@ -645,6 +645,117 @@ test("source-independent practitioner and appointment imports require exact mapp
   assert.equal(repeatedBlockedRollback.body.blockedLinks.length, 1);
 });
 
+test("practitioner mapping rollback waits for dependent imported appointments", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const dependencies: OperationsDependencies = { repository };
+  const assistant = await operationsContext("seed-assistant", "practitioner-rollback-dependency");
+  const sourceSystem = "practitioner_rollback_dependency_test";
+
+  const practitionerBatch = await createMigrationBatch(assistant, dependencies, {
+    importType: "practitioners",
+    sourceSystem,
+    rows: [
+      {
+        externalReference: "dependency-doctor-1",
+        displayName: "Dependency Doctor"
+      }
+    ]
+  });
+  await resolveMigrationBatchRow(
+    assistant,
+    dependencies,
+    practitionerBatch.body.batch.id,
+    practitionerBatch.body.rows[0].id,
+    {
+      action: "link_existing",
+      targetRecordId: CHECKPOINT1_SEED_IDS.users.doctor,
+      note: "Confirmed for rollback dependency coverage."
+    }
+  );
+  await commitMigrationBatch(
+    { ...assistant, idempotencyKey: "dependency-practitioner-commit" },
+    dependencies,
+    practitionerBatch.body.batch.id,
+    {}
+  );
+
+  const patientBatch = await createMigrationBatch(assistant, dependencies, {
+    importType: "patients",
+    sourceSystem,
+    rows: [
+      {
+        externalReference: "dependency-patient-1",
+        fullName: "Dependency Patient",
+        phone: "+91 99900 08881"
+      }
+    ]
+  });
+  await commitMigrationBatch(
+    { ...assistant, idempotencyKey: "dependency-patient-commit" },
+    dependencies,
+    patientBatch.body.batch.id,
+    {}
+  );
+
+  const appointmentBatch = await createMigrationBatch(assistant, dependencies, {
+    importType: "appointments",
+    sourceSystem,
+    rows: [
+      {
+        externalReference: "dependency-appointment-1",
+        patientExternalReference: "dependency-patient-1",
+        providerExternalReference: "dependency-doctor-1",
+        appointmentTypeCode: "consultation",
+        startAt: "2099-03-01T09:00:00.000Z",
+        endAt: "2099-03-01T09:30:00.000Z",
+        status: "booked",
+        source: "practo"
+      }
+    ]
+  });
+  await commitMigrationBatch(
+    { ...assistant, idempotencyKey: "dependency-appointment-commit" },
+    dependencies,
+    appointmentBatch.body.batch.id,
+    {}
+  );
+
+  const blockedPractitionerRollback = await rollbackMigrationBatch(
+    { ...assistant, idempotencyKey: "dependency-practitioner-blocked" },
+    dependencies,
+    practitionerBatch.body.batch.id,
+    {}
+  );
+  assert.equal(blockedPractitionerRollback.body.batch.state, "partially_committed");
+  assert.equal(blockedPractitionerRollback.body.blockedLinks.length, 1);
+  assert.match(
+    String(blockedPractitionerRollback.body.blockedLinks[0].metadata.rollbackBlockedReason),
+    /appointment depends on this practitioner mapping/
+  );
+
+  const appointmentRollback = await rollbackMigrationBatch(
+    { ...assistant, idempotencyKey: "dependency-appointment-rollback" },
+    dependencies,
+    appointmentBatch.body.batch.id,
+    {}
+  );
+  assert.equal(appointmentRollback.body.batch.state, "rolled_back");
+  const patientRollback = await rollbackMigrationBatch(
+    { ...assistant, idempotencyKey: "dependency-patient-rollback" },
+    dependencies,
+    patientBatch.body.batch.id,
+    {}
+  );
+  assert.equal(patientRollback.body.batch.state, "rolled_back");
+  const practitionerRollback = await rollbackMigrationBatch(
+    { ...assistant, idempotencyKey: "dependency-practitioner-cleanup" },
+    dependencies,
+    practitionerBatch.body.batch.id,
+    {}
+  );
+  assert.equal(practitionerRollback.body.batch.state, "rolled_back");
+});
+
 test("migration creation requires exactly one bounded input source", async () => {
   const dependencies: OperationsDependencies = {
     repository: new LocalFixtureClinicOperationsRepository()
@@ -675,6 +786,40 @@ test("migration creation requires exactly one bounded input source", async () =>
       }),
     /cannot exceed 100 rows/
   );
+});
+
+test("migration repository rejects commit-ready identity rows without external identifiers", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const scope = {
+    tenantId: CHECKPOINT1_SEED_IDS.tenantId,
+    clinicId: CHECKPOINT1_SEED_IDS.clinicId,
+    actorUserId: CHECKPOINT1_SEED_IDS.users.assistant
+  };
+
+  for (const importType of ["patients", "practitioners", "appointments"] as const) {
+    await assert.rejects(
+      () =>
+        repository.createMigrationBatch(scope, {
+          importType,
+          sourceSystem: `missing_external_identity_${importType}`,
+          state: "ready_to_commit",
+          rows: [
+            {
+              rowNumber: 1,
+              importType,
+              externalRecordId: null,
+              rawPayload: {},
+              rawPayloadDigest: `missing-external-identity-${importType}`,
+              normalizedRecord: null,
+              validationErrors: [],
+              status: "ready_to_commit",
+              matchStatus: "none"
+            }
+          ]
+        }),
+      /requires a stable external record identifier/
+    );
+  }
 });
 
 test("migration rollback preserves an imported patient after downstream mutation", async () => {

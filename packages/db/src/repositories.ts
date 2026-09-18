@@ -302,6 +302,26 @@ export interface CreateMigrationBatchInput {
   rows: CreateMigrationRowInput[];
 }
 
+const STABLE_IDENTITY_MIGRATION_TYPES = new Set<MigrationImportType>([
+  "patients",
+  "practitioners",
+  "appointments"
+]);
+
+export function assertStableMigrationExternalReferences(input: CreateMigrationBatchInput): void {
+  for (const row of input.rows) {
+    if (
+      STABLE_IDENTITY_MIGRATION_TYPES.has(row.importType) &&
+      row.status !== "invalid" &&
+      !row.externalRecordId?.trim()
+    ) {
+      throw new Error(
+        `${row.importType} migration row ${row.rowNumber} requires a stable external record identifier.`
+      );
+    }
+  }
+}
+
 export interface ResolveMigrationRowInput {
   action: MigrationResolutionAction;
   targetRecordType?: string | null;

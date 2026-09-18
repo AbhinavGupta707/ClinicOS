@@ -4,6 +4,7 @@ import {
   CHECKPOINT1_SEED_IDS,
   CHECKPOINT1_SEED_USERS,
   DueGenerationInputError,
+  assertStableMigrationExternalReferences,
   type AppointmentSearchFilter,
   type AcceptTreatmentPlanInput,
   type AmendClinicalNoteInput,
@@ -1639,6 +1640,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     scope: RepositoryScope,
     input: CreateMigrationBatchInput
   ): Promise<MigrationBatchDetail> {
+    assertStableMigrationExternalReferences(input);
     const now = this.#nowIso();
     const batch: MigrationBatchRecord = {
       id: uuid(),
@@ -2108,8 +2110,36 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         );
         return reconciliationBatch?.sourceSystem === link.sourceSystem;
       });
+      const hasCommittedAppointmentDependency =
+        link.targetRecordType === "provider_user" &&
+        this.migrationRows.some((row) => {
+          if (
+            !matchesScope(row, scope) ||
+            row.batchId === batchId ||
+            row.status !== "committed" ||
+            row.normalizedRecord?.recordType !== "appointment" ||
+            row.normalizedRecord.providerExternalReference !== link.externalRecordId
+          ) {
+            return false;
+          }
+          const appointmentBatch = this.migrationBatches.find(
+            (candidate) => matchesScope(candidate, scope) && candidate.id === row.batchId
+          );
+          return (
+            appointmentBatch?.sourceSystem === link.sourceSystem &&
+            this.importedRecordLinks.some(
+              (candidate) =>
+                matchesScope(candidate, scope) &&
+                candidate.sourceSystem === link.sourceSystem &&
+                candidate.externalRecordId === row.externalRecordId &&
+                candidate.targetRecordType === "appointment" &&
+                candidate.verificationStatus !== "rolled_back"
+            )
+          );
+        });
       const rollbackBlocked =
         hasLaterReconciliation ||
+        hasCommittedAppointmentDependency ||
         (link.linkType === "created_from_import" &&
           (link.targetRecordType === "appointment"
             ? this.#appointmentHasRollbackBlockingDependencies(scope, link.targetRecordId)
@@ -2123,6 +2153,8 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
           rollbackBlockedReason:
             hasLaterReconciliation
               ? "A later committed migration reconciliation depends on this canonical external mapping."
+              : hasCommittedAppointmentDependency
+                ? "A committed imported appointment depends on this practitioner mapping."
               : link.targetRecordType === "appointment"
               ? "Imported appointment has been changed or has downstream operational dependencies."
               : link.targetRecordType === "patient"

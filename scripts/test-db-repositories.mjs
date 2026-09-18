@@ -393,7 +393,7 @@ try {
     /REPOSITORY_MVP_SLICE_ROLLBACK/u
   );
   assert.equal(await concurrentMigrationReplayProbe(repository, tenantA, pool), true);
-  assert.equal(await sourceIndependentMigrationProbe(repository, tenantA), true);
+  assert.equal(await sourceIndependentMigrationProbe(repository, tenantA, pool), true);
   assert.equal(await concurrentBatchCommitRollbackProbe(repository, tenantA, pool), true);
   assert.equal(await concurrentReconciliationRollbackProbe(repository, tenantA, pool), true);
 
@@ -622,9 +622,33 @@ async function concurrentMigrationReplayProbe(repository, scope, connectionPool)
   return true;
 }
 
-async function sourceIndependentMigrationProbe(repository, scope) {
+async function sourceIndependentMigrationProbe(repository, scope, connectionPool) {
   const token = randomUUID();
   const sourceSystem = `repository_source_independent_${token}`;
+  for (const importType of ["patients", "practitioners", "appointments"]) {
+    await assert.rejects(
+      repository.createMigrationBatch(scope, {
+        importType,
+        sourceSystem,
+        state: "ready_to_commit",
+        rows: [
+          {
+            rowNumber: 1,
+            importType,
+            externalRecordId: null,
+            rawPayload: {},
+            rawPayloadDigest: sha256({ token, importType, case: "missing-external-id" }),
+            normalizedRecord: null,
+            validationErrors: [],
+            status: "ready_to_commit",
+            matchStatus: "none",
+            conflicts: []
+          }
+        ]
+      }),
+      /requires a stable external record identifier/u
+    );
+  }
   const practitionerExternalId = `practitioner-${token}`;
   const patientExternalId = `patient-${token}`;
   const appointmentExternalId = `appointment-${token}`;
@@ -793,16 +817,52 @@ async function sourceIndependentMigrationProbe(repository, scope) {
     state: "ready_to_commit",
     rows: [migrationReadyRow("appointments", appointmentExternalId, appointmentRecord)]
   });
-  const appointmentCommit = await repository.commitMigrationBatch(
-    scope,
-    appointmentBatch.batch.id,
-    { idempotencyKey: `source-independent-appointment-${token}` }
-  );
+  const blockingClient = await connectionPool.connect();
+  let appointmentCommitPromise;
+  let practitionerRollbackPromise;
+  try {
+    await blockingClient.query("begin");
+    const practitionerLockKey = JSON.stringify([
+      scope.tenantId,
+      scope.clinicId,
+      sourceSystem,
+      practitionerExternalId,
+      "provider_user"
+    ]);
+    await blockingClient.query("select pg_advisory_xact_lock(hashtextextended($1::text, 0))", [
+      practitionerLockKey
+    ]);
+    appointmentCommitPromise = repository.commitMigrationBatch(scope, appointmentBatch.batch.id, {
+      idempotencyKey: `source-independent-appointment-${token}`
+    });
+    await waitForAdvisoryLockWaiters(blockingClient, 1);
+    practitionerRollbackPromise = repository.rollbackMigrationBatch(
+      scope,
+      practitionerBatch.batch.id,
+      { idempotencyKey: `source-independent-practitioner-blocked-${token}` }
+    );
+    await waitForAdvisoryLockWaiters(blockingClient, 2);
+    await blockingClient.query("commit");
+  } catch (error) {
+    await blockingClient.query("rollback");
+    await Promise.allSettled(
+      [appointmentCommitPromise, practitionerRollbackPromise].filter(Boolean)
+    );
+    throw error;
+  } finally {
+    blockingClient.release();
+  }
+  const [appointmentCommit, blockedPractitionerRollback] = await Promise.all([
+    appointmentCommitPromise,
+    practitionerRollbackPromise
+  ]);
   const appointmentId = appointmentCommit?.rows[0]?.committedRecordId;
   assert.ok(appointmentId);
   const appointment = await repository.findAppointmentById(scope, appointmentId);
   assert.equal(appointment?.patientId, patientId);
   assert.equal(appointment?.providerUserId, CHECKPOINT1_SEED_IDS.users.doctor);
+  assert.equal(blockedPractitionerRollback?.batch.state, "partially_committed");
+  assert.equal(blockedPractitionerRollback?.blockedLinks.length, 1);
 
   const appointmentRollback = await repository.rollbackMigrationBatch(
     scope,

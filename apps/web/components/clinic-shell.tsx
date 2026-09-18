@@ -44,6 +44,8 @@ import {
   type SurfaceRegistration
 } from "@/lib/navigation";
 import {
+  clearPatientNavigationHandoff,
+  patientNavigationHandoffMatchesIdentity,
   readPatientNavigationHandoff,
   rememberPatientNavigation,
   type PatientNavigationHandoff
@@ -122,6 +124,30 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
     setActiveSurfaceId(initialSurfaceId);
   }, [initialSurfaceId]);
 
+  useEffect(() => {
+    if (meState.status === "authenticated") {
+      const handoff = readPatientNavigationHandoff();
+      if (
+        handoff &&
+        !patientNavigationHandoffMatchesIdentity(
+          handoff,
+          meState.profile.tenant.id,
+          meState.profile.clinic.id,
+          meState.profile.user.id
+        )
+      ) {
+        clearPatientNavigationHandoff();
+        setPatientHandoff(null);
+      }
+      return;
+    }
+
+    if (meState.status !== "loading") {
+      clearPatientNavigationHandoff();
+      setPatientHandoff(null);
+    }
+  }, [meState]);
+
   const activeSurface = getSurface(activeSurfaceId);
 
   const visibleSurfaces = useMemo(() => {
@@ -154,9 +180,19 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
   const profile = meState.profile;
   const roleLabels = profile.roles.map((role) => ROLE_LABELS[role]);
   const selectedPatientId =
-    patientHandoff?.clinicId === profile.clinic.id ? patientHandoff.patientId : null;
+    patientHandoff &&
+    patientNavigationHandoffMatchesIdentity(
+      patientHandoff,
+      profile.tenant.id,
+      profile.clinic.id,
+      profile.user.id
+    )
+      ? patientHandoff.patientId
+      : null;
   const rememberSelectedPatient = (patientId: string) => {
-    setPatientHandoff(rememberPatientNavigation(profile.clinic.id, patientId));
+    setPatientHandoff(
+      rememberPatientNavigation(profile.tenant.id, profile.clinic.id, profile.user.id, patientId)
+    );
   };
 
   return (

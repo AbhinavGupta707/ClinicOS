@@ -411,6 +411,14 @@ export function validatePatientImportRow(
 ): PatientImportValidationResult {
   const validationErrors: MigrationValidationIssue[] = [];
 
+  if (!draft.externalReference?.trim()) {
+    validationErrors.push({
+      field: "externalReference",
+      code: "required",
+      message: "Patient externalReference is required."
+    });
+  }
+
   if (!draft.fullName.trim()) {
     validationErrors.push({
       field: "fullName",
