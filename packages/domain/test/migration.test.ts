@@ -107,6 +107,23 @@ test("practitioner migration requires stable reviewable link evidence", () => {
   );
 });
 
+test("practitioner email validation rejects adversarial input without regex backtracking", () => {
+  const adversarialEmail = `!@${"!.".repeat(2_000)}example`;
+  const [draft] = parsePractitionerMigrationCsv(
+    [
+      "external_reference,display_name,email,phone",
+      `doctor-adversarial,Dr Linear Validation,${adversarialEmail},`
+    ].join("\n")
+  );
+
+  const result = validatePractitionerImportRow(draft);
+  assert.equal(result.normalizedRecord, null);
+  assert.deepEqual(
+    result.validationErrors.map((issue) => issue.code),
+    ["invalid_email"]
+  );
+});
+
 test("appointment migration accepts only explicit canonical references, statuses, sources, and instants", () => {
   const rows = parseAppointmentMigrationCsv(
     [

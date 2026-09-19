@@ -521,7 +521,7 @@ export function validatePractitionerImportRow(
       message: "Practitioner displayName is required for operator review."
     });
   }
-  if (draft.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(draft.email)) {
+  if (draft.email && !isPlausibleEmail(draft.email)) {
     validationErrors.push({
       field: "email",
       code: "invalid_email",
@@ -876,6 +876,27 @@ function pickString(row: Record<string, unknown>, keys: readonly string[]): stri
 function normalizedNullableText(value: string | null): string | null {
   const normalized = value?.trim() ?? "";
   return normalized.length > 0 ? normalized : null;
+}
+
+function isPlausibleEmail(value: string): boolean {
+  if (value.length > 254) return false;
+
+  let atIndex = -1;
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (character === "@") {
+      if (atIndex !== -1) return false;
+      atIndex = index;
+    }
+    if (character.trim().length === 0) return false;
+  }
+
+  if (atIndex <= 0 || atIndex >= value.length - 1) return false;
+  if (atIndex > 64) return false;
+
+  const domain = value.slice(atIndex + 1);
+  const dotIndex = domain.indexOf(".");
+  return dotIndex > 0 && dotIndex < domain.length - 1;
 }
 
 function pickNullableString(row: Record<string, unknown>, keys: readonly string[]): string | null {
