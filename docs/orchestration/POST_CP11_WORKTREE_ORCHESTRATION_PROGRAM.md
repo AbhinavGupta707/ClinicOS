@@ -4,7 +4,9 @@
 **Status:** Canonical CP12-CP18 execution runbook
 **Master:** one project-scoped Codex master task on `gpt-5.6-sol` with `xhigh` reasoning
 **Workers:** adaptive visible project-scoped worktree tasks; no fixed count or padding
-**Project ID:** `/Users/abhinavgupta/Desktop/ClinicOS`
+**Repository:** `/Volumes/Spectra/Projects/ClinicOS`
+**Project ID:** resolve the opaque `projectId` from current `list_projects` registration for this repository; never substitute its path.
+**Relocation verified (2026-09-20):** current registration returned `bb25c055-6ebb-4ff1-8052-9c1588cddbf3` on host `local`. Re-resolve before every launch.
 
 ## 1. Operating Decision
 
@@ -68,7 +70,7 @@ If the previous checkpoint exists only as uncommitted changes, stop lane launch.
 Every initial worker is created with the Codex app thread tool using:
 
 - target type `project`;
-- project ID `/Users/abhinavgupta/Desktop/ClinicOS`, freshly confirmed by `list_projects`;
+- opaque project ID freshly returned by `list_projects` for `/Volumes/Spectra/Projects/ClinicOS`;
 - environment type `worktree`;
 - starting branch `main` after the checkpoint launch packet is committed;
 - explicit model `gpt-5.6-sol` because the user selected it;
@@ -107,7 +109,7 @@ Before creating a `medium` worker, the master records the frozen input, exact al
 
 ### Capability provenance
 
-This policy was verified on the current Codex host on 2026-07-09:
+Historical capability evidence from 2026-07-09 follows. Its Desktop project identifier is retained as provenance; current launches must use the registration lookup above:
 
 - `create_thread` exposes project/worktree creation, explicit `gpt-5.6-sol`, and `high`/`xhigh` reasoning;
 - `list_projects` returns ClinicOS project ID `/Users/abhinavgupta/Desktop/ClinicOS`;

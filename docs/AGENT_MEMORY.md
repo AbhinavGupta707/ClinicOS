@@ -119,14 +119,14 @@ This file captures durable execution memory for future Codex sessions. Treat `cl
 
 ## Worktree Launch Memory
 
-For visible isolated worker lanes, use project-scoped Codex threads:
+For visible isolated worker lanes, resolve the saved project at `/Volumes/Spectra/Projects/ClinicOS` with `list_projects` and use its returned opaque `projectId`. On 2026-09-20 registration returned `bb25c055-6ebb-4ff1-8052-9c1588cddbf3`; this is evidence, not a permanent ID to hard-code. `clinicOsProject` below means the matching entry in the latest registration response:
 
 ```ts
 create_thread({
   prompt: "<lane prompt>",
   target: {
     type: "project",
-    projectId: "/Users/abhinavgupta/Desktop/ClinicOS",
+    projectId: clinicOsProject.projectId,
     environment: {
       type: "worktree"
     }
