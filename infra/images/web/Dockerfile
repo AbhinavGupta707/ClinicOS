@@ -20,7 +20,7 @@ ENV NODE_ENV="production" \
     HOSTNAME="0.0.0.0" \
     PORT="3000"
 WORKDIR /workspace
-RUN apk add --no-cache --upgrade libcrypto3=3.5.7-r0 libssl3=3.5.7-r0 \
+RUN apk add --no-cache --upgrade libcrypto3=3.5.8-r0 libssl3=3.5.8-r0 \
     && rm -rf /usr/local/lib/node_modules/npm \
     && rm -rf /usr/local/lib/node_modules/corepack /opt/yarn-* \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx /usr/local/bin/yarn /usr/local/bin/yarnpkg \

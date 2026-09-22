@@ -17,7 +17,7 @@ test("CP14 application images pin their base, build ARM64-compatible output, and
       `${service.name} must pin the multi-architecture Node base by digest`
     );
     assert.match(dockerfile, /USER 10001:10001/u);
-    assert.match(dockerfile, /libcrypto3=3\.5\.7-r0 libssl3=3\.5\.7-r0/u);
+    assert.match(dockerfile, /libcrypto3=3\.5\.8-r0 libssl3=3\.5\.8-r0/u);
     assert.match(dockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/npm/u);
     assert.match(dockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/corepack \/opt\/yarn-/u);
     assert.match(dockerfile, new RegExp(`EXPOSE ${service.port}`, "u"));
@@ -30,7 +30,7 @@ test("CP14 application images pin their base, build ARM64-compatible output, and
 test("CP14 CI builds and scans every application image on an ARM64 runner", async () => {
   const workflow = await readFile(".github/workflows/security.yml", "utf8");
   assert.match(workflow, /runs-on: ubuntu-24\.04-arm/u);
-  assert.match(workflow, /service: \[api, web, worker\]/u);
+  assert.match(workflow, /service: \[api, media-scanner, web, worker\]/u);
   assert.match(workflow, /--platform linux\/arm64/u);
   assert.match(workflow, /scan-type: image/u);
   assert.match(workflow, /severity: HIGH,CRITICAL/u);

@@ -38,9 +38,9 @@ USER 0:0
 RUN apk add --no-cache \
   curl \
   jq \
-  libcrypto3=3.5.7-r0 \
-  libssl3=3.5.7-r0 \
-  postgresql17-client=17.10-r0
+  libcrypto3=3.5.8-r0 \
+  libssl3=3.5.8-r0 \
+  postgresql17-client=17.11-r0
 
 COPY --from=temporal-build /out/temporal-server /usr/local/bin/temporal-server
 COPY --from=temporal-build /out/temporal-sql-tool /usr/local/bin/temporal-sql-tool

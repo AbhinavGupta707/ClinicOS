@@ -38,7 +38,7 @@ cleanup() {
 trap cleanup EXIT
 
 version="$(docker run --rm "${image_ref}" --version)"
-if [[ "${version}" != *"26.7.0"* ]]; then
+if [[ "${version}" != *"26.7.4"* ]]; then
   printf 'Unexpected Keycloak version: %s\n' "${version}" >&2
   exit 1
 fi
