@@ -59,6 +59,25 @@ test("realm promotion is deterministic, exact-bound, and secret-free", async () 
   );
 });
 
+test("realm promotion rejects interactive clients without subject and authentication-time claims", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "clinicos-keycloak-basic-scope-"));
+  const bindings = JSON.parse(await readFile(exampleBindingPath, "utf8"));
+  const realm = JSON.parse(
+    await bindRealm({
+      templatePath,
+      bindingPath: exampleBindingPath,
+      outputPath: join(directory, "realm.json")
+    })
+  );
+  for (const clientId of ["clinic-os-web-bff", "clinic-os-mobile"]) {
+    const invalid = structuredClone(realm);
+    const client = invalid.clients.find((entry) => entry.clientId === clientId);
+    assert.ok(client.defaultClientScopes.includes("basic"));
+    client.defaultClientScopes = client.defaultClientScopes.filter((scope) => scope !== "basic");
+    assert.throws(() => validateRealm(invalid, bindings), /basic subject and authentication-time/);
+  }
+});
+
 test("realm promotion accepts only the approved exact mobile custom scheme", async () => {
   const directory = await mkdtemp(join(tmpdir(), "clinicos-keycloak-custom-mobile-"));
   const binding = JSON.parse(await readFile(exampleBindingPath, "utf8"));

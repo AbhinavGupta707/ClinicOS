@@ -107,9 +107,13 @@ try {
     assert.equal(claims.iss, issuer);
     assert.equal(claims.sub, userUrl.split("/").at(-1));
     assert.ok(claims.exp > Math.floor(Date.now() / 1000));
+    assert.ok(Number.isInteger(claims.auth_time) && claims.auth_time > 0);
     if (token === tokens.id_token) {
       assert.equal(claims.aud, clientId);
       assert.equal(claims.nonce, nonce);
+    } else {
+      const audiences = Array.isArray(claims.aud) ? claims.aud : [claims.aud];
+      assert.ok(audiences.includes("clinic-os-api"), "Access token must address the ClinicOS API");
     }
   }
   assert.equal((await form(tokenUrl, exchange)).status, 400, "Authorization code replay accepted");

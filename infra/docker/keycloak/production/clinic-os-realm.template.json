@@ -132,6 +132,7 @@
       "webOrigins": ["${CLINIC_OS_WEB_ORIGIN}"],
       "defaultClientScopes": [
         "openid",
+        "basic",
         "profile",
         "email",
         "roles",
@@ -165,6 +166,7 @@
       "webOrigins": [],
       "defaultClientScopes": [
         "openid",
+        "basic",
         "profile",
         "email",
         "roles",

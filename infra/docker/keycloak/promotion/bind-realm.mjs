@@ -226,6 +226,11 @@ function assertInteractiveClient(client, publicClient, redirectUri) {
   ) {
     throw new Error(`${client.clientId} must use one exact redirect URI.`);
   }
+  if (!client.defaultClientScopes?.includes("basic")) {
+    throw new Error(
+      `${client.clientId} must include basic subject and authentication-time claims.`
+    );
+  }
   if (client.optionalClientScopes?.includes("offline_access")) {
     throw new Error(`${client.clientId} cannot request offline access.`);
   }
