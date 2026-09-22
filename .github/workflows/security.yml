@@ -135,6 +135,20 @@ jobs:
         if: matrix.service == 'media-scanner'
         run: infra/images/media-scanner/test-runtime.sh clinicos-media-scanner:${{ github.sha }}
 
+      - name: Verify packaged worker SDK and workflow bundle
+        if: matrix.service == 'worker'
+        run: >-
+          docker run --rm --entrypoint node --workdir /workspace/apps/worker
+          clinicos-worker:${{ github.sha }} --input-type=module -e
+          'import { bundleWorkflowCode } from "@temporalio/worker";
+          import { createRequire } from "node:module";
+          import assert from "node:assert/strict";
+          const require = createRequire(import.meta.url);
+          for (const name of ["client", "common", "worker", "core-bridge"])
+          assert.equal(require(`@temporalio/${name}/package.json`).version, "1.22.0");
+          const bundle = await bundleWorkflowCode({ workflowsPath: "/workspace/packages/workflow/dist/workflows/index.js" });
+          assert.ok(bundle.code.length > 0);'
+
       - name: Scan image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -149,7 +163,7 @@ jobs:
   platform-images:
     name: ARM64 platform image ${{ matrix.service }}
     runs-on: ubuntu-24.04-arm
-    timeout-minutes: 45
+    timeout-minutes: 60
     strategy:
       fail-fast: false
       matrix:
@@ -161,6 +175,10 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Verify Keycloak dependency guard regressions
+        if: matrix.service == 'keycloak'
+        run: python3 -B infra/images/keycloak/test-source-build.py
 
       - name: Build immutable candidate
         run: >-
@@ -175,6 +193,13 @@ jobs:
         run: |
           test "$(docker image inspect clinicos-${{ matrix.service }}:${{ github.sha }} --format '{{.Architecture}}')" = "arm64"
           test "$(docker image inspect clinicos-${{ matrix.service }}:${{ github.sha }} --format '{{.Config.User}}')" = "${{ matrix.user }}"
+
+      - name: Retain Keycloak source rebuild provenance
+        if: matrix.service == 'keycloak'
+        run: |
+          mkdir -p image-evidence
+          docker run --rm --entrypoint cat clinicos-keycloak:${{ github.sha }} /opt/clinicos/provenance/source-build.json > image-evidence/keycloak-source-build.json
+          docker image inspect clinicos-keycloak:${{ github.sha }} --format '{{.Id}}' > image-evidence/keycloak-image-id.txt
 
       - name: Exercise hardened Keycloak runtime
         if: matrix.service == 'keycloak'
@@ -194,3 +219,12 @@ jobs:
           exit-code: "1"
           format: table
           version: v0.70.0
+
+      - name: Upload source rebuild evidence
+        if: always() && matrix.service == 'keycloak'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: keycloak-source-build-${{ github.sha }}
+          path: image-evidence
+          if-no-files-found: warn
+          retention-days: 30

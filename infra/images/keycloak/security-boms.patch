@@ -1,0 +1,22 @@
+--- a/pom.xml
++++ b/pom.xml
+@@ -334,4 +334,19 @@
+         <dependencies>
++            <!-- ClinicOS security rebuild: align complete dependency families. -->
++            <dependency>
++                <groupId>io.netty</groupId>
++                <artifactId>netty-bom</artifactId>
++                <version>4.1.137.Final</version>
++                <type>pom</type>
++                <scope>import</scope>
++            </dependency>
++            <dependency>
++                <groupId>org.bouncycastle</groupId>
++                <artifactId>bc-jdk18on-bom</artifactId>
++                <version>1.85</version>
++                <type>pom</type>
++                <scope>import</scope>
++            </dependency>
+             <dependency>
+                 <groupId>org.infinispan</groupId>
+                 <artifactId>infinispan-bom</artifactId>

@@ -18,7 +18,10 @@ WORKDIR /workspace
 COPY package.json package-lock.json ./
 COPY apps ./apps
 COPY packages ./packages
-RUN npm ci --omit=dev --workspace @clinic-os/api --include-workspace-root=false
+RUN npm ci --omit=dev --workspace @clinic-os/api --include-workspace-root=false \
+    && mkdir -p /runtime-dependencies \
+    && find apps packages -type d -name node_modules -prune -exec sh -c \
+      'mkdir -p "/runtime-dependencies/$(dirname "$1")"; cp -a "$1" "/runtime-dependencies/$1"' _ '{}' \;
 
 FROM ${NODE_IMAGE} AS runtime
 ARG SOURCE_REVISION="unknown"
@@ -38,6 +41,7 @@ RUN apk add --no-cache --upgrade libcrypto3=3.5.8-r0 libssl3=3.5.8-r0 \
 COPY --from=production-dependencies --chown=10001:10001 /workspace/node_modules ./node_modules
 COPY --from=build --chown=10001:10001 /workspace/apps/api ./apps/api
 COPY --from=build --chown=10001:10001 /workspace/packages ./packages
+COPY --from=production-dependencies --chown=10001:10001 /runtime-dependencies/ ./
 COPY --from=build --chown=10001:10001 /workspace/package.json ./package.json
 USER 10001:10001
 EXPOSE 4100

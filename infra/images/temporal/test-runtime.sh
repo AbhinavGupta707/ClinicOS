@@ -55,7 +55,7 @@ trap cleanup EXIT
 
 server_version="$(docker run --rm "${image_ref}" temporal-server --version)"
 sql_tool_version="$(docker run --rm "${image_ref}" temporal-sql-tool --version)"
-if [[ "${server_version}" != "temporal version 1.31.2" || "${sql_tool_version}" != "temporal-sql-tool version 1.31.2" ]]; then
+if [[ "${server_version}" != "temporal version 1.31.3" || "${sql_tool_version}" != "temporal-sql-tool version 1.31.3" ]]; then
   printf 'Temporal image contains unexpected binary versions\n' >&2
   exit 1
 fi

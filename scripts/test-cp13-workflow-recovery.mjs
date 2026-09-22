@@ -6,7 +6,7 @@ import { spawn } from "node:child_process";
 import { setTimeout as delay } from "node:timers/promises";
 import { resolve } from "node:path";
 import { Pool } from "pg";
-import { Worker } from "@temporalio/worker";
+import { createRequire } from "node:module";
 import {
   CHECKPOINT1_SEED_IDS,
   PostgresClinicUnitOfWork,
@@ -16,6 +16,11 @@ import {
   buildCp13PaymentRequestRecoveryWorkflowId,
   createTemporalClient
 } from "@clinic-os/workflow";
+
+// Resolve through the workspace which declares this SDK, including nested installs.
+const { Worker } = createRequire(new URL("../packages/workflow/package.json", import.meta.url))(
+  "@temporalio/worker"
+);
 
 const runtimeUrl = requiredLocalUrl(process.env.DATABASE_URL, "DATABASE_URL", "clinic_os_runtime");
 const workerUrl = requiredLocalUrl(
