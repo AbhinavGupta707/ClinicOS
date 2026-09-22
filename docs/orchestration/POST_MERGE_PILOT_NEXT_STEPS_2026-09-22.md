@@ -85,11 +85,14 @@ They do not retroactively close CP14–CP18 external evidence or production gate
 ## Clinic input that still matters
 
 Healthy Roots and Practo Ray/Profile are already identified. The remaining
-source-specific inputs are the Ray edition value, representative
+source-specific inputs are verified account export access and format, representative
 de-identified Contacts/Appointments files, practitioner mapping, timezone and
 update/cancellation meanings. Record them in the [existing intake](MVP_INTEGRATION_INTAKE.md).
-On 2026-09-22 the owner confirmed authorized export access and that the edition
-is known; the actual details and samples have not yet been supplied.
+The latest 2026-09-22 clarification confirms only that staff log in through
+`ray.practo.com`; it withdraws the earlier edition/export confirmation. Official
+documentation establishes a candidate export process, not this account's access
+or schema. The owner has deferred obtaining those details for now. A verified
+account export and supported schema matter more than guessing an edition label.
 No connector-specific parser should guess the format. No live patient data,
 passwords or API keys are needed to continue the bounded identity implementation.
 
