@@ -444,7 +444,7 @@ export function validatePatientImportRow(
     });
   }
 
-  if (draft.email && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(draft.email)) {
+  if (draft.email && !isPlausibleEmail(draft.email)) {
     validationErrors.push({
       field: "email",
       code: "invalid_email",

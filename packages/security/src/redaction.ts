@@ -82,21 +82,33 @@ export function maskPhone(value: string): string {
   return `${"*".repeat(Math.max(0, digits.length - 4))}${digits.slice(-4)}`;
 }
 
-export function maskEmail(value: string): string {
-  return value.replace(EMAIL_PATTERN, (_match, first: string, _rest: string, domain: string) => {
-    return `${first}***${domain}`;
+function maskEmailCandidates(value: string, replacement: string): string {
+  // Tokenization consumes each email-like run once. Never run the legacy
+  // permissive email matcher on an unbounded candidate; overlong addresses
+  // are redacted in full rather than truncated (which could leak their suffix).
+  return value.replace(/[a-zA-Z0-9._%+@-]+/g, (candidate) => {
+    if (candidate.length > 254) return candidate.includes("@") ? replacement : candidate;
+    return candidate.replace(
+      EMAIL_PATTERN,
+      (_match, first: string, _rest: string, domain: string) => {
+        return `${first}***${domain}`;
+      }
+    );
   });
 }
 
+export function maskEmail(value: string): string {
+  return maskEmailCandidates(value, DEFAULT_REDACTION);
+}
+
 export function maskFreeTextPhi(value: string, replacement = DEFAULT_REDACTION): string {
-  return value
-    .replace(BEARER_PATTERN, replacement)
-    .replace(JWT_PATTERN, replacement)
-    .replace(KEY_VALUE_SECRET_PATTERN, replacement)
-    .replace(
-      EMAIL_PATTERN,
-      (_match, first: string, _rest: string, domain: string) => `${first}***${domain}`
-    )
+  return maskEmailCandidates(
+    value
+      .replace(BEARER_PATTERN, replacement)
+      .replace(JWT_PATTERN, replacement)
+      .replace(KEY_VALUE_SECRET_PATTERN, replacement),
+    replacement
+  )
     .replace(PHONE_PATTERN, (match) => maskPhone(match))
     .replace(ABHA_PATTERN, replacement);
 }

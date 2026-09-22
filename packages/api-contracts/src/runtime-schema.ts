@@ -300,6 +300,23 @@ function validateSchema(
   }
 }
 
+// Scan once, including when a schema has already recorded an overlength issue.
+function isEmailFormat(value: string): boolean {
+  if (value.length > 320) return false;
+  let at = -1;
+  for (let index = 0; index < value.length; index += 1) {
+    if (/\s/u.test(value[index])) return false;
+    if (value[index] === "@") {
+      if (at !== -1) return false;
+      at = index;
+    }
+  }
+  if (at <= 0 || at === value.length - 1) return false;
+  const domain = value.slice(at + 1);
+  const dot = domain.indexOf(".", 1);
+  return dot !== -1 && dot < domain.length - 1;
+}
+
 function validateString(
   definition: RuntimeSchema,
   input: unknown,
@@ -344,7 +361,7 @@ function validateString(
       "Expected a real RFC3339 date-time with an explicit Z or numeric offset."
     );
   }
-  if (definition.format === "email" && !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(input)) {
+  if (definition.format === "email" && !isEmailFormat(input)) {
     issue(issues, path, "format", "Expected an email address.");
   }
   if (definition.format === "sha256" && !SHA256_PATTERN.test(input)) {

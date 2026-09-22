@@ -107,6 +107,21 @@ test("practitioner migration requires stable reviewable link evidence", () => {
   );
 });
 
+test("patient email validation rejects adversarial input without regex backtracking", () => {
+  const [draft] = parsePatientMigrationCsv(
+    [
+      "external_reference,full_name,phone,email",
+      `patient-adversarial,Synthetic Patient,+91 98765 11111,!@${"!.".repeat(20_000)} `
+    ].join("\n")
+  );
+  const result = validatePatientImportRow(draft);
+  assert.equal(result.normalizedRecord, null);
+  assert.deepEqual(
+    result.validationErrors.map((issue) => issue.code),
+    ["invalid_email"]
+  );
+});
+
 test("practitioner email validation rejects adversarial input without regex backtracking", () => {
   const adversarialEmail = `!@${"!.".repeat(2_000)}example`;
   const [draft] = parsePractitionerMigrationCsv(
