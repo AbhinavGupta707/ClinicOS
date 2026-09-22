@@ -18,6 +18,12 @@ the assembled ARM64 image, realm import, client credentials and worker claims,
 interactive authorization-code login with required S256 PKCE, JWKS signatures,
 single-use authorization codes, refresh-token rotation/replay rejection and
 logout. These use ephemeral synthetic users and an internal Docker network.
+The image creates the data/import and transaction-log directories with ownership
+for its non-root runtime user before any import mount is applied. CI checks
+writability and rejects recovery-module initialization warnings, then restarts
+the owned Keycloak container against the same disposable database and repeats
+interactive OIDC. This proves restart/re-authentication, not an in-flight XA
+crash-recovery or production restore drill.
 The HTTP protocol smoke does not establish production HTTPS, MFA, or ClinicOS
 application session integration.
 

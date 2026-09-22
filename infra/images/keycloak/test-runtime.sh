@@ -34,7 +34,7 @@ cleanup() {
   if [[ "${completed}" != true ]] && docker container inspect "${keycloak_container}" >/dev/null 2>&1; then
     docker logs "${keycloak_container}" >&2 || true
   fi
-  docker rm -f "${keycloak_container}" "${postgres_container}" >/dev/null 2>&1 || true
+  docker rm -fv "${keycloak_container}" "${postgres_container}" >/dev/null 2>&1 || true
   docker network rm "${network}" >/dev/null 2>&1 || true
   rm -rf "${temporary_directory}"
 }
@@ -98,23 +98,26 @@ docker run --detach \
   start --optimized --import-realm --http-enabled=true --log-level=INFO,com.arjuna:DEBUG \
   --hostname="http://${keycloak_container}:8080" >/dev/null
 
-for _attempt in {1..120}; do
-  if docker exec "${keycloak_container}" \
-    curl --fail --silent --show-error http://127.0.0.1:9000/health/ready >/dev/null 2>&1; then
-    break
-  fi
-  if [[ "$(docker inspect "${keycloak_container}" --format '{{.State.Running}}')" != true ]]; then
-    printf 'Keycloak exited before readiness\n' >&2
-    exit 1
-  fi
-  sleep 1
-done
-readiness="$(docker exec "${keycloak_container}" \
-  curl --fail --silent --show-error http://127.0.0.1:9000/health/ready)"
-node -e '
-  const value = JSON.parse(process.argv[1]);
-  if (value.status !== "UP" || !value.checks?.every((check) => check.status === "UP")) process.exit(1);
-' "${readiness}"
+await_readiness() {
+  for _attempt in {1..120}; do
+    if docker exec "${keycloak_container}" \
+      curl --connect-timeout 2 --max-time 5 --fail --silent --show-error http://127.0.0.1:9000/health/ready >/dev/null 2>&1; then
+      break
+    fi
+    if [[ "$(docker inspect "${keycloak_container}" --format '{{.State.Running}}')" != true ]]; then
+      printf 'Keycloak exited before readiness\n' >&2
+      exit 1
+    fi
+    sleep 1
+  done
+  readiness="$(docker exec "${keycloak_container}" \
+    curl --connect-timeout 2 --max-time 5 --fail --silent --show-error http://127.0.0.1:9000/health/ready)"
+  node -e '
+    const value = JSON.parse(process.argv[1]);
+    if (value.status !== "UP" || !value.checks?.every((check) => check.status === "UP")) process.exit(1);
+  ' "${readiness}"
+}
+await_readiness
 
 # Diagnose object-store initialization under the actual non-root runtime user.
 docker exec "${keycloak_container}" /bin/sh -c '
@@ -123,6 +126,7 @@ docker exec "${keycloak_container}" /bin/sh -c '
     if [ -e "${directory}" ]; then ls -ld "${directory}"; fi
   done
   test -w /opt/keycloak/data
+  test -w /opt/keycloak/data/transaction-logs
 ' >"${evidence_directory}/keycloak-storage.txt"
 docker exec "${keycloak_container}" /opt/keycloak/bin/kc.sh show-config \
   | awk '/transaction|recovery|object-store/ { print }' \
@@ -187,11 +191,21 @@ node -e '
   if (claims.azp !== "clinic-os-temporal-worker") process.exit(1);
 ' "${worker_token_response}"
 
-docker run --rm --network "${network}" \
-  --volume "${root_dir}/infra/images/keycloak/test-oidc.mjs:/test-oidc.mjs:ro" \
-  --env "KEYCLOAK_SMOKE_ADMIN_PASSWORD=${admin_password}" \
-  node:22.22.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f \
-  node /test-oidc.mjs "http://${keycloak_container}:8080" "${realm}"
+test_interactive_oidc() {
+  docker run --rm --network "${network}" \
+    --volume "${root_dir}/infra/images/keycloak/test-oidc.mjs:/test-oidc.mjs:ro" \
+    --env "KEYCLOAK_SMOKE_ADMIN_PASSWORD=${admin_password}" \
+    node:22.22.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f \
+    node /test-oidc.mjs "http://${keycloak_container}:8080" "${realm}"
+}
+test_interactive_oidc
+
+# Restart only this smoke's owned container, retaining its writable layer and
+# PostgreSQL database. Re-import must preserve the realm and login must recover.
+# This is restart/re-authentication coverage, not in-flight XA crash recovery.
+docker restart --time 30 "${keycloak_container}" >/dev/null
+await_readiness
+test_interactive_oidc
 
 docker logs "${keycloak_container}" >"${evidence_directory}/keycloak-runtime.log" 2>&1
 if grep -q 'ARJUNA048006' "${evidence_directory}/keycloak-runtime.log"; then
@@ -200,4 +214,4 @@ if grep -q 'ARJUNA048006' "${evidence_directory}/keycloak-runtime.log"; then
 fi
 
 completed=true
-printf 'Keycloak runtime smoke passed: hardened image, import, readiness, discovery, clients and worker claims\n'
+printf 'Keycloak runtime smoke passed: hardened image, writable recovery store, import, readiness, discovery, clients, worker claims and OIDC before/after restart\n'

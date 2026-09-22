@@ -67,7 +67,12 @@ COPY --chown=1000:0 infra/docker/keycloak/production/clinic-os-realm.template.js
 COPY --chown=1000:0 infra/images/keycloak/bin/bootstrap-keycloak /opt/clinicos/bin/bootstrap-keycloak
 COPY --chown=1000:0 infra/images/keycloak/bin/entrypoint-keycloak /opt/clinicos/bin/entrypoint-keycloak
 
-RUN rm -rf \
+# Create writable state before any nested import bind mount can make Docker
+# create a root-owned parent. Narayana stores recovery logs under data.
+RUN mkdir -p /opt/keycloak/data/import /opt/keycloak/data/transaction-logs \
+  && chown 1000:0 /opt/keycloak/data /opt/keycloak/data/import /opt/keycloak/data/transaction-logs \
+  && chmod 0770 /opt/keycloak/data /opt/keycloak/data/import /opt/keycloak/data/transaction-logs \
+  && rm -rf \
     /opt/keycloak/bin/client \
     /opt/keycloak/bin/kcadm.sh \
     /opt/keycloak/bin/kcreg.sh \
