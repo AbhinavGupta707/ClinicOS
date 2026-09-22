@@ -129,14 +129,23 @@ try {
   const health = await fetch(`${apiBase}/health/ready`, { signal: AbortSignal.timeout(5000) });
   assert.equal(health.status, 200, "Durable API must be ready before browser acceptance.");
   const healthBody = await health.json();
-  assert.equal(healthBody.repository_mode, "postgres");
+  const expectedHealth = {
+    status: "ready",
+    repository_mode: "postgres",
+    auth_mode: "local_synthetic_fixture",
+    evidence_tier: "E3_durable"
+  };
+  for (const [field, expected] of Object.entries(expectedHealth)) {
+    assert.equal(healthBody[field], expected, `Unexpected API readiness field: ${field}`);
+  }
   const me = await fetch(`${apiBase}/v1/me`, { signal: AbortSignal.timeout(5000) });
   assert.equal(me.status, 200, "Synthetic identity must resolve through the real database.");
   await writeFile(
     join(artifacts, "preflight.json"),
     JSON.stringify(
       {
-        health: healthBody,
+        // Record only the readiness contract proven above, not arbitrary response data.
+        health: expectedHealth,
         identity: "database-backed synthetic seed-owner",
         authentication: "local development fixture; not real OIDC evidence"
       },
