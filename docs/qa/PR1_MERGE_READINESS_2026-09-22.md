@@ -1,190 +1,226 @@
-# PR #1 pre-merge repair status — 22 September 2026
+# PR #1 pre-merge repair review — 22 September 2026
 
-**Merge decision: NO-GO pending image security and final-commit CI.**
-The owner-approved synthetic durable acceptance run passed after the two
-integration fixes below. The verified source/dependency/acceptance repair paths
-are separated from the unverified image candidates on `codex/pr1-quality-repairs`,
-based on `5d11479050b2b5435c41f9397c68212d054b5dce`. Nothing was pushed or merged.
-This report updates the dated [20 September review](PR1_MAC_REPAIR_REVIEW_2026-09-20.md).
-It concerns PR readiness and continued development, not Desktop retirement.
+**Reviewed source candidate: GO for the scoped development merge. No merge or
+deployment has occurred.**
+This report supersedes the pending-gate status in the
+[20 September repair review](PR1_MAC_REPAIR_REVIEW_2026-09-20.md), while preserving
+that dated evidence. It concerns [PR #1](https://github.com/AbhinavGupta707/ClinicOS/pull/1)
+and continued development; Desktop retirement is outside this decision.
 
-## What this pass changed
+The PR targets **`mac-latest-20260829`**, not `main`. The repair branch is
+`codex/pr1-quality-repairs`, pushed to the existing PR branch
+`codex/integration/mvp-0`. The verified source candidate is
+`51595122e7f864581ebc6b368b282f4ddb9e8d62` (before the final documentation-only update). Its
+[quality run](https://github.com/AbhinavGupta707/ClinicOS/actions/runs/35733062570)
+and [security run](https://github.com/AbhinavGupta707/ClinicOS/actions/runs/35733062609)
+both passed; the push-event checks also passed and GitHub reported `CLEAN`.
+Any later PR head, including the documentation commit containing this report,
+must retain green checks before merge. This report records source-candidate
+evidence; it does not waive that final head check.
 
-- Added `npm run mvp:test:real-stack` and documented its exact boundary in
-  [MVP_REAL_STACK_ACCEPTANCE.md](MVP_REAL_STACK_ACCEPTANCE.md). It owns temporary
-  API/web processes and runs the four existing browser scenarios against real
-  PostgreSQL repositories, Redis and the web API proxy without response
-  interception. Authentication remains the existing synthetic local adapter;
-  the browser calls the real `/v1/me`. This is not OIDC acceptance.
-- Require explicit synthetic/disposable opt-ins, loopback database and Redis,
-  the runtime database role, and a matching random database provenance marker
-  placed by the fresh-cluster provisioner. Reject ambient web environment files.
-  No default connection to the existing development stack is permitted.
-- Put browser artifacts and temporary files under the selected artifact folder,
-  use a separate ignored Next build/config, and bound child-process cleanup.
-  Refuse passing evidence if any browser case fails, is skipped or flaky, or
-  fewer than four cases execute. Eleven negative configuration checks pass,
-  including rejection of URL query parameters that could override a host.
-- Add the acceptance command to the quality workflow after its existing fresh
-  synthetic database setup and workspace build, with always-on artifact upload.
-  Browser installation is a CI-runner step only. This workflow has not run yet.
-- Ignore the named local audit scratch directory. Its accumulated generated
-  filenames exceeded the secret scanner's child-process output buffer. No
-  secret was reported; rerunning the unchanged scanner now passes. No source
-  security rule or vulnerability severity gate was weakened.
+## Product outcome and architectural fit
 
-The earlier import identity, rollback, duplicate-choice, stale-search,
-unavailable-state, generated-contract and compatible dependency repairs remain
-in the candidate. They are described individually in the 20 September report.
-An independent read-only review found no remaining material safety or false-pass
-defect in the new test runner after the provenance and cleanup corrections.
+The PR delivers the source-independent ClinicOS import loop: bounded canonical
+CSV batches of patients, practitioner links and appointments; validation and
+human conflict review; durable commit, replay and guarded rollback; then Today
+and patient search/profile navigation. It extends the canonical domain,
+PostgreSQL repositories, provider boundaries and generated API contracts. It
+supports the integration-first [MVP execution plan](../orchestration/MVP_EXECUTION_PLAN.md)
+and the blue-sky architecture without inventing a Practo schema or a second datastore.
 
-## Defects found by the approved durable run
+It does **not** deliver a Practo connector, scheduled sync, source freshness,
+source-system writeback, complete application OIDC sessions or a production
+clinic deployment. Synthetic acceptance cannot close clinic or production
+readiness gates. Rollback remains deliberately guarded and best-effort.
 
-1. **Rollback returned stale evidence.** PostgreSQL saved the blocking reason
-   but returned the pre-update link on the first request. Both dependency and
-   reaffirmation branches now map the authoritative `UPDATE ... RETURNING *`
-   row. The durable regression checks the reason/timestamp immediately and
-   equality with an idempotent retry. Existing transaction/row locks remain.
-2. **The web shell rejected the actual identity contract.** The API returns
-   `clinics` with clinic-specific `roleSlugs`; the shell expected the old
-   singular `clinic`/top-level `roles` fixture shape. It now reads the canonical
-   same-tenant membership and maps `owner_admin` to the owner UI role. It never
-   substitutes token roles or legacy authority when canonical membership data
-   is unusable. Multiple memberships produce an explicit unavailable-selection
-   diagnostic, rather than selecting a clinic or combining their roles.
+## Reviewed repairs
 
-Six added identity cases cover the real payload, token-role disagreement,
-cross-tenant rejection, multiple clinics and malformed canonical memberships.
-Independent read-only review found no material defect in these two corrections.
-The single-clinic boundary remains deliberate: multi-clinic selection and
-tenant-wide-only role presentation require future contract/workflow work.
+- **Import authority and rollback:** protect stable external identities and
+  linked patients while appointments depend on them; require a reviewed
+  duplicate candidate; preserve transaction/advisory/row locks and concurrency
+  guards. PostgreSQL now returns the authoritative saved rollback block reason
+  immediately rather than a stale pre-update link. Durable regressions cover
+  dependencies, reaffirmation and retry.
+- **Web/API correctness:** reject stale patient-search responses, isolate
+  profile handoff by tenant/clinic/user, preserve honest unavailable/timezone
+  states, and consume the actual `/v1/me` clinic membership/role contract.
+  Never infer authority from token roles when canonical membership is unusable.
+  Multiple memberships explicitly require an unavailable selection workflow.
+- **Generated contracts:** repair invoice union/nullable generation and keep
+  generated clients, schemas and consumers coherent.
+- **Reproducible acceptance:** the real-stack runner requires explicit synthetic
+  and disposable opt-ins, loopback endpoints, the runtime database role and a
+  random matching database provenance marker. It rejects ambient web env files,
+  owns only its API/web processes, isolates build output, bounds cleanup and
+  rejects failed/skipped/flaky/under-count browser runs. Health artifacts contain
+  only validated expected fields. Eleven negative safety checks remain active.
+- **Dependencies and worker packaging:** compatible security updates remove npm
+  high/critical findings. Temporal SDK packages are aligned at **1.22.0** and
+  hoisted consistently; root test tooling declares its direct worker dependency.
+  Images preserve workspace-local production dependencies. The native SDK
+  requires glibc, so the worker uses a pinned non-root distroless Node 22 runtime
+  rather than the incompatible Alpine runtime. Its actual SDK loading and
+  ClinicOS workflow bundling are tested inside the final image.
+- **Platform images:** refresh available pinned OpenSSL/PostgreSQL packages and
+  media-scanner base; rebuild Temporal **1.31.3** from pinned/checksummed upstream
+  source using patched Go. Test real verified-TLS PostgreSQL connections, both
+  Temporal schemas twice, and SDK workflow/activity/timer execution plus history
+  replay against the assembled server and worker images.
+- **Keycloak security:** rebuild **26.7.4** from pinned/checksummed source with
+  complete Netty **4.1.137.Final** and Bouncy Castle **1.85** BOM alignment. Verify
+  effective dependency management, BOM checksums, every distribution library,
+  source/patch/distribution hashes and upstream unit results. This is a
+  **ClinicOS-maintained rebuild**, not an official supported binary; its
+  [maintenance and removal policy](../../infra/images/keycloak/README.md) is
+  explicit. No vulnerable JAR was blindly overlaid or suppressed.
+- **Real identity defect:** the protocol test exposed missing access-token
+  subjects. Both interactive clients now include Keycloak's `basic` scope,
+  required for `sub` and `auth_time`; promotion rejects its absence. Runtime
+  assertions retain signed subject, issuer, expiry and API-audience checks.
+  Realm import explicitly creates the standard scopes even when custom scopes
+  are listed; naming a missing scope alone is insufficient. This follows the [upstream scope migration](https://github.com/keycloak/keycloak/blob/main/docs/documentation/upgrading/topics/changes/changes-25_0_0.adoc).
+- **Keycloak recovery:** CI diagnostics exposed a root-owned, unwritable data
+  directory created around a nested import mount. The image now pre-creates
+  data/import and transaction-log directories for UID 1000. The smoke checks
+  effective writability, fails on recovery-module initialization warnings, and
+  repeats OIDC after restarting only its owned container against the same
+  disposable PostgreSQL database. This is restart/re-authentication coverage,
+  not an in-flight XA crash or production restore drill.
+- **CI isolation:** exercise full workflow recovery before repository probes
+  that intentionally leave aged outbox failure fixtures, then reinitialize
+  only the disposable CI database before later tests. The production
+  backpressure policy is unchanged. Bounded failure logs retain useful worker
+  diagnostics. The recovery test now passes in that order.
 
-The native test harness needed Java's IPv4 preference to operate inside the
-loopback-only macOS sandbox. An initial run failed before migrations; its owned
-services were stopped cleanly. Lint later encountered generated acceptance
-bundles; those outputs now have the same source-lint exclusion as normal Next
-builds. Neither correction relaxed product or vulnerability checks.
+The final security review separately inspected open CodeQL alerts rather than
+inferring that a green analysis job meant no findings. Patient/runtime email
+validation and free-text redaction now bound adversarial work; the restore CLI
+cannot print arbitrary exception text. Focused regressions and package
+typechecks pass. [The complete alert dispositions](PR1_CODEQL_TRIAGE_2026-09-22.md)
+record the remaining static-template, bounded configuration and intentional
+scanner/test findings without dismissing them or disabling rules.
 
-## Verification of this working-tree candidate
+All repair commits use explicit paths. Untracked
+`docs/CLINICOS_CURRENT_STATE_AND_VISION.md`, `research/` and `scripts/research/`
+remain outside the commits. Historical Windows/Desktop records and all 1,875
+comparison images are preserved. No blanket replacement, blanket staging or
+remote branch retargeting was used.
 
-Evidence is retained in the local ignored directory
-`.audit-spectra-retirement-20260920/pr1-merge-20260922/`.
-Node 22.22.2 and npm 10.9.7 were selected for the workspace gates. Those gates and
-the production web build ran with OS-level denial of Desktop ClinicOS access
-and non-loopback outbound traffic; logs, temporary files and npm cache were on
-Spectra. The dependency audit separately read public registry metadata.
+## Verification and evidence boundaries
 
-| Check | Current result |
-| --- | --- |
-| Workspace check, typecheck, lint | PASS; workspace check rerun after runner corrections |
-| Full workspace tests | PASS: 832 TAP + 175 Vitest = **1,007**, zero failures/skips |
-| New acceptance configuration guards | PASS: **11/11**, no services started |
-| All workspace builds, including normal production web | PASS; `.next` and normal `tsconfig.json` remain selected for the normal web build |
-| Secret scan | PASS after the scratch-file enumeration correction described above |
-| Diff whitespace and runner syntax | PASS |
-| Rebuilt web portability | PASS: 3,323 files and 4,346 traces checked; no Desktop dependency or broken/external trace |
-| Comparison image preservation | PASS: all 1,875 images; 3,750 per-file hashes and 1,875 hardlink pairs preserved |
-| Current npm advisory metadata | **0 critical, 0 high, 13 moderate**; JSON audit exits 1 because moderate findings exist |
-| Prior seven intercepted browser regressions | Passed on the 20 September candidate; retained as dated evidence, not rerun here |
-| Fresh Postgres migrations/repository/concurrency/worker tests | **PASS**: all 23 canonical migrations validate; drift/locking/failure rollback, RLS/atomicity/replay/concurrency and worker retry/dead-letter probes pass |
-| Four real API/Postgres browser scenarios | **PASS: 4/4**, zero failures/skips/flaky cases; import/rollback, named-doctor appointment-to-Today, patient search/profile handoff, mobile controls |
-| Wrong database provenance marker | **PASS**: rejected against the real disposable database before API/web startup |
-| Owned-process cleanup | **PASS**: API/web stopped, Postgres/Redis exited 0, owned database/cache ports are free |
-| Real OIDC login/refresh/logout | **NOT RUN**; application session wiring remains separate product work |
-| Final assembled images: build/runtime/SBOM/security | **NOT RUN**; known Keycloak findings remain |
-| Clean-checkout CI and CodeQL on the repaired commit | **NOT RUN**; local repairs have not been pushed |
+The approved local synthetic run used fresh native PostgreSQL 16.14, Redis 8.8
+and Flyway 12.11 under Spectra. All 23 migrations, repository/RLS/concurrency/
+rollback probes, worker persistence and four real API/PostgreSQL browser cases
+passed. Those browser cases cover import/rollback, doctor mapping and an
+appointment displayed in Today, patient search/profile handoff, and mobile
+controls. API authentication there is the explicit synthetic local adapter.
 
-The completed durable run is `native-zwsn6dgh/`; its browser evidence is under
-`browser/run-WxWCZf/`. `checks.json`, `cleanup.json`, `preflight.json`,
-`browser-results.json` and `result.json` record execution and cleanup. Screenshots
-of the actual synthetic Today and mobile import workflows were visually reviewed.
-The in-app browser backend was unavailable; repeatable installed Playwright
-Chromium executed the browser checks without downloads or response interception.
-Earlier unsuccessful runs remain as failure evidence. The workflow added to CI
-has not run remotely, and Windows checks on `0491c7e` cannot verify this candidate.
+The dated local workspace run, before the four later security regressions,
+passed **1,007 tests** (832 TAP and 175 Vitest), check,
+typecheck, lint, builds and secrets. Desktop reads and non-loopback outbound
+traffic were denied during those workspace/build gates. Web portability checked
+3,323 files and 4,346 traces; image preservation checked 3,750 hashes and 1,875
+hardlink pairs. These remain dated local evidence, not a substitute for the
+remote clean install after the Temporal SDK upgrade. Local installed SDKs have
+not been reinstalled; CI installs the final lockfile.
 
-The captured API readiness is `repository_mode: postgres` and
-`auth_mode: local_synthetic_fixture`. The local run does not exercise Docker
-images, real Keycloak login, deployed/cloud services, or authorized clinic data.
-A pg driver warning about concurrent queries on one client is informational on
-the installed pg 8 line; it does not establish compatibility with a future pg 9
-upgrade.
+| Verified source-candidate gate                                                | Result               |
+| ----------------------------------------------------------------------------- | -------------------- |
+| Clean install, workspace check, typecheck, lint, tests, build                 | PASS                 |
+| Fresh migrations, RLS/atomicity/concurrency/rollback                          | PASS                 |
+| Durable Temporal worker recovery/replay, outbox, readiness recovery           | PASS                 |
+| Real API/PostgreSQL browser acceptance                                        | PASS                 |
+| CodeQL, SCA, IaC, secrets, SBOM and license policy                            | PASS                 |
+| All six assembled ARM64 images and HIGH/CRITICAL scans                        | PASS                 |
+| Keycloak realm import, client credentials and interactive OIDC protocol       | PASS                 |
+| Temporal verified SQL TLS, schemas, SDK execution/history replay              | PASS                 |
+| Focused local realm, image-contract, acceptance-guard and source-build checks | PASS: 6 + 3 + 11 + 4 |
 
-## Security findings that still block a clean merge gate
+Image evidence retains assembled image IDs and CycloneDX SBOMs; Keycloak also
+retains source-build provenance, storage/config diagnostics and synthetic runtime
+logs. Image/security artifacts have 30-day CI retention and real-stack browser
+artifacts have 14-day retention; final evidence is also downloaded to Spectra.
+Its selected upstream server reactor ran
+**2,228 tests, 71 skipped, zero failures/errors** in the completed rebuilds.
+This is not the entire upstream integration testsuite. The worker runtime base's
+published Sigstore identity was independently verified.
 
-Correction to the earlier report's severity wording: the saved Keycloak 26.7.4
-base scan includes **two distinct critical CVEs and a high CVE** in retained
-server libraries, not only high findings:
+The Keycloak protocol smoke uses an ephemeral synthetic user on an internal
+Docker network: required S256 PKCE, interactive authorization-code exchange,
+JWKS signature/claim checks, code replay rejection, refresh rotation/replay
+rejection and logout. It does not establish production HTTPS/MFA or application
+BFF/mobile session wiring. Temporal's new SDK test uses a private test network;
+it does not establish deployed frontend mTLS/OAuth acceptance.
 
-| Library in candidate | Finding | Fixed library version reported by scanner |
-| --- | --- | --- |
-| Netty handler 4.1.136.Final | CRITICAL `CVE-2026-75595` | 4.1.137.Final / 4.2.17.Final |
-| Bouncy Castle 1.84 | CRITICAL `CVE-2026-8763`; HIGH `CVE-2026-13506` | 1.85 |
+The remote clean-install workspace run passed **1,011 tests: 836 TAP and 175
+Vitest**, with zero failures or skips. Its separate workspace-safety check ran
+12 tests. The four browser cases had zero skipped, unexpected or flaky results;
+the runner confirmed owned API/web cleanup. These counts include the later
+security regressions and the locked Temporal SDK 1.22.0. Historical local counts
+above are not being rewritten.
 
-Evidence: `pr1-quality/clinicos-keycloak-base-scan.json` under the same audit
-parent. Removing the client-tools copy does not remove the retained server
-copies. The [official release checked during this review](https://www.keycloak.org/downloads)
-was Keycloak 26.7.4;
-an official patched server distribution was not established. Resolution needs
-a compatible supported distribution update, or a deliberately maintained,
-fully dependency-aligned rebuild with provenance, assembled-image scan and
-identity regression evidence. Blind individual-JAR replacement or scan
-suppression is not an accepted repair.
+The fixed Keycloak runtime artifact confirms UID 1000 owns both data and
+transaction-log directories, zero `ARJUNA048006` initialization warnings across
+two starts, recovery-manager initialization on both starts, and an existing realm
+preserved at re-import. All six final SBOM inventories match the residual-finding
+assessment below. CodeQL still reports exactly the 19 individually classified
+open alerts on `51595122`, with no newly introduced alert.
 
-The 13 npm moderate graph findings derive from two advisory roots. Expo Router's
-query-string/decode-uri-component path is used for mobile/deep-link parsing and
-must be addressed before that exposure is enabled. The inspected Xcode tooling
-uses `uuid.v4()` without an output buffer; the reported uuid issue concerns
-other versions of the UUID algorithm with caller-supplied buffers. This is a
-bounded call-site assessment, not a general exemption for every uuid consumer.
-No forced framework-major update was introduced.
+Retained local evidence: `ci-51595122-quality.log`,
+`ci-51595122-keycloak.log`, `ci-51595122-pr-checks.json`,
+`ci-51595122-codeql-open.json`, and the corresponding quality/security artifact
+folders under the Spectra audit directory. PR-event artifact names use GitHub's
+synthetic merge commit `78cf6d6b59efcbb4228ec96d0a74b37a5e15cfdf`, while the run
+metadata identifies the reviewed PR source head `51595122` above.
 
-## Concrete next execution and promotion steps
+The npm audit snapshot is **0 critical, 0 high, 13 moderate**. The high-severity
+merge gate remains unchanged. Moderate findings derive from two advisory roots:
+Expo's `decode-uri-component` path needs remediation before the affected mobile
+input exposure is enabled; inspected Xcode tooling calls `uuid.v4()` without the
+output-buffer paths affected by the UUID advisory. This is a bounded call-site
+assessment, not a blanket waiver. No forced framework-major upgrade was used.
 
-1. **Local durable acceptance is complete.** With the owner's approval, native
-   PostgreSQL 16.14, Redis 8.8.0 and Flyway 12.11.0 used new synthetic data under
-   Spectra on ports 55439/56389. No existing database or Docker service was used.
-   The two discovered product defects were corrected and the full fresh-cluster
-   sequence passed. Only owned processes were stopped; evidence is retained.
-2. Resolve Keycloak's retained library findings and verify all six assembled
-   images. Docker was already available at the read-only inventory; it was not
-   launched by this work. Its image store is on the internal disk, which had
-   only about 1.3 GiB free, so local image downloads/builds were not attempted.
-   Use an approved adequately provisioned build environment; existing Docker
-   containers/volumes must remain untouched. Current native-test plans do not
-   move Docker storage or require new downloads.
-3. Commit only explicitly listed, reviewed repair paths after their applicable
-   gates pass. Keep the database implementation, fixture and regression probes
-   coherent. Include the acceptance runner, CI configuration, normal/acceptance
-   build isolation and instructions together. Keep dependency and image repairs
-   reviewable; image candidates must not be described as validated before their
-   assembled checks pass. Preserve unrelated vision/research files and images.
-4. With separate push authorization, update PR #1 and require all quality,
-   CodeQL and image checks on the **same final remote SHA**. Recheck the PR head
-   immediately before any later authorized merge. The current PR target is
-   `mac-latest-20260829`; do not silently retarget to the older remote `main`.
+The image gates use Trivy's selected vendor/advisory severity. Their success
+must not be described as vulnerability-free images or zero HIGH ratings in every
+advisory source. The retained CycloneDX records also include alternate ratings:
 
-The scoped source commit includes product/API/database fixes and their tests,
-generated contracts, dependency manifests/lockfile, the acceptance runner and CI,
-build/lint artifact isolation, host/programme guidance and QA documentation.
-Its explicit path list and source hashes are retained as `commit-paths.txt` and
-`committed-file-hashes.json` in this run's audit directory. The pending image
-work is separate: the API, web, worker, media-scanner, Temporal and Keycloak
-Dockerfiles, Keycloak runtime probe, and `cp14-image-contract.test.mjs` remain
-uncommitted candidates. Unrelated vision/research files remain untracked and
-outside the repair commit.
+| Component                                           | Residual finding and current exposure                                                                                                                                                                                                                                                                                                                   | Follow-up boundary                                                                                                                                                                                                                                                            |
+| --------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Worker Debian glibc 2.41-12+deb13u4                 | CVE-2018-20796, CVE-2019-1010022, CVE-2019-1010023 and CVE-2019-9192 have Debian low classifications despite higher NVD ratings. Debian/upstream explicitly disputes the security impact of the mitigation-bypass entry.                                                                                                                                | Track the supported Debian/distroless base and re-scan its replacement; do not arbitrarily replace the worker's required native libc. [Debian assessment](https://security-tracker.debian.org/tracker/CVE-2019-1010022).                                                      |
+| Keycloak OpenTelemetry API 1.57.0                   | CVE-2026-45292 is GHSA moderate, with a higher Red Hat rating: oversized baggage can allocate excessive resources. The pinned Keycloak source disables tracing by default at build time, and this repository does not enable it. This is a configuration-based exposure assessment.                                                                     | Upgrade the compatible upstream tracing dependency before enabling the affected propagation path; the upstream fix is 1.62.0. Preserve HTTP header bounds. [Upstream advisory](https://github.com/open-telemetry/opentelemetry-java/security/advisories/GHSA-rcgg-9c38-7xpx). |
+| Media scanner Lambda runtime's bundled fflate 0.8.1 | CVE-2026-45820 is GHSA moderate with higher alternate ratings. It concerns malformed ZIP64 handling in unzipSync. The affected package is under `/var/runtime/node_modules/@aws-sdk/`; ClinicOS ships its own locked SDK under `/var/task` and the current handler consumes GuardDuty metadata, not ZIP contents. No application fflate call was found. | Track an AWS base with fflate 0.8.3 or later and re-scan before adding archive parsing. Do not patch a bundled runtime package in place. [Upstream fix](https://github.com/101arrowz/fflate/commit/e6d5e6e1076892f72770ac732d83c81da9f3316e).                                 |
 
-## Development after this PR
+These classifications allow review of the current MVP scope; they are not
+suppression rules, live deployment approval, or authorization to enable the
+affected deferred surfaces. Temporal's retained SBOM also has moderate/low
+findings; the configured HIGH/CRITICAL gate remains enforced for all six images.
 
-This work supports the active integration-first plan while preserving the
-blue-sky product architecture. The next clinic-specific slice requires the
-authorized de-identified Practo Ray export, verified field/identity/timezone and
-update/cancellation semantics, and a tested mapping into the canonical import.
-Then prove repeated import/reconciliation, honest source freshness, and the
-pilot's daily workflow. Real identity session completion and controlled pilot
-acceptance remain required before real clinic use. None of those missing
-capabilities should be inferred from the generic synthetic import tests.
+No local Docker image pulls/builds or existing service/database changes were
+made for this CI pass. Remote image builds and synthetic tests use disposable
+GitHub runners under the owner's explicit authorization. Logs, source-inspection
+caches and downloaded evidence are kept on Spectra under the ignored
+`.audit-spectra-retirement-20260920/pr1-merge-20260922/` directory. Earlier failures
+remain preserved; later success does not erase them.
 
-No migration of an existing database, Docker lifecycle action, live patient or
-payment operation, provider/cloud mutation, deployment, push or merge occurred.
+## Remaining work after a verified merge
+
+1. Keep the named pilot: Healthy Roots using Practo Ray/Profile. Obtain an
+   authorized, de-identified representative export and its documented field,
+   identifier, timezone, update/cancellation and missing-record semantics.
+   Confirm entitlement, cadence and expected volume. This is the clinic input
+   needed before implementing the vendor mapping; do not guess its columns.
+2. Build the verified adapter into the existing canonical import contract, then
+   prove first import, replay, changes, cancellation and discrepancy review.
+   Complete repeatable reconciliation and truthful source freshness across two
+   cycles before calling recurring sync complete.
+3. Complete real application identity/session wiring and test login, expiry,
+   refresh, logout/revocation and clinic authority against Keycloak. Passing the
+   identity-server protocol smoke alone does not complete this workflow.
+4. Run the controlled clinic trial and obtain handling approval before any real
+   patient data. Production deployment, provider activation, MFA/operations and
+   the broader CP14–CP18 external evidence remain separately gated.
+
+The owner authorized PR updates and CI iteration, **not merge or deployment**.
+A later merge must recheck the current remote head and all checks, and use the
+existing `mac-latest-20260829` target. The baseline branch and `main` have not
+been promoted by this task.
