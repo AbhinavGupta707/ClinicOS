@@ -54,6 +54,9 @@ export function validateRealm(realm, bindings) {
   if (realm.realm !== bindings.CLINIC_OS_REALM || realm.enabled !== true) {
     throw new Error("Realm identity does not match the runtime binding.");
   }
+  if (realm.attributes?.CreateDefaultClientScopes !== "true") {
+    throw new Error("Realm import must create the standard identity claim scopes.");
+  }
   if (realm.sslRequired !== "external" || realm.registrationAllowed !== false) {
     throw new Error("Realm transport and self-registration policy must fail closed.");
   }

@@ -38,3 +38,11 @@ References: [Keycloak source build instructions](https://github.com/keycloak/key
 [Netty security advisory](https://github.com/netty/netty/security/advisories/GHSA-c4c3-7fpv-j4q5),
 [Bouncy Castle advisory](https://github.com/bcgit/bc-java/wiki/CVE%E2%80%902026%E2%80%908763),
 [Maven dependency-management precedence](https://maven.apache.org/guides/introduction/introduction-to-dependency-mechanism.html).
+
+The realm import explicitly enables upstream `CreateDefaultClientScopes` before
+adding its custom scopes. Keycloak otherwise skips standard scope creation when
+`clientScopes` is present, so merely naming `basic` in a client is insufficient.
+Both interactive clients include `basic` for signed `sub`/`auth_time` claims; the
+runtime smoke verifies the actual tokens. Existing deployed realms are not
+modified by this source change or by an import that skips an existing realm;
+any later deployment must review and apply the corresponding realm update.

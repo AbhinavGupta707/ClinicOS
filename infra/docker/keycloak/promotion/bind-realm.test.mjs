@@ -69,6 +69,9 @@ test("realm promotion rejects interactive clients without subject and authentica
       outputPath: join(directory, "realm.json")
     })
   );
+  const missingDefaults = structuredClone(realm);
+  delete missingDefaults.attributes.CreateDefaultClientScopes;
+  assert.throws(() => validateRealm(missingDefaults, bindings), /standard identity claim scopes/);
   for (const clientId of ["clinic-os-web-bff", "clinic-os-mobile"]) {
     const invalid = structuredClone(realm);
     const client = invalid.clients.find((entry) => entry.clientId === clientId);

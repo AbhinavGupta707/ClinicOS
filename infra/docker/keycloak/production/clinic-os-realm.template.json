@@ -2,6 +2,7 @@
   "realm": "${CLINIC_OS_REALM}",
   "enabled": true,
   "displayName": "ClinicOS",
+  "attributes": { "CreateDefaultClientScopes": "true" },
   "sslRequired": "external",
   "registrationAllowed": false,
   "registrationEmailAsUsername": false,
