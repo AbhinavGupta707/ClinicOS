@@ -284,7 +284,7 @@ export const SURFACES: SurfaceRegistration[] = [
     requiredApis: [
       "GET /v1/provider-health",
       "GET /v1/dead-letter-events?status=unreviewed",
-      "GET /v1/migration-batches?status=needs_review"
+      "GET /v1/migration-batches"
     ],
     roles: ["owner", "assistant"]
   },
@@ -305,18 +305,21 @@ export const SURFACES: SurfaceRegistration[] = [
   {
     availability: "active",
     checkpoint: 7,
-    description: "CSV migration duplicate review, rejected-row safety, and reviewed commit.",
+    description:
+      "Bounded canonical CSV staging, explicit conflict review, durable commit, and safe rollback.",
     href: "/surface/migration-review",
     icon: DatabaseBackup,
     id: "migration-review",
-    label: "Migration review",
+    label: "Import clinic data",
     requiredApis: [
-      "GET /v1/migration-batches?status=needs_review",
+      "GET /v1/migration-batches",
+      "POST /v1/migration-batches",
       "GET /v1/migration-batches/{migrationBatchId}",
       "POST /v1/migration-batches/{migrationBatchId}/rows/{rowId}/resolve",
-      "POST /v1/migration-batches/{migrationBatchId}/commit"
+      "POST /v1/migration-batches/{migrationBatchId}/commit",
+      "POST /v1/migration-batches/{migrationBatchId}/rollback"
     ],
-    roles: ["owner"]
+    roles: ["owner", "assistant", "receptionist"]
   },
   {
     availability: "active",

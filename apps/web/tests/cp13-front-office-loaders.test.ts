@@ -1,14 +1,12 @@
 import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
-import {
-  ClinicOsApiError,
-  type ClinicOsApiErrorCode
-} from "@clinic-os/api-client-generated";
+import { ClinicOsApiError, type ClinicOsApiErrorCode } from "@clinic-os/api-client-generated";
 import {
   classifyFrontOfficeLoadFailure,
   loadFrontOfficeDay,
   loadFrontOfficePatientWorkspace,
   refreshFrontOfficeDay,
+  searchFrontOfficePatients,
   type FrontOfficeApiClient
 } from "../features/cp13/front-office/loaders";
 
@@ -23,6 +21,14 @@ describe("CP13 front-office durable loaders", () => {
     expect(state.status).toBe("ready");
     if (state.status !== "ready") throw new Error("Expected ready state.");
     expect(state.data.dashboard.openTasks).toHaveLength(1);
+    expect(state.data.dashboard.clinicDayAppointments[0]).toMatchObject({
+      patientName: "Synthetic Trial Patient",
+      providerName: "Dr Kabir Doctor",
+      appointmentTypeName: "Consultation",
+      chairName: "Operatory 1",
+      source: "practo",
+      status: "booked"
+    });
     expect(client.getMorningDashboard).toHaveBeenCalledWith({ query: { date: "2026-07-11" } });
     expect(client.listQueue).toHaveBeenCalledWith({ query: { date: "2026-07-11" } });
   });
@@ -51,6 +57,47 @@ describe("CP13 front-office durable loaders", () => {
       requestId: "cp13-request-unavailable"
     });
     expect("data" in refreshed).toBe(false);
+  });
+
+  it("searches patients by operator-friendly name or phone without fixture fallback", async () => {
+    const client = frontOfficeClient();
+    vi.mocked(client.listPatients).mockResolvedValueOnce({
+      patients: [
+        {
+          id: "10000000-0000-4000-8000-000000009002",
+          fullName: "  Synthetic Trial Patient  ",
+          phone: "+91 99900 01001",
+          source: "practo"
+        }
+      ]
+    } as never);
+
+    const state = await searchFrontOfficePatients(client, "  Synthetic  ");
+
+    expect(client.listPatients).toHaveBeenCalledWith({
+      query: { limit: 25, query: "Synthetic" }
+    });
+    expect(state).toMatchObject({
+      status: "ready",
+      data: {
+        query: "Synthetic",
+        patients: [
+          {
+            id: "10000000-0000-4000-8000-000000009002",
+            fullName: "Synthetic Trial Patient",
+            phone: "+91 99900 01001",
+            source: "practo"
+          }
+        ]
+      }
+    });
+  });
+
+  it("does not issue a patient request for fewer than two characters", async () => {
+    const client = frontOfficeClient();
+    const state = await searchFrontOfficePatients(client, " S ");
+    expect(client.listPatients).not.toHaveBeenCalled();
+    expect(state).toMatchObject({ status: "ready", data: { patients: [], query: "S" } });
   });
 
   it("loads patient, timeline and prep from generated granular routes", async () => {
@@ -124,10 +171,14 @@ describe("CP13 front-office durable loaders", () => {
     );
     expect(source).toContain("Loading clinic day");
     expect(source).toContain("Clinic day unavailable");
-    expect(source).toContain("repeat(auto-fit, minmax(min(100%, 18rem), 1fr))");
+    expect(source).toContain("cp13-schedule-table");
     expect(source).toContain('maxWidth: "100%"');
     expect(source).toContain("Open tasks");
-    expect(source).toContain("Medical history needs review");
+    expect(source).toContain("appointmentsTruncated");
+    for (const durableField of ["patientName", "providerName", "appointmentTypeName", "chairName"])
+      expect(source).toContain(durableField);
+    expect(source).toContain("Search by name or phone");
+    expect(source).toContain("Open full profile");
     expect(source.toLowerCase()).not.toContain("fixture patient");
   });
 });
@@ -150,6 +201,7 @@ function frontOfficeClient(): FrontOfficeApiClient {
     listAppointmentTypes: vi.fn(async () => ({ appointmentTypes: [] })),
     listChairs: vi.fn(async () => ({ chairs: [] })),
     listProviderSchedules: vi.fn(async () => ({ providerSchedules: [] })),
+    listPatients: vi.fn(async () => ({ patients: [] })),
     createPatient: vi.fn(),
     checkInAppointment: vi.fn(),
     submitPatientIntakeForm: vi.fn()
@@ -160,6 +212,8 @@ function dayData() {
   return {
     dashboard: {
       date: "2026-07-11",
+      dataAsOf: "2026-07-11T12:01:00.000Z",
+      appointmentsTruncated: false,
       appointmentCounts: {
         requested: 0,
         booked: 1,
@@ -171,6 +225,32 @@ function dayData() {
         no_show: 0
       },
       totalAppointments: 1,
+      clinicDayAppointments: [
+        {
+          id: "10000000-0000-4000-8000-000000009001",
+          rowVersion: 1,
+          patientId: "10000000-0000-4000-8000-000000009002",
+          patientName: "Synthetic Trial Patient",
+          patientPhone: null,
+          patientKind: "returning",
+          providerUserId: "10000000-0000-4000-8000-000000001002",
+          providerName: "Dr Kabir Doctor",
+          appointmentTypeId: "10000000-0000-4000-8000-000000003001",
+          appointmentTypeName: "Consultation",
+          chairId: "10000000-0000-4000-8000-000000004001",
+          chairName: "Operatory 1",
+          status: "booked",
+          startAt: "2026-07-11T12:00:00.000Z",
+          endAt: "2026-07-11T12:30:00.000Z",
+          source: "practo",
+          reason: null,
+          queueEntryId: null,
+          queueStatus: null,
+          queuePosition: null,
+          checkedInAt: null,
+          updatedAt: "2026-07-11T12:01:00.000Z"
+        }
+      ],
       unconfirmedAppointments: [{ id: "appointment", rowVersion: 1, status: "booked" }],
       todaysAppointments: [{ id: "appointment", rowVersion: 1, status: "booked" }],
       openLeads: [{ id: "lead", rowVersion: 1, status: "new" }],

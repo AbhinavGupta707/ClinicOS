@@ -14,7 +14,7 @@ jobs:
   quality:
     name: workspace quality gates
     runs-on: ubuntu-latest
-    timeout-minutes: 20
+    timeout-minutes: 35
     steps:
       - name: Checkout
         uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -40,6 +40,20 @@ jobs:
       - name: Bootstrap migrated synthetic database
         run: npm run db:bootstrap
 
+      - name: Durable Temporal workflow recovery and replay
+        env:
+          DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
+          WORKER_DATABASE_URL: postgresql://clinic_os_worker:clinic_os_worker@127.0.0.1:5432/clinic_os
+          MIGRATION_DATABASE_URL: postgresql://clinic_os_migrator:clinic_os_migrator@127.0.0.1:5432/clinic_os
+          CLINIC_OS_ABUSE_BUDGET_KEY_SECRET: synthetic-ci-only-workflow-recovery-secret
+        run: npm run cp13:test:workflow-recovery
+
+      # Repository fault fixtures leave deliberately old outbox rows. Exercise the
+      # full worker first, then reset only this job's disposable database so its
+      # recovery fixtures cannot contaminate the following repository probes.
+      - name: Reinitialize disposable CI database after workflow acceptance
+        run: npm run db:reset:local && npm run db:migrate && npm run db:grant-runtime && npm run db:seed:local && npm run db:verify
+
       - name: Migration locking drift and rollback tests
         run: npm run db:test:migrations
 
@@ -60,6 +74,44 @@ jobs:
 
       - name: Build workspaces
         run: npm run build
+
+      - name: Install acceptance browser on the disposable CI runner
+        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+
+      - name: Mark this CI job's disposable synthetic database
+        run: |
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { randomBytes } from 'node:crypto';
+          import { appendFile } from 'node:fs/promises';
+          import { Client } from 'pg';
+          assert.equal(process.env.GITHUB_ACTIONS, 'true');
+          const token = randomBytes(16).toString('hex');
+          const client = new Client({ connectionString: 'postgresql://clinic_os:clinic_os@127.0.0.1:5432/clinic_os' });
+          try {
+            await client.connect();
+            await client.query(`comment on database clinic_os is 'ClinicOS disposable MVP acceptance ${token}'`);
+            await appendFile(process.env.GITHUB_ENV, `CLINICOS_MVP_DATABASE_TOKEN=${token}\n`);
+          } finally { await client.end(); }
+          NODE
+
+      - name: Real API and PostgreSQL import acceptance
+        env:
+          CLINICOS_MVP_IMPORT_E2E_ENABLED: "true"
+          CLINICOS_MVP_TEST_DATABASE_DISPOSABLE: "true"
+          PILOT_SYNTHETIC_DATA_ONLY: "true"
+          DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
+          REDIS_URL: redis://127.0.0.1:6379
+        run: npm run mvp:test:real-stack
+
+      - name: Retain real-stack acceptance evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mvp-real-stack-${{ github.sha }}
+          path: artifacts/mvp-real-stack
+          if-no-files-found: warn
+          retention-days: 14
 
       - name: Dependency audit
         run: npm run security:audit

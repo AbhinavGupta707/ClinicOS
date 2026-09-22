@@ -1,0 +1,284 @@
+# ClinicOS Integration-First MVP Execution Plan
+
+Status: active owner-approved programme
+
+Started: 2026-08-30
+
+Baseline: `mac-latest-20260829` at `2a4cd31f57d892810c5dfb692266b3965412aff2`
+
+Integration branch: `codex/integration/mvp-0`
+
+Checkout roots: macOS `/Volumes/Spectra/Projects/ClinicOS`; WSL
+`/home/abhinav/code/ClinicOS`. Use the current host's checkout and resolve any
+Codex project ID from current registration. Desktop remains read-only. The
+WSL paths in dated evidence describe where those runs occurred.
+
+## Outcome
+
+Prove that ClinicOS can ingest authorized data from one real clinic system and
+turn it into a useful, trustworthy clinic-day workflow. The MVP succeeds when a
+clinic can see its operational data in ClinicOS, find a patient, understand
+today's schedule, detect import/sync problems, and repeat the process safely.
+
+The blue-sky architecture remains the long-term direction. The MVP does not
+complete every production-readiness checkpoint before product value is proven.
+
+## Fixed principles
+
+1. Integrate with exactly one named clinic system first.
+2. Prefer an official API. If unavailable, use an authorized CSV/XLS export or
+   explicit clinic-approved manual handoff. Never scrape.
+3. Begin read-only. No source-system writeback until identity, idempotency,
+   reconciliation, and operator review are proven.
+4. Use synthetic or de-identified data until the owner explicitly authorizes real
+   clinic data and its handling conditions.
+5. Ship fewer complete vertical slices. Do not create placeholders, fake success
+   states, a shadow datastore, or a second parallel architecture.
+6. Extend existing provider, migration, patient, appointment, database, and API
+   contracts.
+7. Every completed checkpoint requires executable acceptance evidence.
+
+## Scope boundary
+
+Required now:
+
+- one clinic and one source system;
+- patient, practitioner, and appointment ingestion;
+- canonical normalization and external-to-internal identity links;
+- duplicate/conflict review with honest partial-failure reporting;
+- repeatable read-only import or sync;
+- useful Today and patient-search workflows backed by the real API/database;
+- local real-stack verification and a clinic trial recipe.
+
+Deferred until value is proven:
+
+- multi-clinic scale and broad provider coverage;
+- production cloud/DR, formal certification, and full enterprise IAM;
+- live AI, FHIR/ABDM, telephony, accounting, and mobile distribution;
+- bidirectional writeback, except as a later separately approved experiment;
+- final visual polish outside MVP workflows.
+
+Deferred work must remain unavailable or clearly labelled; it must not look live.
+
+## MVP0 — Reproducible foundation and frozen experiment contract
+
+Goal: establish one trustworthy baseline and remove ambiguity about MVP1.
+
+Deliverables:
+
+- verified clean WSL checkout and exact baseline commit;
+- deterministic install, check, typecheck, lint, tests, build, secret scan, and
+  dependency-advisory record;
+- local Postgres/Redis/Temporal/Keycloak startup, all migrations, synthetic seed,
+  database verification, and repository/worker persistence tests;
+- clean-checkout gate ordering fixed where generated declarations are required;
+- this owner-approved scope and orchestration contract;
+- an integration intake naming software/version, access mode, export/API
+  documentation, de-identified sample, cadence, timezone, and record counts.
+
+Exit gate:
+
+- deterministic gates pass or a defect is fixed and covered;
+- local stack and durable database tests pass;
+- dependency risks are fixed or classified for MVP exposure;
+- the target source contract and sample are available.
+
+MVP1 must not guess a vendor schema. Without the source contract, the
+Practo-specific parser and field mapping are blocked on owner/clinic input.
+Source-independent ClinicOS work may continue when it strengthens the same
+canonical migration, identity, read-model, and operator workflows the verified
+adapter will use.
+
+## MVP1 — One-way clinic-system ingestion
+
+Goal: ingest patients, practitioners, and appointments into the existing
+ClinicOS source of truth without changing the clinic's source system.
+
+Implementation sequence:
+
+1. Add a typed adapter profile declaring only verified capabilities.
+2. Parse and validate bounded batches at the provider boundary.
+3. Normalize into canonical patient, practitioner mapping, and appointment
+   commands with explicit field-level errors.
+4. Stage rows in existing migration/integration tables.
+5. Resolve duplicates and external identities before commit.
+6. Commit atomically where possible; retain retryable evidence where not.
+7. Reconcile received, valid, rejected, duplicate, committed, unchanged, missing,
+   and unresolved records.
+8. Expose operator-readable status without raw sensitive payload leakage.
+
+Acceptance:
+
+- first representative de-identified import succeeds;
+- exact replay produces no duplicate domain records;
+- changed appointment evidence is linked to the correct record and quarantined
+  for explicit review until verified source update/cancellation semantics exist;
+- cancellation and missing-source states remain honest;
+- malformed/ambiguous rows cannot corrupt committed rows;
+- tenant isolation and durable retry are proven;
+- no source-system write occurs.
+
+## MVP2 — Repeatable sync plus useful clinic-day product
+
+Goal: turn imported truth into a daily workflow a clinic can evaluate.
+
+Deliverables:
+
+- bounded scheduled or operator-triggered incremental sync with a durable cursor
+  or watermark, lease, idempotency, retry, and last-success visibility;
+- a real Today page with appointments, status, patient identity, practitioner,
+  time, and sync freshness;
+- search-first patient lookup with identity confirmation and a concise summary;
+  no pasted opaque UUIDs;
+- visible sync health, unresolved conflicts, and recovery action;
+- browser acceptance against the real local API/Postgres stack without network
+  interception.
+
+Exit gate:
+
+- two sync cycles prove create, update, unchanged, cancellation, replay, and
+  recovery behavior;
+- Today and search use durable data and honest loading/error/stale states;
+- a non-developer can run the trial recipe and explain discrepancies.
+
+## Later checkpoints
+
+- MVP3: clinic-selected minimal mutations: check-in, manual note, invoice/manual
+  payment evidence, and recall.
+- MVP4: one controlled official writeback or explicit manual handoff.
+- MVP5: staging, stronger security/operations, provider activation, and broader
+  real-stack regression appropriate to the pilot.
+- MVP6: measured clinic experiment and a go/iterate/stop decision.
+
+## Testing strategy
+
+| Layer | Required evidence |
+| --- | --- |
+| Parser | Golden source samples, malformed input, encoding/date/time edges |
+| Domain | Normalization invariants, duplicate matching, status mapping |
+| Contract | Capability truth, schemas, stable errors |
+| Repository | Transactions, idempotency, external links, RLS, retries |
+| Integration | Real Postgres plus representative de-identified batch |
+| Browser | Real API/database Today and search; no request interception |
+| Operational | Replay, partial failure, recovery, reconciliation, freshness |
+
+Every defect receives the smallest durable regression test at the lowest layer
+that can prove it.
+
+## Orchestration and model routing
+
+- The master owns architecture, domain/API/database contracts, migrations,
+  security boundaries, integration, acceptance, and checkpoint decisions. Use a
+  frontier coding model with high or extra-high reasoning for these decisions.
+- Use read-only subagents for bounded evidence mapping or independent review: an
+  efficient model at medium effort for mechanical discovery and a balanced model
+  at high effort for contract/acceptance review.
+- Use an implementation subagent only after inputs are frozen, ownership is
+  path-exclusive, and deterministic verification is specified.
+- MVP0 stays in one master session. MVP1 stays sequential until the source and
+  normalization contracts are frozen.
+- MVP2 may use worktrees only if two substantial lanes are truly independent,
+  such as frozen sync/reconciliation backend and frozen Today/search frontend.
+  Shared contracts and generated files remain master-owned.
+- Never create an agent or worktree merely to satisfy an orchestration pattern.
+
+## Required owner/clinic input
+
+Before connector-specific MVP1 code begins, obtain:
+
+- exact clinic software/vendor and version;
+- official API, export, or manual access the clinic is authorized to use;
+- de-identified patient, practitioner, and appointment samples;
+- timezone, identifiers, update/cancellation semantics, and expected volume;
+- desired cadence and whether the first trial is import-once or recurring;
+- explicit approval before any real patient data or writeback.
+
+## Decision log
+
+- 2026-08-30: owner selected integration-first MVP over enterprise readiness first.
+- 2026-08-30: owner approved selective subagents and conditional worktrees.
+- 2026-08-30: baseline typecheck, lint, workspace tests, and production build
+  passed after shared declarations were built. The clean-checkout `check`
+  ordering defect was repaired and the standalone gate now passes.
+- 2026-08-30: audit reported 12 high and 10 moderate advisories, none critical.
+  Next.js is pinned to the compatible patched line; the remaining advisories are
+  classified in the MVP0 evidence record and automatic force-fixing remains
+  prohibited.
+- 2026-08-30: the WSL local stack, all 22 migrations, synthetic seed, database
+  verification, migration/repository suites, worker persistence, API readiness,
+  workspace checks, web tests/build, root build, and secret scan passed.
+- 2026-08-30: the current lockfile clean install and every post-install gate
+  passed. MVP0 engineering is complete; formal checkpoint exit now waits only
+  for the real source contract and deidentified samples required to define MVP1
+  without guessing.
+- 2026-08-30: the owner identified Healthy Roots Family Dental Studio, Girgaon,
+  and Practo as the pilot clinic/source. Official research supports a Ray
+  export-to-email path, but the clinic must still confirm that its operational
+  product is Practo Ray, its edition, authorized export access, and representative
+  deidentified samples before connector code begins.
+- 2026-08-30: the owner confirmed that the clinic uses Practo Ray and Practo
+  Profile. The Ray edition, authorized clinic-data API entitlement, export
+  columns, identifiers, and deidentified samples remain unverified.
+- 2026-08-30: source-independent MVP1/MVP2 coding proceeded without inventing a
+  Practo schema. Patient external-reference replay now reconciles to the
+  canonical record without duplicate creation, real Postgres covers replay and
+  the joined clinic-day projection, Today consumes that joined projection
+  without bulk-loading the patient registry, patient lookup is search-first, and
+  provider health explicitly reports Practo as not configured. This is not a
+  completed Practo integration or repeatable sync.
+- 2026-08-30: independent review found and the master repaired four edge cases:
+  lead duplicate review now fails closed, busy clinic-day responses are bounded
+  with explicit truncation, confirmation is never inferred from check-in state,
+  and simultaneous external-reference commits serialize and reconcile. Real
+  Postgres now exercises the concurrent commit path and cleanup.
+- 2026-08-30: the source-independent contract expanded to link-only
+  practitioners and dependency-resolved appointments. Exact replay, changed
+  evidence, deterministic in-batch overlap rejection, canonical evidence
+  digests, and dependency-safe rollback are implemented in API, fixture, and
+  Postgres repository code. Migration 0023 and generated API contracts are
+  ready, but applying 0023 and claiming live-Postgres verification remain
+  deferred because the owner's original no-migrations instruction is still in
+  force.
+- 2026-08-30: final adversarial repair added migration-batch row locking,
+  row-version-guarded rollback, broad downstream-dependency detection, bounded
+  100-row requests and conflict projections, null-safe/link-only SQL checks,
+  stale-doctor rejection, durable mapping-digest reaffirmation, and idempotent
+  blocked-rollback evidence. The full workspace check, typecheck, lint, fixture
+  and static tests, and production build pass. Real migration 0023 execution and
+  its already-coded Postgres probes remain a separate authorization gate.
+- 2026-08-30: follow-up adversarial review found three release-blocking evidence
+  defects. Patient source-only changes and missing legacy digests now require
+  explicit review; reaffirmation records actor/batch/row provenance and is
+  truthfully non-automatically-reversible; canonical mappings cannot roll back
+  while later reconciliations depend on them; and appointment timestamps now
+  require strict RFC3339 syntax plus valid Gregorian calendar components.
+- 2026-08-30: re-review found a cross-batch replay/rollback race and an
+  over-inclusive reaffirmation inference. Rollback now acquires the same sorted
+  external-reference locks as commit before re-reading dependencies; migration
+  rows persist explicit reaffirmation state; exact explicitly-linked replays stay
+  rollbackable; and a real-Postgres concurrency regression is coded for the
+  migration-authorization gate.
+- 2026-08-30: the owner authorized execution to continue. Migration 0023 is now
+  applied, all 23 migrations validate, database verification and migration
+  lifecycle tests pass, and the complete repository/Postgres suite proves the
+  practitioner and appointment paths, rollback, replay, and concurrency guards.
+- 2026-08-30: the next operator slice is a truthful manual canonical-CSV
+  stage/review/commit/best-effort-rollback workflow. It does not claim a Practo
+  API, scheduled sync, source freshness, or writeback. A server-side guard also
+  prevents generic appointment resolution from bypassing unresolved patient,
+  practitioner, appointment-type, or chair conflicts.
+- 2026-08-30: real-stack browser acceptance found and repaired two integration
+  defects: CP7 mutation payloads contained fields forbidden by the generated
+  contract, and accumulated import history produced duplicate diagnostic keys
+  plus an unusably tall page. The local Next.js API proxy, exact contract
+  payloads, actionable server errors, bounded run-history viewport, desktop and
+  mobile Playwright proof, full workspace gates, and final Postgres probes now
+  pass. This completes the source-independent manual import operator slice.
+- 2026-08-31: the source-independent clinic trial now guides an operator through
+  patient, practitioner, and appointment commits using one source key, lists
+  only active clinic-eligible doctors by name, and opens the canonical CP13
+  Today page with the imported patient, practitioner, visit, chair, source,
+  status, clinic-local time, and freshness. Real API/Postgres browser acceptance
+  proves the complete loop and reverse-order cleanup at desktop and mobile
+  widths. This closes the local guided-trial product seam; it does not prove a
+  Practo API/export adapter, source freshness, recurring sync, or writeback.

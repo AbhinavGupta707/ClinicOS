@@ -24,7 +24,7 @@ export type AppointmentStatus =
   | "no_show"
   | "requested";
 
-export type ConfirmationState = "confirmed" | "draft_ready" | "not_sent" | "sent";
+export type ConfirmationState = "confirmed" | "draft_ready" | "not_sent" | "sent" | "unknown";
 
 export type QueueState = "called" | "not_checked_in" | "waiting" | "with_doctor";
 
@@ -95,6 +95,8 @@ export interface QueueEntrySummary {
 
 export interface Cp2WorkflowData {
   api?: {
+    appointmentsTruncated?: boolean;
+    dataAsOf?: string | null;
     environment?: string;
     requestIds: string[];
   };
@@ -140,6 +142,7 @@ export interface PatientCreateInput {
 
 export interface LeadCreateInput {
   contactName: string;
+  externalReference?: string;
   messageSnippet: string;
   phone: string;
   source: WorkflowSource;
@@ -183,10 +186,8 @@ interface EndpointFailure {
 }
 
 export const CP2_REQUIRED_ENDPOINTS = [
-  "GET /v1/appointments?date=",
-  "GET /v1/queue?date=",
+  "GET /v1/dashboard/morning?date=",
   "GET /v1/leads?status=",
-  "GET /v1/patients?query=&phone=&source=",
   "POST /v1/leads"
 ] as const;
 
@@ -228,7 +229,8 @@ export const CONFIRMATION_LABELS: Record<ConfirmationState, string> = {
   confirmed: "Confirmed",
   draft_ready: "Draft ready",
   not_sent: "Not sent",
-  sent: "Sent"
+  sent: "Sent",
+  unknown: "Confirmation unknown"
 };
 
 export const QUEUE_STATE_LABELS: Record<QueueState, string> = {
@@ -266,9 +268,7 @@ export function formatPatientKind(kind: PatientKind) {
 }
 
 export function duplicateSuggestionDisplayText(suggestion: DuplicateSuggestion) {
-  return `${suggestion.patient.phone} · ${formatPatientKind(suggestion.patient.kind)} · matched by ${
-    suggestion.matchedOn
-  }`;
+  return `${suggestion.patient.phone || "No phone"} · matched by ${suggestion.matchedOn}`;
 }
 
 export function summarizeDashboard(data: Cp2WorkflowData): DashboardSummary {
@@ -278,7 +278,6 @@ export function summarizeDashboard(data: Cp2WorkflowData): DashboardSummary {
   const confirmed = data.appointments.filter(
     (appointment) =>
       appointment.status === "confirmed" ||
-      appointment.status === "checked_in" ||
       appointment.confirmationState === "confirmed"
   ).length;
   const checkedIn = data.appointments.filter(
@@ -463,20 +462,18 @@ export async function loadCp2Workflow(
   }
 
   try {
-    const [appointments, queue, leads, patients] = await Promise.allSettled([
-      fetchEndpoint("/v1/appointments", { date: today }, signal),
-      fetchEndpoint("/v1/queue", { date: today }, signal),
-      fetchEndpoint("/v1/leads", { status: "" }, signal),
-      fetchEndpoint("/v1/patients", { phone: "", query: "", source: "" }, signal)
+    const [dashboard, leads] = await Promise.allSettled([
+      fetchEndpoint("/v1/dashboard/morning", { date: today }, signal),
+      fetchEndpoint("/v1/leads", { status: "" }, signal)
     ]);
 
-    const failures = collectFailures([appointments, queue, leads, patients]);
+    const failures = collectFailures([dashboard, leads]);
 
     if (failures.length > 0) {
       return stateFromEndpointFailures(failures);
     }
 
-    const successful = [appointments, queue, leads, patients].map((result) => {
+    const successful = [dashboard, leads].map((result) => {
       if (result.status !== "fulfilled") {
         throw new Error("Endpoint failure should have been handled before normalization.");
       }
@@ -484,18 +481,21 @@ export async function loadCp2Workflow(
       return result.value;
     });
 
+    const clinicDayAppointments = readClinicDayAppointments(successful[0]?.payload);
     return {
       data: {
         api: {
+          appointmentsTruncated: readDashboardAppointmentsTruncated(successful[0]?.payload),
+          dataAsOf: readDashboardDataAsOf(successful[0]?.payload),
           environment: "api",
           requestIds: successful
             .map((result) => result.requestId)
             .filter((requestId): requestId is string => Boolean(requestId))
         },
-        appointments: normalizeAppointmentList(successful[0]?.payload),
-        leads: normalizeLeadList(successful[2]?.payload),
-        patients: normalizePatientList(successful[3]?.payload),
-        queue: normalizeQueueList(successful[1]?.payload),
+        appointments: normalizeAppointmentList(clinicDayAppointments),
+        leads: normalizeLeadList(successful[1]?.payload),
+        patients: normalizeClinicDayPatients(clinicDayAppointments),
+        queue: normalizeClinicDayQueue(clinicDayAppointments),
         source: "api",
         today
       },
@@ -533,20 +533,50 @@ export async function createLivePatient(input: PatientCreateInput, signal?: Abor
   );
 }
 
+export async function searchLivePatients(query: string, signal?: AbortSignal) {
+  const normalized = query.trim();
+  if (normalized.length < 2) {
+    throw new Error("Enter at least 2 characters to search patients.");
+  }
+  const digits = normalized.replace(/\D/g, "");
+  const response = await fetchEndpoint(
+    "/v1/patients",
+    digits.length >= 8
+      ? { phone: normalized, query: "", source: "" }
+      : { phone: "", query: normalized, source: "" },
+    signal
+  );
+  return normalizePatientList(response.payload);
+}
+
 export async function createLiveLead(input: LeadCreateInput, signal?: AbortSignal) {
-  return postEndpoint(
+  const payload = await postEndpoint(
     "/v1/leads",
     {
       intent: "appointment_request",
       primaryContact: input.phone,
       source: input.source,
       sourceDetail: {
+        externalRef: input.externalReference?.trim() || undefined,
+        patientName: input.contactName,
         rawNotificationText: input.messageSnippet
       },
-      contactName: input.contactName
     },
     signal
   );
+  if (!isRecord(payload)) {
+    throw new Error("Lead creation returned an invalid response.");
+  }
+  const lead = normalizeLead(payload.lead);
+  if (!lead) {
+    throw new Error("Lead creation did not return a valid lead.");
+  }
+  return {
+    lead,
+    patientMatchSuggestions: normalizePatientDuplicateSuggestions(
+      payload.patientMatchSuggestions
+    )
+  };
 }
 
 export async function matchLiveLeadToPatient(
@@ -631,6 +661,7 @@ export function applyFixtureCreateLead(data: Cp2WorkflowData, input: LeadCreateI
     attribution: {
       capturedAt: new Date().toISOString(),
       detail: "Captured in local CP2 workflow fixture",
+      externalRef: input.externalReference?.trim() || undefined,
       source: input.source
     },
     contactName: input.contactName.trim(),
@@ -769,7 +800,6 @@ export function applyFixtureCheckInAppointment(
       item.id === appointmentId
         ? {
             ...item,
-            confirmationState: "confirmed",
             status: "checked_in"
           }
         : item
@@ -805,6 +835,64 @@ export function normalizeAppointmentList(payload: unknown): AppointmentSummary[]
 
 export function normalizeQueueList(payload: unknown): QueueEntrySummary[] {
   return readPayloadArray(payload).map(normalizeQueueEntry).filter(isQueueEntrySummary);
+}
+
+export function normalizeClinicDayPatients(payload: unknown): PatientSummary[] {
+  const patients = new Map<string, PatientSummary>();
+  for (const value of readPayloadArray(payload)) {
+    if (!isRecord(value)) continue;
+    const id = readString(value, ["patientId", "patient_id"]);
+    const displayName = readString(value, ["patientName", "patient_name"]);
+    const phone = readString(value, ["patientPhone", "patient_phone"]);
+    if (!id || !displayName || !phone || patients.has(id)) continue;
+    patients.set(id, {
+      attribution: [],
+      displayName,
+      id,
+      kind: normalizePatientKind(value.patientKind ?? value.patient_kind),
+      phone
+    });
+  }
+  return [...patients.values()];
+}
+
+export function normalizeClinicDayQueue(payload: unknown): QueueEntrySummary[] {
+  return readPayloadArray(payload).flatMap((value) => {
+    if (!isRecord(value)) return [];
+    const id = readString(value, ["queueEntryId", "queue_entry_id"]);
+    const appointmentId = readString(value, ["id", "appointmentId", "appointment_id"]);
+    const patientId = readString(value, ["patientId", "patient_id"]);
+    const patientName = readString(value, ["patientName", "patient_name"]);
+    const providerName = readString(value, ["providerName", "provider_name"]);
+    const queueStatus = readString(value, ["queueStatus", "queue_status"]);
+    if (
+      !id ||
+      !appointmentId ||
+      !patientId ||
+      !patientName ||
+      !providerName ||
+      !queueStatus ||
+      ["completed", "cancelled"].includes(queueStatus)
+    ) {
+      return [];
+    }
+    const checkedInAt = readString(value, ["checkedInAt", "checked_in_at"]);
+    return [
+      {
+        appointmentId,
+        checkedInAt: checkedInAt ?? undefined,
+        id,
+        patientId,
+        patientKind: normalizePatientKind(value.patientKind ?? value.patient_kind),
+        patientName,
+        providerName,
+        state: queueStatus === "in_consult" ? "with_doctor" : normalizeQueueState(queueStatus),
+        waitMinutes: checkedInAt
+          ? Math.max(0, Math.floor((Date.now() - Date.parse(checkedInAt)) / 60_000))
+          : 0
+      }
+    ];
+  });
 }
 
 export function classifyEndpointFailures(failures: WorkflowEndpointIssue[]): WorkflowProblem {
@@ -1009,6 +1097,22 @@ function readPayloadArray(payload: unknown) {
   return [];
 }
 
+function readClinicDayAppointments(payload: unknown): unknown[] {
+  if (!isRecord(payload) || !isRecord(payload.dashboard)) return [];
+  const appointments = payload.dashboard.clinicDayAppointments;
+  return Array.isArray(appointments) ? appointments : [];
+}
+
+function readDashboardDataAsOf(payload: unknown): string | null {
+  if (!isRecord(payload) || !isRecord(payload.dashboard)) return null;
+  return readString(payload.dashboard, ["dataAsOf", "data_as_of"]);
+}
+
+function readDashboardAppointmentsTruncated(payload: unknown): boolean {
+  if (!isRecord(payload) || !isRecord(payload.dashboard)) return false;
+  return payload.dashboard.appointmentsTruncated === true;
+}
+
 function normalizePatient(value: unknown): PatientSummary | null {
   if (!isRecord(value)) {
     return null;
@@ -1048,6 +1152,11 @@ function normalizeLead(value: unknown): LeadSummary | null {
   const id = readString(value, ["id", "leadId", "lead_id"]);
   const phone = readString(value, ["phone", "primaryContact", "primary_contact"]);
   const source = normalizeSource(value.source);
+  const sourceDetail = isRecord(value.sourceDetail)
+    ? value.sourceDetail
+    : isRecord(value.source_detail)
+      ? value.source_detail
+      : {};
 
   if (!id || !phone || !source) {
     return null;
@@ -1056,13 +1165,26 @@ function normalizeLead(value: unknown): LeadSummary | null {
   return {
     attribution: {
       capturedAt:
-        readString(value, ["capturedAt", "captured_at", "receivedAt", "received_at"]) ??
+        readString(value, [
+          "capturedAt",
+          "captured_at",
+          "receivedAt",
+          "received_at",
+          "firstSeenAt",
+          "first_seen_at"
+        ]) ??
         new Date().toISOString(),
-      detail: readString(value, ["sourceDetail", "source_detail", "detail"]) ?? undefined,
-      externalRef: readString(value, ["externalRef", "external_ref"]) ?? undefined,
+      detail: readString(sourceDetail, ["detail"]) ?? undefined,
+      externalRef:
+        readString(value, ["externalRef", "external_ref"]) ??
+        readString(sourceDetail, ["externalRef", "external_ref"]) ??
+        undefined,
       source
     },
-    contactName: readString(value, ["contactName", "contact_name", "name"]) ?? "Unknown lead",
+    contactName:
+      readString(value, ["contactName", "contact_name", "name"]) ??
+      readString(sourceDetail, ["patientName", "patient_name", "contactName", "contact_name"]) ??
+      "Unknown lead",
     deliveryStatus:
       readString(value, ["deliveryStatus", "delivery_status", "messageStatus"]) ?? undefined,
     id,
@@ -1072,10 +1194,18 @@ function normalizeLead(value: unknown): LeadSummary | null {
       undefined,
     messageSnippet:
       readString(value, ["messageSnippet", "message_snippet", "rawNotificationText", "body"]) ??
+      readString(sourceDetail, ["rawNotificationText", "raw_notification_text", "messageSnippet"]) ??
       "No message preview available.",
     phone,
     receivedAt:
-      readString(value, ["receivedAt", "received_at", "createdAt", "created_at"]) ??
+      readString(value, [
+        "receivedAt",
+        "received_at",
+        "firstSeenAt",
+        "first_seen_at",
+        "createdAt",
+        "created_at"
+      ]) ??
       new Date().toISOString(),
     requestedWindow: readString(value, ["requestedWindow", "requested_window"]) ?? undefined,
     slaMinutesRemaining: readNumber(value, ["slaMinutesRemaining", "sla_minutes_remaining"]) ?? 0,
@@ -1097,6 +1227,8 @@ function normalizeAppointment(value: unknown): AppointmentSummary | null {
     return null;
   }
 
+  const status = normalizeAppointmentStatus(value.status);
+  const confirmationState = readString(value, ["confirmationState", "confirmation_state"]);
   return {
     appointmentType:
       readString(value, [
@@ -1106,9 +1238,11 @@ function normalizeAppointment(value: unknown): AppointmentSummary | null {
         "appointment_type_name"
       ]) ?? "Appointment",
     chair: readString(value, ["chair", "room", "chairName", "chair_name"]) ?? "Unassigned",
-    confirmationState: normalizeConfirmationState(
-      value.confirmationState ?? value.confirmation_state
-    ),
+    confirmationState: confirmationState
+      ? normalizeConfirmationState(confirmationState)
+      : status === "confirmed"
+        ? "confirmed"
+        : "unknown",
     endAt:
       readString(value, ["endAt", "end_at"]) ??
       addMinutes(
@@ -1132,7 +1266,7 @@ function normalizeAppointment(value: unknown): AppointmentSummary | null {
       "Unassigned provider",
     source,
     startAt,
-    status: normalizeAppointmentStatus(value.status)
+    status
   };
 }
 
@@ -1260,15 +1394,49 @@ function normalizeAppointmentStatus(value: unknown): AppointmentStatus {
 
 function normalizeConfirmationState(value: unknown): ConfirmationState {
   if (typeof value !== "string") {
-    return "not_sent";
+    return "unknown";
   }
 
   const normalized = value.trim().toLowerCase().replace(/-/g, "_");
-  const states = new Set<ConfirmationState>(["confirmed", "draft_ready", "not_sent", "sent"]);
+  const states = new Set<ConfirmationState>([
+    "confirmed",
+    "draft_ready",
+    "not_sent",
+    "sent",
+    "unknown"
+  ]);
 
   return states.has(normalized as ConfirmationState)
     ? (normalized as ConfirmationState)
-    : "not_sent";
+    : "unknown";
+}
+
+function normalizePatientDuplicateSuggestions(value: unknown): DuplicateSuggestion[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((candidate) => {
+    if (!isRecord(candidate) || !isRecord(candidate.patient)) return [];
+    const id = readString(candidate.patient, ["id"]);
+    const displayName = readString(candidate.patient, ["fullName", "full_name"]);
+    const phone = readString(candidate.patient, ["phone"]) ?? "";
+    const score = readNumber(candidate, ["score"]);
+    const reasons = Array.isArray(candidate.reasons)
+      ? candidate.reasons.filter((reason): reason is string => typeof reason === "string")
+      : [];
+    if (!id || !displayName || score === null) return [];
+    return [
+      {
+        matchedOn: reasons.includes("phone_exact") ? ("phone" as const) : ("name" as const),
+        patient: {
+          attribution: [],
+          displayName,
+          id,
+          kind: "returning" as const,
+          phone
+        },
+        score
+      }
+    ];
+  });
 }
 
 function normalizeQueueState(value: unknown): QueueState {

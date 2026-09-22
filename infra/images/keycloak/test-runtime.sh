@@ -26,19 +26,22 @@ realm_path="${temporary_directory}/realm.json"
 database_password="$(node -e "process.stdout.write(require('node:crypto').randomBytes(24).toString('hex'))")"
 admin_password="$(node -e "process.stdout.write(require('node:crypto').randomBytes(24).toString('hex'))")"
 completed=false
+evidence_directory="${root_dir}/image-evidence"
+mkdir -p "${evidence_directory}"
 
 cleanup() {
+  docker logs "${keycloak_container}" >"${evidence_directory}/keycloak-runtime.log" 2>&1 || true
   if [[ "${completed}" != true ]] && docker container inspect "${keycloak_container}" >/dev/null 2>&1; then
     docker logs "${keycloak_container}" >&2 || true
   fi
-  docker rm -f "${keycloak_container}" "${postgres_container}" >/dev/null 2>&1 || true
+  docker rm -fv "${keycloak_container}" "${postgres_container}" >/dev/null 2>&1 || true
   docker network rm "${network}" >/dev/null 2>&1 || true
   rm -rf "${temporary_directory}"
 }
 trap cleanup EXIT
 
 version="$(docker run --rm "${image_ref}" --version)"
-if [[ "${version}" != *"26.7.0"* ]]; then
+if [[ "${version}" != *"26.7.4"* ]]; then
   printf 'Unexpected Keycloak version: %s\n' "${version}" >&2
   exit 1
 fi
@@ -62,7 +65,7 @@ node "${root_dir}/infra/docker/keycloak/promotion/bind-realm.mjs" \
 chmod 0755 "${temporary_directory}"
 chmod 0444 "${realm_path}"
 
-docker network create "${network}" >/dev/null
+docker network create --internal "${network}" >/dev/null
 docker run --detach \
   --name "${postgres_container}" \
   --network "${network}" \
@@ -92,26 +95,42 @@ docker run --detach \
   --env KC_BOOTSTRAP_ADMIN_USERNAME=smoke-admin \
   --env "KC_BOOTSTRAP_ADMIN_PASSWORD=${admin_password}" \
   "${image_ref}" \
-  start --optimized --import-realm --http-enabled=true \
+  start --optimized --import-realm --http-enabled=true --log-level=INFO,com.arjuna:DEBUG \
   --hostname="http://${keycloak_container}:8080" >/dev/null
 
-for _attempt in {1..120}; do
-  if docker exec "${keycloak_container}" \
-    curl --fail --silent --show-error http://127.0.0.1:9000/health/ready >/dev/null 2>&1; then
-    break
-  fi
-  if [[ "$(docker inspect "${keycloak_container}" --format '{{.State.Running}}')" != true ]]; then
-    printf 'Keycloak exited before readiness\n' >&2
-    exit 1
-  fi
-  sleep 1
-done
-readiness="$(docker exec "${keycloak_container}" \
-  curl --fail --silent --show-error http://127.0.0.1:9000/health/ready)"
-node -e '
-  const value = JSON.parse(process.argv[1]);
-  if (value.status !== "UP" || !value.checks?.every((check) => check.status === "UP")) process.exit(1);
-' "${readiness}"
+await_readiness() {
+  for _attempt in {1..120}; do
+    if docker exec "${keycloak_container}" \
+      curl --connect-timeout 2 --max-time 5 --fail --silent --show-error http://127.0.0.1:9000/health/ready >/dev/null 2>&1; then
+      break
+    fi
+    if [[ "$(docker inspect "${keycloak_container}" --format '{{.State.Running}}')" != true ]]; then
+      printf 'Keycloak exited before readiness\n' >&2
+      exit 1
+    fi
+    sleep 1
+  done
+  readiness="$(docker exec "${keycloak_container}" \
+    curl --connect-timeout 2 --max-time 5 --fail --silent --show-error http://127.0.0.1:9000/health/ready)"
+  node -e '
+    const value = JSON.parse(process.argv[1]);
+    if (value.status !== "UP" || !value.checks?.every((check) => check.status === "UP")) process.exit(1);
+  ' "${readiness}"
+}
+await_readiness
+
+# Diagnose object-store initialization under the actual non-root runtime user.
+docker exec "${keycloak_container}" /bin/sh -c '
+  id
+  for directory in /opt/keycloak/data /opt/keycloak/data/transaction-logs; do
+    if [ -e "${directory}" ]; then ls -ld "${directory}"; fi
+  done
+  test -w /opt/keycloak/data
+  test -w /opt/keycloak/data/transaction-logs
+' >"${evidence_directory}/keycloak-storage.txt"
+docker exec "${keycloak_container}" /opt/keycloak/bin/kc.sh show-config \
+  | awk '/transaction|recovery|object-store/ { print }' \
+  >"${evidence_directory}/keycloak-transaction-config.txt"
 
 discovery="$(docker exec "${keycloak_container}" curl --fail --silent --show-error \
   "http://${keycloak_container}:8080/realms/${realm}/.well-known/openid-configuration")"
@@ -172,5 +191,27 @@ node -e '
   if (claims.azp !== "clinic-os-temporal-worker") process.exit(1);
 ' "${worker_token_response}"
 
+test_interactive_oidc() {
+  docker run --rm --network "${network}" \
+    --volume "${root_dir}/infra/images/keycloak/test-oidc.mjs:/test-oidc.mjs:ro" \
+    --env "KEYCLOAK_SMOKE_ADMIN_PASSWORD=${admin_password}" \
+    node:22.22.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f \
+    node /test-oidc.mjs "http://${keycloak_container}:8080" "${realm}"
+}
+test_interactive_oidc
+
+# Restart only this smoke's owned container, retaining its writable layer and
+# PostgreSQL database. Re-import must preserve the realm and login must recover.
+# This is restart/re-authentication coverage, not in-flight XA crash recovery.
+docker restart --time 30 "${keycloak_container}" >/dev/null
+await_readiness
+test_interactive_oidc
+
+docker logs "${keycloak_container}" >"${evidence_directory}/keycloak-runtime.log" 2>&1
+if grep -q 'ARJUNA048006' "${evidence_directory}/keycloak-runtime.log"; then
+  printf 'Keycloak recovery module initialization failed; inspect retained runtime diagnostics\n' >&2
+  exit 1
+fi
+
 completed=true
-printf 'Keycloak runtime smoke passed: hardened image, import, readiness, discovery, clients and worker claims\n'
+printf 'Keycloak runtime smoke passed: hardened image, writable recovery store, import, readiness, discovery, clients, worker claims and OIDC before/after restart\n'

@@ -8,6 +8,7 @@ import {
 export const SCHEDULING_OPERATIONS = [
   "listAppointmentTypes",
   "listChairs",
+  "listClinicDoctors",
   "listProviderSchedules",
   "listAppointments",
   "findAppointmentById",

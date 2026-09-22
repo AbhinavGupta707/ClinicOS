@@ -1,9 +1,10 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { KeycloakAccessTokenClaims } from "@clinic-os/auth";
 import {
   CHECKPOINT1_SEED_IDS,
   CHECKPOINT1_SEED_USERS,
   DueGenerationInputError,
+  assertStableMigrationExternalReferences,
   type AppointmentSearchFilter,
   type AcceptTreatmentPlanInput,
   type AmendClinicalNoteInput,
@@ -11,6 +12,7 @@ import {
   type ActiveBreakGlassAccessFilter,
   type AuditEventSearchFilter,
   type ClinicOperationsRepository,
+  type ProviderEligibilityResult,
   type AiRetentionDeletionResult,
   type CreateAppointmentInput,
   type CreateAuditReviewInput,
@@ -54,6 +56,7 @@ import {
   type GenerateDueSopRunsInput,
   type GenerateDueSopRunsResult,
   type IntegrationDeadLetterSearchFilter,
+  type ImportedRecordLinkLookup,
   type BreakGlassAccessSearchFilter,
   type CreateInventoryCategoryInput,
   type CreateInventoryCheckRunInput,
@@ -137,6 +140,7 @@ import {
   classifyInventoryException,
   buildConsentEnforcementState,
   detectAppointmentConflicts,
+  differingAppointmentImportFields,
   isSettledPaymentTransaction,
   normalizeClinicalNoteContent,
   normalizeDentalSurface,
@@ -160,6 +164,8 @@ import {
   type AttributionTouchRecord,
   type BreakGlassAccessRecord,
   type ChairOrRoomRecord,
+  type ClinicDoctorRecord,
+  type ClinicDayAppointmentReadModel,
   type Clock,
   type ClinicalNoteVersionRecord,
   type ConsentRecord,
@@ -694,6 +700,8 @@ export class InMemoryAuditSink {
 export class LocalFixtureClinicOperationsRepository implements ClinicOperationsRepository {
   readonly #clock: Clock;
   readonly #clinicTimeZone: string;
+  readonly #reaffirmedMigrationRowIds = new Set<UUID>();
+  readonly ineligibleProviderUserIds = new Set<UUID>();
 
   constructor(options: { clock?: Clock; clinicTimeZone?: string } = {}) {
     this.#clock = options.clock ?? systemClock;
@@ -1632,6 +1640,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     scope: RepositoryScope,
     input: CreateMigrationBatchInput
   ): Promise<MigrationBatchDetail> {
+    assertStableMigrationExternalReferences(input);
     const now = this.#nowIso();
     const batch: MigrationBatchRecord = {
       id: uuid(),
@@ -1734,6 +1743,26 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return batch ? this.#migrationBatchDetail(scope, batch) : null;
   }
 
+  async listImportedRecordLinksByExternalIds(
+    scope: RepositoryScope,
+    lookup: ImportedRecordLinkLookup
+  ): Promise<ImportedRecordLinkRecord[]> {
+    const externalRecordIds = new Set(
+      lookup.externalRecordIds.map((value) => value.trim()).filter((value) => value.length > 0)
+    );
+    return this.importedRecordLinks
+      .filter(
+        (link) =>
+          matchesScope(link, scope) &&
+          link.sourceSystem === lookup.sourceSystem &&
+          link.targetRecordType === lookup.targetRecordType &&
+          link.externalRecordId !== null &&
+          externalRecordIds.has(link.externalRecordId) &&
+          link.verificationStatus !== "rolled_back"
+      )
+      .map((link) => ({ ...link }));
+  }
+
   async listMigrationBatches(
     scope: RepositoryScope,
     filter: MigrationBatchSearchFilter = {}
@@ -1775,16 +1804,77 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       this.migrationRows.find(
         (candidate) => matchesScope(candidate, scope) && candidate.batchId === batchId && candidate.id === rowId
       ) ?? null;
-    if (!batch || !row) return null;
+    if (
+      !batch ||
+      !row ||
+      ["committed", "partially_committed", "rolled_back", "failed"].includes(batch.state)
+    ) {
+      return null;
+    }
     if (row.status === "committed" || row.status === "rolled_back") return null;
+    const expectedTargetRecordType = migrationTargetRecordType(row);
+    if (!expectedTargetRecordType) return null;
+    if (expectedTargetRecordType === "provider_user" && input.action === "create_new") {
+      return null;
+    }
+    const openConflicts = this.migrationConflicts.filter(
+      (candidate) =>
+        matchesScope(candidate, scope) &&
+        candidate.batchId === batchId &&
+        candidate.rowId === rowId &&
+        candidate.status === "open"
+    );
+    if (
+      expectedTargetRecordType === "appointment" &&
+      input.action === "create_new" &&
+      openConflicts.length > 0
+    ) {
+      return null;
+    }
 
     if (input.action === "link_existing") {
-      const patient = input.targetRecordId
-        ? await this.findPatientById(scope, input.targetRecordId)
-        : null;
-      if (!patient) return null;
-      row.resolutionTargetRecordType = input.targetRecordType ?? "patient";
-      row.resolutionTargetRecordId = patient.id;
+      if (
+        !input.targetRecordId ||
+        (input.targetRecordType ?? expectedTargetRecordType) !== expectedTargetRecordType
+      ) {
+        return null;
+      }
+      const targetExists =
+        expectedTargetRecordType === "patient"
+          ? Boolean(await this.findPatientById(scope, input.targetRecordId))
+          : expectedTargetRecordType === "provider_user"
+            ? this.#providerIsEligible(scope, input.targetRecordId)
+            : Boolean(await this.findAppointmentById(scope, input.targetRecordId));
+      if (!targetExists) return null;
+      if (expectedTargetRecordType === "patient") {
+        const repeatsRecordedResolution = row.resolutionAction === "link_existing" &&
+          row.resolutionTargetRecordId === input.targetRecordId;
+        const candidate = this.migrationConflicts.some((conflict) =>
+          matchesScope(conflict, scope) && conflict.batchId === batchId && conflict.rowId === rowId &&
+          conflict.targetRecordType === "patient" && conflict.targetRecordId === input.targetRecordId &&
+          ["duplicate_patient", "verified_record_overlap"].includes(conflict.conflictType) &&
+          (conflict.status === "open" || repeatsRecordedResolution)
+        );
+        const canonicalTarget = this.importedRecordLinks.some((link) =>
+          matchesScope(link, scope) && link.sourceSystem === batch.sourceSystem &&
+          link.externalRecordId === row.externalRecordId && link.targetRecordType === "patient" &&
+          link.targetRecordId === input.targetRecordId && link.verificationStatus !== "rolled_back"
+        );
+        if (!candidate && !canonicalTarget) return null;
+      }
+      if (
+        expectedTargetRecordType === "appointment" &&
+        !(await this.#appointmentMatchesImport(
+          scope,
+          batch.sourceSystem,
+          row,
+          input.targetRecordId
+        ))
+      ) {
+        return null;
+      }
+      row.resolutionTargetRecordType = expectedTargetRecordType;
+      row.resolutionTargetRecordId = input.targetRecordId;
     } else {
       row.resolutionTargetRecordType = null;
       row.resolutionTargetRecordId = null;
@@ -1810,6 +1900,21 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return this.#migrationRowWithConflicts(scope, row);
   }
 
+  async findProviderEligibility(
+    scope: RepositoryScope,
+    providerUserId: UUID
+  ): Promise<ProviderEligibilityResult> {
+    const eligible = this.#providerIsEligible(scope, providerUserId);
+    return {
+      providerUserId,
+      userActive: eligible,
+      membershipActive: eligible,
+      clinicAssignmentActive: eligible,
+      doctorRoleActive: eligible,
+      eligible
+    };
+  }
+
   async commitMigrationBatch(
     scope: RepositoryScope,
     batchId: UUID,
@@ -1829,53 +1934,53 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         importedRecordLinks: this.#importedLinksForBatch(scope, batchId)
       };
     }
+    if (batch.state === "rolled_back" || batch.state === "failed") return null;
 
     const readyRows = this.migrationRows.filter(
       (row) => matchesScope(row, scope) && row.batchId === batchId && row.status === "ready_to_commit"
     );
-    const linksCreated: ImportedRecordLinkRecord[] = [];
+    const linksBeforeCommit = this.#importedLinksForBatch(scope, batchId).length;
+    const conflictingAppointmentRowIds = new Set<UUID>();
+    const appointmentRows = readyRows.filter(
+      (row) =>
+        row.normalizedRecord?.recordType === "appointment" &&
+        appointmentStatusBlocksAvailability(row.normalizedRecord.status)
+    );
+    for (let leftIndex = 0; leftIndex < appointmentRows.length; leftIndex += 1) {
+      const left = appointmentRows[leftIndex];
+      if (!left?.normalizedRecord || left.normalizedRecord.recordType !== "appointment") continue;
+      for (let rightIndex = leftIndex + 1; rightIndex < appointmentRows.length; rightIndex += 1) {
+        const right = appointmentRows[rightIndex];
+        if (!right?.normalizedRecord || right.normalizedRecord.recordType !== "appointment") continue;
+        const overlaps =
+          left.normalizedRecord.startAt < right.normalizedRecord.endAt &&
+          right.normalizedRecord.startAt < left.normalizedRecord.endAt;
+        const sameProvider =
+          left.normalizedRecord.providerExternalReference ===
+          right.normalizedRecord.providerExternalReference;
+        const sameChair =
+          left.normalizedRecord.chairCode !== null &&
+          left.normalizedRecord.chairCode === right.normalizedRecord.chairCode;
+        if (overlaps && (sameProvider || sameChair)) {
+          conflictingAppointmentRowIds.add(left.id);
+          conflictingAppointmentRowIds.add(right.id);
+        }
+      }
+    }
+    for (const rowId of conflictingAppointmentRowIds) {
+      const row = readyRows.find((candidate) => candidate.id === rowId);
+      if (!row) continue;
+      row.status = "failed";
+      row.errorMessage = "Imported appointment overlaps another active appointment in this batch.";
+      row.updatedAt = this.#nowIso();
+    }
+
+    let reconciledRows = 0;
 
     for (const row of readyRows) {
-      if (!row.normalizedRecord || row.normalizedRecord.recordType !== "patient") {
-        row.status = "failed";
-        row.errorMessage = "Only patient import rows can be committed in CP7.";
-        continue;
-      }
-
-      if (row.resolutionAction === "link_existing") {
-        if (!row.resolutionTargetRecordId) {
-          row.status = "failed";
-          row.errorMessage = "Resolved existing patient target is missing.";
-          continue;
-        }
-
-        row.committedRecordType = "patient";
-        row.committedRecordId = row.resolutionTargetRecordId;
-        row.status = "committed";
-        linksCreated.push(
-          this.#createImportedRecordLink(scope, batch, row, row.resolutionTargetRecordId, "linked_existing")
-        );
-        continue;
-      }
-
-      const patient = await this.createPatient(scope, {
-        fullName: row.normalizedRecord.fullName,
-        phone: row.normalizedRecord.phone,
-        email: row.normalizedRecord.email,
-        dateOfBirth: row.normalizedRecord.dateOfBirth,
-        gender: row.normalizedRecord.gender,
-        source: "imported",
-        sourceDetail: {
-          sourceSystem: batch.sourceSystem,
-          externalReference: row.externalRecordId,
-          ...row.normalizedRecord.sourceDetail
-        }
-      });
-      row.committedRecordType = "patient";
-      row.committedRecordId = patient.id;
-      row.status = "committed";
-      row.updatedAt = this.#nowIso();
-      linksCreated.push(this.#createImportedRecordLink(scope, batch, row, patient.id, "created_from_import"));
+      if (conflictingAppointmentRowIds.has(row.id)) continue;
+      const outcome = await this.#commitMigrationRow(scope, batch, row);
+      if (outcome === "reconciled") reconciledRows += 1;
     }
 
     const failedRows = this.migrationRows.filter(
@@ -1898,9 +2003,10 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       input.idempotencyKey ?? null,
       {
         committedRows: batch.committedRowCount,
+        reconciledRows,
         invalidRows: batch.invalidRowCount,
         failedRows: batch.failedRowCount,
-        linksCreated: linksCreated.length
+        linksCreated: this.#importedLinksForBatch(scope, batchId).length - linksBeforeCommit
       },
       failedRows.length > 0 ? { failedRowIds: failedRows.map((row) => row.id) } : null
     );
@@ -1925,36 +2031,169 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     const existing = this.#findExistingMigrationCommit(scope, batchId, "rollback", input.idempotencyKey);
     if (existing || batch.state === "rolled_back") {
+      const rollback =
+        existing ??
+        this.#latestMigrationCommit(scope, batchId, "rollback") ??
+        this.#createMigrationCommit(
+          scope,
+          batchId,
+          "rollback",
+          "succeeded",
+          input.idempotencyKey ?? null,
+          {},
+          null
+        );
+      const importedRecordLinks = this.#importedLinksForBatch(scope, batchId);
+      const blockedLinkIds = new Set(
+        Array.isArray(rollback.errorSummary?.blockedLinkIds)
+          ? rollback.errorSummary.blockedLinkIds.filter(
+              (value): value is string => typeof value === "string"
+            )
+          : []
+      );
       return {
         batch,
-        rollback: existing ?? this.#latestMigrationCommit(scope, batchId, "rollback") ?? this.#createMigrationCommit(scope, batchId, "rollback", "succeeded", input.idempotencyKey ?? null, {}, null),
+        rollback,
         rows: await this.listMigrationRows(scope, batchId),
-        importedRecordLinks: this.#importedLinksForBatch(scope, batchId),
-        blockedLinks: []
+        importedRecordLinks,
+        blockedLinks: this.importedRecordLinks.filter(
+          (link) => matchesScope(link, scope) && blockedLinkIds.has(link.id)
+        )
       };
     }
+    if (batch.state !== "committed" && batch.state !== "partially_committed") return null;
 
+    const reaffirmedLinks = this.migrationRows
+      .filter(
+        (row) =>
+          matchesScope(row, scope) &&
+          row.batchId === batchId &&
+          row.status === "committed" &&
+          this.#reaffirmedMigrationRowIds.has(row.id) &&
+          !this.importedRecordLinks.some(
+            (link) => matchesScope(link, scope) && link.rowId === row.id
+          )
+      )
+      .flatMap((row) => {
+        const targetRecordType = migrationTargetRecordType(row);
+        const link = this.importedRecordLinks.find(
+          (candidate) =>
+            matchesScope(candidate, scope) &&
+            candidate.sourceSystem === batch.sourceSystem &&
+            candidate.externalRecordId === row.externalRecordId &&
+            candidate.targetRecordType === targetRecordType &&
+            candidate.targetRecordId === row.resolutionTargetRecordId &&
+            candidate.verificationStatus !== "rolled_back"
+        );
+        return link ? [link] : [];
+      });
     const links = this.#importedLinksForBatch(scope, batchId).filter(
       (link) => link.verificationStatus === "imported_unverified"
+    ).sort(
+      (left, right) =>
+        migrationRollbackOrder(left.targetRecordType) -
+          migrationRollbackOrder(right.targetRecordType) ||
+        right.createdAt.localeCompare(left.createdAt)
     );
     const blockedLinks: ImportedRecordLinkRecord[] = [];
     const rolledBackLinks: ImportedRecordLinkRecord[] = [];
 
+    for (const link of reaffirmedLinks) {
+      link.metadata = {
+        ...link.metadata,
+        rollbackBlockedAt: this.#nowIso(),
+        rollbackBlockedReason:
+          "Explicit evidence reaffirmation changes a canonical external mapping and is not automatically reversible."
+      };
+      link.updatedAt = this.#nowIso();
+      blockedLinks.push(link);
+    }
+
     for (const link of links) {
-      if (link.linkType === "created_from_import" && this.#patientHasRollbackBlockingDependencies(scope, link.targetRecordId)) {
+      const hasLaterReconciliation = this.migrationRows.some((row) => {
+        if (
+          !matchesScope(row, scope) ||
+          row.batchId === batchId ||
+          row.status !== "committed" ||
+          row.externalRecordId !== link.externalRecordId ||
+          row.committedRecordType !== link.targetRecordType ||
+          row.committedRecordId !== link.targetRecordId
+        ) {
+          return false;
+        }
+        const reconciliationBatch = this.migrationBatches.find(
+          (candidate) => matchesScope(candidate, scope) && candidate.id === row.batchId
+        );
+        return reconciliationBatch?.sourceSystem === link.sourceSystem;
+      });
+      const hasCommittedAppointmentDependency =
+        (link.targetRecordType === "provider_user" || link.targetRecordType === "patient") &&
+        this.migrationRows.some((row) => {
+          if (
+            !matchesScope(row, scope) ||
+            row.batchId === batchId ||
+            row.status !== "committed" ||
+            row.normalizedRecord?.recordType !== "appointment" ||
+            (link.targetRecordType === "patient"
+              ? row.normalizedRecord.patientExternalReference
+              : row.normalizedRecord.providerExternalReference) !== link.externalRecordId
+          ) {
+            return false;
+          }
+          const appointmentBatch = this.migrationBatches.find(
+            (candidate) => matchesScope(candidate, scope) && candidate.id === row.batchId
+          );
+          return (
+            appointmentBatch?.sourceSystem === link.sourceSystem &&
+            this.importedRecordLinks.some(
+              (candidate) =>
+                matchesScope(candidate, scope) &&
+                candidate.sourceSystem === link.sourceSystem &&
+                candidate.externalRecordId === row.externalRecordId &&
+                candidate.targetRecordType === "appointment" &&
+                candidate.verificationStatus !== "rolled_back"
+            )
+          );
+        });
+      const rollbackBlocked =
+        hasLaterReconciliation ||
+        hasCommittedAppointmentDependency ||
+        (link.linkType === "created_from_import" &&
+          (link.targetRecordType === "appointment"
+            ? this.#appointmentHasRollbackBlockingDependencies(scope, link.targetRecordId)
+            : link.targetRecordType === "patient"
+              ? this.#patientHasRollbackBlockingDependencies(scope, link.targetRecordId)
+              : true));
+      if (rollbackBlocked) {
         link.metadata = {
           ...link.metadata,
           rollbackBlockedAt: this.#nowIso(),
-          rollbackBlockedReason: "Imported patient has downstream clinical or billing dependencies."
+          rollbackBlockedReason:
+            hasLaterReconciliation
+              ? "A later committed migration reconciliation depends on this canonical external mapping."
+              : hasCommittedAppointmentDependency
+                ? `A committed imported appointment depends on this ${link.targetRecordType === "patient" ? "patient" : "practitioner"} mapping.`
+              : link.targetRecordType === "appointment"
+              ? "Imported appointment has been changed or has downstream operational dependencies."
+              : link.targetRecordType === "patient"
+                ? "Imported patient has downstream clinical or billing dependencies."
+                : "Imported record type cannot be safely deleted by migration rollback."
         };
         blockedLinks.push(link);
         continue;
       }
 
       if (link.linkType === "created_from_import") {
-        removeWhere(this.dentalCharts, (chart) => matchesScope(chart, scope) && chart.patientId === link.targetRecordId);
-        removeWhere(this.timelineItems, (item) => matchesScope(item, scope) && item.patientId === link.targetRecordId);
-        removeWhere(this.patients, (patient) => matchesScope(patient, scope) && patient.id === link.targetRecordId);
+        if (link.targetRecordType === "appointment") {
+          removeWhere(
+            this.appointments,
+            (appointment) => matchesScope(appointment, scope) && appointment.id === link.targetRecordId
+          );
+        } else if (link.targetRecordType === "patient") {
+          removeWhere(this.dentalCharts, (chart) => matchesScope(chart, scope) && chart.patientId === link.targetRecordId);
+          removeWhere(this.timelineItems, (item) => matchesScope(item, scope) && item.patientId === link.targetRecordId);
+          removeWhere(this.patients, (patient) => matchesScope(patient, scope) && patient.id === link.targetRecordId);
+        }
       }
 
       link.verificationStatus = "rolled_back";
@@ -1968,6 +2207,26 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         row.status = "rolled_back";
         row.matchStatus = row.resolutionAction === "link_existing" ? "resolved" : row.matchStatus;
         row.updatedAt = link.updatedAt;
+      }
+    }
+
+    for (const row of this.migrationRows.filter(
+      (candidate) =>
+        matchesScope(candidate, scope) &&
+        candidate.batchId === batchId &&
+        candidate.status === "committed" &&
+        !this.#reaffirmedMigrationRowIds.has(candidate.id)
+    )) {
+      const hasActiveBatchLink = this.importedRecordLinks.some(
+        (link) =>
+          matchesScope(link, scope) &&
+          link.rowId === row.id &&
+          link.verificationStatus !== "rolled_back"
+      );
+      if (!hasActiveBatchLink) {
+        row.status = "rolled_back";
+        row.errorMessage = null;
+        row.updatedAt = this.#nowIso();
       }
     }
 
@@ -2115,6 +2374,28 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
   async listChairs(scope: RepositoryScope): Promise<ChairOrRoomRecord[]> {
     return this.chairs.filter((chair) => matchesScope(chair, scope) && chair.active);
+  }
+
+  async listClinicDoctors(scope: RepositoryScope): Promise<ClinicDoctorRecord[]> {
+    const doctor = CHECKPOINT1_SEED_USERS.find((candidate) => candidate.key === "doctor");
+    const providerUserId = CHECKPOINT1_SEED_IDS.users.doctor;
+    if (
+      !doctor ||
+      scope.tenantId !== CHECKPOINT1_SEED_IDS.tenantId ||
+      scope.clinicId !== CHECKPOINT1_SEED_IDS.clinicId ||
+      this.ineligibleProviderUserIds.has(providerUserId)
+    ) {
+      return [];
+    }
+
+    return [
+      {
+        tenantId: scope.tenantId,
+        clinicId: scope.clinicId,
+        providerUserId,
+        displayName: doctor.displayName
+      }
+    ];
   }
 
   async listProviderSchedules(
@@ -3836,24 +4117,80 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async loadDashboardData(scope: RepositoryScope, date: string): Promise<DashboardDataSet> {
-    const appointments = await this.listAppointments(scope, { date });
+    const allAppointments = await this.listAppointments(scope, { date });
+    const appointmentsTruncated = allAppointments.length > 500;
+    const appointments = allAppointments.slice(0, 500);
+    const returningPatientIds = new Set(
+      this.appointments
+        .filter(
+          (appointment) =>
+            matchesScope(appointment, scope) && appointment.startAt < `${date}T00:00:00.000Z`
+        )
+        .map((appointment) => appointment.patientId)
+    );
+    const clinicDayAppointments: ClinicDayAppointmentReadModel[] = appointments.map(
+      (appointment) => {
+        const patient = this.patients.find(
+          (candidate) => matchesScope(candidate, scope) && candidate.id === appointment.patientId
+        );
+        const appointmentType = this.appointmentTypes.find(
+          (candidate) =>
+            matchesScope(candidate, scope) && candidate.id === appointment.appointmentTypeId
+        );
+        const chair = appointment.chairId
+          ? this.chairs.find(
+              (candidate) => matchesScope(candidate, scope) && candidate.id === appointment.chairId
+            )
+          : null;
+        const providerKey = Object.entries(CHECKPOINT1_SEED_IDS.users).find(
+          ([, id]) => id === appointment.providerUserId
+        )?.[0];
+        const provider = CHECKPOINT1_SEED_USERS.find((candidate) => candidate.key === providerKey);
+        const queueEntry = this.queueEntries.find(
+          (candidate) =>
+            matchesScope(candidate, scope) && candidate.appointmentId === appointment.id
+        );
+        if (!patient || !appointmentType || !provider) {
+          throw new Error("Clinic-day fixture contains an appointment with unresolved identity data.");
+        }
+        return {
+          id: appointment.id,
+          rowVersion: appointment.rowVersion,
+          patientId: patient.id,
+          patientName: patient.fullName,
+          patientPhone: patient.phone,
+          patientKind: returningPatientIds.has(patient.id) ? "returning" : "new",
+          providerUserId: appointment.providerUserId,
+          providerName: provider.displayName,
+          appointmentTypeId: appointment.appointmentTypeId,
+          appointmentTypeName: appointmentType.displayName,
+          chairId: appointment.chairId,
+          chairName: chair?.displayName ?? null,
+          status: appointment.status,
+          startAt: appointment.startAt,
+          endAt: appointment.endAt,
+          source: appointment.source,
+          reason: appointment.reason,
+          queueEntryId: queueEntry?.id ?? null,
+          queueStatus: queueEntry?.status ?? null,
+          queuePosition: queueEntry?.position ?? null,
+          checkedInAt: queueEntry?.checkedInAt ?? null,
+          updatedAt: appointment.updatedAt
+        };
+      }
+    );
     return {
       appointments,
+      appointmentsTruncated,
+      clinicDayAppointments,
       leads: this.leads.filter(
         (lead) => matchesScope(lead, scope) && ["new", "contacted", "matched"].includes(lead.status)
-      ),
+      ).slice(0, 500),
       tasks: this.tasks.filter(
         (task) => matchesScope(task, scope) && ["open", "in_progress"].includes(task.status)
-      ),
-      queue: await this.listQueueEntries(scope, date),
-      returningPatientIds: new Set(
-        this.appointments
-          .filter(
-            (appointment) =>
-              matchesScope(appointment, scope) && appointment.startAt < `${date}T00:00:00.000Z`
-          )
-        .map((appointment) => appointment.patientId)
-      )
+      ).slice(0, 500),
+      queue: (await this.listQueueEntries(scope, date)).slice(0, 500),
+      returningPatientIds
     };
   }
 
@@ -6249,10 +6586,342 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
   }
 
+  async #commitMigrationRow(
+    scope: RepositoryScope,
+    batch: MigrationBatchRecord,
+    row: MigrationRowRecord
+  ): Promise<"committed" | "reconciled" | "failed"> {
+    const targetRecordType = migrationTargetRecordType(row);
+    if (!targetRecordType || !row.normalizedRecord) {
+      return this.#failMigrationRow(row, "Migration row does not contain a supported normalized record.");
+    }
+
+    const existingExternalLink = row.externalRecordId
+      ? this.importedRecordLinks.find(
+          (link) =>
+            matchesScope(link, scope) &&
+            link.sourceSystem === batch.sourceSystem &&
+            link.externalRecordId === row.externalRecordId &&
+            link.targetRecordType === targetRecordType &&
+            link.verificationStatus !== "rolled_back"
+        ) ?? null
+      : null;
+    if (existingExternalLink) {
+      const existingDigest = existingExternalLink.metadata.normalizedRecordDigest;
+      const normalizedRecordDigest = migrationRecordDigest(row);
+      const explicitlyReaffirmedTarget =
+        row.resolutionAction === "link_existing" &&
+        row.resolutionTargetRecordId === existingExternalLink.targetRecordId;
+      const targetChanged =
+        row.resolutionAction === "create_new" ||
+        (row.resolutionAction === "link_existing" &&
+          row.resolutionTargetRecordId !== existingExternalLink.targetRecordId);
+      if (
+        targetChanged ||
+        (existingDigest !== normalizedRecordDigest && !explicitlyReaffirmedTarget)
+      ) {
+        return this.#failMigrationRow(
+          row,
+          `The external ${targetRecordType} reference is already linked with different evidence.`
+        );
+      }
+
+      const targetValid =
+        targetRecordType === "patient"
+          ? Boolean(await this.findPatientById(scope, existingExternalLink.targetRecordId))
+          : targetRecordType === "provider_user"
+            ? this.#providerIsEligible(scope, existingExternalLink.targetRecordId)
+            : await this.#appointmentMatchesImport(
+                scope,
+                batch.sourceSystem,
+                row,
+                existingExternalLink.targetRecordId
+              );
+      if (!targetValid) {
+        return this.#failMigrationRow(row, "The linked ClinicOS record no longer matches the import.");
+      }
+      if (explicitlyReaffirmedTarget && existingDigest !== normalizedRecordDigest) {
+        existingExternalLink.metadata = {
+          ...existingExternalLink.metadata,
+          previousNormalizedRecordDigest:
+            typeof existingDigest === "string" ? existingDigest : null,
+          normalizedRecordDigest,
+          evidenceReaffirmedAt: this.#nowIso(),
+          evidenceReaffirmedByUserId: scope.actorUserId,
+          evidenceReaffirmedByBatchId: batch.id,
+          evidenceReaffirmedByRowId: row.id
+        };
+        existingExternalLink.updatedAt = this.#nowIso();
+        this.#reaffirmedMigrationRowIds.add(row.id);
+      }
+      this.#markMigrationRowCommitted(row, targetRecordType, existingExternalLink.targetRecordId);
+      return "reconciled";
+    }
+
+    if (targetRecordType === "patient") {
+      if (row.normalizedRecord.recordType !== "patient") {
+        return this.#failMigrationRow(row, "Patient record is invalid.");
+      }
+      if (row.resolutionAction === "link_existing") {
+        const patient = row.resolutionTargetRecordId
+          ? await this.findPatientById(scope, row.resolutionTargetRecordId)
+          : null;
+        if (!patient) {
+          return this.#failMigrationRow(row, "Resolved existing patient target is missing.");
+        }
+        this.#createImportedRecordLink(
+          scope,
+          batch,
+          row,
+          "patient",
+          patient.id,
+          "linked_existing"
+        );
+        this.#markMigrationRowCommitted(row, "patient", patient.id);
+        return "committed";
+      }
+
+      const patient = await this.createPatient(scope, {
+        fullName: row.normalizedRecord.fullName,
+        phone: row.normalizedRecord.phone,
+        email: row.normalizedRecord.email,
+        dateOfBirth: row.normalizedRecord.dateOfBirth,
+        gender: row.normalizedRecord.gender,
+        source: "imported",
+        sourceDetail: {
+          sourceSystem: batch.sourceSystem,
+          externalReference: row.externalRecordId,
+          ...row.normalizedRecord.sourceDetail
+        }
+      });
+      this.#createImportedRecordLink(
+        scope,
+        batch,
+        row,
+        "patient",
+        patient.id,
+        "created_from_import"
+      );
+      this.#markMigrationRowCommitted(row, "patient", patient.id);
+      return "committed";
+    }
+
+    if (targetRecordType === "provider_user") {
+      if (
+        row.resolutionAction !== "link_existing" ||
+        !row.resolutionTargetRecordId ||
+        !this.#providerIsEligible(scope, row.resolutionTargetRecordId)
+      ) {
+        return this.#failMigrationRow(
+          row,
+          "Practitioners must be linked to an eligible existing ClinicOS doctor."
+        );
+      }
+      this.#createImportedRecordLink(
+        scope,
+        batch,
+        row,
+        "provider_user",
+        row.resolutionTargetRecordId,
+        "linked_existing"
+      );
+      this.#markMigrationRowCommitted(row, "provider_user", row.resolutionTargetRecordId);
+      return "committed";
+    }
+
+    if (row.normalizedRecord.recordType !== "appointment") {
+      return this.#failMigrationRow(row, "Appointment record is invalid.");
+    }
+    const references = this.#resolveImportedAppointmentReferences(
+      scope,
+      batch.sourceSystem,
+      row
+    );
+    if (!references) {
+      return this.#failMigrationRow(
+        row,
+        "Appointment references do not resolve to active ClinicOS master data."
+      );
+    }
+
+    if (row.resolutionAction === "link_existing") {
+      const appointment = row.resolutionTargetRecordId
+        ? await this.findAppointmentById(scope, row.resolutionTargetRecordId)
+        : null;
+      if (
+        !appointment ||
+        differingAppointmentImportFields(row.normalizedRecord, appointment, references).length > 0
+      ) {
+        return this.#failMigrationRow(
+          row,
+          "Existing appointment target does not match the imported evidence."
+        );
+      }
+      this.#createImportedRecordLink(
+        scope,
+        batch,
+        row,
+        "appointment",
+        appointment.id,
+        "linked_existing"
+      );
+      this.#markMigrationRowCommitted(row, "appointment", appointment.id);
+      return "committed";
+    }
+
+    const conflicts = appointmentStatusBlocksAvailability(row.normalizedRecord.status)
+      ? await this.findAppointmentConflicts(scope, {
+          providerUserId: references.providerUserId,
+          chairId: references.chairId,
+          startAt: row.normalizedRecord.startAt,
+          endAt: row.normalizedRecord.endAt
+        })
+      : [];
+    if (conflicts.length > 0) {
+      return this.#failMigrationRow(
+        row,
+        "Imported appointment overlaps an existing active appointment."
+      );
+    }
+    const now = this.#nowIso();
+    const appointment: AppointmentRecord = {
+      id: uuid(),
+      tenantId: scope.tenantId,
+      clinicId: scope.clinicId,
+      rowVersion: 1,
+      patientId: references.patientId,
+      leadId: null,
+      providerUserId: references.providerUserId,
+      appointmentTypeId: references.appointmentTypeId,
+      chairId: references.chairId,
+      status: row.normalizedRecord.status,
+      startAt: row.normalizedRecord.startAt,
+      endAt: row.normalizedRecord.endAt,
+      source: row.normalizedRecord.source,
+      reason: null,
+      notes: null,
+      createdAt: now,
+      updatedAt: now
+    };
+    this.appointments.push(appointment);
+    this.#createImportedRecordLink(
+      scope,
+      batch,
+      row,
+      "appointment",
+      appointment.id,
+      "created_from_import"
+    );
+    this.#markMigrationRowCommitted(row, "appointment", appointment.id);
+    return "committed";
+  }
+
+  #resolveImportedAppointmentReferences(
+    scope: RepositoryScope,
+    sourceSystem: string,
+    row: MigrationRowRecord
+  ): {
+    patientId: UUID;
+    providerUserId: UUID;
+    appointmentTypeId: UUID;
+    chairId: UUID | null;
+  } | null {
+    if (!row.normalizedRecord || row.normalizedRecord.recordType !== "appointment") return null;
+    const normalized = row.normalizedRecord;
+    const patientLink = this.importedRecordLinks.find(
+      (link) =>
+        matchesScope(link, scope) &&
+        link.sourceSystem === sourceSystem &&
+        link.externalRecordId === normalized.patientExternalReference &&
+        link.targetRecordType === "patient" &&
+        link.verificationStatus !== "rolled_back"
+    );
+    const providerLink = this.importedRecordLinks.find(
+      (link) =>
+        matchesScope(link, scope) &&
+        link.sourceSystem === sourceSystem &&
+        link.externalRecordId === normalized.providerExternalReference &&
+        link.targetRecordType === "provider_user" &&
+        link.verificationStatus !== "rolled_back"
+    );
+    const appointmentType = this.appointmentTypes.find(
+      (record) =>
+        matchesScope(record, scope) && record.active && record.code === normalized.appointmentTypeCode
+    );
+    const chair = normalized.chairCode
+      ? this.chairs.find(
+          (record) => matchesScope(record, scope) && record.active && record.code === normalized.chairCode
+        )
+      : null;
+    if (
+      !patientLink ||
+      !providerLink ||
+      !appointmentType ||
+      (normalized.chairCode !== null && !chair) ||
+      !this.patients.some(
+        (record) => matchesScope(record, scope) && record.id === patientLink.targetRecordId
+      ) ||
+      !this.#providerIsEligible(scope, providerLink.targetRecordId)
+    ) {
+      return null;
+    }
+    return {
+      patientId: patientLink.targetRecordId,
+      providerUserId: providerLink.targetRecordId,
+      appointmentTypeId: appointmentType.id,
+      chairId: chair?.id ?? null
+    };
+  }
+
+  async #appointmentMatchesImport(
+    scope: RepositoryScope,
+    sourceSystem: string,
+    row: MigrationRowRecord,
+    appointmentId: UUID
+  ): Promise<boolean> {
+    if (!row.normalizedRecord || row.normalizedRecord.recordType !== "appointment") return false;
+    const appointment = await this.findAppointmentById(scope, appointmentId);
+    const references = this.#resolveImportedAppointmentReferences(scope, sourceSystem, row);
+    return Boolean(
+      appointment &&
+        references &&
+        differingAppointmentImportFields(row.normalizedRecord, appointment, references).length === 0
+    );
+  }
+
+  #markMigrationRowCommitted(
+    row: MigrationRowRecord,
+    targetRecordType: "patient" | "provider_user" | "appointment",
+    targetRecordId: UUID
+  ): void {
+    row.committedRecordType = targetRecordType;
+    row.committedRecordId = targetRecordId;
+    row.status = "committed";
+    row.errorMessage = null;
+    row.updatedAt = this.#nowIso();
+  }
+
+  #failMigrationRow(row: MigrationRowRecord, errorMessage: string): "failed" {
+    row.status = "failed";
+    row.errorMessage = errorMessage;
+    row.updatedAt = this.#nowIso();
+    return "failed";
+  }
+
+  #providerIsEligible(scope: RepositoryScope, providerUserId: UUID): boolean {
+    return (
+      scope.tenantId === CHECKPOINT1_SEED_IDS.tenantId &&
+      scope.clinicId === CHECKPOINT1_SEED_IDS.clinicId &&
+      providerUserId === CHECKPOINT1_SEED_IDS.users.doctor &&
+      !this.ineligibleProviderUserIds.has(providerUserId)
+    );
+  }
+
   #createImportedRecordLink(
     scope: RepositoryScope,
     batch: MigrationBatchRecord,
     row: MigrationRowRecord,
+    targetRecordType: "patient" | "provider_user" | "appointment",
     targetRecordId: UUID,
     linkType: ImportedRecordLinkRecord["linkType"]
   ): ImportedRecordLinkRecord {
@@ -6261,7 +6930,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         matchesScope(link, scope) &&
         link.batchId === batch.id &&
         link.rowId === row.id &&
-        link.targetRecordType === "patient" &&
+        link.targetRecordType === targetRecordType &&
         link.targetRecordId === targetRecordId
     );
     if (existing) return existing;
@@ -6276,13 +6945,14 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       importType: batch.importType,
       sourceSystem: batch.sourceSystem,
       externalRecordId: row.externalRecordId,
-      targetRecordType: "patient",
+      targetRecordType,
       targetRecordId,
       linkType,
       verificationStatus: "imported_unverified",
       verifiedByUserId: null,
       verifiedAt: null,
       metadata: {
+        normalizedRecordDigest: migrationRecordDigest(row),
         rowNumber: row.rowNumber,
         resolutionAction: row.resolutionAction ?? "create_new"
       },
@@ -6300,21 +6970,125 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
   }
 
-  #patientHasRollbackBlockingDependencies(scope: RepositoryScope, patientId: UUID): boolean {
+  #appointmentHasRollbackBlockingDependencies(
+    scope: RepositoryScope,
+    appointmentId: UUID
+  ): boolean {
+    const appointment = this.appointments.find(
+      (record) => matchesScope(record, scope) && record.id === appointmentId
+    );
     return (
+      !appointment ||
+      appointment.rowVersion > 1 ||
+      this.queueEntries.some(
+        (record) => matchesScope(record, scope) && record.appointmentId === appointmentId
+      ) ||
+      this.encounters.some(
+        (record) => matchesScope(record, scope) && record.appointmentId === appointmentId
+      ) ||
+      this.tasks.some(
+        (record) => matchesScope(record, scope) && record.appointmentId === appointmentId
+      ) ||
+      this.attributionTouches.some(
+        (record) => matchesScope(record, scope) && record.appointmentId === appointmentId
+      ) ||
+      this.recalls.some(
+        (record) => matchesScope(record, scope) && record.appointmentId === appointmentId
+      ) ||
+      this.incidents.some(
+        (record) => matchesScope(record, scope) && record.appointmentId === appointmentId
+      )
+    );
+  }
+
+  #patientHasRollbackBlockingDependencies(scope: RepositoryScope, patientId: UUID): boolean {
+    const patient = this.patients.find(
+      (record) => matchesScope(record, scope) && record.id === patientId
+    );
+    return (
+      !patient ||
+      patient.rowVersion > 1 ||
+      this.timelineItems.filter(
+        (record) => matchesScope(record, scope) && record.patientId === patientId
+      ).length > 1 ||
+      this.leads.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
       this.appointments.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.queueEntries.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.tasks.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.attributionTouches.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
       this.encounters.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
       this.intakeFormSubmissions.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
       this.consents.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.clinicalNoteVersions.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.prescriptions.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
       this.dentalFindings.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.dentalFindingHistory.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.dentalChartSnapshots.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.mediaUploadReservations.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
       this.mediaAssets.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
       this.treatmentPlans.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
       this.proceduresPerformed.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
       this.invoices.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.invoiceItems.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.paymentRequests.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.paymentTransactions.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.receipts.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.patientInstructions.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.recalls.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
       this.labCases.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
-      this.incidents.some((record) => matchesScope(record, scope) && record.patientId === patientId)
+      this.labCaseStatusHistory.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.labReconciliationEntries.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.incidents.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.aiSessions.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.patientRecordExports.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.deletionRequests.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.retentionActions.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.breakGlassAccesses.some((record) => matchesScope(record, scope) && record.patientId === patientId) ||
+      this.auditEvents.some(
+        (record) =>
+          record.tenantId === scope.tenantId &&
+          record.clinicId === scope.clinicId &&
+          record.patientId === patientId
+      )
     );
   }
+}
+
+function migrationTargetRecordType(
+  row: MigrationRowRecord
+): "patient" | "provider_user" | "appointment" | null {
+  if (row.normalizedRecord?.recordType === "patient") return "patient";
+  if (row.normalizedRecord?.recordType === "provider_user") return "provider_user";
+  if (row.normalizedRecord?.recordType === "appointment") return "appointment";
+  return null;
+}
+
+function migrationRecordDigest(row: MigrationRowRecord): string | null {
+  return row.normalizedRecord
+    ? createHash("sha256").update(stableMigrationJson(row.normalizedRecord)).digest("hex")
+    : null;
+}
+
+function stableMigrationJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableMigrationJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nestedValue]) => `${JSON.stringify(key)}:${stableMigrationJson(nestedValue)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+function appointmentStatusBlocksAvailability(status: AppointmentStatus): boolean {
+  return ["requested", "booked", "confirmed", "checked_in", "in_consult"].includes(status);
+}
+
+function migrationRollbackOrder(targetRecordType: string): number {
+  if (targetRecordType === "appointment") return 0;
+  if (targetRecordType === "provider_user") return 1;
+  if (targetRecordType === "patient") return 2;
+  return 3;
 }
 
 export function createLocalFixtureClaims(input: {

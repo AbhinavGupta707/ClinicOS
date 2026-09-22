@@ -12,9 +12,11 @@ import {
   createCp13ApiClient,
   registerClinicOsAccessTokenProvider
 } from "../lib/cp13-api-client";
+import { createSyntheticMeFixture } from "../lib/dev-fixture";
 
 afterEach(() => {
   vi.unstubAllGlobals();
+  vi.unstubAllEnvs();
   vi.restoreAllMocks();
 });
 
@@ -51,6 +53,43 @@ describe("CP13 browser runtime composition", () => {
     await expect(client.listPricebookProcedures()).rejects.toBeInstanceOf(
       ClinicOsSessionUnavailableError
     );
+  });
+
+  it("uses the durable seed scope only when the local identity fixture is explicitly enabled", async () => {
+    vi.stubEnv("NEXT_PUBLIC_CLINIC_OS_USE_DEV_ME_FIXTURE", "true");
+    vi.stubEnv("NEXT_PUBLIC_CLINIC_OS_ENV", "local");
+    vi.stubEnv("NEXT_PUBLIC_CLINIC_OS_DEV_ROLE", "owner");
+    const requested: Array<{ authorization: string | null; clinic: string | null }> = [];
+    vi.stubGlobal("window", { location: { origin: "http://127.0.0.1:3000" } });
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (_input: RequestInfo | URL, init?: RequestInit) => {
+        const headers = new Headers(init?.headers);
+        requested.push({
+          authorization: headers.get("authorization"),
+          clinic: headers.get("x-clinic-id")
+        });
+        return new Response(JSON.stringify({ procedures: [] }), {
+          status: 200,
+          headers: { "content-type": "application/json" }
+        });
+      })
+    );
+
+    const profile = createSyntheticMeFixture();
+    expect(profile).toMatchObject({
+      clinic: { id: "10000000-0000-4000-8000-000000000101" },
+      tenant: { id: "10000000-0000-4000-8000-000000000001" },
+      user: { id: "10000000-0000-4000-8000-000000001001" }
+    });
+
+    await createCp13ApiClient(profile.clinic.id).listPricebookProcedures();
+    expect(requested).toEqual([
+      {
+        authorization: "Bearer local-synthetic-fixture",
+        clinic: "10000000-0000-4000-8000-000000000101"
+      }
+    ]);
   });
 
   it("selects the clinic-local date across a UTC day boundary", () => {

@@ -18,24 +18,30 @@ import {
   CAPABILITY_STATUS_LABELS,
   classifyCp7EndpointFailures,
   commitLiveMigrationBatch,
+  createLiveMigrationBatch,
   DEAD_LETTER_STATUS_LABELS,
   getOpenDeadLetterCount,
   getProviderStatusCount,
   getUnresolvedMigrationConflictCount,
   loadCp7IntegrationOps,
-  MIGRATION_BATCH_STATUS_LABELS,
   PROVIDER_ACTIVATION_LABELS,
   PROVIDER_STATUS_LABELS,
   replayLiveDeadLetterEvent,
   resolveLiveMigrationConflict,
+  rollbackLiveMigrationBatch,
+  type CreateMigrationBatchRequest,
   type Cp7IntegrationOpsData,
   type Cp7IntegrationOpsLoadState,
   type Cp7IntegrationOpsProblem,
   type DeadLetterEvent,
   type MigrationBatch,
+  type MigrationConflict,
+  type MigrationRow,
+  type ResolveMigrationRowRequest,
   type ProviderHealthCard
 } from "@/lib/cp7-integration-ops";
 import type { MeProfile } from "@/lib/me";
+import { MigrationOperationsPanel } from "@/components/migration-operations-panel";
 
 interface IntegrationOpsWorkflowProps {
   activeSurfaceId: string;
@@ -64,6 +70,7 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
   const [mode, setMode] = useState<Cp7Mode>(() => modeForSurface(activeSurfaceId));
   const [actionBusy, setActionBusy] = useState(false);
   const [actionMessage, setActionMessage] = useState<ActionMessage | null>(null);
+  const [selectedBatchId, setSelectedBatchId] = useState<string | null>(null);
 
   useEffect(() => {
     setMode(modeForSurface(activeSurfaceId));
@@ -99,10 +106,31 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
     () => data?.deadLetters.find((event) => event.replayAvailable) ?? data?.deadLetters[0] ?? null,
     [data]
   );
-  const primaryBatch = data?.migrationBatches[0] ?? null;
+
+  useEffect(() => {
+    if (!data?.migrationBatches.length) {
+      setSelectedBatchId(null);
+      return;
+    }
+    if (!selectedBatchId || !data.migrationBatches.some((batch) => batch.id === selectedBatchId)) {
+      setSelectedBatchId(data.migrationBatches[0]?.id ?? null);
+    }
+  }, [data, selectedBatchId]);
 
   const updateFixtureData = (nextData: Cp7IntegrationOpsData) => {
     setLoadState({ data: nextData, status: "ready" });
+  };
+
+  const reloadWorkflow = async (batchId?: string) => {
+    const nextState = await loadCp7IntegrationOps();
+    setLoadState(nextState);
+    if (nextState.status === "ready") {
+      const nextBatchId =
+        batchId && nextState.data.migrationBatches.some((batch) => batch.id === batchId)
+          ? batchId
+          : (nextState.data.migrationBatches[0]?.id ?? null);
+      setSelectedBatchId(nextBatchId);
+    }
   };
 
   const handleReplayDeadLetter = async (event: DeadLetterEvent) => {
@@ -125,7 +153,6 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
         });
       } else {
         await replayLiveDeadLetterEvent(event.id, {
-          actorName: profile.user.displayName,
           reason: "Operator reviewed failed provider event from CP7 integration ops."
         });
         setActionMessage({
@@ -143,15 +170,21 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
     }
   };
 
-  const handleResolveConflict = async (batch: MigrationBatch) => {
+  const handleResolveConflict = async (
+    batch: MigrationBatch,
+    row: MigrationRow,
+    conflict: MigrationConflict,
+    input: Omit<ResolveMigrationRowRequest, "actorName">
+  ) => {
     if (!data) return;
-    const conflict = batch.conflicts.find((item) => item.status === "unresolved");
-    if (!conflict) return;
 
     setActionBusy(true);
     setActionMessage(null);
     try {
       if (data.source === "cp7_fixture") {
+        if (input.action !== "link_existing") {
+          throw new Error("The local CP7 fixture supports only its synthetic duplicate-link path.");
+        }
         updateFixtureData(
           applyFixtureResolveMigrationConflict(data, {
             actorName: profile.user.displayName,
@@ -165,15 +198,11 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
           tone: "success"
         });
       } else {
-        await resolveLiveMigrationConflict(batch.id, conflict, {
-          actorName: profile.user.displayName,
-          notes:
-            "Keep existing verified ClinicOS record; import row stays unverified/history only.",
-          resolution: "keep_existing_verified_record"
-        });
+        await resolveLiveMigrationConflict(batch.id, row.id, input);
+        await reloadWorkflow(batch.id);
         setActionMessage({
-          text: "Migration conflict resolution was sent to the CP7 API boundary.",
-          tone: "info"
+          text: "Row resolution was recorded and the durable batch state was refreshed.",
+          tone: "success"
         });
       }
     } catch (error) {
@@ -205,12 +234,11 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
           tone: "success"
         });
       } else {
-        await commitLiveMigrationBatch(batch.id, {
-          actorName: profile.user.displayName
-        });
+        await commitLiveMigrationBatch(batch.id);
+        await reloadWorkflow(batch.id);
         setActionMessage({
-          text: "Migration commit request was sent to the CP7 API boundary for reviewed rows only.",
-          tone: "info"
+          text: "Reviewed rows were committed and the durable batch state was refreshed.",
+          tone: "success"
         });
       }
     } catch (error) {
@@ -223,14 +251,89 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
     }
   };
 
+  const handleCreateBatch = async (input: CreateMigrationBatchRequest) => {
+    if (!data || data.source === "cp7_fixture") return;
+    setActionBusy(true);
+    setActionMessage(null);
+    try {
+      const created = await createLiveMigrationBatch(input);
+      await reloadWorkflow(created.batchId);
+      setActionMessage({
+        text: "The CSV was validated and staged. Review conflicts and invalid rows before commit.",
+        tone: "success"
+      });
+    } catch (error) {
+      setActionMessage({
+        text: error instanceof Error ? error.message : "Migration batch staging failed.",
+        tone: "error"
+      });
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleRollbackBatch = async (batch: MigrationBatch) => {
+    if (!data || data.source === "cp7_fixture") return;
+    setActionBusy(true);
+    setActionMessage(null);
+    try {
+      const outcome = await rollbackLiveMigrationBatch(batch.id);
+      await reloadWorkflow(batch.id);
+      const reasons =
+        outcome.blockedReasons.length > 0 ? " " + outcome.blockedReasons.join(" ") : "";
+      setActionMessage({
+        text:
+          outcome.blockedCount > 0
+            ? outcome.blockedCount +
+              " record(s) were preserved because safe rollback was blocked." +
+              reasons
+            : "Safe rollback completed; the durable batch state was refreshed.",
+        tone: outcome.blockedCount > 0 ? "info" : "success"
+      });
+    } catch (error) {
+      setActionMessage({
+        text: error instanceof Error ? error.message : "Migration rollback failed.",
+        tone: "error"
+      });
+    } finally {
+      setActionBusy(false);
+    }
+  };
+
+  const handleRefresh = async () => {
+    setActionBusy(true);
+    try {
+      await reloadWorkflow(selectedBatchId ?? undefined);
+    } finally {
+      setActionBusy(false);
+    }
+  };
+  const dedicatedImport = activeSurfaceId === "migration-review";
+
   return (
     <div data-testid="cp7-integration-ops-workspace">
       <div className="surface-stack cp7-workflow" data-testid={`cp7-surface-${activeSurfaceId}`}>
-        <section className="surface-hero surface-hero--integrations" aria-labelledby="cp7-title">
+        <section
+          className={
+            dedicatedImport ? "import-page-hero" : "surface-hero surface-hero--integrations"
+          }
+          aria-labelledby="cp7-title"
+        >
           <div>
-            <p className="eyebrow">Live integration operations</p>
+            <p className="eyebrow">
+              {dedicatedImport ? "Manual clinic onboarding" : "Live integration operations"}
+            </p>
             <h1 id="cp7-title">{titleForSurface(activeSurfaceId)}</h1>
             <p className="hero-subline">{descriptionForSurface(activeSurfaceId)}</p>
+            {dedicatedImport ? (
+              <div className="import-page-hero__truth">
+                <span>Manual file import</span>
+                <span aria-hidden="true">·</span>
+                <span>No Practo connection</span>
+                <span aria-hidden="true">·</span>
+                <span>Review before commit</span>
+              </div>
+            ) : null}
           </div>
           <div className="hero-status" aria-label="Workflow API mode">
             <span
@@ -267,7 +370,7 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
               </section>
             ) : null}
 
-            <ReadinessPanel data={loadState.data} />
+            {mode === "migration" ? null : <ReadinessPanel data={loadState.data} />}
 
             {actionMessage ? (
               <section
@@ -289,7 +392,7 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
               </section>
             ) : null}
 
-            <WorkflowTabs mode={mode} setMode={setMode} />
+            {dedicatedImport ? null : <WorkflowTabs mode={mode} setMode={setMode} />}
 
             {mode === "providers" ? <ProviderDashboard data={loadState.data} /> : null}
             {mode === "replay" ? (
@@ -300,15 +403,29 @@ export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: Integration
               />
             ) : null}
             {mode === "migration" ? (
-              <MigrationReviewPanel
+              <MigrationOperationsPanel
                 actionBusy={actionBusy}
-                batch={primaryBatch}
+                batches={loadState.data.migrationBatches}
+                eligibleDoctors={loadState.data.clinicDoctors}
+                fixtureMode={loadState.data.source === "cp7_fixture"}
                 onCommit={handleCommitBatch}
-                onResolveConflict={handleResolveConflict}
+                onCreate={handleCreateBatch}
+                onRefresh={handleRefresh}
+                onResolve={handleResolveConflict}
+                onRollback={handleRollbackBatch}
+                onSelectBatch={setSelectedBatchId}
+                selectedBatchId={selectedBatchId}
               />
             ) : null}
 
-            <TimelinePanel data={loadState.data} />
+            {dedicatedImport ? (
+              <details className="import-technical-details">
+                <summary>Technical details and audit trail</summary>
+                <TimelinePanel data={loadState.data} />
+              </details>
+            ) : (
+              <TimelinePanel data={loadState.data} />
+            )}
           </>
         )}
       </div>
@@ -549,101 +666,6 @@ function ReplayPanel({
   );
 }
 
-function MigrationReviewPanel({
-  actionBusy,
-  batch,
-  onCommit,
-  onResolveConflict
-}: {
-  actionBusy: boolean;
-  batch: MigrationBatch | null;
-  onCommit: (batch: MigrationBatch) => void;
-  onResolveConflict: (batch: MigrationBatch) => void;
-}) {
-  if (!batch) {
-    return (
-      <section className="work-panel" data-testid="cp7-migration-review">
-        <EmptyState text="No migration batch is ready for review." />
-      </section>
-    );
-  }
-
-  const openConflict = batch.conflicts.find((conflict) => conflict.status === "unresolved");
-  const commitReady = batch.commit.state === "ready";
-
-  return (
-    <section
-      className="work-panel"
-      aria-labelledby="cp7-migration-title"
-      data-testid="cp7-migration-review"
-    >
-      <div className="panel-heading">
-        <div>
-          <h2 id="cp7-migration-title">Migration review and commit</h2>
-          <p>
-            Imported rows are reviewed before commit. Bad rows stay out, duplicate candidates are
-            resolved explicitly, and verified ClinicOS records are preserved.
-          </p>
-        </div>
-        <span className="state-pill" data-testid="cp7-migration-status">
-          {MIGRATION_BATCH_STATUS_LABELS[batch.status]}
-        </span>
-      </div>
-      <div className="workflow-grid workflow-grid--cp7">
-        <div className="cp7-card-list">
-          {batch.rows.map((row) => (
-            <article className="cp7-card cp7-card--compact" key={row.id}>
-              <div className="cp7-card__heading">
-                <div>
-                  <strong>
-                    Row {row.rowNumber}: {row.target}
-                  </strong>
-                  <span>{row.preview}</span>
-                </div>
-                <span className="state-pill">{row.status.replaceAll("_", " ")}</span>
-              </div>
-              {row.issue ? <p className="cp7-card-note">{row.issue}</p> : null}
-            </article>
-          ))}
-        </div>
-        <aside className="activation-card">
-          <DatabaseBackup size={20} aria-hidden="true" />
-          <strong>Commit gate</strong>
-          <p>
-            {batch.commit.state === "committed"
-              ? `${batch.commit.committedRows} reviewed rows committed. Rejected rows were not imported.`
-              : (batch.commit.blockedReason ?? "Reviewed rows are ready to commit.")}
-          </p>
-          {openConflict ? (
-            <p>
-              Conflict: {openConflict.candidateSummary} Resolution must be recorded before commit.
-            </p>
-          ) : null}
-          <div className="surface-actions">
-            <Button
-              data-testid="cp7-resolve-migration-conflict"
-              disabled={actionBusy || !openConflict}
-              onClick={() => onResolveConflict(batch)}
-              size="sm"
-              variant="secondary"
-            >
-              Resolve duplicate
-            </Button>
-            <Button
-              data-testid="cp7-commit-migration-batch"
-              disabled={actionBusy || !commitReady}
-              onClick={() => onCommit(batch)}
-              size="sm"
-            >
-              Commit reviewed rows
-            </Button>
-          </div>
-        </aside>
-      </div>
-    </section>
-  );
-}
-
 function TimelinePanel({ data }: { data: Cp7IntegrationOpsData }) {
   return (
     <section className="work-panel" aria-labelledby="cp7-timeline-title" data-testid="cp7-timeline">
@@ -684,8 +706,11 @@ function ProblemPanel({ problem }: { problem: Cp7IntegrationOpsProblem }) {
           <span>Endpoint</span>
           <span>Status</span>
         </div>
-        {problem.endpoints.map((endpoint) => (
-          <div className="endpoint-row" key={`${endpoint.endpoint}-${endpoint.status ?? "n/a"}`}>
+        {problem.endpoints.map((endpoint, index) => (
+          <div
+            className="endpoint-row"
+            key={`${endpoint.endpoint}-${endpoint.status ?? "n/a"}-${index}`}
+          >
             <span>{endpoint.endpoint}</span>
             <span>
               {endpoint.status ?? "n/a"} - {endpoint.message}
@@ -750,7 +775,7 @@ function modeForSurface(surfaceId: string): Cp7Mode {
 
 function titleForSurface(surfaceId: string) {
   if (surfaceId === "event-replay") return "Failed event replay";
-  if (surfaceId === "migration-review") return "Migration review";
+  if (surfaceId === "migration-review") return "Import clinic data";
 
   return "Provider health";
 }
@@ -760,7 +785,7 @@ function descriptionForSurface(surfaceId: string) {
     return "Review failed provider events and replay only through explicit, auditable routes.";
   }
   if (surfaceId === "migration-review") {
-    return "Inspect import conflicts and commit only reviewed, non-overwriting migration rows.";
+    return "Bring approved clinic records into ClinicOS with a guided file upload, row-by-row review, and an explicit final commit.";
   }
 
   return "Inspect WhatsApp, telephony, Google/source, Razorpay, and import capabilities without fake live success states.";

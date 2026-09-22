@@ -54,6 +54,9 @@ export function validateRealm(realm, bindings) {
   if (realm.realm !== bindings.CLINIC_OS_REALM || realm.enabled !== true) {
     throw new Error("Realm identity does not match the runtime binding.");
   }
+  if (realm.attributes?.CreateDefaultClientScopes !== "true") {
+    throw new Error("Realm import must create the standard identity claim scopes.");
+  }
   if (realm.sslRequired !== "external" || realm.registrationAllowed !== false) {
     throw new Error("Realm transport and self-registration policy must fail closed.");
   }
@@ -225,6 +228,11 @@ function assertInteractiveClient(client, publicClient, redirectUri) {
     redirectUri.includes("*")
   ) {
     throw new Error(`${client.clientId} must use one exact redirect URI.`);
+  }
+  if (!client.defaultClientScopes?.includes("basic")) {
+    throw new Error(
+      `${client.clientId} must include basic subject and authentication-time claims.`
+    );
   }
   if (client.optionalClientScopes?.includes("offline_access")) {
     throw new Error(`${client.clientId} cannot request offline access.`);

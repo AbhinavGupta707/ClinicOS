@@ -1,5 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { buildAccessContext, principalFromVerifiedKeycloakClaims } from "@clinic-os/auth";
 import { CHECKPOINT1_SEED_IDS } from "@clinic-os/db";
 import {
@@ -84,6 +85,17 @@ test("CP2 services execute lead to checked-in dashboard workflow without socket 
   const dashboard = await getMorningDashboard(assistant, dependencies, workflowDate);
   assert.equal(dashboard.body.dashboard.appointmentCounts.checked_in, 1);
   assert.equal(dashboard.body.dashboard.queue.length, 1);
+  assert.equal(dashboard.body.dashboard.clinicDayAppointments.length, 1);
+  const clinicDayAppointment = dashboard.body.dashboard.clinicDayAppointments[0];
+  assert.equal(clinicDayAppointment.id, appointment.id);
+  assert.equal(clinicDayAppointment.patientId, patient.id);
+  assert.equal(clinicDayAppointment.patientName, "Rhea Synthetic");
+  assert.equal(clinicDayAppointment.providerName, "Dr Kabir Doctor");
+  assert.equal(clinicDayAppointment.appointmentTypeName, "Consultation");
+  assert.equal(clinicDayAppointment.chairName, "Operatory 1");
+  assert.equal(clinicDayAppointment.queueStatus, "waiting");
+  assert.ok(clinicDayAppointment.queueEntryId);
+  assert.equal(dashboard.body.dashboard.dataAsOf, clinicDayAppointment.updatedAt);
   assert.ok(auditSink.events.some((event) => event.action === "patient.checked_in"));
   assert.ok(repository.outboxEvents.some((event) => event.eventType === "patient.checked_in"));
 
@@ -100,6 +112,47 @@ test("CP2 services execute lead to checked-in dashboard workflow without socket 
       }),
     /missing_permission/
   );
+});
+
+test("morning dashboard caps a busy clinic day and reports truncation truthfully", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const dependencies = { repository, auditSink: new InMemoryAuditSink() };
+  const assistant = await operationsContext("seed-assistant");
+  const patient = (
+    await createPatient(assistant, dependencies, {
+      fullName: "Busy Day Synthetic",
+      phone: "+91 98765 49999",
+      source: "manual"
+    })
+  ).body.patient;
+  const firstAppointment = (
+    await createAppointment(assistant, dependencies, {
+      patientId: patient.id,
+      providerUserId: CHECKPOINT1_SEED_IDS.users.doctor,
+      appointmentTypeId: CHECKPOINT1_SEED_IDS.appointmentTypes.consultation,
+      chairId: null,
+      startAt: "2026-07-06T09:00:00.000Z",
+      durationMinutes: 30,
+      source: "manual"
+    })
+  ).body.appointment;
+  repository.appointments.push(
+    ...Array.from({ length: 500 }, (_, index) => ({
+      ...firstAppointment,
+      id: randomUUID() as typeof firstAppointment.id,
+      reason: `Synthetic contract-bound appointment ${index + 2}`
+    }))
+  );
+
+  const dashboard = await getMorningDashboard(
+    assistant,
+    dependencies,
+    "2026-07-06"
+  );
+
+  assert.equal(dashboard.body.dashboard.appointmentsTruncated, true);
+  assert.equal(dashboard.body.dashboard.todaysAppointments.length, 500);
+  assert.equal(dashboard.body.dashboard.clinicDayAppointments.length, 500);
 });
 
 test("creating a patient from a source lead matches the lead before conversion", async () => {

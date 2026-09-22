@@ -351,7 +351,8 @@ function schemaType(definition: RuntimeSchema): string {
   } else {
     result = "JsonValue";
   }
-  return definition.nullable && !result.includes("null") ? `${result} | null` : result;
+  // A nullable field inside an object (or array item) does not make its parent nullable.
+  return definition.nullable && !definition.enum?.includes(null) ? `${result} | null` : result;
 }
 
 function renderClientMethod(operation: HttpOperationContract): string {

@@ -22,6 +22,7 @@ const ROLE_ALIASES: Record<string, ClinicRole> = {
   admin: "owner",
   clinic_admin: "owner",
   clinic_owner: "owner",
+  owner_admin: "owner",
   front_desk: "receptionist",
   platform: "platform_admin",
   platformAdmin: "platform_admin",

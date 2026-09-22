@@ -10,6 +10,7 @@ export default tseslint.config(
       "**/build/**",
       "**/coverage/**",
       ".next/**",
+      "**/.next-mvp-acceptance/**",
       ".expo/**",
       ".cache/**",
       ".turbo/**",

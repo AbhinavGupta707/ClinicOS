@@ -75,6 +75,31 @@ test("morning dashboard separates unconfirmed, queue, and new versus returning p
   const dashboard = buildMorningDashboard({
     date: "2026-07-07",
     appointments,
+    appointmentsTruncated: false,
+    clinicDayAppointments: appointments.map((candidate) => ({
+      id: candidate.id,
+      rowVersion: candidate.rowVersion,
+      patientId: candidate.patientId,
+      patientName: "Rhea Synthetic",
+      patientPhone: "+919876543210",
+      patientKind: "returning",
+      providerUserId: candidate.providerUserId,
+      providerName: "Dr Kabir Doctor",
+      appointmentTypeId: candidate.appointmentTypeId,
+      appointmentTypeName: "Consultation",
+      chairId: candidate.chairId,
+      chairName: "Operatory 1",
+      status: candidate.status,
+      startAt: candidate.startAt,
+      endAt: candidate.endAt,
+      source: candidate.source,
+      reason: candidate.reason,
+      queueEntryId: null,
+      queueStatus: null,
+      queuePosition: null,
+      checkedInAt: null,
+      updatedAt: candidate.updatedAt
+    })),
     leads: [lead()],
     tasks: [task()],
     queue: [queueEntry(appointments[1].id)],
@@ -85,6 +110,9 @@ test("morning dashboard separates unconfirmed, queue, and new versus returning p
   assert.equal(dashboard.appointmentCounts.booked, 1);
   assert.equal(dashboard.unconfirmedAppointments.length, 1);
   assert.equal(dashboard.queue.length, 1);
+  assert.equal(dashboard.clinicDayAppointments[0].patientName, "Rhea Synthetic");
+  assert.equal(dashboard.appointmentsTruncated, false);
+  assert.equal(dashboard.dataAsOf, "2026-07-06T09:00:00.000Z");
   assert.deepEqual(dashboard.returningPatientAppointmentIds, appointments.map((candidate) => candidate.id));
 });
 

@@ -2,6 +2,7 @@
   "realm": "${CLINIC_OS_REALM}",
   "enabled": true,
   "displayName": "ClinicOS",
+  "attributes": { "CreateDefaultClientScopes": "true" },
   "sslRequired": "external",
   "registrationAllowed": false,
   "registrationEmailAsUsername": false,
@@ -132,6 +133,7 @@
       "webOrigins": ["${CLINIC_OS_WEB_ORIGIN}"],
       "defaultClientScopes": [
         "openid",
+        "basic",
         "profile",
         "email",
         "roles",
@@ -165,6 +167,7 @@
       "webOrigins": [],
       "defaultClientScopes": [
         "openid",
+        "basic",
         "profile",
         "email",
         "roles",

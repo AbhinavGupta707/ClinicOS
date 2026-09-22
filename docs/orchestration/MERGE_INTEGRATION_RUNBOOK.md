@@ -2,6 +2,13 @@
 
 Date: 2026-07-09
 
+Current programme note (2026-09-20): the owner-approved integration-first MVP plan
+controls current sequencing. CP12–CP18 orchestration below remains applicable when
+checkpoint work resumes; it does not require MVP repairs to launch worktree lanes.
+PR #1 targets `mac-latest-20260829`, not `main`. Verify exact branch ancestry,
+corrected-head checks and relocation preservation before any promotion; a local
+implementation merge is not a production release approval.
+
 This runbook optimizes the master orchestration pass after isolated worker lanes finish. For CP12-CP18 it supplements the `orchestrate-worktrees` skill, `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`, and the active checkpoint packet. Plan 20 remains historical CP0-CP10 context.
 
 ## CP12-CP18 Control Addendum
@@ -10,7 +17,7 @@ This runbook optimizes the master orchestration pass after isolated worker lanes
 - Worker count is adaptive, not a quota. Launch only substantial lanes with disjoint paths, stable inputs, independent narrow tests, standalone commit value and no competing mutable environment. Sequence dependent consumers from a recorded integration commit or keep them with the master.
 - Create and verify the requested 90-second thread heartbeat at orchestration start. If rejected, record it and use the documented active-loop/fallback cadence.
 - Build a path-level conflict matrix before thread creation. Two workers must not own the same implementation file.
-- Use project ID `/Users/abhinavgupta/Desktop/ClinicOS` resolved through `list_projects`; never use hidden/projectless/raw worktrees.
+- Resolve the saved project at `/Volumes/Spectra/Projects/ClinicOS` through `list_projects` and use its returned opaque `projectId`; never substitute a filesystem path as the ID or use hidden/projectless/raw worktrees.
 - Workers commit lane changes but never merge or change release truth. The master reviews actual worktree commits/diffs.
 - `main` remains the last verified checkpoint; all lane integration happens on `codex/integration/checkpoint-N`.
 

@@ -47,7 +47,7 @@ describe("role-aware navigation", () => {
 
   it("reports active versus registered unavailable surfaces", () => {
     expect(summarizeSurfaceAccess(["assistant"])).toMatchObject({
-      activeCount: 18,
+      activeCount: 19,
       registeredCount: expect.any(Number),
       unavailableCount: expect.any(Number)
     });
@@ -129,7 +129,7 @@ describe("role-aware navigation", () => {
     expect(resolveSurfaceId("continuity")).toBe("tasks");
   });
 
-  it("activates CP7 integration ops without exposing replay or migration to non-owner roles", () => {
+  it("allows front-office import review while keeping failed-event replay owner-only", () => {
     const assistantActive = getVisibleSurfaces(["assistant"])
       .filter((surface) => surface.availability === "active")
       .map((surface) => surface.id);
@@ -140,7 +140,7 @@ describe("role-aware navigation", () => {
 
     expect(assistantActive).toContain("integrations");
     expect(assistantActive).not.toContain("event-replay");
-    expect(assistantActive).not.toContain("migration-review");
+    expect(assistantActive).toContain("migration-review");
     expect(ownerActive).toEqual(
       expect.arrayContaining(["integrations", "event-replay", "migration-review"])
     );

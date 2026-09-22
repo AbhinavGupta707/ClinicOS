@@ -1,5 +1,7 @@
 # Checkpoint 01 - Production Platform Foundation
 
+> Relocation note (2026-09-20): Desktop locations and launch IDs below are historical evidence. For current launches, resolve the Spectra repository through `list_projects` as specified in [the active orchestration program](POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md).
+
 ## Goal
 
 Build the deployable ClinicOS skeleton: web/API/worker/mobile app foundation, local development dependencies, auth/tenancy base, CI, database migrations, audit, outbox, and Temporal foundation.

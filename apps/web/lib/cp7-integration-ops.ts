@@ -15,6 +15,7 @@ export type Cp7ProviderKey =
   | "exotel"
   | "google_business_profile"
   | "manual_import"
+  | "practo"
   | "razorpay"
   | "whatsapp_cloud";
 
@@ -82,19 +83,29 @@ export type MigrationRowStatus =
   | "skipped"
   | "valid";
 export type MigrationConflictStatus = "resolved" | "unresolved";
+export type MigrationConflictType =
+  | "duplicate_patient"
+  | "field_conflict"
+  | "invalid_reference"
+  | "verified_record_overlap";
+export type MigrationImportType = "appointments" | "patients" | "practitioners";
+export type MigrationResolutionAction = "create_new" | "link_existing" | "skip";
 
 export interface MigrationRow {
+  conflictsTruncated?: boolean;
   externalReference: string;
   id: string;
   issue?: string;
   preview: string;
   rowNumber: number;
   status: MigrationRowStatus;
-  target: "appointment" | "invoice" | "patient";
+  target: "appointment" | "patient" | "practitioner";
 }
 
 export interface MigrationConflict {
+  candidatePatient?: { fullName: string; phone: string | null };
   candidateSummary: string;
+  conflictType: MigrationConflictType;
   id: string;
   resolution?: "keep_existing_verified_record" | "import_as_unverified";
   resolutionAction?: "create_new" | "link_existing" | "skip" | null;
@@ -113,13 +124,52 @@ export interface MigrationCommitState {
 }
 
 export interface MigrationBatch {
+  conflictsTruncated?: boolean;
   commit: MigrationCommitState;
   conflicts: MigrationConflict[];
+  counts: {
+    committed: number;
+    conflicts: number;
+    failed: number;
+    invalid: number;
+    ready: number;
+    rolledBack: number;
+    total: number;
+  };
   id: string;
+  importType: MigrationImportType;
   rows: MigrationRow[];
-  sourceSystem: "ray_csv_export" | "synthetic_csv";
+  sourceFileName?: string | null;
+  sourceSystem: string;
   status: MigrationBatchStatus;
   uploadedAt: string;
+  updatedAt: string;
+}
+
+export interface CreateMigrationBatchRequest {
+  csv: string;
+  importType: MigrationImportType;
+  sourceFileName?: string | null;
+  sourceSystem: string;
+}
+
+export interface ResolveMigrationRowRequest {
+  action: MigrationResolutionAction;
+  actorName: string;
+  notes: string;
+  targetRecordId?: string | null;
+  targetRecordType?: string | null;
+}
+
+export interface MigrationRollbackOutcome {
+  blockedCount: number;
+  blockedReasons: string[];
+  state: MigrationBatchStatus | null;
+}
+
+export interface EligibleClinicDoctor {
+  displayName: string;
+  providerUserId: string;
 }
 
 export interface Cp7TimelineItem {
@@ -148,6 +198,7 @@ export interface Cp7IntegrationOpsData {
     environment?: string;
     requestIds: string[];
   };
+  clinicDoctors: EligibleClinicDoctor[];
   deadLetters: DeadLetterEvent[];
   migrationBatches: MigrationBatch[];
   providers: ProviderHealthCard[];
@@ -195,12 +246,15 @@ interface EndpointFailure extends Cp7EndpointIssue {
 
 export const CP7_REQUIRED_ENDPOINTS = [
   "GET /v1/provider-health",
+  "GET /v1/clinic-doctors",
   "GET /v1/dead-letter-events?status=unreviewed",
   "POST /v1/dead-letter-events/{deadLetterEventId}/replay",
-  "GET /v1/migration-batches?status=needs_review",
+  "GET /v1/migration-batches",
+  "POST /v1/migration-batches",
   "GET /v1/migration-batches/{migrationBatchId}",
   "POST /v1/migration-batches/{migrationBatchId}/rows/{rowId}/resolve",
-  "POST /v1/migration-batches/{migrationBatchId}/commit"
+  "POST /v1/migration-batches/{migrationBatchId}/commit",
+  "POST /v1/migration-batches/{migrationBatchId}/rollback"
 ] as const;
 
 export const PROVIDER_STATUS_LABELS: Record<ProviderHealthStatus, string> = {
@@ -246,6 +300,71 @@ export const DEAD_LETTER_STATUS_LABELS: Record<DeadLetterStatus, string> = {
   unreviewed: "Unreviewed"
 };
 
+export const MIGRATION_IMPORT_TYPE_LABELS: Record<MigrationImportType, string> = {
+  appointments: "Appointments",
+  patients: "Patients",
+  practitioners: "Practitioner mappings"
+};
+
+const CANONICAL_MIGRATION_CSV_TEMPLATES: Record<MigrationImportType, string> = {
+  appointments: [
+    "external_reference,patient_external_reference,provider_external_reference,appointment_type_code,chair_code,start_at,end_at,status,source",
+    "trial-appointment-001,trial-patient-001,trial-practitioner-001,consultation,op-1,2026-09-01T09:00:00.000Z,2026-09-01T09:30:00.000Z,booked,practo"
+  ].join("\n"),
+  patients: [
+    "external_reference,full_name,phone,email,date_of_birth,gender,source_type",
+    "trial-patient-001,Synthetic Trial Patient,+91 99900 01001,trial.patient@example.test,1990-01-01,unknown,practo"
+  ].join("\n"),
+  practitioners: [
+    "external_reference,display_name,email,phone",
+    "trial-practitioner-001,Synthetic Trial Doctor,trial.doctor@example.test,+91 99900 01002"
+  ].join("\n")
+};
+
+export function getCanonicalMigrationCsvTemplate(importType: MigrationImportType) {
+  return CANONICAL_MIGRATION_CSV_TEMPLATES[importType];
+}
+
+const MIGRATION_TRIAL_ORDER: readonly MigrationImportType[] = [
+  "patients",
+  "practitioners",
+  "appointments"
+];
+
+export type MigrationTrialStepState = "complete" | "current" | "upcoming";
+
+export function getMigrationTrialStepStates(
+  batches: readonly MigrationBatch[],
+  sourceSystem: string
+): Record<MigrationImportType, MigrationTrialStepState> {
+  const normalizedSource = sourceSystem.trim();
+  const committedTypes = new Set(
+    batches
+      .filter(
+        (batch) =>
+          normalizedSource.length > 0 &&
+          batch.sourceSystem === normalizedSource &&
+          batch.status === "committed" &&
+          batch.counts.committed > 0
+      )
+      .map((batch) => batch.importType)
+  );
+  const firstIncomplete = MIGRATION_TRIAL_ORDER.findIndex(
+    (importType) => !committedTypes.has(importType)
+  );
+
+  return Object.fromEntries(
+    MIGRATION_TRIAL_ORDER.map((importType, index) => [
+      importType,
+      committedTypes.has(importType)
+        ? "complete"
+        : firstIncomplete === index
+          ? "current"
+          : "upcoming"
+    ])
+  ) as Record<MigrationImportType, MigrationTrialStepState>;
+}
+
 const FIXTURE_ENVIRONMENTS = new Set(["development", "dev", "local", "test"]);
 
 export function getCp7TodayInputValue(now = new Date()) {
@@ -270,6 +389,12 @@ export function createFixtureCp7IntegrationOpsData(
       environment: "local synthetic CP7 fixture",
       requestIds: ["fixture-cp7-integration-ops"]
     },
+    clinicDoctors: [
+      {
+        displayName: "Dr Kabir Doctor",
+        providerUserId: "10000000-0000-4000-8000-000000001002"
+      }
+    ],
     deadLetters: [
       {
         attempts: 3,
@@ -304,16 +429,30 @@ export function createFixtureCp7IntegrationOpsData(
           committedRows: 0,
           state: "blocked"
         },
+        counts: {
+          committed: 0,
+          conflicts: 1,
+          failed: 0,
+          invalid: 1,
+          ready: 1,
+          rolledBack: 0,
+          total: 3
+        },
         conflicts: [
           {
             candidateSummary: "Existing verified ClinicOS patient with same phone; keep existing record.",
+            conflictType: "duplicate_patient",
+            candidatePatient: { fullName: "Synthetic existing patient", phone: "+919999997002" },
             id: "cp7ConflictDuplicatePatient",
             rowId: "cp7MigrationRowDuplicatePatient",
             status: "unresolved",
+            targetRecordId: "cp7ExistingPatient",
+            targetRecordType: "patient",
             type: "possible_duplicate"
           }
         ],
         id: "cp7MigrationBatchRayPatients",
+        importType: "patients",
         rows: [
           {
             externalReference: "ray-patient-001",
@@ -344,7 +483,8 @@ export function createFixtureCp7IntegrationOpsData(
         ],
         sourceSystem: "ray_csv_export",
         status: "needs_review",
-        uploadedAt: `${today}T08:30:00+05:30`
+        uploadedAt: `${today}T08:30:00+05:30`,
+        updatedAt: `${today}T08:30:00+05:30`
       }
     ],
     providers: [
@@ -473,6 +613,35 @@ export function createFixtureCp7IntegrationOpsData(
       },
       {
         activationChecks: [
+          "The clinic has identified Practo Ray, but no official clinic-data API contract is configured.",
+          "An authorized export sample is still required before source-specific mapping.",
+          "No background sync, scraping, or Practo writeback is active."
+        ],
+        capabilities: [
+          {
+            detail: "Awaiting a clinic-authorized Contact and Appointment export sample.",
+            key: "authorized_export",
+            label: "Authorized export import",
+            status: "unavailable"
+          },
+          {
+            detail: "No Practo clinic-data API agreement, credentials, or payload documentation are configured.",
+            key: "official_clinic_data_api",
+            label: "Official clinic-data API",
+            status: "unavailable"
+          }
+        ],
+        category: "source",
+        checkedAt,
+        evidence: "Practo integration is awaiting authorized access evidence and a deidentified schema.",
+        id: "practo-source",
+        label: "Practo Ray",
+        mode: "awaiting authorized access contract",
+        providerKey: "practo",
+        status: "not_configured"
+      },
+      {
+        activationChecks: [
           "Synthetic CSV path is local/test only.",
           "Rows are marked imported/unverified until review.",
           "Verified ClinicOS records are never overwritten silently."
@@ -564,7 +733,8 @@ export async function loadLiveCp7IntegrationOps(
   const results = await Promise.allSettled([
     fetchEndpoint("/v1/provider-health", {}, signal),
     fetchEndpoint("/v1/dead-letter-events", { status: "unreviewed" }, signal),
-    fetchEndpoint("/v1/migration-batches", { status: "needs_review" }, signal)
+    fetchEndpoint("/v1/migration-batches", {}, signal),
+    fetchEndpoint("/v1/clinic-doctors", {}, signal)
   ]);
   const failures = results
     .filter((result): result is PromiseRejectedResult => result.status === "rejected")
@@ -595,19 +765,22 @@ export async function loadLiveCp7IntegrationOps(
   const providerResponse = fulfilledResponses[0];
   const deadLetterResponse = fulfilledResponses[1];
   const migrationResponse = fulfilledResponses[2];
+  const clinicDoctorsResponse = fulfilledResponses[3];
 
-  if (!providerResponse || !deadLetterResponse || !migrationResponse) {
+  if (!providerResponse || !deadLetterResponse || !migrationResponse || !clinicDoctorsResponse) {
     throw new Error("CP7 endpoint result missing after route checks.");
   }
 
   const normalized = normalizeCp7LivePayload({
+    clinicDoctorsPayload: clinicDoctorsResponse.payload,
     deadLettersPayload: deadLetterResponse.payload,
     migrationPayload: migrationResponse.payload,
     providerPayload: providerResponse.payload,
     requestIds: [
       providerResponse.requestId,
       deadLetterResponse.requestId,
-      migrationResponse.requestId
+      migrationResponse.requestId,
+      clinicDoctorsResponse.requestId
     ].filter((requestId): requestId is string => Boolean(requestId)),
     today
   });
@@ -707,6 +880,11 @@ export function applyFixtureResolveMigrationConflict(
         state: hasOpenConflicts ? ("blocked" as const) : ("ready" as const),
         ...(hasOpenConflicts ? { blockedReason: "Resolve duplicate review before committing." } : {})
       },
+      counts: {
+        ...candidate.counts,
+        conflicts: hasOpenConflicts ? candidate.counts.conflicts : 0,
+        ready: hasOpenConflicts ? candidate.counts.ready : candidate.counts.ready + 1
+      },
       conflicts,
       rows: candidate.rows.map((row) =>
         row.id === conflict.rowId
@@ -717,7 +895,8 @@ export function applyFixtureResolveMigrationConflict(
             }
           : row
       ),
-      status: hasOpenConflicts ? candidate.status : ("ready_to_commit" as const)
+      status: hasOpenConflicts ? candidate.status : ("ready_to_commit" as const),
+      updatedAt: resolvedAt
     };
   });
 
@@ -768,6 +947,11 @@ export function applyFixtureCommitMigrationBatch(
               committedRows,
               state: "committed" as const
             },
+            counts: {
+              ...candidate.counts,
+              committed: committedRows,
+              ready: 0
+            },
             rows: candidate.rows.map((row) =>
               ["ready_to_commit", "valid"].includes(row.status)
                 ? {
@@ -776,7 +960,8 @@ export function applyFixtureCommitMigrationBatch(
                   }
                 : row
             ),
-            status: "committed" as const
+            status: "committed" as const,
+            updatedAt: committedAt
           }
         : candidate
     ),
@@ -796,66 +981,96 @@ export function applyFixtureCommitMigrationBatch(
 
 export async function replayLiveDeadLetterEvent(
   deadLetterEventId: string,
-  input: { actorName: string; reason: string },
+  input: { reason: string },
   signal?: AbortSignal
 ) {
   return postEndpoint(
     `/v1/dead-letter-events/${encodeURIComponent(deadLetterEventId)}/replay`,
-    {
-      reason: input.reason,
-      reviewedByName: input.actorName,
-      source: "cp7_integration_ops_surface"
-    },
+    { reason: input.reason },
     signal
   );
 }
 
 export async function resolveLiveMigrationConflict(
   batchId: string,
-  conflict: Pick<
-    MigrationConflict,
-    "id" | "rowId" | "targetRecordId" | "targetRecordType"
-  >,
-  input: {
-    actorName: string;
-    notes: string;
-    resolution: MigrationConflict["resolution"];
-  },
+  rowId: string,
+  input: Omit<ResolveMigrationRowRequest, "actorName">,
   signal?: AbortSignal
 ) {
-  const action = input.resolution === "keep_existing_verified_record" ? "link_existing" : "create_new";
   return postEndpoint(
     `/v1/migration-batches/${encodeURIComponent(batchId)}/rows/${encodeURIComponent(
-      conflict.rowId
+      rowId
     )}/resolve`,
     {
-      action,
+      action: input.action,
       note: input.notes,
-      ...(action === "link_existing"
+      ...(input.action === "link_existing"
         ? {
-            targetRecordId: conflict.targetRecordId,
-            targetRecordType: conflict.targetRecordType ?? "patient"
+            targetRecordId: input.targetRecordId,
+            targetRecordType: input.targetRecordType
           }
-        : {}),
-      reviewedByName: input.actorName
+        : {})
     },
     signal
   );
 }
 
+export async function createLiveMigrationBatch(
+  input: CreateMigrationBatchRequest,
+  signal?: AbortSignal
+): Promise<{ batchId: string }> {
+  const payload = await postEndpoint(
+    "/v1/migration-batches",
+    {
+      csv: input.csv,
+      importType: input.importType,
+      sourceFileName: input.sourceFileName?.trim() || null,
+      sourceSystem: input.sourceSystem.trim()
+    },
+    signal
+  );
+  if (!isRecord(payload) || !isRecord(payload.batch)) {
+    throw new Error("The migration API created a batch without returning its identity.");
+  }
+  const batchId = readString(payload.batch, ["id"]);
+  if (!batchId) {
+    throw new Error("The migration API created a batch without returning its identity.");
+  }
+  return { batchId };
+}
+
 export async function commitLiveMigrationBatch(
   batchId: string,
-  input: { actorName: string },
   signal?: AbortSignal
 ) {
   return postEndpoint(
     `/v1/migration-batches/${encodeURIComponent(batchId)}/commit`,
-    {
-      committedByName: input.actorName,
-      safetyConfirmation: "reviewed_rows_only_no_silent_overwrite"
-    },
+    {},
     signal
   );
+}
+
+export async function rollbackLiveMigrationBatch(
+  batchId: string,
+  signal?: AbortSignal
+): Promise<MigrationRollbackOutcome> {
+  const payload = await postEndpoint(
+    `/v1/migration-batches/${encodeURIComponent(batchId)}/rollback`,
+    {},
+    signal
+  );
+  const blockedLinks = readArray(payload, ["blockedLinks"]);
+  const batch = isRecord(payload) && isRecord(payload.batch) ? payload.batch : {};
+  return {
+    blockedCount: blockedLinks.length,
+    blockedReasons: blockedLinks
+      .map((link) => {
+        if (!isRecord(link) || !isRecord(link.metadata)) return null;
+        return readString(link.metadata, ["rollbackBlockedReason"]);
+      })
+      .filter((reason): reason is string => Boolean(reason)),
+    state: normalizeOptionalMigrationBatchStatus(readString(batch, ["state", "status"]))
+  };
 }
 
 export function classifyCp7EndpointFailures(
@@ -925,6 +1140,7 @@ export function getUnresolvedMigrationConflictCount(data: Cp7IntegrationOpsData)
 }
 
 function normalizeCp7LivePayload(input: {
+  clinicDoctorsPayload: unknown;
   deadLettersPayload: unknown;
   migrationPayload: unknown;
   providerPayload: unknown;
@@ -945,8 +1161,14 @@ function normalizeCp7LivePayload(input: {
   ])
     .map(normalizeLiveMigrationBatch)
     .filter((batch): batch is MigrationBatch => Boolean(batch));
+  const clinicDoctors = normalizeClinicDoctors(input.clinicDoctorsPayload);
 
-  if (providers.length === 0 || !Array.isArray(deadLetters) || !Array.isArray(migrationBatches)) {
+  if (
+    providers.length === 0 ||
+    !Array.isArray(deadLetters) ||
+    !Array.isArray(migrationBatches) ||
+    clinicDoctors === null
+  ) {
     return {
       code: "CONTRACT_MISMATCH",
       endpoints: CP7_REQUIRED_ENDPOINTS.map((endpoint) => ({
@@ -963,6 +1185,7 @@ function normalizeCp7LivePayload(input: {
       environment: "live boundary",
       requestIds: input.requestIds
     },
+    clinicDoctors,
     deadLetters,
     migrationBatches,
     providers,
@@ -979,6 +1202,22 @@ function normalizeCp7LivePayload(input: {
     ],
     today: input.today
   };
+}
+
+function normalizeClinicDoctors(payload: unknown): EligibleClinicDoctor[] | null {
+  if (!isRecord(payload) || !Array.isArray(payload.clinicDoctors)) return null;
+
+  const doctors = payload.clinicDoctors.map((value) => {
+    if (!isRecord(value)) return null;
+    const providerUserId = readString(value, ["providerUserId"]);
+    const displayName = readString(value, ["displayName"]);
+    return providerUserId && displayName ? { displayName, providerUserId } : null;
+  });
+  if (doctors.some((doctor) => doctor === null)) return null;
+
+  return doctors
+    .filter((doctor): doctor is EligibleClinicDoctor => doctor !== null)
+    .sort((left, right) => left.displayName.localeCompare(right.displayName));
 }
 
 function deriveReadiness(
@@ -1038,14 +1277,19 @@ function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
   if (!id || !isMigrationBatchStatus(state)) return null;
 
   const rows = readArray(value, ["rows"]).map(normalizeLiveMigrationRow);
-  const conflicts = readArray(value, ["conflicts"]).map(normalizeLiveMigrationConflict);
+  // Each row carries its own bounded conflict slice even when the batch summary is truncated.
+  const conflicts = [
+    ...readArray(value, ["conflicts"]),
+    ...readArray(value, ["rows"]).flatMap((row) => isRecord(row) ? readArray(row, ["conflicts"]) : [])
+  ].map(normalizeLiveMigrationConflict);
   const normalizedRows = rows.filter((row): row is MigrationRow => Boolean(row));
-  const normalizedConflicts = conflicts.filter((conflict): conflict is MigrationConflict =>
-    Boolean(conflict)
-  );
+  const normalizedConflicts = [...new Map(conflicts
+    .filter((conflict): conflict is MigrationConflict => Boolean(conflict))
+    .map((conflict) => [conflict.id, conflict])).values()];
   const openConflicts = normalizedConflicts.some((conflict) => conflict.status === "unresolved");
   const committedRows = readNumber(batch, ["committedRowCount"]) ?? 0;
   const readyRows = readNumber(batch, ["readyRowCount"]) ?? 0;
+  const uploadedAt = readString(batch, ["createdAt", "uploadedAt"]) ?? new Date().toISOString();
 
   return {
     commit: {
@@ -1064,11 +1308,24 @@ function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
               : "unavailable"
     },
     conflicts: normalizedConflicts,
+    conflictsTruncated: value.conflictsTruncated === true,
+    counts: {
+      committed: committedRows,
+      conflicts: readNumber(batch, ["conflictRowCount"]) ?? normalizedConflicts.length,
+      failed: readNumber(batch, ["failedRowCount"]) ?? 0,
+      invalid: readNumber(batch, ["invalidRowCount"]) ?? 0,
+      ready: readyRows,
+      rolledBack: readNumber(batch, ["rolledBackRowCount"]) ?? 0,
+      total: readNumber(batch, ["rowCount"]) ?? normalizedRows.length
+    },
     id,
+    importType: normalizeMigrationImportType(readString(batch, ["importType"])),
     rows: normalizedRows,
-    sourceSystem: normalizeMigrationSourceSystem(readString(batch, ["sourceSystem"])),
+    sourceFileName: readString(batch, ["sourceFileName"]),
+    sourceSystem: readString(batch, ["sourceSystem"]) ?? "unknown_source",
     status: state,
-    uploadedAt: readString(batch, ["createdAt", "uploadedAt"]) ?? new Date().toISOString()
+    uploadedAt,
+    updatedAt: readString(batch, ["updatedAt"]) ?? uploadedAt
   };
 }
 
@@ -1092,13 +1349,21 @@ function normalizeLiveMigrationRow(value: unknown): MigrationRow | null {
     readString(normalizedRecord ?? {}, ["externalReference"]) ??
     id;
   const fullName = readString(normalizedRecord ?? {}, ["fullName"]);
+  const displayName = readString(normalizedRecord ?? {}, ["displayName"]);
   const phone = readString(normalizedRecord ?? {}, ["phone", "normalizedPhone"]);
+  const startAt = readString(normalizedRecord ?? {}, ["startAt"]);
+  const endAt = readString(normalizedRecord ?? {}, ["endAt"]);
   const preview =
     fullName && phone
       ? `${fullName}, phone ${phone}`
-      : fullName ?? externalReference ?? `Import row ${rowNumber}`;
+      : fullName ??
+        displayName ??
+        (startAt && endAt ? `${startAt} to ${endAt}` : null) ??
+        externalReference ??
+        `Import row ${rowNumber}`;
 
   return {
+    conflictsTruncated: value.conflictsTruncated === true,
     externalReference,
     id,
     issue:
@@ -1120,8 +1385,15 @@ function normalizeLiveMigrationConflict(value: unknown): MigrationConflict | nul
   if (!id || !rowId) return null;
 
   const conflictType = readString(value, ["conflictType", "type"]);
+  const evidence = isRecord(value.evidence) ? value.evidence : {};
+  const candidate = isRecord(evidence.candidatePatient) ? evidence.candidatePatient : {};
+  const candidateName = readString(candidate, ["fullName"]);
   return {
+    ...(candidateName ? { candidatePatient: {
+      fullName: candidateName, phone: readString(candidate, ["phone"])
+    } } : {}),
     candidateSummary: readString(value, ["summary", "candidateSummary"]) ?? "Migration row needs review.",
+    conflictType: normalizeMigrationConflictType(conflictType),
     id,
     resolutionAction: normalizeResolutionAction(readString(value, ["resolutionAction"])),
     rowId,
@@ -1133,6 +1405,18 @@ function normalizeLiveMigrationConflict(value: unknown): MigrationConflict | nul
         ? "verified_record_conflict"
         : "possible_duplicate"
   };
+}
+
+function normalizeMigrationConflictType(value: string | null): MigrationConflictType {
+  if (
+    value === "duplicate_patient" ||
+    value === "field_conflict" ||
+    value === "invalid_reference" ||
+    value === "verified_record_overlap"
+  ) {
+    return value;
+  }
+  return "field_conflict";
 }
 
 function normalizeMigrationRowStatus(
@@ -1158,14 +1442,19 @@ function normalizeResolutionAction(value: string | null): MigrationConflict["res
   return null;
 }
 
-function normalizeMigrationSourceSystem(value: string | null): MigrationBatch["sourceSystem"] {
-  return value === "synthetic_csv" ? "synthetic_csv" : "ray_csv_export";
-}
-
 function migrationTargetFromImportType(value: string | null): MigrationRow["target"] {
   if (value === "appointments") return "appointment";
-  if (value === "invoices" || value === "payments") return "invoice";
+  if (value === "practitioners") return "practitioner";
   return "patient";
+}
+
+function normalizeMigrationImportType(value: string | null): MigrationImportType {
+  if (value === "appointments" || value === "practitioners") return value;
+  return "patients";
+}
+
+function normalizeOptionalMigrationBatchStatus(value: string | null): MigrationBatchStatus | null {
+  return value && isMigrationBatchStatus(value) ? value : null;
 }
 
 function readNumber(record: Record<string, unknown>, keys: string[]) {
@@ -1244,6 +1533,7 @@ function isCp7ProviderKey(value: unknown): value is Cp7ProviderKey {
     value === "exotel" ||
     value === "google_business_profile" ||
     value === "manual_import" ||
+    value === "practo" ||
     value === "razorpay" ||
     value === "whatsapp_cloud"
   );
@@ -1368,13 +1658,16 @@ function endpointFailureFromResponse(
   response: Response,
   payload: unknown
 ): EndpointFailure {
-  return {
-    endpoint: `${method} ${path}`,
-    isEndpointFailure: true,
-    message: readErrorMessage(payload) ?? `HTTP ${response.status}`,
-    requestId: getRequestId(response, payload),
-    status: response.status
-  };
+  return Object.assign(
+    new Error(readErrorMessage(payload) ?? `HTTP ${response.status}`),
+    {
+      endpoint: `${method} ${path}`,
+      isEndpointFailure: true,
+      message: readErrorMessage(payload) ?? `HTTP ${response.status}`,
+      requestId: getRequestId(response, payload),
+      status: response.status
+    } as const
+  );
 }
 
 function isEndpointFailure(value: unknown): value is EndpointFailure {

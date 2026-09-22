@@ -113,7 +113,11 @@ import {
   isLabReconciliationEntryStatus,
   isLabReconciliationStatus,
   isPatientInstructionChannel,
+  coerceAppointmentImportRows,
   coercePatientImportRows,
+  coercePractitionerImportRows,
+  differingAppointmentImportFields,
+  differingPatientImportFields,
   duplicateCandidatesForPatientImport,
   isMigrationImportType,
   isMigrationResolutionAction,
@@ -138,10 +142,16 @@ import {
   isUuid,
   toPublicMediaAsset,
   toPublicMediaUploadReservation,
+  parseAppointmentMigrationCsv,
   parsePatientMigrationCsv,
+  parsePractitionerMigrationCsv,
   summarizeMigrationBatchState,
+  validateAppointmentImportRow,
   validatePatientImportRow,
+  validatePractitionerImportRow,
   type AppointmentRecord,
+  type AppointmentImportRowDraft,
+  type AppointmentMigrationNormalizedRecord,
   type AppointmentStatus,
   type AuditEventForReviewRecord,
   type AiSessionDetail,
@@ -173,6 +183,8 @@ import {
   type PaymentRequestRecord,
   type PaymentRequestType,
   type PaymentTransactionRecord,
+  type PatientRecord,
+  type PractitionerImportRowDraft,
   type PatientRecordExportRecord,
   type PatientTimelineItem as DomainPatientTimelineItem,
   type PatientInstructionRecord,
@@ -240,6 +252,8 @@ export interface OperationsDependencies {
 }
 
 const SYSTEM_INTEGRATION_ACTOR_USER_ID = "00000000-0000-4000-8000-000000000000" as UUID;
+const MAX_MIGRATION_BATCH_ROWS = 100;
+const MAX_PUBLIC_MIGRATION_CONFLICTS_PER_ROW = 20;
 
 export interface ApiSuccess<T> {
   status: number;
@@ -1099,6 +1113,22 @@ export async function listProviderHealth(
         manualProviderCard({
           checkedAt: nowIso(dependencies),
           activationChecks: [
+            "The clinic has identified Practo Ray, but no official clinic-data API agreement, credentials, or payload documentation are configured.",
+            "A clinic-authorized Contact and Appointment export remains the supported MVP access path once its schema is supplied.",
+            "No background sync, scraping, browser automation, or Practo writeback is active."
+          ],
+          category: "source",
+          evidence:
+            "Practo access is awaiting an authorized export sample or a separately documented official clinic-data API contract.",
+          id: "practo-source",
+          label: "Practo Ray",
+          mode: "awaiting authorized access contract",
+          providerKey: "practo",
+          status: "not_configured"
+        }),
+        manualProviderCard({
+          checkedAt: nowIso(dependencies),
+          activationChecks: [
             "No official telephony provider has been selected or registered.",
             "Manual missed-call capture remains the only enabled path.",
             "No telephony credentials, callbacks, recordings or provider state are implied."
@@ -1176,6 +1206,22 @@ export async function listProviderHealth(
         label: "Telephony",
         mode: telephonyProviderMode(config, telephonyHealth),
         providerKey: "exotel"
+      }),
+      manualProviderCard({
+        checkedAt: nowIso(dependencies),
+        activationChecks: [
+          "The clinic has identified Practo Ray, but no official clinic-data API agreement, credentials, or payload documentation are configured.",
+          "A clinic-authorized Contact and Appointment export remains the supported MVP access path once its schema is supplied.",
+          "No background sync, scraping, browser automation, or Practo writeback is active."
+        ],
+        category: "source",
+        evidence:
+          "Practo access is awaiting an authorized export sample or a separately documented official clinic-data API contract.",
+        id: "practo-source",
+        label: "Practo Ray",
+        mode: "awaiting authorized access contract",
+        providerKey: "practo",
+        status: "not_configured"
       }),
       manualProviderCard({
         checkedAt: nowIso(dependencies),
@@ -1450,8 +1496,8 @@ export async function resolveMigrationBatchRow(
     metadata: {
       batchId,
       action: input.action,
-      targetRecordType: input.targetRecordType ?? null,
-      targetRecordId: input.targetRecordId ?? null
+      targetRecordType: row.resolutionTargetRecordType,
+      targetRecordId: row.resolutionTargetRecordId
     }
   });
   await appendOutbox(context, dependencies, {
@@ -1912,6 +1958,15 @@ export async function listChairs(
   authorize(context, { permission: "schedule.read" });
   const chairs = await dependencies.repository.listChairs(scopeFrom(context));
   return ok({ chairs });
+}
+
+export async function listClinicDoctors(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies
+) {
+  authorize(context, { permission: "schedule.read" });
+  const clinicDoctors = await dependencies.repository.listClinicDoctors(scopeFrom(context));
+  return ok({ clinicDoctors });
 }
 
 export async function listProviderSchedules(
@@ -6004,26 +6059,69 @@ async function parseCreateMigrationBatchInput(
   if (!isMigrationImportType(importTypeValue)) {
     throw validation("importType is not supported.", { importType: importTypeValue });
   }
+
+  const sourceSystem = optionalString(input.sourceSystem, "sourceSystem") ?? "manual_csv";
+  const sourceFileName = optionalNullableString(input.sourceFileName, "sourceFileName") ?? null;
+  const csv = optionalString(input.csv, "csv") ?? null;
+  const rowsValue = input.rows;
+  if ((csv !== null && rowsValue !== undefined) || (csv === null && rowsValue === undefined)) {
+    throw validation("Provide exactly one of csv or rows for a migration batch.", {});
+  }
+  const rowObjects = csv
+    ? null
+    : arrayField(rowsValue, "rows").map((value, index) =>
+        objectField(value, `rows[${index}]`)
+      );
+  const sourceChecksum =
+    optionalSha256Digest(input.sourceChecksum, "sourceChecksum") ?? sha256Json(csv ?? rowsValue);
+
+  if (importTypeValue === "practitioners") {
+    return preparePractitionerMigrationBatch(scope, dependencies, {
+      sourceSystem,
+      sourceFileName,
+      sourceChecksum,
+      drafts: csv
+        ? parsePractitionerMigrationCsv(csv)
+        : coercePractitionerImportRows(rowObjects ?? [])
+    });
+  }
+  if (importTypeValue === "appointments") {
+    return prepareAppointmentMigrationBatch(scope, dependencies, {
+      sourceSystem,
+      sourceFileName,
+      sourceChecksum,
+      drafts: csv ? parseAppointmentMigrationCsv(csv) : coerceAppointmentImportRows(rowObjects ?? [])
+    });
+  }
   if (importTypeValue !== "patients") {
-    throw validation("CP7 currently supports the patient import workflow for committed imports.", {
+    throw validation("This import type does not have an implemented ingestion contract.", {
       importType: importTypeValue
     });
   }
 
-  const sourceSystem = optionalString(input.sourceSystem, "sourceSystem") ?? "manual_csv";
-  const sourceFileName = optionalNullableString(input.sourceFileName, "sourceFileName") ?? null;
-  const csv = optionalNullableString(input.csv, "csv") ?? null;
-  const rowsValue = input.rows;
   const rowDrafts = csv
     ? parsePatientMigrationCsv(csv)
-    : coercePatientImportRows(
-        arrayField(rowsValue, "rows").map((value, index) => objectField(value, `rows[${index}]`))
-      );
+    : coercePatientImportRows(rowObjects ?? []);
+  assertMigrationBatchSize(rowDrafts);
 
-  if (rowDrafts.length === 0) {
-    throw validation("Migration batch must include at least one row.", {});
+  const externalRecordIds = rowDrafts
+    .map((draft) => draft.externalReference?.trim() ?? "")
+    .filter((value) => value.length > 0);
+  const existingLinks = await dependencies.repository.listImportedRecordLinksByExternalIds(scope, {
+    sourceSystem,
+    targetRecordType: "patient",
+    externalRecordIds
+  });
+  const existingPatients = new Map<UUID, PatientRecord | null>();
+  for (const patientId of new Set(existingLinks.map((link) => link.targetRecordId))) {
+    existingPatients.set(patientId, await dependencies.repository.findPatientById(scope, patientId));
   }
-
+  const existingLinksByExternalId = new Map(
+    existingLinks.flatMap((link) =>
+      link.externalRecordId ? [[link.externalRecordId, link] as const] : []
+    )
+  );
+  const externalReferenceCounts = countMigrationReferences(externalRecordIds);
   const migrationRows: CreateMigrationBatchInput["rows"] = [];
   for (const draft of rowDrafts) {
     const validationResult = validatePatientImportRow(draft);
@@ -6032,27 +6130,100 @@ async function parseCreateMigrationBatchInput(
     let matchStatus: MigrationRowRecord["matchStatus"] = "none";
 
     if (validationResult.normalizedRecord) {
-      const existingPatients = await dependencies.repository.findPatientDuplicateCandidates(scope, {
-        fullName: validationResult.normalizedRecord.fullName,
-        phone: validationResult.normalizedRecord.phone
-      });
-      const duplicateCandidates = duplicateCandidatesForPatientImport(
-        validationResult.normalizedRecord,
-        existingPatients
-      );
-      for (const candidate of duplicateCandidates) {
+      const externalReference = validationResult.externalReference?.trim() ?? null;
+      if (externalReference && (externalReferenceCounts.get(externalReference) ?? 0) > 1) {
         conflicts.push({
-          conflictType: "duplicate_patient" as const,
+          conflictType: "field_conflict" as const,
           severity: "blocking" as const,
           targetRecordType: "patient",
-          targetRecordId: candidate.patient.id,
-          summary: `Potential duplicate patient: ${candidate.patient.fullName}`,
-          evidence: { candidate }
+          fieldName: "externalReference",
+          summary: "The external patient reference occurs more than once in this import batch.",
+          evidence: { occurrenceCount: externalReferenceCounts.get(externalReference) }
         });
+        status = "needs_review";
+        matchStatus = "conflict";
       }
 
-      status = duplicateCandidates.length > 0 ? "needs_review" : "ready_to_commit";
-      matchStatus = duplicateCandidates.length > 0 ? "duplicate_candidate" : "none";
+      const existingLink = externalReference
+        ? existingLinksByExternalId.get(externalReference)
+        : undefined;
+      const linkedPatient = existingLink
+        ? existingPatients.get(existingLink.targetRecordId) ?? null
+        : null;
+      if (existingLink && !linkedPatient) {
+        conflicts.push({
+          conflictType: "invalid_reference" as const,
+          severity: "blocking" as const,
+          targetRecordType: "patient",
+          targetRecordId: existingLink.targetRecordId,
+          summary: "The external patient reference points to a missing ClinicOS patient.",
+          evidence: { existingLinkId: existingLink.id }
+        });
+        status = "needs_review";
+        matchStatus = "conflict";
+      } else if (existingLink && linkedPatient) {
+        const differingFields = differingPatientImportFields(
+          validationResult.normalizedRecord,
+          linkedPatient
+        );
+        const existingDigest = existingLink.metadata.normalizedRecordDigest;
+        const normalizedRecordDigest = sha256MigrationRecord(validationResult.normalizedRecord);
+        const evidenceDigestStatus =
+          typeof existingDigest !== "string"
+            ? "missing"
+            : existingDigest === normalizedRecordDigest
+              ? "matching"
+              : "changed";
+        if (differingFields.length > 0 || evidenceDigestStatus !== "matching") {
+          conflicts.push({
+            conflictType: "verified_record_overlap" as const,
+            severity: "blocking" as const,
+            targetRecordType: "patient",
+            targetRecordId: linkedPatient.id,
+            summary:
+              "The imported patient or its source evidence differs from the patient already linked to this external reference.",
+            evidence: {
+              differingFields,
+              evidenceDigestStatus,
+              existingLinkId: existingLink.id,
+              candidatePatient: { fullName: linkedPatient.fullName, phone: linkedPatient.phone }
+            }
+          });
+          status = "needs_review";
+          matchStatus = "conflict";
+        } else if (conflicts.length === 0) {
+          status = "ready_to_commit";
+          matchStatus = "resolved";
+        }
+      } else if (conflicts.length === 0) {
+        const duplicatePatients = await dependencies.repository.findPatientDuplicateCandidates(
+          scope,
+          {
+            fullName: validationResult.normalizedRecord.fullName,
+            phone: validationResult.normalizedRecord.phone
+          }
+        );
+        const duplicateCandidates = duplicateCandidatesForPatientImport(
+          validationResult.normalizedRecord,
+          duplicatePatients
+        );
+        for (const candidate of duplicateCandidates) {
+          conflicts.push({
+            conflictType: "duplicate_patient" as const,
+            severity: "blocking" as const,
+            targetRecordType: "patient",
+            targetRecordId: candidate.patient.id,
+            summary: "Potential duplicate patient requires identity review.",
+            evidence: {
+              matchReasons: candidate.reasons, score: candidate.score,
+              candidatePatient: { fullName: candidate.patient.fullName, phone: candidate.patient.phone }
+            }
+          });
+        }
+
+        status = duplicateCandidates.length > 0 ? "needs_review" : "ready_to_commit";
+        matchStatus = duplicateCandidates.length > 0 ? "duplicate_candidate" : "none";
+      }
     }
 
     migrationRows.push({
@@ -6072,15 +6243,14 @@ async function parseCreateMigrationBatchInput(
   const readyRows = migrationRows.filter((row) => row.status === "ready_to_commit").length;
   const invalidRows = migrationRows.filter((row) => row.status === "invalid").length;
   const conflictRows = migrationRows.filter(
-    (row) => row.matchStatus === "duplicate_candidate"
+    (row) => row.matchStatus === "duplicate_candidate" || row.matchStatus === "conflict"
   ).length;
 
   return {
     importType: importTypeValue,
     sourceSystem,
     sourceFileName,
-    sourceChecksum:
-      optionalSha256Digest(input.sourceChecksum, "sourceChecksum") ?? sha256Json(csv ?? rowsValue),
+    sourceChecksum,
     state: summarizeMigrationBatchState({
       totalRows: migrationRows.length,
       invalidRows,
@@ -6088,6 +6258,453 @@ async function parseCreateMigrationBatchInput(
       readyRows
     }),
     rows: migrationRows
+  };
+}
+
+type MigrationStagingRowInput = CreateMigrationBatchInput["rows"][number];
+type MigrationStagingConflictInput = NonNullable<MigrationStagingRowInput["conflicts"]>[number];
+
+async function preparePractitionerMigrationBatch(
+  scope: RepositoryScope,
+  dependencies: OperationsDependencies,
+  input: {
+    sourceSystem: string;
+    sourceFileName: string | null;
+    sourceChecksum: string;
+    drafts: PractitionerImportRowDraft[];
+  }
+): Promise<CreateMigrationBatchInput> {
+  assertMigrationBatchSize(input.drafts);
+  const validationResults = input.drafts.map(validatePractitionerImportRow);
+  const externalReferences = validationResults
+    .map((result) => result.externalReference)
+    .filter((value) => value.length > 0);
+  const referenceCounts = countMigrationReferences(externalReferences);
+  const existingLinks = await dependencies.repository.listImportedRecordLinksByExternalIds(scope, {
+    sourceSystem: input.sourceSystem,
+    targetRecordType: "provider_user",
+    externalRecordIds: externalReferences
+  });
+  const existingLinksByReference = new Map(
+    existingLinks.flatMap((link) =>
+      link.externalRecordId ? [[link.externalRecordId, link] as const] : []
+    )
+  );
+  const providerEligibilityById = new Map<UUID, boolean>();
+  await Promise.all(
+    [...new Set(existingLinks.map((link) => link.targetRecordId))].map(async (providerUserId) => {
+      providerEligibilityById.set(
+        providerUserId,
+        await migrationProviderIsEligible(dependencies.repository, scope, providerUserId)
+      );
+    })
+  );
+
+  const rows: MigrationStagingRowInput[] = validationResults.map((result) => {
+    const conflicts: MigrationStagingConflictInput[] = [];
+    let status: MigrationRowRecord["status"] = "invalid";
+    let matchStatus: MigrationRowRecord["matchStatus"] = "none";
+    const normalized = result.normalizedRecord;
+    if (normalized) {
+      const duplicateReference = (referenceCounts.get(result.externalReference) ?? 0) > 1;
+      if (duplicateReference) {
+        conflicts.push({
+          conflictType: "field_conflict",
+          severity: "blocking",
+          targetRecordType: "provider_user",
+          fieldName: "externalReference",
+          summary: "The external practitioner reference occurs more than once in this batch.",
+          evidence: { occurrenceCount: referenceCounts.get(result.externalReference) }
+        });
+      }
+
+      const existingLink = existingLinksByReference.get(result.externalReference);
+      if (existingLink) {
+        const existingDigest = existingLink.metadata.normalizedRecordDigest;
+        if (!providerEligibilityById.get(existingLink.targetRecordId)) {
+          conflicts.push({
+            conflictType: "invalid_reference",
+            severity: "blocking",
+            targetRecordType: "provider_user",
+            targetRecordId: existingLink.targetRecordId,
+            fieldName: "externalReference",
+            summary: "The mapped ClinicOS doctor is no longer eligible for appointments.",
+            evidence: { existingLinkId: existingLink.id }
+          });
+        } else if (
+          typeof existingDigest !== "string" ||
+          existingDigest !== sha256MigrationRecord(normalized)
+        ) {
+          conflicts.push({
+            conflictType: "verified_record_overlap",
+            severity: "blocking",
+            targetRecordType: "provider_user",
+            targetRecordId: existingLink.targetRecordId,
+            summary:
+              "The practitioner evidence differs from the existing external-reference mapping.",
+            evidence: { existingLinkId: existingLink.id }
+          });
+        }
+      } else {
+        conflicts.push({
+          conflictType: "invalid_reference",
+          severity: "blocking",
+          targetRecordType: "provider_user",
+          fieldName: "externalReference",
+          summary: "Map this external practitioner to an existing eligible ClinicOS doctor.",
+          evidence: { mappingRequired: true }
+        });
+      }
+
+      status = conflicts.length > 0 ? "needs_review" : "ready_to_commit";
+      matchStatus = conflicts.length > 0 ? "conflict" : "resolved";
+    }
+    return {
+      rowNumber: result.rowNumber,
+      importType: "practitioners",
+      externalRecordId: result.externalReference,
+      rawPayload: result.rawPayload,
+      rawPayloadDigest: sha256Json(result.rawPayload),
+      normalizedRecord: normalized,
+      validationErrors: result.validationErrors,
+      status,
+      matchStatus,
+      conflicts
+    };
+  });
+  return migrationBatchInputFromStagedRows("practitioners", input, rows);
+}
+
+async function prepareAppointmentMigrationBatch(
+  scope: RepositoryScope,
+  dependencies: OperationsDependencies,
+  input: {
+    sourceSystem: string;
+    sourceFileName: string | null;
+    sourceChecksum: string;
+    drafts: AppointmentImportRowDraft[];
+  }
+): Promise<CreateMigrationBatchInput> {
+  assertMigrationBatchSize(input.drafts);
+  const validationResults = input.drafts.map(validateAppointmentImportRow);
+  const normalizedRecords = validationResults.flatMap((result) =>
+    result.normalizedRecord ? [result.normalizedRecord] : []
+  );
+  const referenceCounts = countMigrationReferences(
+    normalizedRecords.map((record) => record.externalReference)
+  );
+  const [patientLinks, providerLinks, appointmentLinks, appointmentTypes, chairs] =
+    await Promise.all([
+      dependencies.repository.listImportedRecordLinksByExternalIds(scope, {
+        sourceSystem: input.sourceSystem,
+        targetRecordType: "patient",
+        externalRecordIds: normalizedRecords.map((record) => record.patientExternalReference)
+      }),
+      dependencies.repository.listImportedRecordLinksByExternalIds(scope, {
+        sourceSystem: input.sourceSystem,
+        targetRecordType: "provider_user",
+        externalRecordIds: normalizedRecords.map((record) => record.providerExternalReference)
+      }),
+      dependencies.repository.listImportedRecordLinksByExternalIds(scope, {
+        sourceSystem: input.sourceSystem,
+        targetRecordType: "appointment",
+        externalRecordIds: normalizedRecords.map((record) => record.externalReference)
+      }),
+      dependencies.repository.listAppointmentTypes(scope),
+      dependencies.repository.listChairs(scope)
+    ]);
+  const patientLinksByReference = migrationLinksByReference(patientLinks);
+  const providerLinksByReference = migrationLinksByReference(providerLinks);
+  const appointmentLinksByReference = migrationLinksByReference(appointmentLinks);
+  const appointmentTypesByCode = new Map(appointmentTypes.map((record) => [record.code, record]));
+  const chairsByCode = new Map(chairs.map((record) => [record.code, record]));
+  const patientsById = new Map<UUID, PatientRecord | null>();
+  await Promise.all(
+    [...new Set(patientLinks.map((link) => link.targetRecordId))].map(async (patientId) => {
+      patientsById.set(patientId, await dependencies.repository.findPatientById(scope, patientId));
+    })
+  );
+  const providerEligibilityById = new Map<UUID, boolean>();
+  await Promise.all(
+    [...new Set(providerLinks.map((link) => link.targetRecordId))].map(
+      async (providerUserId) => {
+        providerEligibilityById.set(
+          providerUserId,
+          await migrationProviderIsEligible(dependencies.repository, scope, providerUserId)
+        );
+      }
+    )
+  );
+  const appointmentsById = new Map<UUID, AppointmentRecord | null>();
+  await Promise.all(
+    [...new Set(appointmentLinks.map((link) => link.targetRecordId))].map(
+      async (appointmentId) => {
+        appointmentsById.set(
+          appointmentId,
+          await dependencies.repository.findAppointmentById(scope, appointmentId)
+        );
+      }
+    )
+  );
+
+  const stagedContexts: Array<{
+    row: MigrationStagingRowInput;
+    normalized: AppointmentMigrationNormalizedRecord;
+    providerUserId: UUID;
+    chairId: UUID | null;
+    hasExistingAppointmentLink: boolean;
+  }> = [];
+  const rows: MigrationStagingRowInput[] = [];
+  for (const result of validationResults) {
+    const conflicts: MigrationStagingConflictInput[] = [];
+    let status: MigrationRowRecord["status"] = "invalid";
+    let matchStatus: MigrationRowRecord["matchStatus"] = "none";
+    const normalized = result.normalizedRecord;
+    if (normalized) {
+      if ((referenceCounts.get(normalized.externalReference) ?? 0) > 1) {
+        conflicts.push({
+          conflictType: "field_conflict",
+          severity: "blocking",
+          targetRecordType: "appointment",
+          fieldName: "externalReference",
+          summary: "The external appointment reference occurs more than once in this batch.",
+          evidence: { occurrenceCount: referenceCounts.get(normalized.externalReference) }
+        });
+      }
+
+      const patientLink = patientLinksByReference.get(normalized.patientExternalReference);
+      const providerLink = providerLinksByReference.get(normalized.providerExternalReference);
+      const appointmentType = appointmentTypesByCode.get(normalized.appointmentTypeCode);
+      const chair = normalized.chairCode ? chairsByCode.get(normalized.chairCode) : null;
+      if (!patientLink || !patientsById.get(patientLink.targetRecordId)) {
+        conflicts.push({
+          conflictType: "invalid_reference",
+          severity: "blocking",
+          targetRecordType: "patient",
+          fieldName: "patientExternalReference",
+          summary: "The appointment patient reference has no active ClinicOS patient mapping.",
+          evidence: { mappingRequired: true }
+        });
+      }
+      if (!providerLink || !providerEligibilityById.get(providerLink.targetRecordId)) {
+        conflicts.push({
+          conflictType: "invalid_reference",
+          severity: "blocking",
+          targetRecordType: "provider_user",
+          fieldName: "providerExternalReference",
+          summary:
+            "The appointment practitioner reference has no active eligible ClinicOS doctor mapping.",
+          evidence: { mappingRequired: true }
+        });
+      }
+      if (!appointmentType) {
+        conflicts.push({
+          conflictType: "invalid_reference",
+          severity: "blocking",
+          targetRecordType: "appointment_type",
+          fieldName: "appointmentTypeCode",
+          summary: "The appointment type code is not an exact active ClinicOS code.",
+          evidence: { mappingRequired: true }
+        });
+      }
+      if (normalized.chairCode && !chair) {
+        conflicts.push({
+          conflictType: "invalid_reference",
+          severity: "blocking",
+          targetRecordType: "chair_or_room",
+          fieldName: "chairCode",
+          summary: "The chair code is not an exact active ClinicOS code.",
+          evidence: { mappingRequired: true }
+        });
+      }
+
+      const existingAppointmentLink = appointmentLinksByReference.get(
+        normalized.externalReference
+      );
+      if (
+        patientLink &&
+        providerLink &&
+        providerEligibilityById.get(providerLink.targetRecordId) &&
+        appointmentType &&
+        (!normalized.chairCode || chair)
+      ) {
+        const resolved = {
+          patientId: patientLink.targetRecordId,
+          providerUserId: providerLink.targetRecordId,
+          appointmentTypeId: appointmentType.id,
+          chairId: chair?.id ?? null
+        };
+        if (existingAppointmentLink) {
+          const appointment = appointmentsById.get(existingAppointmentLink.targetRecordId) ?? null;
+          const existingDigest = existingAppointmentLink.metadata.normalizedRecordDigest;
+          const differingFields = appointment
+            ? differingAppointmentImportFields(normalized, appointment, resolved)
+            : ["targetRecordId"];
+          if (
+            typeof existingDigest !== "string" ||
+            existingDigest !== sha256MigrationRecord(normalized) ||
+            differingFields.length > 0
+          ) {
+            conflicts.push({
+              conflictType: "verified_record_overlap",
+              severity: "blocking",
+              targetRecordType: "appointment",
+              targetRecordId: existingAppointmentLink.targetRecordId,
+              summary:
+                "The appointment differs from the record already linked to this external reference.",
+              evidence: { differingFields, existingLinkId: existingAppointmentLink.id }
+            });
+          }
+        } else if (appointmentStatusBlocksAvailability(normalized.status)) {
+          const existingConflicts = await dependencies.repository.findAppointmentConflicts(scope, {
+            providerUserId: resolved.providerUserId,
+            chairId: resolved.chairId,
+            startAt: normalized.startAt,
+            endAt: normalized.endAt
+          });
+          for (const existingConflict of existingConflicts) {
+            conflicts.push({
+              conflictType: "verified_record_overlap",
+              severity: "blocking",
+              targetRecordType: "appointment",
+              targetRecordId: existingConflict.appointmentId,
+              summary: "The imported appointment overlaps an active ClinicOS appointment.",
+              evidence: { reason: existingConflict.reason }
+            });
+          }
+        }
+
+        const row: MigrationStagingRowInput = {
+          rowNumber: result.rowNumber,
+          importType: "appointments",
+          externalRecordId: result.externalReference,
+          rawPayload: result.rawPayload,
+          rawPayloadDigest: sha256Json(result.rawPayload),
+          normalizedRecord: normalized,
+          validationErrors: result.validationErrors,
+          status: conflicts.length > 0 ? "needs_review" : "ready_to_commit",
+          matchStatus:
+            conflicts.length > 0 ? "conflict" : existingAppointmentLink ? "resolved" : "none",
+          conflicts
+        };
+        rows.push(row);
+        stagedContexts.push({
+          row,
+          normalized,
+          providerUserId: resolved.providerUserId,
+          chairId: resolved.chairId,
+          hasExistingAppointmentLink: Boolean(existingAppointmentLink)
+        });
+        continue;
+      }
+      status = "needs_review";
+      matchStatus = "conflict";
+    }
+
+    rows.push({
+      rowNumber: result.rowNumber,
+      importType: "appointments",
+      externalRecordId: result.externalReference,
+      rawPayload: result.rawPayload,
+      rawPayloadDigest: sha256Json(result.rawPayload),
+      normalizedRecord: normalized,
+      validationErrors: result.validationErrors,
+      status,
+      matchStatus,
+      conflicts
+    });
+  }
+
+  for (let leftIndex = 0; leftIndex < stagedContexts.length; leftIndex += 1) {
+    const left = stagedContexts[leftIndex];
+    if (
+      !left ||
+      left.hasExistingAppointmentLink ||
+      !appointmentStatusBlocksAvailability(left.normalized.status)
+    ) {
+      continue;
+    }
+    for (let rightIndex = leftIndex + 1; rightIndex < stagedContexts.length; rightIndex += 1) {
+      const right = stagedContexts[rightIndex];
+      if (
+        !right ||
+        right.hasExistingAppointmentLink ||
+        !appointmentStatusBlocksAvailability(right.normalized.status)
+      ) {
+        continue;
+      }
+      const overlaps =
+        left.normalized.startAt < right.normalized.endAt &&
+        right.normalized.startAt < left.normalized.endAt;
+      const sameProvider = left.providerUserId === right.providerUserId;
+      const sameChair = left.chairId !== null && left.chairId === right.chairId;
+      if (!overlaps || (!sameProvider && !sameChair)) continue;
+      for (const [current, other] of [
+        [left, right],
+        [right, left]
+      ] as const) {
+        current.row.conflicts ??= [];
+        current.row.conflicts.push({
+          conflictType: "field_conflict",
+          severity: "blocking",
+          targetRecordType: "appointment",
+          fieldName: sameProvider ? "providerExternalReference" : "chairCode",
+          summary: "Imported active appointments overlap within this batch.",
+          evidence: { conflictingRowNumber: other.row.rowNumber }
+        });
+        current.row.status = "needs_review";
+        current.row.matchStatus = "conflict";
+      }
+    }
+  }
+
+  return migrationBatchInputFromStagedRows("appointments", input, rows);
+}
+
+function migrationLinksByReference<T extends { externalRecordId: string | null }>(
+  links: readonly T[]
+): Map<string, T> {
+  return new Map(
+    links.flatMap((link) =>
+      link.externalRecordId ? [[link.externalRecordId, link] as const] : []
+    )
+  );
+}
+
+function countMigrationReferences(references: readonly string[]): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const reference of references) {
+    counts.set(reference, (counts.get(reference) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function appointmentStatusBlocksAvailability(status: AppointmentStatus): boolean {
+  return ["requested", "booked", "confirmed", "checked_in", "in_consult"].includes(status);
+}
+
+function migrationBatchInputFromStagedRows(
+  importType: "practitioners" | "appointments",
+  input: { sourceSystem: string; sourceFileName: string | null; sourceChecksum: string },
+  rows: MigrationStagingRowInput[]
+): CreateMigrationBatchInput {
+  const readyRows = rows.filter((row) => row.status === "ready_to_commit").length;
+  const invalidRows = rows.filter((row) => row.status === "invalid").length;
+  const conflictRows = rows.filter(
+    (row) => row.matchStatus === "duplicate_candidate" || row.matchStatus === "conflict"
+  ).length;
+  return {
+    importType,
+    sourceSystem: input.sourceSystem,
+    sourceFileName: input.sourceFileName,
+    sourceChecksum: input.sourceChecksum,
+    state: summarizeMigrationBatchState({
+      totalRows: rows.length,
+      invalidRows,
+      conflictRows,
+      readyRows
+    }),
+    rows
   };
 }
 
@@ -6115,7 +6732,7 @@ function parseResolveMigrationRowInput(body: unknown): ResolveMigrationRowInput 
     action,
     targetRecordType:
       action === "link_existing"
-        ? (optionalString(input.targetRecordType, "targetRecordType") ?? "patient")
+        ? (optionalString(input.targetRecordType, "targetRecordType") ?? null)
         : null,
     targetRecordId,
     note: optionalNullableString(input.note, "note") ?? null
@@ -6402,17 +7019,51 @@ function parseReviewBreakGlassAccessRequest(body: unknown): ReviewBreakGlassAcce
 }
 
 function toMigrationBatchResponse(detail: MigrationBatchDetail) {
+  const conflicts = detail.conflicts.slice(0, MAX_MIGRATION_BATCH_ROWS);
   return {
     batch: detail.batch,
     rows: detail.rows.map(toPublicMigrationRow),
-    conflicts: detail.conflicts
+    conflicts,
+    returnedConflictCount: conflicts.length,
+    conflictsTruncated: conflicts.length < detail.conflicts.length
   };
 }
 
-function toPublicMigrationRow(row: MigrationRowRecord): MigrationRowRecord {
+function assertMigrationBatchSize(rows: readonly unknown[]): void {
+  if (rows.length === 0) {
+    throw validation("Migration batch must include at least one row.", {});
+  }
+  if (rows.length > MAX_MIGRATION_BATCH_ROWS) {
+    throw validation(`Migration batch cannot exceed ${MAX_MIGRATION_BATCH_ROWS} rows.`, {
+      rowCount: rows.length,
+      maxRows: MAX_MIGRATION_BATCH_ROWS
+    });
+  }
+}
+
+async function migrationProviderIsEligible(
+  repository: ClinicOperationsRepository,
+  scope: RepositoryScope,
+  providerUserId: UUID
+): Promise<boolean> {
+  const candidate = repository as ClinicOperationsRepository & {
+    findProviderEligibility?: (
+      lookupScope: RepositoryScope,
+      lookupProviderUserId: UUID
+    ) => Promise<{ eligible: boolean }>;
+  };
+  if (typeof candidate.findProviderEligibility !== "function") return false;
+  return (await candidate.findProviderEligibility(scope, providerUserId)).eligible;
+}
+
+function toPublicMigrationRow(row: MigrationRowRecord) {
+  const conflicts = row.conflicts.slice(0, MAX_PUBLIC_MIGRATION_CONFLICTS_PER_ROW);
   return {
     ...row,
-    rawPayloadRef: { ...row.rawPayloadRef }
+    rawPayloadRef: { ...row.rawPayloadRef },
+    conflicts,
+    returnedConflictCount: conflicts.length,
+    conflictsTruncated: conflicts.length < row.conflicts.length
   };
 }
 
@@ -6613,7 +7264,12 @@ function manualProviderCard(input: {
   label: string;
   mode: string;
   providerKey:
-    "exotel" | "google_business_profile" | "manual_import" | "razorpay" | "whatsapp_cloud";
+    | "exotel"
+    | "google_business_profile"
+    | "manual_import"
+    | "practo"
+    | "razorpay"
+    | "whatsapp_cloud";
   status: "available" | "degraded" | "not_configured" | "unavailable";
 }) {
   return {
@@ -6728,6 +7384,21 @@ function sha256Json(value: unknown): string {
   return createHash("sha256")
     .update(JSON.stringify(value ?? null))
     .digest("hex");
+}
+
+function sha256MigrationRecord(value: unknown): string {
+  return createHash("sha256").update(stableMigrationJson(value)).digest("hex");
+}
+
+function stableMigrationJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableMigrationJson).join(",")}]`;
+  if (value && typeof value === "object") {
+    return `{${Object.entries(value as Record<string, unknown>)
+      .sort(([left], [right]) => left.localeCompare(right))
+      .map(([key, nestedValue]) => `${JSON.stringify(key)}:${stableMigrationJson(nestedValue)}`)
+      .join(",")}}`;
+  }
+  return JSON.stringify(value) ?? "null";
 }
 
 function parseCreateLead(body: unknown): CreateLeadInput {

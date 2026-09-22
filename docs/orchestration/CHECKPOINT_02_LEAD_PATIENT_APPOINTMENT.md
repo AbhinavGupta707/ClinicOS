@@ -1,5 +1,7 @@
 # Checkpoint 02 - Lead, Patient, Appointment, And Assistant Day-Start
 
+> Relocation note (2026-09-20): Desktop locations and launch IDs below are historical evidence. For current launches, resolve the Spectra repository through `list_projects` as specified in [the active orchestration program](POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md).
+
 ## Goal
 
 Assistant can capture a source-attributed lead, match or create a patient, book an appointment, confirm/check in the patient, and use the morning dashboard as the working start-of-day surface.

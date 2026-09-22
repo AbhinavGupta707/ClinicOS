@@ -62,6 +62,7 @@ const handlers = {
   markAppointmentNoShow: handleMarkAppointmentNoShow,
   listAppointmentTypes: handleListAppointmentTypes,
   listChairs: handleListChairs,
+  listClinicDoctors: handleListClinicDoctors,
   listProviderSchedules: handleListProviderSchedules,
   listQueue: handleListQueue,
   updateQueueEntry: handleUpdateQueueEntry,
@@ -523,6 +524,13 @@ async function handleListChairs(
   context: ClinicFeatureExecutionContext
 ) {
   return ok({ chairs: await context.repositories.scheduling.listChairs() });
+}
+
+async function handleListClinicDoctors(
+  _request: ClinicFeatureOperationRequest,
+  context: ClinicFeatureExecutionContext
+) {
+  return ok({ clinicDoctors: await context.repositories.scheduling.listClinicDoctors() });
 }
 
 async function handleListProviderSchedules(

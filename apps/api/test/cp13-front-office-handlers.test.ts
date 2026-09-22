@@ -23,23 +23,44 @@ const QUEUE_ID = "10000000-0000-4000-8000-000000000007";
 const APPOINTMENT_TYPE_ID = "10000000-0000-4000-8000-000000000030";
 const CHAIR_ID = "10000000-0000-4000-8000-000000000031";
 
-test("handler factory has exact frozen coverage for all 26 front-office operations", () => {
+test("handler factory has exact frozen coverage for all 27 front-office operations", () => {
   assert.deepEqual(
     Object.keys(createFrontOfficeFeatureHandlerMap()).sort(),
     [...CP13_FRONT_OFFICE_OPERATION_IDS].sort()
   );
-  assert.equal(Object.keys(FRONT_OFFICE_FEATURE_HANDLERS).length, 26);
+  assert.equal(Object.keys(FRONT_OFFICE_FEATURE_HANDLERS).length, 27);
 });
 
 test("central policy denies wrong-role capability sets before feature dispatch", () => {
   assert.deepEqual(permissionsForOperation("createPatient"), ["patient.write"]);
   assert.deepEqual(permissionsForOperation("checkInAppointment"), ["queue.manage"]);
+  assert.deepEqual(permissionsForOperation("listClinicDoctors"), ["schedule.read"]);
   assert.deepEqual(permissionsForOperation("createIntakeFormTemplate"), ["clinic.manage"]);
   assert.deepEqual(permissionsForOperation("getPatientPrepSummary"), [
     "patient.read",
     "patient.phi.read",
     "clinical.note.read"
   ]);
+});
+
+test("clinic doctor directory returns only the canonical eligible-doctor projection", async () => {
+  const clinicDoctor = {
+    tenantId: TENANT_ID,
+    clinicId: CLINIC_ID,
+    providerUserId: ACTOR_ID,
+    displayName: "Dr Synthetic Eligible"
+  };
+  const response = await FRONT_OFFICE_FEATURE_HANDLERS.listClinicDoctors!(
+    request("listClinicDoctors"),
+    featureContext({
+      scheduling: {
+        listClinicDoctors: async () => [clinicDoctor]
+      }
+    })
+  );
+
+  assertContractResponse("listClinicDoctors", response);
+  assert.deepEqual(response.body, { clinicDoctors: [clinicDoctor] });
 });
 
 test("patient creation fails closed before writes when duplicate candidates exist", async () => {
@@ -413,6 +434,8 @@ test("morning dashboard uses only the approved authoritative cross-domain read p
         requestedDate = date;
         return {
           appointments: [appointmentRecord()],
+          appointmentsTruncated: false,
+          clinicDayAppointments: [],
           leads: [leadRecord()],
           tasks: [
             {

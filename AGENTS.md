@@ -1,5 +1,30 @@
 # ClinicOS Agent Instructions
 
+## Active Owner-Approved MVP Programme (2026-08-30)
+
+- The current execution programme is the integration-first MVP defined in
+  `docs/orchestration/MVP_EXECUTION_PLAN.md`. It is the authoritative scope and
+  sequencing document until the owner explicitly closes or replaces it.
+- Use the checkout on the current host: `/Volumes/Spectra/Projects/ClinicOS` on
+  macOS and `/home/abhinav/code/ClinicOS` on WSL. Verify the actual working
+  directory, Git root, branch, commit and status before work. Keep the former
+  `/Users/abhinavgupta/Desktop/ClinicOS` copy read-only; historical paths are
+  provenance, not runtime dependencies. Resolve Codex project IDs from current
+  registration for the host's saved project; a filesystem path is never an ID.
+- Preserve the blue-sky specifications as the long-term product direction, but
+  reduce present scope to fewer complete vertical slices that prove real clinic
+  interoperability and daily usefulness. Enterprise-scale cloud, compliance,
+  provider breadth, and operational assurance remain deferred unless required
+  for the safety or correctness of a slice being built now.
+- The owner has explicitly authorized the `orchestrate-subagents` workflow for
+  bounded read-only exploration, contract review, verification, and suitably
+  isolated implementation. Apply its model-routing guidance. Use the
+  `orchestrate-worktrees` workflow only when its independence gate passes and
+  concurrent isolated implementation will materially shorten delivery.
+- MVP work must still use official APIs, authorized exports/imports, signed
+  webhooks, or explicit clinic-approved manual workflows. Do not use scraping or
+  browser automation as a product integration.
+
 ## Production-Grade Scope
 
 - Build for the blue-sky production system, not a throwaway MVP, demo, or bootstrap.
@@ -16,10 +41,15 @@
 
 ## Orchestration And Integration
 
+The checkpoint rules below apply when that checkpoint programme is explicitly active.
+For current MVP work, follow `docs/orchestration/MVP_EXECUTION_PLAN.md` for scope,
+sequencing and orchestration. MVP progress does not close CP14–CP18 external evidence
+or production release gates. Synthetic integration testing is not live clinic approval.
+
 - CP11 is complete at E3. CP12-CP18 use one master orchestrator plus an adaptive number of visible project-scoped Codex worktree lanes. Worker count is not a quota: launch only substantial lanes that are genuinely path-disjoint, independently testable and able to commit useful work from stable inputs. Read `clinic_os_specs_v2/23_PRODUCTION_READINESS_REMEDIATION_PLAN.md`, `clinic_os_specs_v2/24_PRODUCTION_SECURITY_THREAT_MODEL_AND_CONTROLS.md`, `docs/security/PRODUCTION_SECURITY_AND_READINESS_REMEDIATION_REGISTER.md`, `docs/qa/PRODUCTION_READINESS_EVIDENCE_STANDARD.md`, `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`, the active checkpoint packet, `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`, `docs/AGENT_MEMORY.md`, and `docs/orchestration/CHECKPOINT_LOG.md` before checkpoint work.
 - At master-orchestrator start, explicitly invoke and follow the available `orchestrate-worktrees` skill. Read its complete `SKILL.md` and referenced runbook before creating or managing any worktree session; keep the skill active for lane design, monitoring, handoff review, merge, verification and sequential-checkpoint control.
 - Use the master on `gpt-5.6-sol` with `xhigh` reasoning. Create each worker explicitly on `gpt-5.6-sol`, using `xhigh` for architecture, schema/RLS, security, clinical/financial correctness, cloud/DR, provider signatures, AI safety and interoperability; use `high` for bounded UI, QA, browser/device tests, docs and evidence. `medium` is allowed only for a substantial, spec-frozen mechanical task with no unresolved design, security/safety/release judgment, exact expected outputs and deterministic verification. Do not create or downgrade a lane merely to save usage; escalate any ambiguity to `high`.
-- Use visible project-scoped worktree threads: resolve the saved project with `list_projects`, then create threads with `target.type = "project"`, project ID `/Users/abhinavgupta/Desktop/ClinicOS`, and `environment.type = "worktree"`. Do not use hidden subagents, projectless threads, same-directory forks, or raw `git worktree add`.
+- Use visible project-scoped worktree threads: resolve the saved project with `list_projects`, then create threads with `target.type = "project"`, the opaque `projectId` returned for the saved project at `/Volumes/Spectra/Projects/ClinicOS` (never a filesystem path as the ID), and `environment.type = "worktree"`. Do not use hidden subagents, projectless threads, same-directory forks, or raw `git worktree add`.
 - At orchestration start, create a thread-attached heartbeat through the Codex automation tool at the requested 90-second cadence and verify the returned schedule/status. If 90 seconds is unsupported, record that fact, use an active-turn roughly 90-second monitor loop plus the shortest supported sub-hour heartbeat, and never claim the requested automation exists when it does not.
 - The master owns architecture, path-level conflict design, worker prompts, blocker resolution, handoff/diff review, integration fixes, merge order, complete verification, evidence, release decisions and sequential checkpoint advancement. Workers own only their isolated lane paths and commits. Do not begin a later checkpoint while the active checkpoint exit gate fails, except for the explicit owner-directed CP14 cloud deferral recorded in `docs/orchestration/CHECKPOINT_14_CLOUD_DEFERRAL_DECISION.md`: CP15 and selected CP16 implementation may advance from the verified CP14 E3 baseline, while CP14/CP15 live evidence and CP17/CP18 remain open and the release remains NO-GO.
 - Treat `package-lock.json`, root/app manifests, migrations, API contracts, generated files, environment schemas, Terraform/local stack files, and release evidence as high-risk integration points. Inspect all consumers and reconcile each coherently.

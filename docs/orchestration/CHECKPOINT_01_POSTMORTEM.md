@@ -1,5 +1,7 @@
 # Checkpoint 01 Postmortem
 
+> Relocation note (2026-09-20): Desktop locations and launch IDs below are historical evidence. For current launches, resolve the Spectra repository through `list_projects` as specified in [the active orchestration program](POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md).
+
 Date: 2026-07-06
 
 ## Question

@@ -25,7 +25,9 @@ import type {
   ClinicalNoteVersionRecord,
   Clinic,
   ClinicAssignment,
+  ClinicDoctorRecord,
   ClinicUser,
+  ClinicDayAppointmentReadModel,
   ConsentCaptureMethod,
   ConsentEnforcementState,
   ConsentPurpose,
@@ -75,6 +77,7 @@ import type {
   IntakeSubmissionSource,
   IntegrationDeadLetterRecord,
   IntegrationDeadLetterStatus,
+  ImportedRecordLinkRecord,
   MediaAssetRecord,
   MediaScanStatus,
   MediaStorageProviderKey,
@@ -299,6 +302,26 @@ export interface CreateMigrationBatchInput {
   rows: CreateMigrationRowInput[];
 }
 
+const STABLE_IDENTITY_MIGRATION_TYPES = new Set<MigrationImportType>([
+  "patients",
+  "practitioners",
+  "appointments"
+]);
+
+export function assertStableMigrationExternalReferences(input: CreateMigrationBatchInput): void {
+  for (const row of input.rows) {
+    if (
+      STABLE_IDENTITY_MIGRATION_TYPES.has(row.importType) &&
+      row.status !== "invalid" &&
+      !row.externalRecordId?.trim()
+    ) {
+      throw new Error(
+        `${row.importType} migration row ${row.rowNumber} requires a stable external record identifier.`
+      );
+    }
+  }
+}
+
 export interface ResolveMigrationRowInput {
   action: MigrationResolutionAction;
   targetRecordType?: string | null;
@@ -314,6 +337,12 @@ export interface MigrationRowsFilter {
 export interface MigrationBatchSearchFilter {
   status?: MigrationBatchState | null;
   limit?: number | null;
+}
+
+export interface ImportedRecordLinkLookup {
+  sourceSystem: string;
+  targetRecordType: string;
+  externalRecordIds: string[];
 }
 
 export interface CommitMigrationBatchInput {
@@ -1332,6 +1361,8 @@ export interface AmendClinicalNoteResult {
 
 export interface DashboardDataSet {
   appointments: AppointmentRecord[];
+  appointmentsTruncated: boolean;
+  clinicDayAppointments: ClinicDayAppointmentReadModel[];
   leads: LeadRecord[];
   tasks: TaskRecord[];
   queue: QueueEntryRecord[];
@@ -1423,6 +1454,10 @@ export interface ClinicOperationsRepository {
     scope: RepositoryScope,
     batchId: UUID
   ): Promise<MigrationBatchDetail | null>;
+  listImportedRecordLinksByExternalIds(
+    scope: RepositoryScope,
+    lookup: ImportedRecordLinkLookup
+  ): Promise<ImportedRecordLinkRecord[]>;
   listMigrationRows(
     scope: RepositoryScope,
     batchId: UUID,
@@ -1470,6 +1505,7 @@ export interface ClinicOperationsRepository {
 
   listAppointmentTypes(scope: RepositoryScope): Promise<AppointmentTypeRecord[]>;
   listChairs(scope: RepositoryScope): Promise<ChairOrRoomRecord[]>;
+  listClinicDoctors(scope: RepositoryScope): Promise<ClinicDoctorRecord[]>;
   listProviderSchedules(
     scope: RepositoryScope,
     providerUserId?: UUID | null

@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.10
 
 ARG NODE_IMAGE="node:22.22.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f"
-ARG LAMBDA_NODE_IMAGE="public.ecr.aws/lambda/nodejs:22-arm64@sha256:b8f80e8cd11dacaa916eb3bcc24bd6db300c30bfb3228316faa72a15360a4f38"
+ARG LAMBDA_NODE_IMAGE="public.ecr.aws/lambda/nodejs:22-arm64@sha256:29e0788a2c1b8d4ac714e1b02ac3c49c495b27295758930a056e4ee3d8abda13"
 
 FROM ${NODE_IMAGE} AS build
 WORKDIR /workspace

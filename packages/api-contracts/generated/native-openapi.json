@@ -8623,6 +8623,325 @@
         ]
       }
     },
+    "/v1/clinic-doctors": {
+      "get": {
+        "description": "List active doctors eligible for clinic assignment. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "operationId": "listClinicDoctors",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 1,
+                  "properties": {
+                    "clinicDoctors": {
+                      "items": {
+                        "$ref": "#/components/schemas/PublicJsonObject"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "clinicDoctors"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request is malformed or ambiguous.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Authentication is required or invalid.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The verified identity is not authorized for the scoped operation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The tenant-scoped resource does not exist.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request conflicts with current workflow or idempotency state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeds its declared body budget.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed runtime contract validation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeded an application abuse budget.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed without exposing internal details.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A required dependency or configured capability is unavailable.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "List active doctors eligible for clinic assignment",
+        "tags": [
+          "Appointments",
+          "Configuration"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP2",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "mode": "none",
+          "replaySemantics": "This operation has no client mutation effect.",
+          "required": false
+        },
+        "x-clinicos-native-enforcement": "body-parser-only",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "none",
+        "x-clinicos-required-master-wiring": [
+          "Invoke the runtime contract before the native or NestJS handler."
+        ]
+      }
+    },
     "/v1/corrective-actions": {
       "get": {
         "description": "List corrective and preventive actions. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
@@ -9828,7 +10147,7 @@
                   "properties": {
                     "dashboard": {
                       "additionalProperties": false,
-                      "maxProperties": 10,
+                      "maxProperties": 13,
                       "properties": {
                         "appointmentCounts": {
                           "additionalProperties": false,
@@ -9887,6 +10206,221 @@
                           ],
                           "type": "object"
                         },
+                        "appointmentsTruncated": {
+                          "type": "boolean"
+                        },
+                        "clinicDayAppointments": {
+                          "items": {
+                            "additionalProperties": false,
+                            "maxProperties": 22,
+                            "properties": {
+                              "appointmentTypeId": {
+                                "format": "uuid",
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "type": "string"
+                              },
+                              "appointmentTypeName": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "chairId": {
+                                "format": "uuid",
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "chairName": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "checkedInAt": {
+                                "format": "date-time",
+                                "maxLength": 40,
+                                "minLength": 20,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "endAt": {
+                                "format": "date-time",
+                                "maxLength": 40,
+                                "minLength": 20,
+                                "type": "string"
+                              },
+                              "id": {
+                                "format": "uuid",
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "type": "string"
+                              },
+                              "patientId": {
+                                "format": "uuid",
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "type": "string"
+                              },
+                              "patientKind": {
+                                "enum": [
+                                  "new",
+                                  "returning"
+                                ]
+                              },
+                              "patientName": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "patientPhone": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "providerName": {
+                                "maxLength": 256,
+                                "minLength": 1,
+                                "type": "string"
+                              },
+                              "providerUserId": {
+                                "format": "uuid",
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "type": "string"
+                              },
+                              "queueEntryId": {
+                                "format": "uuid",
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "queuePosition": {
+                                "maximum": 2147483647,
+                                "minimum": 1,
+                                "type": [
+                                  "integer",
+                                  "null"
+                                ]
+                              },
+                              "queueStatus": {
+                                "anyOf": [
+                                  {
+                                    "type": "null"
+                                  }
+                                ],
+                                "enum": [
+                                  "waiting",
+                                  "called",
+                                  "in_consult",
+                                  "completed",
+                                  "cancelled"
+                                ]
+                              },
+                              "reason": {
+                                "maxLength": 4096,
+                                "minLength": 1,
+                                "type": [
+                                  "string",
+                                  "null"
+                                ]
+                              },
+                              "rowVersion": {
+                                "maximum": 2147483647,
+                                "minimum": 1,
+                                "type": "integer"
+                              },
+                              "source": {
+                                "enum": [
+                                  "manual",
+                                  "whatsapp",
+                                  "phone",
+                                  "call",
+                                  "walkin",
+                                  "practo",
+                                  "google",
+                                  "website",
+                                  "instagram",
+                                  "referral",
+                                  "recall_campaign"
+                                ]
+                              },
+                              "startAt": {
+                                "format": "date-time",
+                                "maxLength": 40,
+                                "minLength": 20,
+                                "type": "string"
+                              },
+                              "status": {
+                                "enum": [
+                                  "requested",
+                                  "booked",
+                                  "confirmed",
+                                  "checked_in",
+                                  "in_consult",
+                                  "completed",
+                                  "cancelled",
+                                  "no_show"
+                                ]
+                              },
+                              "updatedAt": {
+                                "format": "date-time",
+                                "maxLength": 40,
+                                "minLength": 20,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "id",
+                              "rowVersion",
+                              "patientId",
+                              "patientName",
+                              "patientPhone",
+                              "patientKind",
+                              "providerUserId",
+                              "providerName",
+                              "appointmentTypeId",
+                              "appointmentTypeName",
+                              "chairId",
+                              "chairName",
+                              "status",
+                              "startAt",
+                              "endAt",
+                              "source",
+                              "reason",
+                              "queueEntryId",
+                              "queueStatus",
+                              "queuePosition",
+                              "checkedInAt",
+                              "updatedAt"
+                            ],
+                            "type": "object"
+                          },
+                          "maxItems": 500,
+                          "type": "array"
+                        },
+                        "dataAsOf": {
+                          "format": "date-time",
+                          "maxLength": 40,
+                          "minLength": 20,
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
                         "date": {
                           "format": "date",
                           "maxLength": 10,
@@ -9900,28 +10434,28 @@
                             "minLength": 36,
                             "type": "string"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         },
                         "openLeads": {
                           "items": {
                             "$ref": "#/components/schemas/VersionedPublicResource"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         },
                         "openTasks": {
                           "items": {
                             "$ref": "#/components/schemas/VersionedPublicResource"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         },
                         "queue": {
                           "items": {
                             "$ref": "#/components/schemas/VersionedPublicResource"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         },
                         "returningPatientAppointmentIds": {
@@ -9931,14 +10465,14 @@
                             "minLength": 36,
                             "type": "string"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         },
                         "todaysAppointments": {
                           "items": {
                             "$ref": "#/components/schemas/VersionedPublicResource"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         },
                         "totalAppointments": {
@@ -9950,14 +10484,17 @@
                           "items": {
                             "$ref": "#/components/schemas/VersionedPublicResource"
                           },
-                          "maxItems": 100,
+                          "maxItems": 500,
                           "type": "array"
                         }
                       },
                       "required": [
                         "date",
+                        "dataAsOf",
+                        "appointmentsTruncated",
                         "appointmentCounts",
                         "totalAppointments",
+                        "clinicDayAppointments",
                         "unconfirmedAppointments",
                         "todaysAppointments",
                         "openLeads",
@@ -31424,7 +31961,7 @@
         ]
       },
       "post": {
-        "description": "Create a bounded patient migration batch for review. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "description": "Create a bounded patient, practitioner-link, or appointment migration batch. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
         "operationId": "createMigrationBatch",
         "parameters": [
           {
@@ -31465,7 +32002,8 @@
             "application/json": {
               "schema": {
                 "additionalProperties": false,
-                "anyOf": [
+                "maxProperties": 6,
+                "oneOf": [
                   {
                     "additionalProperties": true,
                     "required": [
@@ -31481,26 +32019,24 @@
                     "type": "object"
                   }
                 ],
-                "maxProperties": 6,
                 "properties": {
                   "csv": {
                     "maxLength": 900000,
                     "minLength": 1,
-                    "type": [
-                      "string",
-                      "null"
-                    ]
+                    "type": "string"
                   },
                   "importType": {
                     "enum": [
-                      "patients"
+                      "patients",
+                      "practitioners",
+                      "appointments"
                     ]
                   },
                   "rows": {
                     "items": {
                       "$ref": "#/components/schemas/WritableJsonObject"
                     },
-                    "maxItems": 10000,
+                    "maxItems": 100,
                     "minItems": 1,
                     "type": "array"
                   },
@@ -31543,7 +32079,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": false,
-                  "maxProperties": 3,
+                  "maxProperties": 5,
                   "properties": {
                     "batch": {
                       "$ref": "#/components/schemas/PublicJsonObject"
@@ -31554,6 +32090,14 @@
                       },
                       "maxItems": 100,
                       "type": "array"
+                    },
+                    "conflictsTruncated": {
+                      "type": "boolean"
+                    },
+                    "returnedConflictCount": {
+                      "maximum": 2147483647,
+                      "minimum": 0,
+                      "type": "integer"
                     },
                     "rows": {
                       "items": {
@@ -31566,7 +32110,9 @@
                   "required": [
                     "batch",
                     "rows",
-                    "conflicts"
+                    "conflicts",
+                    "returnedConflictCount",
+                    "conflictsTruncated"
                   ],
                   "type": "object"
                 }
@@ -31825,7 +32371,7 @@
             "bearerAuth": []
           }
         ],
-        "summary": "Create a bounded patient migration batch for review",
+        "summary": "Create a bounded patient, practitioner-link, or appointment migration batch",
         "tags": [
           "Migration"
         ],
@@ -31898,7 +32444,7 @@
               "application/json": {
                 "schema": {
                   "additionalProperties": false,
-                  "maxProperties": 3,
+                  "maxProperties": 5,
                   "properties": {
                     "batch": {
                       "$ref": "#/components/schemas/PublicJsonObject"
@@ -31909,6 +32455,14 @@
                       },
                       "maxItems": 100,
                       "type": "array"
+                    },
+                    "conflictsTruncated": {
+                      "type": "boolean"
+                    },
+                    "returnedConflictCount": {
+                      "maximum": 2147483647,
+                      "minimum": 0,
+                      "type": "integer"
                     },
                     "rows": {
                       "items": {
@@ -31921,7 +32475,9 @@
                   "required": [
                     "batch",
                     "rows",
-                    "conflicts"
+                    "conflicts",
+                    "returnedConflictCount",
+                    "conflictsTruncated"
                   ],
                   "type": "object"
                 }
@@ -33413,7 +33969,7 @@
                 "properties": {
                   "action": {
                     "enum": [
-                      "import_new",
+                      "create_new",
                       "link_existing",
                       "skip"
                     ]

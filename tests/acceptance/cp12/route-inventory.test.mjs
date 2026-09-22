@@ -35,9 +35,9 @@ const interoperabilityOperationIds = new Set([
 
 test("CP12 inventory covers every current Nest and strangler operation registration", async () => {
   assert.equal(CURRENT_ROUTE_CONTROL_INVENTORY.length, CURRENT_ROUTE_COUNT);
-  assert.equal(CURRENT_ROUTE_COUNT, 135);
+  assert.equal(CURRENT_ROUTE_COUNT, 136);
   const extracted = await assertNativeRouterInventoryCoverage();
-  assert.equal(extracted.actual.length, 135);
+  assert.equal(extracted.actual.length, 136);
   assert.deepEqual(extracted.actual, extracted.contracted);
 
   const keys = CURRENT_ROUTE_CONTROL_INVENTORY.map(

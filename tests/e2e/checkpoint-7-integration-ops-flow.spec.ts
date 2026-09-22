@@ -40,8 +40,12 @@ test.describe("Checkpoint 7 integration ops workflow smoke", () => {
     );
 
     await page.getByRole("tab", { name: /migration/i }).click();
-    await expect(page.getByTestId("cp7-migration-review")).toBeVisible();
+    await expect(page.getByTestId("cp7-migration-operations")).toBeVisible();
+    await expect(page.getByText("Scheduled sync").locator("..")).toContainText("Not configured");
+    await expect(page.getByText("Source freshness").locator("..")).toContainText("Unknown");
     await expect(page.getByTestId("cp7-migration-status")).toContainText("Needs review");
+    await expect(page.getByTestId("cp7-resolve-migration-conflict")).toBeDisabled();
+    await page.getByTestId("migration-patient-candidate").selectOption("cp7ExistingPatient");
     await page.getByTestId("cp7-resolve-migration-conflict").click();
     await expect(page.getByTestId("cp7-migration-status")).toContainText("Ready to commit");
     await page.getByTestId("cp7-commit-migration-batch").click();
@@ -61,8 +65,8 @@ test.describe("Checkpoint 7 integration ops workflow smoke", () => {
     await page.goto("/surface/migration-review?scenario=cp7-integration-ops-mobile");
 
     await expect(page.getByTestId("cp7-integration-ops-workspace")).toBeVisible();
-    await expect(page.getByTestId("cp7-provider-readiness")).toBeVisible();
-    await expect(page.getByTestId("cp7-migration-review")).toBeVisible();
+    await expect(page.getByTestId("cp7-migration-operations")).toBeVisible();
+    await expect(page.getByText("Scheduled sync").locator("..")).toContainText("Not configured");
     await expect(page.getByTestId("cp7-resolve-migration-conflict")).toBeVisible();
     await expect(page.getByTestId("cp7-commit-migration-batch")).toBeDisabled();
 

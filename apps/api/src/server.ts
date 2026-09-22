@@ -133,6 +133,7 @@ import {
   listAppointmentTypes,
   listAppointments,
   listChairs,
+  listClinicDoctors,
   listIntakeFormTemplates,
   listIncidents,
   listInventoryCategories,
@@ -1497,6 +1498,10 @@ async function routeOperationsRequest(input: {
 
   if (input.request.method === "GET" && pathname === "/v1/chairs") {
     return listChairs(operationsContext, dependencies);
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/clinic-doctors") {
+    return listClinicDoctors(operationsContext, dependencies);
   }
 
   if (input.request.method === "GET" && pathname === "/v1/provider-schedules") {

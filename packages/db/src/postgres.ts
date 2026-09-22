@@ -20,7 +20,9 @@ import type {
   ClinicalNoteVersionRecord,
   Clinic,
   ClinicAssignment,
+  ClinicDoctorRecord,
   ClinicUser,
+  ClinicDayAppointmentReadModel,
   Clock,
   ConsentEnforcementState,
   ConsentRecord,
@@ -142,6 +144,7 @@ import {
   calculateInvoicePaymentStatus,
   calculateInventoryVariance,
   classifyInventoryException,
+  differingAppointmentImportFields,
   normalizeDentalSurface,
   normalizeDentalToothNumber,
   buildConsentEnforcementState,
@@ -158,7 +161,11 @@ import {
   type ScopedApiRequestGuardsPort
 } from "./api-request-guards.ts";
 import { createRepositoryPortTransactionLease } from "./modules/core/scoped-repository-port.ts";
-import { DueGenerationConfigurationError, DueGenerationInputError } from "./repositories.ts";
+import {
+  assertStableMigrationExternalReferences,
+  DueGenerationConfigurationError,
+  DueGenerationInputError
+} from "./repositories.ts";
 
 const DEFAULT_DUE_GENERATION_BATCH_SIZE = 25;
 const MAX_DUE_GENERATION_BATCH_SIZE = 25;
@@ -166,6 +173,58 @@ const MAX_DUE_GENERATION_CURSOR_LENGTH = 2_048;
 const MAX_DUE_GENERATION_FUTURE_SKEW_MS = 5 * 60 * 1000;
 const MAX_SOP_TEMPLATE_GENERATION_ITEMS = 100;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/iu;
+type MigrationTargetRecordType = "patient" | "provider_user" | "appointment";
+interface ImportedAppointmentReferences {
+  patientId: UUID;
+  providerUserId: UUID;
+  appointmentTypeId: UUID;
+  chairId: UUID | null;
+}
+
+interface ImportedRecordReferenceLock {
+  externalRecordId: string;
+  targetRecordType: string;
+}
+
+function compareImportedRecordReferenceLocks(
+  left: ImportedRecordReferenceLock,
+  right: ImportedRecordReferenceLock
+): number {
+  if (left.targetRecordType < right.targetRecordType) return -1;
+  if (left.targetRecordType > right.targetRecordType) return 1;
+  if (left.externalRecordId < right.externalRecordId) return -1;
+  if (left.externalRecordId > right.externalRecordId) return 1;
+  return 0;
+}
+
+function migrationTargetRecordType(
+  record: MigrationRowRecord["normalizedRecord"]
+): MigrationTargetRecordType | null {
+  if (!record) return null;
+  if (record.recordType === "patient") return "patient";
+  if (record.recordType === "provider_user") return "provider_user";
+  if (record.recordType === "appointment") return "appointment";
+  return null;
+}
+
+function migrationNormalizedRecordDigest(row: MigrationRowRecord): string | null {
+  return row.normalizedRecord
+    ? createHash("sha256").update(stableJson(row.normalizedRecord)).digest("hex")
+    : null;
+}
+
+function appointmentStatusBlocksAvailability(status: AppointmentStatus): boolean {
+  return ["requested", "booked", "confirmed", "checked_in", "in_consult"].includes(status);
+}
+
+function isPostgresErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
+}
 import type {
   AppointmentConflictFilter,
   AppointmentSearchFilter,
@@ -251,6 +310,7 @@ import type {
   LeadSearchFilter,
   BreakGlassAccessSearchFilter,
   IntegrationDeadLetterSearchFilter,
+  ImportedRecordLinkLookup,
   MigrationBatchSearchFilter,
   MigrationRowsFilter,
   OutboxEventInput,
@@ -1736,6 +1796,7 @@ export class PostgresClinicOperationsRepository
     scope: RepositoryScope,
     input: CreateMigrationBatchInput
   ): Promise<MigrationBatchDetail> {
+    assertStableMigrationExternalReferences(input);
     return this.#withRls(scope, async (client) => {
       const batchResult = await client.query<MigrationBatchRow>(
         `
@@ -1887,6 +1948,40 @@ export class PostgresClinicOperationsRepository
     );
   }
 
+  async listImportedRecordLinksByExternalIds(
+    scope: RepositoryScope,
+    lookup: ImportedRecordLinkLookup
+  ): Promise<ImportedRecordLinkRecord[]> {
+    const externalRecordIds = [...new Set(lookup.externalRecordIds.map((value) => value.trim()))]
+      .filter((value) => value.length > 0);
+    if (externalRecordIds.length === 0) return [];
+
+    return this.#withRls(scope, async (client) =>
+      (
+        await client.query<ImportedRecordLinkRow>(
+          `
+            select *
+            from imported_record_links
+            where tenant_id = $1
+              and clinic_id = $2
+              and source_system = $3
+              and target_record_type = $4
+              and external_record_id = any($5::text[])
+              and verification_status <> 'rolled_back'
+            order by created_at
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            lookup.sourceSystem,
+            lookup.targetRecordType,
+            externalRecordIds
+          ]
+        )
+      ).rows.map(mapImportedRecordLinkRow)
+    );
+  }
+
   async listMigrationRows(
     scope: RepositoryScope,
     batchId: UUID,
@@ -1927,11 +2022,111 @@ export class PostgresClinicOperationsRepository
     input: ResolveMigrationRowInput
   ): Promise<MigrationRowRecord | null> {
     return this.#withRls(scope, async (client) => {
+      const batch = await this.#lockMigrationBatchRowInTransaction(client, scope, batchId);
+      if (
+        !batch ||
+        ["committed", "partially_committed", "rolled_back", "failed"].includes(batch.state)
+      ) {
+        return null;
+      }
+      const existingRowResult = await client.query<MigrationRowRow>(
+        `
+          select *
+          from migration_rows
+          where tenant_id = $1 and clinic_id = $2 and batch_id = $3 and id = $4
+        `,
+        [scope.tenantId, scope.clinicId, batchId, rowId]
+      );
+      if (!existingRowResult.rows[0]) return null;
+      const existingRow = mapMigrationRowRow(existingRowResult.rows[0], []);
+      const expectedTargetType = migrationTargetRecordType(existingRow.normalizedRecord);
+      if (!expectedTargetType) return null;
+      if (existingRow.normalizedRecord?.recordType === "provider_user" && input.action === "create_new") {
+        return null;
+      }
+      if (existingRow.normalizedRecord?.recordType === "appointment" && input.action === "create_new") {
+        const openConflict = await client.query<{ present: boolean }>(
+          `
+            select exists (
+              select 1
+              from migration_conflicts
+              where tenant_id = $1
+                and clinic_id = $2
+                and batch_id = $3
+                and row_id = $4
+                and status = 'open'
+            ) as present
+          `,
+          [scope.tenantId, scope.clinicId, batchId, rowId]
+        );
+        if (openConflict.rows[0]?.present) return null;
+      }
+
       if (input.action === "link_existing") {
-        const patient = input.targetRecordId
-          ? await this.#findPatientByIdInTransaction(client, scope, input.targetRecordId)
-          : null;
-        if (!patient) return null;
+        if (!input.targetRecordId || (input.targetRecordType ?? expectedTargetType) !== expectedTargetType) {
+          return null;
+        }
+        if (
+          expectedTargetType === "patient" &&
+          !(await this.#findPatientByIdInTransaction(client, scope, input.targetRecordId))
+        ) {
+          return null;
+        }
+        if (expectedTargetType === "patient") {
+          const repeatsRecordedResolution = existingRow.resolutionAction === "link_existing" &&
+            existingRow.resolutionTargetRecordId === input.targetRecordId;
+          const candidate = await client.query<{ present: boolean }>(
+            `
+              select exists (
+                select 1 from migration_conflicts
+                where tenant_id = $1 and clinic_id = $2 and batch_id = $3 and row_id = $4
+                  and target_record_type = 'patient' and target_record_id = $5
+                  and conflict_type in ('duplicate_patient', 'verified_record_overlap')
+                  and (status = 'open' or $6::boolean)
+              ) or exists (
+                select 1 from imported_record_links
+                where tenant_id = $1 and clinic_id = $2 and source_system = $7
+                  and external_record_id = $8 and target_record_type = 'patient'
+                  and target_record_id = $5 and verification_status <> 'rolled_back'
+              ) as present
+            `,
+            [scope.tenantId, scope.clinicId, batchId, rowId, input.targetRecordId,
+              repeatsRecordedResolution, batch.sourceSystem, existingRow.externalRecordId]
+          );
+          if (!candidate.rows[0]?.present) return null;
+        }
+        if (
+          expectedTargetType === "provider_user" &&
+          !(await this.#findProviderEligibilityInTransaction(client, scope, input.targetRecordId))
+            .eligible
+        ) {
+          return null;
+        }
+        if (
+          expectedTargetType === "appointment" &&
+          existingRow.normalizedRecord?.recordType === "appointment"
+        ) {
+          const [appointment, references] = await Promise.all([
+            this.#findAppointmentByIdInTransaction(client, scope, input.targetRecordId),
+            this.#resolveImportedAppointmentReferencesInTransaction(
+              client,
+              scope,
+              batch.sourceSystem,
+              existingRow
+            )
+          ]);
+          if (
+            !appointment ||
+            !references ||
+            differingAppointmentImportFields(
+              existingRow.normalizedRecord,
+              appointment,
+              references
+            ).length > 0
+          ) {
+            return null;
+          }
+        }
       }
 
       const updated = await client.query<MigrationRowRow>(
@@ -1953,7 +2148,7 @@ export class PostgresClinicOperationsRepository
           scope.clinicId,
           batchId,
           input.action,
-          input.action === "link_existing" ? (input.targetRecordType ?? "patient") : null,
+          input.action === "link_existing" ? expectedTargetType : null,
           input.action === "link_existing" ? (input.targetRecordId ?? null) : null,
           input.note ?? null,
           input.action === "skip" ? "skipped" : "ready_to_commit",
@@ -1997,7 +2192,7 @@ export class PostgresClinicOperationsRepository
     input: CommitMigrationBatchInput = {}
   ): Promise<MigrationCommitResult | null> {
     return this.#withRls(scope, async (client) => {
-      const batch = await this.#findMigrationBatchRowInTransaction(client, scope, batchId);
+      const batch = await this.#lockMigrationBatchRowInTransaction(client, scope, batchId);
       if (!batch) return null;
       const existing = await this.#findMigrationCommitInTransaction(
         client,
@@ -2032,6 +2227,7 @@ export class PostgresClinicOperationsRepository
           )
         };
       }
+      if (["rolled_back", "failed"].includes(batch.state)) return null;
 
       const readyRows = (
         await client.query<MigrationRowRow>(
@@ -2045,60 +2241,98 @@ export class PostgresClinicOperationsRepository
         )
       ).rows.map((row) => mapMigrationRowRow(row, []));
 
-      for (const row of readyRows) {
-        if (!row.normalizedRecord || row.normalizedRecord.recordType !== "patient") {
-          await this.#markMigrationRowFailed(
-            client,
-            scope,
-            row.id,
-            "Only patient import rows can be committed in CP7."
-          );
-          continue;
-        }
-
-        if (row.resolutionAction === "link_existing") {
-          if (!row.resolutionTargetRecordId) {
-            await this.#markMigrationRowFailed(
-              client,
-              scope,
-              row.id,
-              "Resolved existing patient target is missing."
-            );
+      const conflictingAppointmentRowIds = new Set<UUID>();
+      const appointmentRows = readyRows.filter(
+        (row) =>
+          row.normalizedRecord?.recordType === "appointment" &&
+          appointmentStatusBlocksAvailability(row.normalizedRecord.status)
+      );
+      for (let leftIndex = 0; leftIndex < appointmentRows.length; leftIndex += 1) {
+        const left = appointmentRows[leftIndex];
+        if (!left?.normalizedRecord || left.normalizedRecord.recordType !== "appointment") continue;
+        for (let rightIndex = leftIndex + 1; rightIndex < appointmentRows.length; rightIndex += 1) {
+          const right = appointmentRows[rightIndex];
+          if (!right?.normalizedRecord || right.normalizedRecord.recordType !== "appointment") {
             continue;
           }
-          await this.#createImportedRecordLinkInTransaction(
-            client,
-            scope,
-            batch,
-            row,
-            row.resolutionTargetRecordId,
-            "linked_existing"
-          );
-          await this.#markMigrationRowCommitted(
-            client,
-            scope,
-            row.id,
-            "patient",
-            row.resolutionTargetRecordId
-          );
-          continue;
+          const overlaps =
+            left.normalizedRecord.startAt < right.normalizedRecord.endAt &&
+            right.normalizedRecord.startAt < left.normalizedRecord.endAt;
+          const sameProvider =
+            left.normalizedRecord.providerExternalReference ===
+            right.normalizedRecord.providerExternalReference;
+          const sameChair =
+            left.normalizedRecord.chairCode !== null &&
+            left.normalizedRecord.chairCode === right.normalizedRecord.chairCode;
+          if (overlaps && (sameProvider || sameChair)) {
+            conflictingAppointmentRowIds.add(left.id);
+            conflictingAppointmentRowIds.add(right.id);
+          }
         }
+      }
+      for (const rowId of conflictingAppointmentRowIds) {
+        await this.#markMigrationRowFailed(
+          client,
+          scope,
+          rowId,
+          "Imported appointment overlaps another active appointment in this batch."
+        );
+      }
 
-        const patient = await this.#insertImportedPatientInTransaction(
+      let reconciledRows = 0;
+      const externalReferences = [
+        ...new Map(
+          readyRows.flatMap((row) => {
+            if (conflictingAppointmentRowIds.has(row.id)) return [];
+            const targetRecordType = migrationTargetRecordType(row.normalizedRecord);
+            const references: Array<
+              readonly [
+                string,
+                { externalRecordId: string; targetRecordType: MigrationTargetRecordType }
+              ]
+            > = [];
+            if (row.externalRecordId && targetRecordType) {
+              references.push([
+                `${targetRecordType}\u0000${row.externalRecordId}`,
+                { externalRecordId: row.externalRecordId, targetRecordType }
+              ]);
+            }
+            if (row.normalizedRecord?.recordType === "appointment") {
+              references.push(
+                [
+                  `patient\u0000${row.normalizedRecord.patientExternalReference}`,
+                  {
+                    externalRecordId: row.normalizedRecord.patientExternalReference,
+                    targetRecordType: "patient"
+                  }
+                ],
+                [
+                  `provider_user\u0000${row.normalizedRecord.providerExternalReference}`,
+                  {
+                    externalRecordId: row.normalizedRecord.providerExternalReference,
+                    targetRecordType: "provider_user"
+                  }
+                ]
+              );
+            }
+            return references;
+          })
+        ).values()
+      ].sort(compareImportedRecordReferenceLocks);
+      for (const externalReference of externalReferences) {
+        await this.#lockImportedRecordReferenceInTransaction(
           client,
           scope,
-          row,
-          batch.sourceSystem
+          batch.sourceSystem,
+          externalReference.externalRecordId,
+          externalReference.targetRecordType
         );
-        await this.#createImportedRecordLinkInTransaction(
-          client,
-          scope,
-          batch,
-          row,
-          patient.id,
-          "created_from_import"
-        );
-        await this.#markMigrationRowCommitted(client, scope, row.id, "patient", patient.id);
+      }
+
+      for (const row of readyRows) {
+        if (conflictingAppointmentRowIds.has(row.id)) continue;
+        const outcome = await this.#commitMigrationRowInTransaction(client, scope, batch, row);
+        if (outcome === "reconciled") reconciledRows += 1;
       }
 
       const counts = await this.#refreshMigrationBatchCountsInTransaction(client, scope, batchId);
@@ -2124,6 +2358,7 @@ export class PostgresClinicOperationsRepository
         input.idempotencyKey ?? null,
         {
           committedRows: counts.committedRowCount,
+          reconciledRows,
           invalidRows: counts.invalidRowCount,
           failedRows: counts.failedRowCount
         },
@@ -2149,7 +2384,7 @@ export class PostgresClinicOperationsRepository
     input: RollbackMigrationBatchInput = {}
   ): Promise<MigrationRollbackResult | null> {
     return this.#withRls(scope, async (client) => {
-      const batch = await this.#findMigrationBatchRowInTransaction(client, scope, batchId);
+      const batch = await this.#lockMigrationBatchRowInTransaction(client, scope, batchId);
       if (!batch) return null;
       const existing = await this.#findMigrationCommitInTransaction(
         client,
@@ -2161,58 +2396,217 @@ export class PostgresClinicOperationsRepository
       if (existing || batch.state === "rolled_back") {
         const detail = await this.#findMigrationBatchDetailInTransaction(client, scope, batchId);
         if (!detail) return null;
-        return {
-          batch: detail.batch,
-          rollback:
-            existing ??
-            (await this.#latestMigrationCommitInTransaction(client, scope, batchId, "rollback")) ??
-            (await this.#insertMigrationCommitInTransaction(
-              client,
-              scope,
-              batchId,
-              "rollback",
-              "succeeded",
-              input.idempotencyKey ?? null,
-              {},
-              null
-            )),
-          rows: detail.rows,
-          importedRecordLinks: await this.#listImportedRecordLinksInTransaction(
+        const rollback =
+          existing ??
+          (await this.#latestMigrationCommitInTransaction(client, scope, batchId, "rollback")) ??
+          (await this.#insertMigrationCommitInTransaction(
             client,
             scope,
-            batchId
-          ),
-          blockedLinks: []
+            batchId,
+            "rollback",
+            "succeeded",
+            input.idempotencyKey ?? null,
+            {},
+            null
+          ));
+        const importedRecordLinks = await this.#listImportedRecordLinksInTransaction(
+          client,
+          scope,
+          batchId
+        );
+        const blockedLinkIds = new Set(
+          Array.isArray(rollback.errorSummary?.blockedLinkIds)
+            ? rollback.errorSummary.blockedLinkIds.filter(
+                (value): value is string => typeof value === "string"
+              )
+            : []
+        );
+        const blockedLinks =
+          blockedLinkIds.size === 0
+            ? []
+            : (
+                await client.query<ImportedRecordLinkRow>(
+                  `
+                    select *
+                    from imported_record_links
+                    where tenant_id = $1 and clinic_id = $2 and id = any($3::uuid[])
+                    order by created_at
+                  `,
+                  [scope.tenantId, scope.clinicId, [...blockedLinkIds]]
+                )
+              ).rows.map(mapImportedRecordLinkRow);
+        return {
+          batch: detail.batch,
+          rollback,
+          rows: detail.rows,
+          importedRecordLinks,
+          blockedLinks
         };
       }
+      if (!["committed", "partially_committed"].includes(batch.state)) return null;
 
+      const rollbackReferences = (
+        await client.query<{
+          external_record_id: string;
+          target_record_type: string;
+        }>(
+          `
+            select distinct
+              external_record_id,
+              committed_record_type as target_record_type
+            from migration_rows
+            where tenant_id = $1
+              and clinic_id = $2
+              and batch_id = $3
+              and status = 'committed'
+              and external_record_id is not null
+              and committed_record_type is not null
+          `,
+          [scope.tenantId, scope.clinicId, batchId]
+        )
+      ).rows
+        .map((reference) => ({
+          externalRecordId: reference.external_record_id,
+          targetRecordType: reference.target_record_type
+        }))
+        .sort(compareImportedRecordReferenceLocks);
+      for (const reference of rollbackReferences) {
+        await this.#lockImportedRecordReferenceInTransaction(
+          client,
+          scope,
+          batch.sourceSystem,
+          reference.externalRecordId,
+          reference.targetRecordType
+        );
+      }
+
+      const reaffirmedLinks = (
+        await client.query<ImportedRecordLinkRow>(
+          `
+            select imported_record_links.*
+            from migration_rows
+            join migration_batches
+              on migration_batches.tenant_id = migration_rows.tenant_id
+             and migration_batches.clinic_id = migration_rows.clinic_id
+             and migration_batches.id = migration_rows.batch_id
+            join imported_record_links
+              on imported_record_links.tenant_id = migration_rows.tenant_id
+             and imported_record_links.clinic_id = migration_rows.clinic_id
+             and imported_record_links.source_system = migration_batches.source_system
+             and imported_record_links.external_record_id = migration_rows.external_record_id
+             and imported_record_links.target_record_type = migration_rows.resolution_target_record_type
+             and imported_record_links.target_record_id = migration_rows.resolution_target_record_id
+             and imported_record_links.verification_status <> 'rolled_back'
+            where migration_rows.tenant_id = $1
+              and migration_rows.clinic_id = $2
+              and migration_rows.batch_id = $3
+              and migration_rows.status = 'committed'
+              and migration_rows.evidence_reaffirmed
+              and not exists (
+                select 1
+                from imported_record_links as batch_link
+                where batch_link.tenant_id = migration_rows.tenant_id
+                  and batch_link.clinic_id = migration_rows.clinic_id
+                  and batch_link.row_id = migration_rows.id
+              )
+            for update of imported_record_links
+          `,
+          [scope.tenantId, scope.clinicId, batchId]
+        )
+      ).rows.map(mapImportedRecordLinkRow);
       const links = (
         await client.query<ImportedRecordLinkRow>(
           `
             select *
             from imported_record_links
             where tenant_id = $1 and clinic_id = $2 and batch_id = $3 and verification_status = 'imported_unverified'
-            order by created_at
+            order by
+              case target_record_type
+                when 'appointment' then 0
+                when 'provider_user' then 1
+                when 'patient' then 2
+                else 3
+              end,
+              created_at desc
+            for update
           `,
           [scope.tenantId, scope.clinicId, batchId]
         )
       ).rows.map(mapImportedRecordLinkRow);
       const blockedLinks: ImportedRecordLinkRecord[] = [];
 
+      for (const link of reaffirmedLinks) {
+        const blocked = await client.query<ImportedRecordLinkRow>(
+          `
+            update imported_record_links
+            set metadata = metadata || $4::jsonb
+            where tenant_id = $1 and clinic_id = $2 and id = $3
+            returning *
+          `,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            link.id,
+            JSON.stringify({
+              rollbackBlockedAt: this.#clock.now().toISOString(),
+              rollbackBlockedReason:
+                "Explicit evidence reaffirmation changes a canonical external mapping and is not automatically reversible."
+            })
+          ]
+        );
+        blockedLinks.push(mapImportedRecordLinkRow(blocked.rows[0]));
+      }
+
       for (const link of links) {
-        if (
-          link.linkType === "created_from_import" &&
-          (await this.#patientHasRollbackBlockingDependenciesInTransaction(
+        const hasLaterReconciliation =
+          await this.#importedRecordLinkHasLaterReconciliationInTransaction(
             client,
             scope,
-            link.targetRecordId
-          ))
-        ) {
-          await client.query(
+            batchId,
+            link
+          );
+        const hasCommittedAppointmentDependency =
+          (link.targetRecordType === "provider_user" || link.targetRecordType === "patient") &&
+          (await this.#referenceLinkHasCommittedAppointmentDependencyInTransaction(
+            client,
+            scope,
+            batchId,
+            link
+          ));
+        const rollbackBlocked =
+          hasLaterReconciliation ||
+          hasCommittedAppointmentDependency ||
+          (link.linkType === "created_from_import" &&
+            (link.targetRecordType === "appointment"
+              ? await this.#appointmentHasRollbackBlockingDependenciesInTransaction(
+                  client,
+                  scope,
+                  link.targetRecordId
+                )
+              : link.targetRecordType === "patient"
+                ? await this.#patientHasRollbackBlockingDependenciesInTransaction(
+                    client,
+                    scope,
+                    link.targetRecordId
+                  )
+                : true));
+        if (rollbackBlocked) {
+          const rollbackBlockedReason =
+            hasLaterReconciliation
+              ? "A later committed migration reconciliation depends on this canonical external mapping."
+              : hasCommittedAppointmentDependency
+                ? `A committed imported appointment depends on this ${link.targetRecordType === "patient" ? "patient" : "practitioner"} mapping.`
+              : link.targetRecordType === "appointment"
+              ? "Imported appointment has been changed or has downstream operational dependencies."
+              : link.targetRecordType === "patient"
+                ? "Imported patient has downstream clinical or billing dependencies."
+                : "Imported record type cannot be safely deleted by migration rollback.";
+          const blocked = await client.query<ImportedRecordLinkRow>(
             `
               update imported_record_links
               set metadata = metadata || $4::jsonb
               where tenant_id = $1 and clinic_id = $2 and id = $3
+              returning *
             `,
             [
               scope.tenantId,
@@ -2220,37 +2614,54 @@ export class PostgresClinicOperationsRepository
               link.id,
               JSON.stringify({
                 rollbackBlockedAt: this.#clock.now().toISOString(),
-                rollbackBlockedReason:
-                  "Imported patient has downstream clinical or billing dependencies."
+                rollbackBlockedReason
               })
             ]
           );
-          blockedLinks.push(link);
+          blockedLinks.push(mapImportedRecordLinkRow(blocked.rows[0]));
           continue;
         }
 
         if (link.linkType === "created_from_import") {
-          await client.query(
-            `
-              delete from dental_charts
-              where tenant_id = $1 and clinic_id = $2 and patient_id = $3
-            `,
-            [scope.tenantId, scope.clinicId, link.targetRecordId]
-          );
-          await client.query(
-            `
-              delete from patient_timeline_items
-              where tenant_id = $1 and clinic_id = $2 and patient_id = $3
-            `,
-            [scope.tenantId, scope.clinicId, link.targetRecordId]
-          );
-          await client.query(
-            `
-              delete from patients
-              where tenant_id = $1 and clinic_id = $2 and id = $3
-            `,
-            [scope.tenantId, scope.clinicId, link.targetRecordId]
-          );
+          if (link.targetRecordType === "appointment") {
+            const deleted = await client.query<{ id: UUID }>(
+              `
+                delete from appointments
+                where tenant_id = $1 and clinic_id = $2 and id = $3 and row_version = 1
+                returning id
+              `,
+              [scope.tenantId, scope.clinicId, link.targetRecordId]
+            );
+            if (!deleted.rows[0]) {
+              throw new Error("Imported appointment changed while migration rollback was running.");
+            }
+          } else if (link.targetRecordType === "patient") {
+            await client.query(
+              `
+                delete from dental_charts
+                where tenant_id = $1 and clinic_id = $2 and patient_id = $3
+              `,
+              [scope.tenantId, scope.clinicId, link.targetRecordId]
+            );
+            await client.query(
+              `
+                delete from patient_timeline_items
+                where tenant_id = $1 and clinic_id = $2 and patient_id = $3
+              `,
+              [scope.tenantId, scope.clinicId, link.targetRecordId]
+            );
+            const deleted = await client.query<{ id: UUID }>(
+              `
+                delete from patients
+                where tenant_id = $1 and clinic_id = $2 and id = $3 and row_version = 1
+                returning id
+              `,
+              [scope.tenantId, scope.clinicId, link.targetRecordId]
+            );
+            if (!deleted.rows[0]) {
+              throw new Error("Imported patient changed while migration rollback was running.");
+            }
+          }
         }
 
         await client.query(
@@ -2270,6 +2681,27 @@ export class PostgresClinicOperationsRepository
           [scope.tenantId, scope.clinicId, link.rowId]
         );
       }
+
+      await client.query(
+        `
+          update migration_rows
+          set status = 'rolled_back', error_message = null
+          where tenant_id = $1
+            and clinic_id = $2
+            and batch_id = $3
+            and status = 'committed'
+            and not evidence_reaffirmed
+            and not exists (
+              select 1
+              from imported_record_links
+              where imported_record_links.tenant_id = migration_rows.tenant_id
+                and imported_record_links.clinic_id = migration_rows.clinic_id
+                and imported_record_links.row_id = migration_rows.id
+                and imported_record_links.verification_status <> 'rolled_back'
+            )
+        `,
+        [scope.tenantId, scope.clinicId, batchId]
+      );
 
       const counts = await this.#refreshMigrationBatchCountsInTransaction(client, scope, batchId);
       const finalState = blockedLinks.length > 0 ? "partially_committed" : "rolled_back";
@@ -2517,6 +2949,43 @@ export class PostgresClinicOperationsRepository
         [scope.tenantId, scope.clinicId]
       );
       return result.rows.map(mapChairRow);
+    });
+  }
+
+  async listClinicDoctors(scope: RepositoryScope): Promise<ClinicDoctorRecord[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<ClinicDoctorRow>(
+        `
+          select distinct
+            memberships.tenant_id,
+            clinic_user_assignments.clinic_id,
+            users.id as provider_user_id,
+            users.display_name
+          from users
+          join memberships
+            on memberships.user_id = users.id
+           and memberships.tenant_id = $1
+           and memberships.status = 'active'
+          join clinic_user_assignments
+            on clinic_user_assignments.user_id = users.id
+           and clinic_user_assignments.tenant_id = memberships.tenant_id
+           and clinic_user_assignments.clinic_id = $2
+           and clinic_user_assignments.status = 'active'
+          join user_role_assignments
+            on user_role_assignments.user_id = users.id
+           and user_role_assignments.tenant_id = memberships.tenant_id
+           and user_role_assignments.clinic_id = clinic_user_assignments.clinic_id
+           and user_role_assignments.revoked_at is null
+          join roles
+            on roles.id = user_role_assignments.role_id
+           and roles.tenant_id = user_role_assignments.tenant_id
+           and roles.slug = 'doctor'
+          where users.status = 'active'
+          order by users.display_name, users.id
+        `,
+        [scope.tenantId, scope.clinicId]
+      );
+      return result.rows.map(mapClinicDoctorRow);
     });
   }
 
@@ -4478,7 +4947,7 @@ export class PostgresClinicOperationsRepository
   async loadDashboardData(scope: RepositoryScope, date: string): Promise<DashboardDataSet> {
     return this.#withRls(scope, async (client) => {
       const { timezone } = await this.#clinicCalendar(client, scope);
-      const appointments = (
+      const appointmentRows = (
         await client.query<AppointmentRow>(
           `
             select *
@@ -4487,11 +4956,72 @@ export class PostgresClinicOperationsRepository
               and clinic_id = $2
               and start_at >= ($3::date::timestamp at time zone $4)
               and start_at < (($3::date + 1)::timestamp at time zone $4)
-            order by start_at
+            order by start_at, id
+            limit 501
           `,
           [scope.tenantId, scope.clinicId, date, timezone]
         )
-      ).rows.map(mapAppointmentRow);
+      ).rows;
+      const appointmentsTruncated = appointmentRows.length > 500;
+      const appointments = appointmentRows.slice(0, 500).map(mapAppointmentRow);
+      const clinicDayAppointments = (
+        await client.query<ClinicDayAppointmentRow>(
+          `
+            select
+              appointments.id,
+              appointments.row_version,
+              appointments.patient_id,
+              patients.full_name as patient_name,
+              patients.phone as patient_phone,
+              case when exists (
+                select 1
+                from appointments as prior_appointments
+                where prior_appointments.tenant_id = appointments.tenant_id
+                  and prior_appointments.clinic_id = appointments.clinic_id
+                  and prior_appointments.patient_id = appointments.patient_id
+                  and prior_appointments.start_at < ($3::date::timestamp at time zone $4)
+              ) then true else false end as is_returning_patient,
+              appointments.provider_user_id,
+              users.display_name as provider_name,
+              appointments.appointment_type_id,
+              appointment_types.display_name as appointment_type_name,
+              appointments.chair_id,
+              chairs_or_rooms.display_name as chair_name,
+              appointments.status,
+              appointments.start_at,
+              appointments.end_at,
+              appointments.source,
+              appointments.reason,
+              queue_entries.id as queue_entry_id,
+              queue_entries.status as queue_status,
+              queue_entries.position as queue_position,
+              queue_entries.checked_in_at,
+              appointments.updated_at
+            from appointments
+            join patients
+              on patients.tenant_id = appointments.tenant_id
+             and patients.id = appointments.patient_id
+            join users on users.id = appointments.provider_user_id
+            join appointment_types
+              on appointment_types.tenant_id = appointments.tenant_id
+             and appointment_types.id = appointments.appointment_type_id
+            left join chairs_or_rooms
+              on chairs_or_rooms.tenant_id = appointments.tenant_id
+             and chairs_or_rooms.id = appointments.chair_id
+            left join queue_entries
+              on queue_entries.tenant_id = appointments.tenant_id
+             and queue_entries.clinic_id = appointments.clinic_id
+             and queue_entries.appointment_id = appointments.id
+            where appointments.tenant_id = $1
+              and appointments.clinic_id = $2
+              and appointments.start_at >= ($3::date::timestamp at time zone $4)
+              and appointments.start_at < (($3::date + 1)::timestamp at time zone $4)
+            order by appointments.start_at, appointments.id
+            limit 500
+          `,
+          [scope.tenantId, scope.clinicId, date, timezone]
+        )
+      ).rows.map(mapClinicDayAppointmentRow);
       const leads = (
         await client.query<LeadRow>(
           `
@@ -4499,7 +5029,7 @@ export class PostgresClinicOperationsRepository
             from leads
             where tenant_id = $1 and clinic_id = $2 and status in ('new', 'contacted', 'matched')
             order by last_activity_at desc
-            limit 50
+            limit 500
           `,
           [scope.tenantId, scope.clinicId]
         )
@@ -4514,7 +5044,7 @@ export class PostgresClinicOperationsRepository
               and status in ('open', 'in_progress')
               and (due_at is null or due_at < (($3::date + 1)::timestamp at time zone $4))
             order by due_at nulls last, created_at desc
-            limit 50
+            limit 500
           `,
           [scope.tenantId, scope.clinicId, date, timezone]
         )
@@ -4529,28 +5059,23 @@ export class PostgresClinicOperationsRepository
               and checked_in_at >= ($3::date::timestamp at time zone $4)
               and checked_in_at < (($3::date + 1)::timestamp at time zone $4)
             order by position, checked_in_at
+            limit 500
           `,
           [scope.tenantId, scope.clinicId, date, timezone]
         )
       ).rows.map(mapQueueEntryRow);
-      const returningRows = await client.query<{ patient_id: UUID }>(
-        `
-          select patient_id
-          from appointments
-          where tenant_id = $1
-            and clinic_id = $2
-            and start_at < ($3::date::timestamp at time zone $4)
-          group by patient_id
-        `,
-        [scope.tenantId, scope.clinicId, date, timezone]
-      );
-
       return {
         appointments,
+        appointmentsTruncated,
+        clinicDayAppointments,
         leads,
         tasks,
         queue,
-        returningPatientIds: new Set(returningRows.rows.map((row) => row.patient_id))
+        returningPatientIds: new Set(
+          clinicDayAppointments
+            .filter((appointment) => appointment.patientKind === "returning")
+            .map((appointment) => appointment.patientId)
+        )
       };
     });
   }
@@ -5260,8 +5785,17 @@ export class PostgresClinicOperationsRepository
     scope: RepositoryScope,
     providerUserId: UUID
   ): Promise<ProviderEligibilityResult> {
-    return this.#withRls(scope, async (client) => {
-      const result = await client.query<{
+    return this.#withRls(scope, (client) =>
+      this.#findProviderEligibilityInTransaction(client, scope, providerUserId)
+    );
+  }
+
+  async #findProviderEligibilityInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    providerUserId: UUID
+  ): Promise<ProviderEligibilityResult> {
+    const result = await client.query<{
         user_active: boolean;
         membership_active: boolean;
         clinic_assignment_active: boolean;
@@ -5296,25 +5830,24 @@ export class PostgresClinicOperationsRepository
         `,
         [scope.tenantId, scope.clinicId, providerUserId]
       );
-      const row = result.rows[0] ?? {
-        user_active: false,
-        membership_active: false,
-        clinic_assignment_active: false,
-        doctor_role_active: false
-      };
-      return {
-        providerUserId,
-        userActive: row.user_active,
-        membershipActive: row.membership_active,
-        clinicAssignmentActive: row.clinic_assignment_active,
-        doctorRoleActive: row.doctor_role_active,
-        eligible:
-          row.user_active &&
-          row.membership_active &&
-          row.clinic_assignment_active &&
-          row.doctor_role_active
-      };
-    });
+    const row = result.rows[0] ?? {
+      user_active: false,
+      membership_active: false,
+      clinic_assignment_active: false,
+      doctor_role_active: false
+    };
+    return {
+      providerUserId,
+      userActive: row.user_active,
+      membershipActive: row.membership_active,
+      clinicAssignmentActive: row.clinic_assignment_active,
+      doctorRoleActive: row.doctor_role_active,
+      eligible:
+        row.user_active &&
+        row.membership_active &&
+        row.clinic_assignment_active &&
+        row.doctor_role_active
+    };
   }
 
   async findActivePaymentProviderAccount(
@@ -9897,6 +10430,23 @@ export class PostgresClinicOperationsRepository
     return result.rows[0] ? mapMigrationBatchRow(result.rows[0]) : null;
   }
 
+  async #lockMigrationBatchRowInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batchId: UUID
+  ): Promise<MigrationBatchRecord | null> {
+    const result = await client.query<MigrationBatchRow>(
+      `
+        select *
+        from migration_batches
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+        for update
+      `,
+      [scope.tenantId, scope.clinicId, batchId]
+    );
+    return result.rows[0] ? mapMigrationBatchRow(result.rows[0]) : null;
+  }
+
   async #findMigrationBatchDetailInTransaction(
     client: SqlQueryClient,
     scope: RepositoryScope,
@@ -9985,16 +10535,17 @@ export class PostgresClinicOperationsRepository
     }>(
       `
         select
-          count(*) as row_count,
-          count(*) filter (where status <> 'invalid') as valid_row_count,
-          count(*) filter (where status = 'invalid') as invalid_row_count,
+          count(distinct migration_rows.id) as row_count,
+          count(distinct migration_rows.id) filter (where migration_rows.status <> 'invalid') as valid_row_count,
+          count(distinct migration_rows.id) filter (where migration_rows.status = 'invalid') as invalid_row_count,
           count(distinct migration_rows.id) filter (where migration_conflicts.status = 'open') as conflict_row_count,
-          count(*) filter (where migration_rows.status = 'ready_to_commit') as ready_row_count,
-          count(*) filter (where migration_rows.status = 'committed') as committed_row_count,
-          count(*) filter (where migration_rows.status = 'rolled_back') as rolled_back_row_count,
-          count(*) filter (where migration_rows.status = 'failed') as failed_row_count
+          count(distinct migration_rows.id) filter (where migration_rows.status = 'ready_to_commit') as ready_row_count,
+          count(distinct migration_rows.id) filter (where migration_rows.status = 'committed') as committed_row_count,
+          count(distinct migration_rows.id) filter (where migration_rows.status = 'rolled_back') as rolled_back_row_count,
+          count(distinct migration_rows.id) filter (where migration_rows.status = 'failed') as failed_row_count
         from migration_rows
         left join migration_conflicts on migration_conflicts.tenant_id = migration_rows.tenant_id
+          and migration_conflicts.clinic_id = migration_rows.clinic_id
           and migration_conflicts.row_id = migration_rows.id
         where migration_rows.tenant_id = $1 and migration_rows.clinic_id = $2 and migration_rows.batch_id = $3
       `,
@@ -10135,6 +10686,452 @@ export class PostgresClinicOperationsRepository
     return mapMigrationCommitRow(result.rows[0]);
   }
 
+  async #commitMigrationRowInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batch: MigrationBatchRecord,
+    row: MigrationRowRecord
+  ): Promise<"committed" | "reconciled" | "failed"> {
+    const targetRecordType = migrationTargetRecordType(row.normalizedRecord);
+    if (!targetRecordType || !row.normalizedRecord) {
+      await this.#markMigrationRowFailed(
+        client,
+        scope,
+        row.id,
+        "Migration row does not contain a supported normalized record."
+      );
+      return "failed";
+    }
+
+    const existingExternalLink = row.externalRecordId
+      ? await this.#findImportedRecordLinkByExternalIdInTransaction(
+          client,
+          scope,
+          batch.sourceSystem,
+          row.externalRecordId,
+          targetRecordType
+        )
+      : null;
+    if (existingExternalLink) {
+      const existingDigest = existingExternalLink.metadata.normalizedRecordDigest;
+      const normalizedRecordDigest = migrationNormalizedRecordDigest(row);
+      const explicitlyReaffirmedTarget =
+        row.resolutionAction === "link_existing" &&
+        row.resolutionTargetRecordId === existingExternalLink.targetRecordId;
+      const digestChanged =
+        existingDigest !== normalizedRecordDigest && !explicitlyReaffirmedTarget;
+      const targetChanged =
+        row.resolutionAction === "create_new" ||
+        (row.resolutionAction === "link_existing" &&
+          row.resolutionTargetRecordId !== existingExternalLink.targetRecordId);
+      if (digestChanged || targetChanged) {
+        await this.#markMigrationRowFailed(
+          client,
+          scope,
+          row.id,
+          `The external ${targetRecordType} reference is already linked with different evidence.`
+        );
+        return "failed";
+      }
+
+      if (
+        targetRecordType === "patient" &&
+        !(await this.#findPatientByIdInTransaction(client, scope, existingExternalLink.targetRecordId))
+      ) {
+        await this.#markMigrationRowFailed(
+          client,
+          scope,
+          row.id,
+          "The linked ClinicOS patient no longer exists."
+        );
+        return "failed";
+      }
+      if (
+        targetRecordType === "provider_user" &&
+        !(await this.#findProviderEligibilityInTransaction(
+          client,
+          scope,
+          existingExternalLink.targetRecordId
+        )).eligible
+      ) {
+        await this.#markMigrationRowFailed(
+          client,
+          scope,
+          row.id,
+          "The linked ClinicOS doctor is no longer eligible."
+        );
+        return "failed";
+      }
+      if (targetRecordType === "appointment") {
+        if (row.normalizedRecord.recordType !== "appointment") {
+          await this.#markMigrationRowFailed(client, scope, row.id, "Appointment record is invalid.");
+          return "failed";
+        }
+        const references = await this.#resolveImportedAppointmentReferencesInTransaction(
+          client,
+          scope,
+          batch.sourceSystem,
+          row
+        );
+        const appointment = await this.#findAppointmentByIdInTransaction(
+          client,
+          scope,
+          existingExternalLink.targetRecordId
+        );
+        if (
+          !references ||
+          !appointment ||
+          differingAppointmentImportFields(row.normalizedRecord, appointment, references).length > 0
+        ) {
+          await this.#markMigrationRowFailed(
+            client,
+            scope,
+            row.id,
+            "The linked appointment no longer matches the imported evidence."
+          );
+          return "failed";
+        }
+      }
+
+      if (explicitlyReaffirmedTarget && existingDigest !== normalizedRecordDigest) {
+        await this.#reaffirmImportedRecordLinkEvidenceInTransaction(
+          client,
+          scope,
+          batch,
+          row,
+          existingExternalLink.id,
+          existingDigest,
+          normalizedRecordDigest
+        );
+      }
+
+      await this.#markMigrationRowCommitted(
+        client,
+        scope,
+        row.id,
+        targetRecordType,
+        existingExternalLink.targetRecordId,
+        explicitlyReaffirmedTarget && existingDigest !== normalizedRecordDigest
+      );
+      return "reconciled";
+    }
+
+    if (targetRecordType === "patient") {
+      if (row.resolutionAction === "link_existing") {
+        if (
+          !row.resolutionTargetRecordId ||
+          !(await this.#findPatientByIdInTransaction(client, scope, row.resolutionTargetRecordId))
+        ) {
+          await this.#markMigrationRowFailed(
+            client,
+            scope,
+            row.id,
+            "Resolved existing patient target is missing."
+          );
+          return "failed";
+        }
+        await this.#createImportedRecordLinkInTransaction(
+          client,
+          scope,
+          batch,
+          row,
+          "patient",
+          row.resolutionTargetRecordId,
+          "linked_existing"
+        );
+        await this.#markMigrationRowCommitted(
+          client,
+          scope,
+          row.id,
+          "patient",
+          row.resolutionTargetRecordId
+        );
+        return "committed";
+      }
+
+      const patient = await this.#insertImportedPatientInTransaction(
+        client,
+        scope,
+        row,
+        batch.sourceSystem
+      );
+      await this.#createImportedRecordLinkInTransaction(
+        client,
+        scope,
+        batch,
+        row,
+        "patient",
+        patient.id,
+        "created_from_import"
+      );
+      await this.#markMigrationRowCommitted(client, scope, row.id, "patient", patient.id);
+      return "committed";
+    }
+
+    if (targetRecordType === "provider_user") {
+      if (
+        row.resolutionAction !== "link_existing" ||
+        !row.resolutionTargetRecordId ||
+        !(await this.#findProviderEligibilityInTransaction(
+          client,
+          scope,
+          row.resolutionTargetRecordId
+        )).eligible
+      ) {
+        await this.#markMigrationRowFailed(
+          client,
+          scope,
+          row.id,
+          "Practitioners must be linked to an eligible existing ClinicOS doctor."
+        );
+        return "failed";
+      }
+      await this.#createImportedRecordLinkInTransaction(
+        client,
+        scope,
+        batch,
+        row,
+        "provider_user",
+        row.resolutionTargetRecordId,
+        "linked_existing"
+      );
+      await this.#markMigrationRowCommitted(
+        client,
+        scope,
+        row.id,
+        "provider_user",
+        row.resolutionTargetRecordId
+      );
+      return "committed";
+    }
+
+    if (row.normalizedRecord.recordType !== "appointment") {
+      await this.#markMigrationRowFailed(client, scope, row.id, "Appointment record is invalid.");
+      return "failed";
+    }
+    const references = await this.#resolveImportedAppointmentReferencesInTransaction(
+      client,
+      scope,
+      batch.sourceSystem,
+      row
+    );
+    if (!references) {
+      await this.#markMigrationRowFailed(
+        client,
+        scope,
+        row.id,
+        "Appointment references do not resolve to active ClinicOS master data."
+      );
+      return "failed";
+    }
+
+    if (row.resolutionAction === "link_existing") {
+      const appointment = row.resolutionTargetRecordId
+        ? await this.#findAppointmentByIdInTransaction(
+            client,
+            scope,
+            row.resolutionTargetRecordId
+          )
+        : null;
+      if (
+        !appointment ||
+        differingAppointmentImportFields(row.normalizedRecord, appointment, references).length > 0
+      ) {
+        await this.#markMigrationRowFailed(
+          client,
+          scope,
+          row.id,
+          "Existing appointment target does not match the imported evidence."
+        );
+        return "failed";
+      }
+      await this.#createImportedRecordLinkInTransaction(
+        client,
+        scope,
+        batch,
+        row,
+        "appointment",
+        appointment.id,
+        "linked_existing"
+      );
+      await this.#markMigrationRowCommitted(client, scope, row.id, "appointment", appointment.id);
+      return "committed";
+    }
+
+    const appointment = await this.#insertImportedAppointmentInTransaction(
+      client,
+      scope,
+      row,
+      references
+    );
+    if (!appointment) {
+      await this.#markMigrationRowFailed(
+        client,
+        scope,
+        row.id,
+        "Imported appointment overlaps an existing active appointment."
+      );
+      return "failed";
+    }
+    await this.#createImportedRecordLinkInTransaction(
+      client,
+      scope,
+      batch,
+      row,
+      "appointment",
+      appointment.id,
+      "created_from_import"
+    );
+    await this.#markMigrationRowCommitted(client, scope, row.id, "appointment", appointment.id);
+    return "committed";
+  }
+
+  async #resolveImportedAppointmentReferencesInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    sourceSystem: string,
+    row: MigrationRowRecord
+  ): Promise<ImportedAppointmentReferences | null> {
+    if (!row.normalizedRecord || row.normalizedRecord.recordType !== "appointment") return null;
+    const normalized = row.normalizedRecord;
+    const patientLink = await this.#findImportedRecordLinkByExternalIdInTransaction(
+      client,
+      scope,
+      sourceSystem,
+      normalized.patientExternalReference,
+      "patient"
+    );
+    const providerLink = await this.#findImportedRecordLinkByExternalIdInTransaction(
+      client,
+      scope,
+      sourceSystem,
+      normalized.providerExternalReference,
+      "provider_user"
+    );
+    if (
+      !patientLink ||
+      !providerLink ||
+      !(await this.#findPatientByIdInTransaction(client, scope, patientLink.targetRecordId)) ||
+      !(await this.#findProviderEligibilityInTransaction(client, scope, providerLink.targetRecordId))
+        .eligible
+    ) {
+      return null;
+    }
+
+    const appointmentType = await client.query<{ id: UUID }>(
+      `
+        select id
+        from appointment_types
+        where tenant_id = $1 and clinic_id = $2 and code = $3 and active = true
+      `,
+      [scope.tenantId, scope.clinicId, normalized.appointmentTypeCode]
+    );
+    if (!appointmentType.rows[0]) return null;
+
+    let chairId: UUID | null = null;
+    if (normalized.chairCode) {
+      const chair = await client.query<{ id: UUID }>(
+        `
+          select id
+          from chairs_or_rooms
+          where tenant_id = $1 and clinic_id = $2 and code = $3 and active = true
+        `,
+        [scope.tenantId, scope.clinicId, normalized.chairCode]
+      );
+      if (!chair.rows[0]) return null;
+      chairId = chair.rows[0].id;
+    }
+
+    return {
+      patientId: patientLink.targetRecordId,
+      providerUserId: providerLink.targetRecordId,
+      appointmentTypeId: appointmentType.rows[0].id,
+      chairId
+    };
+  }
+
+  async #insertImportedAppointmentInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    row: MigrationRowRecord,
+    references: ImportedAppointmentReferences
+  ): Promise<AppointmentRecord | null> {
+    if (!row.normalizedRecord || row.normalizedRecord.recordType !== "appointment") return null;
+    const normalized = row.normalizedRecord;
+    const conflicts = await client.query<{ id: UUID }>(
+      `
+        select id
+        from appointments
+        where tenant_id = $1
+          and clinic_id = $2
+          and status in ('requested', 'booked', 'confirmed', 'checked_in', 'in_consult')
+          and start_at < $4
+          and $3 < end_at
+          and (
+            provider_user_id = $5
+            or ($6::uuid is not null and chair_id = $6)
+          )
+        limit 1
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        normalized.startAt,
+        normalized.endAt,
+        references.providerUserId,
+        references.chairId
+      ]
+    );
+    if (appointmentStatusBlocksAvailability(normalized.status) && conflicts.rows[0]) return null;
+
+    await client.query("savepoint migration_appointment_insert");
+    try {
+      const result = await client.query<AppointmentRow>(
+        `
+          insert into appointments (
+            tenant_id,
+            clinic_id,
+            patient_id,
+            lead_id,
+            provider_user_id,
+            appointment_type_id,
+            chair_id,
+            status,
+            start_at,
+            end_at,
+            source,
+            reason,
+            notes,
+            created_by_user_id,
+            updated_by_user_id
+          )
+          values ($1, $2, $3, null, $4, $5, $6, $7, $8, $9, $10, null, null, $11, $11)
+          returning *
+        `,
+        [
+          scope.tenantId,
+          scope.clinicId,
+          references.patientId,
+          references.providerUserId,
+          references.appointmentTypeId,
+          references.chairId,
+          normalized.status,
+          normalized.startAt,
+          normalized.endAt,
+          normalized.source,
+          scope.actorUserId
+        ]
+      );
+      await client.query("release savepoint migration_appointment_insert");
+      return mapAppointmentRow(result.rows[0]);
+    } catch (error) {
+      await client.query("rollback to savepoint migration_appointment_insert");
+      await client.query("release savepoint migration_appointment_insert");
+      if (isPostgresErrorCode(error, "23P01")) return null;
+      throw error;
+    }
+  }
+
   async #insertImportedPatientInTransaction(
     client: SqlQueryClient,
     scope: RepositoryScope,
@@ -10219,6 +11216,7 @@ export class PostgresClinicOperationsRepository
     scope: RepositoryScope,
     batch: MigrationBatchRecord,
     row: MigrationRowRecord,
+    targetRecordType: string,
     targetRecordId: UUID,
     linkType: ImportedRecordLinkRecord["linkType"]
   ): Promise<ImportedRecordLinkRecord> {
@@ -10238,7 +11236,7 @@ export class PostgresClinicOperationsRepository
           metadata,
           created_by_user_id
         )
-        values ($1, $2, $3, $4, $5, $6, $7, 'patient', $8, $9, $10::jsonb, $11)
+        values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11::jsonb, $12)
         on conflict do nothing
         returning *
       `,
@@ -10250,9 +11248,11 @@ export class PostgresClinicOperationsRepository
         batch.importType,
         batch.sourceSystem,
         row.externalRecordId,
+        targetRecordType,
         targetRecordId,
         linkType,
         JSON.stringify({
+          normalizedRecordDigest: migrationNormalizedRecordDigest(row),
           rowNumber: row.rowNumber,
           resolutionAction: row.resolutionAction ?? "create_new"
         }),
@@ -10269,7 +11269,69 @@ export class PostgresClinicOperationsRepository
       `,
       [scope.tenantId, scope.clinicId, batch.id, row.id]
     );
-    return mapImportedRecordLinkRow(existing.rows[0]);
+    if (existing.rows[0]) return mapImportedRecordLinkRow(existing.rows[0]);
+
+    if (row.externalRecordId) {
+      const canonicalLink = await this.#findImportedRecordLinkByExternalIdInTransaction(
+        client,
+        scope,
+        batch.sourceSystem,
+        row.externalRecordId,
+        targetRecordType
+      );
+      if (canonicalLink) {
+        throw new Error(
+          "Concurrent import linked this external record reference; retry migration reconciliation."
+        );
+      }
+    }
+
+    throw new Error("Imported record link was not persisted.");
+  }
+
+  async #findImportedRecordLinkByExternalIdInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    sourceSystem: string,
+    externalRecordId: string,
+    targetRecordType: string
+  ): Promise<ImportedRecordLinkRecord | null> {
+    const result = await client.query<ImportedRecordLinkRow>(
+      `
+        select *
+        from imported_record_links
+        where tenant_id = $1
+          and clinic_id = $2
+          and source_system = $3
+          and external_record_id = $4
+          and target_record_type = $5
+          and verification_status <> 'rolled_back'
+        order by created_at
+        limit 1
+      `,
+      [scope.tenantId, scope.clinicId, sourceSystem, externalRecordId, targetRecordType]
+    );
+    return result.rows[0] ? mapImportedRecordLinkRow(result.rows[0]) : null;
+  }
+
+  async #lockImportedRecordReferenceInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    sourceSystem: string,
+    externalRecordId: string,
+    targetRecordType: string
+  ): Promise<void> {
+    const lockKey = JSON.stringify([
+      scope.tenantId,
+      scope.clinicId,
+      sourceSystem,
+      externalRecordId,
+      targetRecordType
+    ]);
+    await client.query(
+      `select pg_advisory_xact_lock(hashtextextended($1::text, 0))`,
+      [lockKey]
+    );
   }
 
   async #markMigrationRowCommitted(
@@ -10277,15 +11339,21 @@ export class PostgresClinicOperationsRepository
     scope: RepositoryScope,
     rowId: UUID,
     recordType: string,
-    recordId: UUID
+    recordId: UUID,
+    evidenceReaffirmed = false
   ): Promise<void> {
     await client.query(
       `
         update migration_rows
-        set status = 'committed', committed_record_type = $4, committed_record_id = $5, error_message = null
+        set
+          status = 'committed',
+          committed_record_type = $4,
+          committed_record_id = $5,
+          evidence_reaffirmed = $6,
+          error_message = null
         where tenant_id = $1 and clinic_id = $2 and id = $3
       `,
-      [scope.tenantId, scope.clinicId, rowId, recordType, recordId]
+      [scope.tenantId, scope.clinicId, rowId, recordType, recordId, evidenceReaffirmed]
     );
   }
 
@@ -10323,30 +11391,224 @@ export class PostgresClinicOperationsRepository
     ).rows.map(mapImportedRecordLinkRow);
   }
 
+  async #reaffirmImportedRecordLinkEvidenceInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batch: MigrationBatchRecord,
+    row: MigrationRowRecord,
+    linkId: UUID,
+    previousDigest: unknown,
+    normalizedRecordDigest: string | null
+  ): Promise<void> {
+    await client.query(
+      `
+        update imported_record_links
+        set
+          metadata = metadata || $4::jsonb,
+          updated_at = now()
+        where tenant_id = $1
+          and clinic_id = $2
+          and id = $3
+          and verification_status <> 'rolled_back'
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        linkId,
+        JSON.stringify({
+          previousNormalizedRecordDigest:
+            typeof previousDigest === "string" ? previousDigest : null,
+          normalizedRecordDigest,
+          evidenceReaffirmedAt: this.#clock.now().toISOString(),
+          evidenceReaffirmedByUserId: scope.actorUserId,
+          evidenceReaffirmedByBatchId: batch.id,
+          evidenceReaffirmedByRowId: row.id
+        })
+      ]
+    );
+  }
+
+  async #appointmentHasRollbackBlockingDependenciesInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    appointmentId: UUID
+  ): Promise<boolean> {
+    const result = await client.query<{
+      row_version: string | number;
+      dependency_count: string | number;
+    }>(
+      `
+        select
+          appointments.row_version,
+          (
+            (select count(*) from appointment_status_history where tenant_id = $1 and clinic_id = $2 and appointment_id = $3)
+            + (select count(*) from queue_entries where tenant_id = $1 and clinic_id = $2 and appointment_id = $3)
+            + (select count(*) from encounters where tenant_id = $1 and clinic_id = $2 and appointment_id = $3)
+            + (select count(*) from tasks where tenant_id = $1 and clinic_id = $2 and appointment_id = $3)
+            + (select count(*) from attribution_touches where tenant_id = $1 and clinic_id = $2 and appointment_id = $3)
+            + (select count(*) from recalls where tenant_id = $1 and clinic_id = $2 and appointment_id = $3)
+            + (select count(*) from incidents where tenant_id = $1 and clinic_id = $2 and appointment_id = $3)
+          ) as dependency_count
+        from appointments
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+        for update of appointments
+      `,
+      [scope.tenantId, scope.clinicId, appointmentId]
+    );
+    const row = result.rows[0];
+    return !row || Number(row.row_version) > 1 || Number(row.dependency_count) > 0;
+  }
+
+  async #importedRecordLinkHasLaterReconciliationInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batchId: UUID,
+    link: ImportedRecordLinkRecord
+  ): Promise<boolean> {
+    const result = await client.query<{ has_dependency: boolean }>(
+      `
+        select exists (
+          select 1
+          from migration_rows
+          join migration_batches
+            on migration_batches.tenant_id = migration_rows.tenant_id
+           and migration_batches.clinic_id = migration_rows.clinic_id
+           and migration_batches.id = migration_rows.batch_id
+          where migration_rows.tenant_id = $1
+            and migration_rows.clinic_id = $2
+            and migration_rows.batch_id <> $3
+            and migration_rows.status = 'committed'
+            and migration_batches.source_system = $4
+            and migration_rows.external_record_id = $5
+            and migration_rows.committed_record_type = $6
+            and migration_rows.committed_record_id = $7
+        ) as has_dependency
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        batchId,
+        link.sourceSystem,
+        link.externalRecordId,
+        link.targetRecordType,
+        link.targetRecordId
+      ]
+    );
+    return result.rows[0]?.has_dependency === true;
+  }
+
+  async #referenceLinkHasCommittedAppointmentDependencyInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    batchId: UUID,
+    link: ImportedRecordLinkRecord
+  ): Promise<boolean> {
+    const result = await client.query<{ has_dependency: boolean }>(
+      `
+        select exists (
+          select 1
+          from migration_rows
+          join migration_batches
+            on migration_batches.tenant_id = migration_rows.tenant_id
+           and migration_batches.clinic_id = migration_rows.clinic_id
+           and migration_batches.id = migration_rows.batch_id
+          join imported_record_links as appointment_link
+            on appointment_link.tenant_id = migration_rows.tenant_id
+           and appointment_link.clinic_id = migration_rows.clinic_id
+           and appointment_link.source_system = migration_batches.source_system
+           and appointment_link.external_record_id = migration_rows.external_record_id
+           and appointment_link.target_record_type = 'appointment'
+           and appointment_link.verification_status <> 'rolled_back'
+          where migration_rows.tenant_id = $1
+            and migration_rows.clinic_id = $2
+            and migration_rows.batch_id <> $3
+            and migration_rows.status = 'committed'
+            and migration_batches.source_system = $4
+            and migration_rows.normalized_record ->> 'recordType' = 'appointment'
+            and migration_rows.normalized_record ->> $6::text = $5
+        ) as has_dependency
+      `,
+      [
+        scope.tenantId,
+        scope.clinicId,
+        batchId,
+        link.sourceSystem,
+        link.externalRecordId,
+        link.targetRecordType === "patient" ? "patientExternalReference" : "providerExternalReference"
+      ]
+    );
+    return result.rows[0]?.has_dependency === true;
+  }
+
   async #patientHasRollbackBlockingDependenciesInTransaction(
     client: SqlQueryClient,
     scope: RepositoryScope,
     patientId: UUID
   ): Promise<boolean> {
-    const result = await client.query<{ dependency_count: string | number }>(
+    const result = await client.query<{
+      row_version: string | number;
+      dependency_count: string | number;
+    }>(
       `
-        select (
-          (select count(*) from appointments where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
-          + (select count(*) from encounters where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
-          + (select count(*) from form_responses where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
-          + (select count(*) from consents where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
-          + (select count(*) from dental_findings where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
-          + (select count(*) from media_assets where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
-          + (select count(*) from treatment_plans where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
-          + (select count(*) from procedure_performed_records where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
-          + (select count(*) from invoices where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
-          + (select count(*) from lab_cases where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
-          + (select count(*) from incidents where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
-        ) as dependency_count
+        select
+          patients.row_version,
+          (
+            (select count(*) from patient_merge_candidates where tenant_id = $1 and clinic_id = $2 and (patient_id = $3 or candidate_patient_id = $3))
+            + (select greatest(count(*) - 1, 0) from patient_contacts where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select greatest(count(*) - 1, 0) from patient_timeline_items where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from dental_charts where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from leads where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from appointments where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from queue_entries where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from tasks where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from attribution_touches where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from encounters where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from form_responses where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from consents where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from clinical_note_versions where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from prescriptions where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from dental_findings where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from media_assets where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from media_uploads where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from dental_finding_history where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from dental_chart_snapshots where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from treatment_plans where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from procedure_performed_records where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from invoices where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from invoice_items where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from payment_requests where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from payment_transactions where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from receipts where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from payment_reconciliation_items where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from patient_instruction_requests where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from recalls where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from lab_cases where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from lab_case_status_history where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from lab_reconciliation_entries where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from incidents where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from normalized_integration_events where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from ai_sessions where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from data_exports where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from deletion_requests where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from retention_actions where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from break_glass_accesses where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from audit_events where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from meta_whatsapp_outbound_messages where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from meta_whatsapp_consent_commands where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from cp16_ai_invocations where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from cp16_fhir_exports where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from cp16_fhir_import_reconciliations where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from cp16_fhir_applied_summaries where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+            + (select count(*) from cp16_fhir_exchange_failures where tenant_id = $1 and clinic_id = $2 and patient_id = $3)
+          ) as dependency_count
+        from patients
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+        for update of patients
       `,
       [scope.tenantId, scope.clinicId, patientId]
     );
-    return Number(result.rows[0]?.dependency_count ?? 0) > 0;
+    const row = result.rows[0];
+    return !row || Number(row.row_version) > 1 || Number(row.dependency_count) > 0;
   }
 
   async #paymentAccountIsAvailable(
@@ -12353,6 +13615,13 @@ interface ChairRow {
   active: boolean;
 }
 
+interface ClinicDoctorRow {
+  tenant_id: UUID;
+  clinic_id: UUID;
+  provider_user_id: UUID;
+  display_name: string;
+}
+
 interface ProviderScheduleRow {
   id: UUID;
   tenant_id: UUID;
@@ -12383,6 +13652,31 @@ interface AppointmentRow {
   reason: string | null;
   notes: string | null;
   created_at: Date | string;
+  updated_at: Date | string;
+}
+
+interface ClinicDayAppointmentRow {
+  id: UUID;
+  row_version: number | string;
+  patient_id: UUID;
+  patient_name: string;
+  patient_phone: string | null;
+  is_returning_patient: boolean;
+  provider_user_id: UUID;
+  provider_name: string;
+  appointment_type_id: UUID;
+  appointment_type_name: string;
+  chair_id: UUID | null;
+  chair_name: string | null;
+  status: AppointmentStatus;
+  start_at: Date | string;
+  end_at: Date | string;
+  source: AppointmentRecord["source"];
+  reason: string | null;
+  queue_entry_id: UUID | null;
+  queue_status: QueueEntryRecord["status"] | null;
+  queue_position: number | null;
+  checked_in_at: Date | string | null;
   updated_at: Date | string;
 }
 
@@ -14152,6 +15446,35 @@ function mapAppointmentTypeRow(row: AppointmentTypeRow): AppointmentTypeRecord {
   };
 }
 
+function mapClinicDayAppointmentRow(
+  row: ClinicDayAppointmentRow
+): ClinicDayAppointmentReadModel {
+  return {
+    id: row.id,
+    rowVersion: positiveRowVersion(row.row_version),
+    patientId: row.patient_id,
+    patientName: row.patient_name,
+    patientPhone: row.patient_phone,
+    patientKind: row.is_returning_patient ? "returning" : "new",
+    providerUserId: row.provider_user_id,
+    providerName: row.provider_name,
+    appointmentTypeId: row.appointment_type_id,
+    appointmentTypeName: row.appointment_type_name,
+    chairId: row.chair_id,
+    chairName: row.chair_name,
+    status: row.status,
+    startAt: toIso(row.start_at),
+    endAt: toIso(row.end_at),
+    source: row.source,
+    reason: row.reason,
+    queueEntryId: row.queue_entry_id,
+    queueStatus: row.queue_status,
+    queuePosition: row.queue_position,
+    checkedInAt: row.checked_in_at ? toIso(row.checked_in_at) : null,
+    updatedAt: toIso(row.updated_at)
+  };
+}
+
 function mapChairRow(row: ChairRow): ChairOrRoomRecord {
   return {
     id: row.id,
@@ -14160,6 +15483,15 @@ function mapChairRow(row: ChairRow): ChairOrRoomRecord {
     code: row.code,
     displayName: row.display_name,
     active: row.active
+  };
+}
+
+function mapClinicDoctorRow(row: ClinicDoctorRow): ClinicDoctorRecord {
+  return {
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    providerUserId: row.provider_user_id,
+    displayName: row.display_name
   };
 }
 

@@ -12,7 +12,17 @@ Reserved root command: `npm run dev:web`.
 npm run dev --workspace apps/web
 ```
 
-By default the shell calls `GET /v1/me` on the same origin. Set `NEXT_PUBLIC_CLINIC_OS_API_BASE_URL` when the API runs elsewhere.
+By default the shell calls `GET /v1/me` on the same origin. When the API runs as
+a separate local process, keep browser requests same-origin and configure the
+Next.js server-side proxy instead:
+
+```sh
+CLINIC_OS_API_INTERNAL_URL=http://127.0.0.1:4000 \
+npm run dev --workspace apps/web
+```
+
+`NEXT_PUBLIC_CLINIC_OS_API_BASE_URL` remains available only for deployments
+whose API explicitly supports that browser origin.
 
 For local UI verification before the API lane has merged, use the synthetic non-PHI identity fixture:
 
@@ -222,10 +232,12 @@ and tests pin the CP7 route-family assumption:
 - `GET /v1/provider-health`
 - `GET /v1/dead-letter-events?status=unreviewed`
 - `POST /v1/dead-letter-events/{deadLetterEventId}/replay`
-- `GET /v1/migration-batches?status=needs_review`
+- `GET /v1/migration-batches`
 - `GET /v1/migration-batches/{migrationBatchId}`
+- `POST /v1/migration-batches`
 - `POST /v1/migration-batches/{migrationBatchId}/rows/{rowId}/resolve`
 - `POST /v1/migration-batches/{migrationBatchId}/commit`
+- `POST /v1/migration-batches/{migrationBatchId}/rollback`
 
 `404` from CP7 route checks is classified as `CP7_ENDPOINT_NOT_REGISTERED`, so registration and
 official activation are checked before permission/runtime debugging. Fixture browser smoke must use

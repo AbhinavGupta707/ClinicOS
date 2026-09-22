@@ -31,6 +31,17 @@ export interface ClinicUser {
   status: UserStatus;
 }
 
+/**
+ * Read-only projection of an active doctor who can be assigned clinical work
+ * in one clinic. The canonical identity remains the existing ClinicOS user.
+ */
+export interface ClinicDoctorRecord {
+  tenantId: UUID;
+  clinicId: UUID;
+  providerUserId: UUID;
+  displayName: string;
+}
+
 export interface TenantMembership {
   tenantId: UUID;
   userId: UUID;

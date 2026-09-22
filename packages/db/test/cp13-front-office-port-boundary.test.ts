@@ -25,7 +25,14 @@ test("front-office ports bind verified scope and do not accept caller authority"
     },
     loadDashboardData: async (boundScope: RepositoryScope, date: string) => {
       observed.push({ operation: "loadDashboardData", scope: boundScope, input: date });
-      return { appointments: [], leads: [], tasks: [], queue: [], returningPatientIds: new Set() };
+      return {
+        appointments: [],
+        clinicDayAppointments: [],
+        leads: [],
+        tasks: [],
+        queue: [],
+        returningPatientIds: new Set()
+      };
     }
   };
   const repository = new Proxy(repositoryTarget, {

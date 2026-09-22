@@ -14,7 +14,7 @@ test("CP13 master composition registers every clinic feature exactly once", () =
   });
 
   assert.equal(Object.isFrozen(handlers), true);
-  assert.equal(Object.keys(handlers).length, 93);
+  assert.equal(Object.keys(handlers).length, 94);
   assert.deepEqual(
     Object.keys(handlers).sort(),
     [...ALL_CP13_CLINIC_FEATURE_OPERATION_IDS].sort()
