@@ -12,7 +12,6 @@ const clientId = "clinic-os-mobile";
 const redirectUri = "https://mobile.staging.example.invalid/auth/callback";
 const username = `oidc-smoke-${randomBytes(8).toString("hex")}`;
 const password = `S!${randomBytes(24).toString("hex")}a9`;
-const cookies = new Map();
 
 async function request(url, options = {}) {
   // Callback locations are inspected but never followed off the private network.
@@ -50,7 +49,10 @@ assert.equal(created.status, 201, "Synthetic user provisioning failed");
 const userUrl = created.headers.get("location");
 assert.ok(userUrl?.startsWith(`${origin}/admin/realms/${realm}/users/`));
 
-try {
+const tokenUrl = `${issuer}/protocol/openid-connect/token`;
+
+async function authenticate() {
+  const cookies = new Map();
   const verifier = randomBytes(32).toString("base64url");
   const nonce = randomBytes(16).toString("hex");
   const state = randomBytes(16).toString("hex");
@@ -86,7 +88,6 @@ try {
   assert.equal(callback.searchParams.get("state"), state);
   const code = callback.searchParams.get("code");
   assert.ok(code && !callback.searchParams.has("error"));
-  const tokenUrl = `${issuer}/protocol/openid-connect/token`;
   const exchange = { grant_type: "authorization_code", client_id: clientId,
     redirect_uri: redirectUri, code, code_verifier: verifier };
   const tokensResponse = await form(tokenUrl, exchange);
@@ -116,29 +117,44 @@ try {
       assert.ok(audiences.includes("clinic-os-api"), "Access token must address the ClinicOS API");
     }
   }
-  assert.equal((await form(tokenUrl, exchange)).status, 400, "Authorization code replay accepted");
-  const refreshedResponse = await form(tokenUrl, {
-    grant_type: "refresh_token", client_id: clientId, refresh_token: tokens.refresh_token
+  return { tokens, exchange };
+}
+
+async function refresh(refreshToken, expectedStatus, message) {
+  const response = await form(tokenUrl, {
+    grant_type: "refresh_token", client_id: clientId, refresh_token: refreshToken
   });
-  assert.equal(refreshedResponse.status, 200, "Refresh failed");
-  const refreshed = await refreshedResponse.json();
+  assert.equal(response.status, expectedStatus, message);
+  const result = await response.json();
+  if (expectedStatus === 400) assert.equal(result.error, "invalid_grant");
+  return result;
+}
+
+try {
+  // Replay detection revokes the affected client session in Keycloak. Each
+  // negative scenario needs a fresh login, otherwise a previous revocation
+  // could make a later assertion pass for the wrong reason.
+  const { tokens } = await authenticate();
+  const refreshed = await refresh(tokens.refresh_token, 200, "Refresh failed");
   assert.ok(refreshed.refresh_token && refreshed.refresh_token !== tokens.refresh_token);
-  const reused = await form(tokenUrl, {
-    grant_type: "refresh_token", client_id: clientId, refresh_token: tokens.refresh_token
-  });
-  assert.equal(reused.status, 400, "Original refresh token replay accepted before logout");
-  assert.equal((await reused.json()).error, "invalid_grant");
   const logout = await form(`${issuer}/protocol/openid-connect/logout`, {
     client_id: clientId, refresh_token: refreshed.refresh_token
   });
   assert.equal(logout.status, 204, "Session logout failed");
   for (const refreshToken of [tokens.refresh_token, refreshed.refresh_token]) {
-    const denied = await form(tokenUrl, {
-      grant_type: "refresh_token", client_id: clientId, refresh_token: refreshToken
-    });
-    assert.equal(denied.status, 400, "Logged-out refresh token accepted");
-    assert.equal((await denied.json()).error, "invalid_grant");
+    await refresh(refreshToken, 400, "Logged-out refresh token accepted");
   }
+
+  const rotationCase = await authenticate();
+  const rotated = await refresh(rotationCase.tokens.refresh_token, 200, "Replay-case refresh failed");
+  assert.ok(rotated.refresh_token && rotated.refresh_token !== rotationCase.tokens.refresh_token);
+  await refresh(rotationCase.tokens.refresh_token, 400, "Original refresh token replay accepted before logout");
+
+  const codeCase = await authenticate();
+  const replay = await form(tokenUrl, codeCase.exchange);
+  assert.equal(replay.status, 400, "Authorization code replay accepted");
+  assert.equal((await replay.json()).error, "invalid_grant");
+  await refresh(codeCase.tokens.refresh_token, 400, "Code replay did not revoke the affected client session");
   console.log("Keycloak OIDC passed: PKCE required, interactive login, JWKS signatures, code replay rejected, refresh rotation, logout/revocation");
 } finally {
   const removed = await request(userUrl, { method: "DELETE", headers: { Authorization: `Bearer ${adminToken}` } });

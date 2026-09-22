@@ -649,8 +649,12 @@ The dry-run path validates synthetic fixtures only and does not connect to AWS o
 
 const currentFile = fileURLToPath(import.meta.url);
 if (process.argv[1] && resolve(process.argv[1]) === currentFile) {
-  runCli().catch((error) => {
-    console.error(error instanceof Error ? error.message : String(error));
+  runCli().catch(() => {
+    // Exceptions may contain environment-derived connection details or fixture
+    // contents. The CLI boundary must not publish arbitrary exception messages.
+    console.error(
+      "CP9 restore drill failed. Check the configuration, synthetic fixtures and permitted local target."
+    );
     process.exitCode = 1;
   });
 }
