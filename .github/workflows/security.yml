@@ -209,6 +209,12 @@ jobs:
         if: matrix.service == 'temporal'
         run: infra/images/temporal/test-runtime.sh clinicos-temporal:${{ github.sha }}
 
+      - name: Verify Temporal schema upgrade and real SDK execution
+        if: matrix.service == 'temporal'
+        run: |
+          docker build --platform linux/arm64 --file infra/images/worker/Dockerfile --tag clinicos-worker-smoke:${{ github.sha }} .
+          bash infra/images/temporal/test-integration.sh clinicos-temporal:${{ github.sha }} clinicos-worker-smoke:${{ github.sha }}
+
       - name: Scan image
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:

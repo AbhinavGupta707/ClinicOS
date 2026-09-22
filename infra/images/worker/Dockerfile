@@ -1,6 +1,7 @@
 # syntax=docker/dockerfile:1.10
 
-ARG NODE_IMAGE="node:22.22.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f"
+# Temporal's native bridge is built for glibc, not Alpine/musl.
+ARG NODE_IMAGE="node:22.22.2-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e"
 
 FROM ${NODE_IMAGE} AS build
 WORKDIR /workspace
@@ -32,12 +33,14 @@ ENV NODE_ENV="production" \
     NODE_OPTIONS="--enable-source-maps" \
     WORKER_HEALTH_PORT="3001"
 WORKDIR /workspace
-RUN apk add --no-cache --upgrade libcrypto3=3.5.8-r0 libssl3=3.5.8-r0 \
+RUN apt-get update && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && rm -rf /var/lib/apt/lists/* \
     && rm -rf /usr/local/lib/node_modules/npm \
     && rm -rf /usr/local/lib/node_modules/corepack /opt/yarn-* \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx /usr/local/bin/yarn /usr/local/bin/yarnpkg \
-    && addgroup -S -g 10001 clinicos \
-    && adduser -S -D -H -u 10001 -G clinicos clinicos
+    && groupadd --gid 10001 clinicos \
+    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin clinicos
 COPY --from=production-dependencies --chown=10001:10001 /workspace/node_modules ./node_modules
 COPY --from=build --chown=10001:10001 /workspace/apps/worker ./apps/worker
 COPY --from=build --chown=10001:10001 /workspace/packages ./packages

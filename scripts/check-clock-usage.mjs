@@ -128,6 +128,7 @@ function sourceFilesUnder(directory) {
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
     if (entry.isDirectory()) {
+      if (entry.name === "node_modules") continue;
       if (entry.name === "src") files.push(...typescriptFiles(path));
       else files.push(...sourceFilesUnder(path));
     }
@@ -139,7 +140,7 @@ function typescriptFiles(directory) {
   const files = [];
   for (const entry of readdirSync(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...typescriptFiles(path));
+    if (entry.isDirectory() && entry.name !== "node_modules") files.push(...typescriptFiles(path));
     else if (/\.tsx?$/u.test(entry.name)) files.push(path);
   }
   return files;

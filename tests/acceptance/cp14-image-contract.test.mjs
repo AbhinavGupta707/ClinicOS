@@ -13,11 +13,14 @@ test("CP14 application images pin their base, build ARM64-compatible output, and
     const dockerfile = await readFile(`infra/images/${service.name}/Dockerfile`, "utf8");
     assert.match(
       dockerfile,
-      /node:22\.22\.2-alpine@sha256:[a-f0-9]{64}/u,
+      service.name === "worker"
+        ? /node:22\.22\.2-bookworm-slim@sha256:[a-f0-9]{64}/u
+        : /node:22\.22\.2-alpine@sha256:[a-f0-9]{64}/u,
       `${service.name} must pin the multi-architecture Node base by digest`
     );
     assert.match(dockerfile, /USER 10001:10001/u);
-    assert.match(dockerfile, /libcrypto3=3\.5\.8-r0 libssl3=3\.5\.8-r0/u);
+    if (service.name === "worker") assert.match(dockerfile, /apt-get upgrade -y/u);
+    else assert.match(dockerfile, /libcrypto3=3\.5\.8-r0 libssl3=3\.5\.8-r0/u);
     assert.match(dockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/npm/u);
     assert.match(dockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/corepack \/opt\/yarn-/u);
     assert.match(dockerfile, new RegExp(`EXPOSE ${service.port}`, "u"));

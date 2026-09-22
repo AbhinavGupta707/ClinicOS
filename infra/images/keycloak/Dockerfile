@@ -4,7 +4,7 @@ ARG JAVA_RUNTIME_IMAGE=eclipse-temurin:21-jre-alpine@sha256:1a29e1fe337eb28b5bec
 
 FROM ${MAVEN_IMAGE} AS source-build
 USER 0
-RUN apt-get update && apt-get install -y --no-install-recommends python3 git \
+RUN apt-get update && apt-get install -y --no-install-recommends python3 git libicu-dev \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /build
 ADD --checksum=sha256:07b284252100d825df27fb2145bc26c9c7430726502218e0c5cfbf3bebe94c1b \

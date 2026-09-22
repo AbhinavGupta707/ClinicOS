@@ -172,5 +172,11 @@ node -e '
   if (claims.azp !== "clinic-os-temporal-worker") process.exit(1);
 ' "${worker_token_response}"
 
+docker run --rm --network "${network}" \
+  --volume "${root_dir}/infra/images/keycloak/test-oidc.mjs:/test-oidc.mjs:ro" \
+  --env "KEYCLOAK_SMOKE_ADMIN_PASSWORD=${admin_password}" \
+  node:22.22.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f \
+  node /test-oidc.mjs "http://${keycloak_container}:8080" "${realm}"
+
 completed=true
 printf 'Keycloak runtime smoke passed: hardened image, import, readiness, discovery, clients and worker claims\n'
