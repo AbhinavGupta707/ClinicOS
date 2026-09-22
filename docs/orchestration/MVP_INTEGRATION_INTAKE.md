@@ -1,6 +1,8 @@
 # MVP Source Integration Intake
 
-Status: Ray and Profile identified; edition, access contract, and samples pending
+Status: Ray and Profile previously identified; owner confirms staff use
+`ray.practo.com` (2026-09-22). Edition, account export access, schema and samples
+remain unverified; the earlier same-day confirmation was withdrawn.
 
 Data policy: attach only synthetic or de-identified samples unless separately approved
 
@@ -15,8 +17,9 @@ explicitly approved fallback.
 - Clinic country/timezone: India; expected `Asia/Kolkata` (clinic confirmation
   pending)
 - Source software/vendor: Practo (owner supplied)
-- Product edition/version: owner confirms Practo Ray plus Practo Profile;
-  Ray v6, Ray v7, or another edition remains pending
+- Product edition/version: Practo Ray plus Practo Profile previously identified;
+  the 2026-09-22 clarification supplies only the staff login hostname
+  `ray.practo.com`. It does not identify the edition/version or account features.
 - Clinic contact who can verify source behavior: pending
 - Expected patient count: pending
 - Expected practitioner count: pending
@@ -34,7 +37,11 @@ Choose one and attach the relevant documentation:
 
 Recommended initial route: a clinic-authorized Practo Ray export-to-email of
 Contacts and Appointments, followed by an import-once dry run. The clinic uses
-Ray, but access to the export screen and the resulting schema remain unconfirmed.
+Ray; account-specific export access, file format, columns and representative
+de-identified samples remain unverified. The official export guide is tagged
+Ray v6; confirm the actual account's supported route before relying on its UI steps.
+Receiving an export at the clinic's existing mailbox does not require a ClinicOS
+email integration.
 
 Required details:
 
@@ -52,8 +59,8 @@ Required details:
   `Contact` and `Appointments`, enter a clinic-controlled correspondence email,
   and use `Export to email`
 - File encoding/delimiter/workbook sheets: pending
-- Access authorization confirmed by: pending
-- Date confirmed: pending
+- Access authorization confirmed by: pending; login hostname alone is not export authorization
+- Date confirmed: pending; 2026-09-22 clarification supersedes the earlier export/edition answer
 
 ## Research-backed access decision
 

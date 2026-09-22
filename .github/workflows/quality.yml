@@ -40,6 +40,13 @@ jobs:
       - name: Bootstrap migrated synthetic database
         run: npm run db:bootstrap
 
+      - name: Distributed OAuth transaction store against real Redis
+        env:
+          CLINICOS_OAUTH_REDIS_TEST_ENABLED: "true"
+          PILOT_SYNTHETIC_DATA_ONLY: "true"
+          CLINICOS_OAUTH_REDIS_TEST_URL: redis://127.0.0.1:6379
+        run: node --test packages/auth/test/redis-oauth.integration.mts
+
       - name: Durable Temporal workflow recovery and replay
         env:
           DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os

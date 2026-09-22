@@ -4,9 +4,41 @@ Status: products confirmed by owner; access contract and samples pending
 
 Date: 2026-08-30
 
+Official documentation rechecked: 2026-09-22
+
 Pilot: Healthy Roots Family Dental Studio, Girgaon
 
 Source confirmed by owner: Practo Ray and Practo Profile
+
+## 22 September clarification and documentation recheck
+
+The owner clarified that the currently known account detail is the staff login
+hostname `ray.practo.com`, and deferred obtaining export/version details. This
+supersedes an earlier same-day answer suggesting those details were confirmed.
+The hostname does not establish edition, export permissions, API entitlement or
+the file schema. An unauthenticated fetch of that host returned HTTP 403; no
+login, private endpoint discovery or clinic account access was attempted.
+
+The [official settings guide](https://help.practo.com/practo-ray/settings/understanding-the-settings-of-your-practo-ray-account/)
+still documents selecting Contact and Appointments under Import/Export data and
+requesting delivery to a clinic-controlled mailbox. The page is tagged **Ray v6**;
+it is a documented candidate workflow, not verification of the clinic's current
+screen. It does not publish the export columns, stable appointment identifiers,
+file format or update/cancellation contract. Other Ray report formats must not
+be substituted for that missing schema. Using the clinic's existing mailbox for
+this manual handoff does not require building email integration into ClinicOS.
+
+The [public partner API terms](https://help.practo.com/partner-api/practo-api-program-terms-and-conditions/)
+describe contract-gated OPD search/booking services, not a generally available
+private Ray database API. The [calendar subscription guide](https://help.practo.com/practo-ray/settings/how-do-i-sync-my-calendar-to-other-calendar-apps/)
+documents doctor-specific links but does not specify the identity or reconciliation
+contract needed by ClinicOS. Neither changes the import-first decision.
+
+When the clinic is ready, verify the export option with an authorized account
+administrator or Practo support, then inspect headers or an approved de-identified
+sample. It is unnecessary to guess the Ray edition now. Until that evidence
+arrives, continue source-independent identity and workflow work, and keep the
+Practo adapter and sync status explicitly unavailable.
 
 ## Decision in one sentence
 
