@@ -40,6 +40,20 @@ jobs:
       - name: Bootstrap migrated synthetic database
         run: npm run db:bootstrap
 
+      - name: Durable Temporal workflow recovery and replay
+        env:
+          DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
+          WORKER_DATABASE_URL: postgresql://clinic_os_worker:clinic_os_worker@127.0.0.1:5432/clinic_os
+          MIGRATION_DATABASE_URL: postgresql://clinic_os_migrator:clinic_os_migrator@127.0.0.1:5432/clinic_os
+          CLINIC_OS_ABUSE_BUDGET_KEY_SECRET: synthetic-ci-only-workflow-recovery-secret
+        run: npm run cp13:test:workflow-recovery
+
+      # Repository fault fixtures leave deliberately old outbox rows. Exercise the
+      # full worker first, then reset only this job's disposable database so its
+      # recovery fixtures cannot contaminate the following repository probes.
+      - name: Reinitialize disposable CI database after workflow acceptance
+        run: npm run db:reset:local && npm run db:migrate && npm run db:grant-runtime && npm run db:seed:local && npm run db:verify
+
       - name: Migration locking drift and rollback tests
         run: npm run db:test:migrations
 
@@ -48,14 +62,6 @@ jobs:
 
       - name: Durable worker outbox retry and dead-letter tests
         run: npm run worker:test:persistence
-
-      - name: Durable Temporal workflow recovery and replay
-        env:
-          DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
-          WORKER_DATABASE_URL: postgresql://clinic_os_worker:clinic_os_worker@127.0.0.1:5432/clinic_os
-          MIGRATION_DATABASE_URL: postgresql://clinic_os_migrator:clinic_os_migrator@127.0.0.1:5432/clinic_os
-          CLINIC_OS_ABUSE_BUDGET_KEY_SECRET: synthetic-ci-only-workflow-recovery-secret
-        run: npm run cp13:test:workflow-recovery
 
       - name: API readiness dependency fault and recovery test
         run: npm run api:test:readiness

@@ -55,6 +55,7 @@ const correlationId = randomUUID();
 const operationKey = `cp13-e3:${randomUUID()}`;
 const requestedAt = new Date().toISOString();
 let workerProcess;
+const workerLogs = new WeakMap();
 
 try {
   await insertSyntheticIssuedInvoice(invoiceId);
@@ -123,6 +124,9 @@ try {
       observationalEventsRemainUnclaimed: true
     })
   );
+} catch (error) {
+  if (workerProcess) console.error((workerLogs.get(workerProcess) ?? []).join("").slice(-8000));
+  throw error;
 } finally {
   if (workerProcess) await stopWorker(workerProcess);
   await Promise.all([runtimePool.end(), migratorPool.end()]);
@@ -306,6 +310,7 @@ function startWorker(workerId) {
     stdio: ["ignore", "pipe", "pipe"]
   });
   const output = [];
+  workerLogs.set(child, output);
   for (const stream of [child.stdout, child.stderr]) {
     stream.setEncoding("utf8");
     stream.on("data", (chunk) => {
