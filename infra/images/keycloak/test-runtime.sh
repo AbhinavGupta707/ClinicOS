@@ -26,8 +26,11 @@ realm_path="${temporary_directory}/realm.json"
 database_password="$(node -e "process.stdout.write(require('node:crypto').randomBytes(24).toString('hex'))")"
 admin_password="$(node -e "process.stdout.write(require('node:crypto').randomBytes(24).toString('hex'))")"
 completed=false
+evidence_directory="${root_dir}/image-evidence"
+mkdir -p "${evidence_directory}"
 
 cleanup() {
+  docker logs "${keycloak_container}" >"${evidence_directory}/keycloak-runtime.log" 2>&1 || true
   if [[ "${completed}" != true ]] && docker container inspect "${keycloak_container}" >/dev/null 2>&1; then
     docker logs "${keycloak_container}" >&2 || true
   fi
@@ -92,7 +95,7 @@ docker run --detach \
   --env KC_BOOTSTRAP_ADMIN_USERNAME=smoke-admin \
   --env "KC_BOOTSTRAP_ADMIN_PASSWORD=${admin_password}" \
   "${image_ref}" \
-  start --optimized --import-realm --http-enabled=true \
+  start --optimized --import-realm --http-enabled=true --log-level=INFO,com.arjuna:DEBUG \
   --hostname="http://${keycloak_container}:8080" >/dev/null
 
 for _attempt in {1..120}; do
@@ -112,6 +115,18 @@ node -e '
   const value = JSON.parse(process.argv[1]);
   if (value.status !== "UP" || !value.checks?.every((check) => check.status === "UP")) process.exit(1);
 ' "${readiness}"
+
+# Diagnose object-store initialization under the actual non-root runtime user.
+docker exec "${keycloak_container}" /bin/sh -c '
+  id
+  for directory in /opt/keycloak/data /opt/keycloak/data/transaction-logs; do
+    if [ -e "${directory}" ]; then ls -ld "${directory}"; fi
+  done
+  test -w /opt/keycloak/data
+' >"${evidence_directory}/keycloak-storage.txt"
+docker exec "${keycloak_container}" /opt/keycloak/bin/kc.sh show-config \
+  | awk '/transaction|recovery|object-store/ { print }' \
+  >"${evidence_directory}/keycloak-transaction-config.txt"
 
 discovery="$(docker exec "${keycloak_container}" curl --fail --silent --show-error \
   "http://${keycloak_container}:8080/realms/${realm}/.well-known/openid-configuration")"
@@ -177,6 +192,12 @@ docker run --rm --network "${network}" \
   --env "KEYCLOAK_SMOKE_ADMIN_PASSWORD=${admin_password}" \
   node:22.22.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f \
   node /test-oidc.mjs "http://${keycloak_container}:8080" "${realm}"
+
+docker logs "${keycloak_container}" >"${evidence_directory}/keycloak-runtime.log" 2>&1
+if grep -q 'ARJUNA048006' "${evidence_directory}/keycloak-runtime.log"; then
+  printf 'Keycloak recovery module initialization failed; inspect retained runtime diagnostics\n' >&2
+  exit 1
+fi
 
 completed=true
 printf 'Keycloak runtime smoke passed: hardened image, import, readiness, discovery, clients and worker claims\n'
