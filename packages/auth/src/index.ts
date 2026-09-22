@@ -5,6 +5,7 @@ export * from "./mobile-token.ts";
 export * from "./oauth-pkce.ts";
 export * from "./production-identity.ts";
 export * from "./redis-runtime.ts";
+export * from "./redis-oauth-transaction-store.ts";
 export * from "./redis-web-session-store.ts";
 export * from "./security-audit.ts";
 export * from "./web-session.ts";

@@ -195,6 +195,15 @@ Before connector-specific MVP1 code begins, obtain:
 
 ## Decision log
 
+- 2026-09-22: PR #1 merged into `mac-latest-20260829` at `dbea5365`;
+  the merged tree matches the fully checked final PR source. The owner authorized
+  continued development, deferred email integration, and clarified that Muse
+  meant a possible WhatsApp intermediary, not transcription. The
+  [post-merge sequence](POST_MERGE_PILOT_NEXT_STEPS_2026-09-22.md) records the
+  identity wiring gaps and next bounded implementation. No provider activation,
+  completed browser sign-in, source-specific Ray mapping or production readiness
+  is implied by the merge.
+
 - 2026-08-30: owner selected integration-first MVP over enterprise readiness first.
 - 2026-08-30: owner approved selective subagents and conditional worktrees.
 - 2026-08-30: baseline typecheck, lint, workspace tests, and production build
