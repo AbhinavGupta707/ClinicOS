@@ -1,6 +1,7 @@
 # MVP Source Integration Intake
 
-Status: Ray and Profile identified; edition, access contract, and samples pending
+Status: Ray and Profile identified; owner confirms export access and knows the
+edition (2026-09-22); edition value, export schema and samples still pending
 
 Data policy: attach only synthetic or de-identified samples unless separately approved
 
@@ -16,7 +17,8 @@ explicitly approved fallback.
   pending)
 - Source software/vendor: Practo (owner supplied)
 - Product edition/version: owner confirms Practo Ray plus Practo Profile;
-  Ray v6, Ray v7, or another edition remains pending
+  on 2026-09-22 the owner confirmed the edition is known and will provide it;
+  the actual edition/version value remains pending
 - Clinic contact who can verify source behavior: pending
 - Expected patient count: pending
 - Expected practitioner count: pending
@@ -34,7 +36,8 @@ Choose one and attach the relevant documentation:
 
 Recommended initial route: a clinic-authorized Practo Ray export-to-email of
 Contacts and Appointments, followed by an import-once dry run. The clinic uses
-Ray, but access to the export screen and the resulting schema remain unconfirmed.
+Ray; the owner confirmed authorized export access on 2026-09-22. The resulting
+file format, columns and representative de-identified samples remain unverified.
 
 Required details:
 
@@ -52,8 +55,8 @@ Required details:
   `Contact` and `Appointments`, enter a clinic-controlled correspondence email,
   and use `Export to email`
 - File encoding/delimiter/workbook sheets: pending
-- Access authorization confirmed by: pending
-- Date confirmed: pending
+- Access authorization confirmed by: owner; export access confirmed in conversation
+- Date confirmed: 2026-09-22; sample handoff and data-handling conditions remain pending
 
 ## Research-backed access decision
 
