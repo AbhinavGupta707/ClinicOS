@@ -138,7 +138,7 @@ jobs:
       - name: Verify packaged worker SDK and workflow bundle
         if: matrix.service == 'worker'
         run: >-
-          docker run --rm --entrypoint node --workdir /workspace/apps/worker
+          docker run --rm --entrypoint /nodejs/bin/node --workdir /workspace/apps/worker
           clinicos-worker:${{ github.sha }} --input-type=module -e
           'import { bundleWorkflowCode } from "@temporalio/worker";
           import { createRequire } from "node:module";
@@ -159,6 +159,20 @@ jobs:
           exit-code: "1"
           format: table
           version: v0.70.0
+
+      - name: Record assembled image SBOM and identity
+        run: |
+          mkdir -p image-evidence
+          trivy image --format cyclonedx --scanners vuln --output image-evidence/${{ matrix.service }}.cdx.json clinicos-${{ matrix.service }}:${{ github.sha }}
+          docker image inspect clinicos-${{ matrix.service }}:${{ github.sha }} --format '{{.Id}}' > image-evidence/${{ matrix.service }}-image-id.txt
+
+      - name: Retain assembled image evidence
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: image-${{ matrix.service }}-${{ github.sha }}
+          path: image-evidence
+          if-no-files-found: error
+          retention-days: 30
 
   platform-images:
     name: ARM64 platform image ${{ matrix.service }}
@@ -226,11 +240,17 @@ jobs:
           format: table
           version: v0.70.0
 
-      - name: Upload source rebuild evidence
-        if: always() && matrix.service == 'keycloak'
+      - name: Record assembled image SBOM and identity
+        run: |
+          mkdir -p image-evidence
+          trivy image --format cyclonedx --scanners vuln --output image-evidence/${{ matrix.service }}.cdx.json clinicos-${{ matrix.service }}:${{ github.sha }}
+          docker image inspect clinicos-${{ matrix.service }}:${{ github.sha }} --format '{{.Id}}' > image-evidence/${{ matrix.service }}-image-id.txt
+
+      - name: Upload platform source and image evidence
+        if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
-          name: keycloak-source-build-${{ github.sha }}
+          name: image-${{ matrix.service }}-${{ github.sha }}
           path: image-evidence
           if-no-files-found: warn
           retention-days: 30

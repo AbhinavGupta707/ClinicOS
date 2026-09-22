@@ -62,7 +62,7 @@ node "${root_dir}/infra/docker/keycloak/promotion/bind-realm.mjs" \
 chmod 0755 "${temporary_directory}"
 chmod 0444 "${realm_path}"
 
-docker network create "${network}" >/dev/null
+docker network create --internal "${network}" >/dev/null
 docker run --detach \
   --name "${postgres_container}" \
   --network "${network}" \

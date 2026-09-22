@@ -2,6 +2,7 @@
 
 # Temporal's native bridge is built for glibc, not Alpine/musl.
 ARG NODE_IMAGE="node:22.22.2-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e"
+ARG NODE_RUNTIME_IMAGE="gcr.io/distroless/nodejs22-debian13:nonroot@sha256:5e9868cc8ef163e86378ff90de23ca031f5bb8b2023d4f3288a5e740698919d4"
 
 FROM ${NODE_IMAGE} AS build
 WORKDIR /workspace
@@ -24,7 +25,7 @@ RUN npm ci --omit=dev --workspace @clinic-os/worker --include-workspace-root=fal
     && find apps packages -type d -name node_modules -prune -exec sh -c \
       'mkdir -p "/runtime-dependencies/$(dirname "$1")"; cp -a "$1" "/runtime-dependencies/$1"' _ '{}' \;
 
-FROM ${NODE_IMAGE} AS runtime
+FROM ${NODE_RUNTIME_IMAGE} AS runtime
 ARG SOURCE_REVISION="unknown"
 LABEL org.opencontainers.image.source="https://github.com/AbhinavGupta707/ClinicOS" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
@@ -33,14 +34,6 @@ ENV NODE_ENV="production" \
     NODE_OPTIONS="--enable-source-maps" \
     WORKER_HEALTH_PORT="3001"
 WORKDIR /workspace
-RUN apt-get update && apt-get upgrade -y \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && rm -rf /usr/local/lib/node_modules/npm \
-    && rm -rf /usr/local/lib/node_modules/corepack /opt/yarn-* \
-    && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx /usr/local/bin/yarn /usr/local/bin/yarnpkg \
-    && groupadd --gid 10001 clinicos \
-    && useradd --uid 10001 --gid 10001 --no-create-home --shell /usr/sbin/nologin clinicos
 COPY --from=production-dependencies --chown=10001:10001 /workspace/node_modules ./node_modules
 COPY --from=build --chown=10001:10001 /workspace/apps/worker ./apps/worker
 COPY --from=build --chown=10001:10001 /workspace/packages ./packages
@@ -48,4 +41,5 @@ COPY --from=production-dependencies --chown=10001:10001 /runtime-dependencies/ .
 COPY --from=build --chown=10001:10001 /workspace/package.json ./package.json
 USER 10001:10001
 EXPOSE 3001
-CMD ["node", "apps/worker/dist/main.js"]
+ENTRYPOINT ["/nodejs/bin/node"]
+CMD ["apps/worker/dist/main.js"]

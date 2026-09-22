@@ -5,7 +5,7 @@ import test from "node:test";
 const services = [
   { name: "api", command: 'CMD ["node", "apps/api/src/main.ts"]', port: 4100 },
   { name: "web", command: 'CMD ["node", "apps/web/server.js"]', port: 3000 },
-  { name: "worker", command: 'CMD ["node", "apps/worker/dist/main.js"]', port: 3001 }
+  { name: "worker", command: 'CMD ["apps/worker/dist/main.js"]', port: 3001 }
 ];
 
 test("CP14 application images pin their base, build ARM64-compatible output, and run non-root", async () => {
@@ -19,10 +19,14 @@ test("CP14 application images pin their base, build ARM64-compatible output, and
       `${service.name} must pin the multi-architecture Node base by digest`
     );
     assert.match(dockerfile, /USER 10001:10001/u);
-    if (service.name === "worker") assert.match(dockerfile, /apt-get upgrade -y/u);
-    else assert.match(dockerfile, /libcrypto3=3\.5\.8-r0 libssl3=3\.5\.8-r0/u);
-    assert.match(dockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/npm/u);
-    assert.match(dockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/corepack \/opt\/yarn-/u);
+    if (service.name === "worker") {
+      assert.match(dockerfile, /gcr\.io\/distroless\/nodejs22-debian13:nonroot@sha256:[a-f0-9]{64}/u);
+      assert.match(dockerfile, /ENTRYPOINT \["\/nodejs\/bin\/node"\]/u);
+    } else {
+      assert.match(dockerfile, /libcrypto3=3\.5\.8-r0 libssl3=3\.5\.8-r0/u);
+      assert.match(dockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/npm/u);
+      assert.match(dockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/corepack \/opt\/yarn-/u);
+    }
     assert.match(dockerfile, new RegExp(`EXPOSE ${service.port}`, "u"));
     assert.ok(dockerfile.includes(service.command));
     assert.match(dockerfile, /org\.opencontainers\.image\.revision="\$\{SOURCE_REVISION\}"/u);

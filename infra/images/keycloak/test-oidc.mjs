@@ -58,7 +58,12 @@ try {
   auth.search = new URLSearchParams({ client_id: clientId, redirect_uri: redirectUri,
     response_type: "code", scope: "openid", state, nonce }).toString();
   const noPkce = await request(auth.href);
-  assert.equal(noPkce.status, 400, "The public client must require PKCE");
+  assert.equal(noPkce.status, 302, "Missing PKCE must return an OAuth error callback");
+  const rejectedCallback = new URL(noPkce.headers.get("location"));
+  assert.equal(`${rejectedCallback.origin}${rejectedCallback.pathname}`, redirectUri);
+  assert.equal(rejectedCallback.searchParams.get("state"), state);
+  assert.equal(rejectedCallback.searchParams.get("error"), "invalid_request");
+  assert.equal(rejectedCallback.searchParams.has("code"), false);
   auth.searchParams.set("code_challenge_method", "S256");
   auth.searchParams.set("code_challenge", createHash("sha256").update(verifier).digest("base64url"));
   const page = await request(auth.href);
@@ -114,6 +119,11 @@ try {
   assert.equal(refreshedResponse.status, 200, "Refresh failed");
   const refreshed = await refreshedResponse.json();
   assert.ok(refreshed.refresh_token && refreshed.refresh_token !== tokens.refresh_token);
+  const reused = await form(tokenUrl, {
+    grant_type: "refresh_token", client_id: clientId, refresh_token: tokens.refresh_token
+  });
+  assert.equal(reused.status, 400, "Original refresh token replay accepted before logout");
+  assert.equal((await reused.json()).error, "invalid_grant");
   const logout = await form(`${issuer}/protocol/openid-connect/logout`, {
     client_id: clientId, refresh_token: refreshed.refresh_token
   });

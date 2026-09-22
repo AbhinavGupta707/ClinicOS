@@ -69,6 +69,6 @@ docker run --detach --name "${server}" "${database_environment[@]}" \
 docker run --rm --name "${probe}" --network "${network}" \
   --volume "${root_dir}/infra/images/temporal/test-sdk.mjs:/workspace/apps/worker/test-sdk.mjs:ro" \
   --volume "${root_dir}/infra/images/temporal/test-workflows.cjs:/workspace/apps/worker/test-workflows.cjs:ro" \
-  --entrypoint node "$2" /workspace/apps/worker/test-sdk.mjs "${server}:7233"
+  --entrypoint /nodejs/bin/node "$2" /workspace/apps/worker/test-sdk.mjs "${server}:7233"
 completed=true
 printf 'Temporal integration passed: verified PostgreSQL TLS, both schemas migrated twice, SDK workflow/activity execution and replay\n'
