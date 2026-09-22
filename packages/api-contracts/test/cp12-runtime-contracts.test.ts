@@ -31,6 +31,41 @@ const bearerHeaders = {
   "content-type": "application/json"
 };
 
+test("patient preparation permits no appointment in runtime and generated contracts", () => {
+  const summary = {
+    patient: { id: patientId, fullName: "Synthetic Patient", phone: null, dateOfBirth: null, gender: "unknown" },
+    appointment: null, generatedAt: "2026-09-20T09:00:00Z", latestIntakeResponse: null,
+    consentEnforcementState: {}, activeConsentPurposes: [], timelineHighlights: [],
+    priorClinicalTimeline: [], medicalHistoryChangePromptRequired: true, dataCoverage: {}
+  };
+  assert.equal(parseNativeOperationResponse("getPatientPrepSummary", 200, { prepSummary: summary, summary }).success, true);
+  const responseType = renderGeneratedClient().split("\n").find((line) => line.startsWith("export type GetPatientPrepSummaryResponse ="));
+  assert.ok(responseType);
+  assert.match(responseType, /readonly appointment: \{[^}]+readonly reason: string \| null \} \| null/);
+});
+
+test("invoice input accepts plan and procedure references together without accepting writable totals", () => {
+  for (const body of [
+    { treatmentPlanId: encounterId },
+    { procedurePerformedIds: [procedureId] },
+    { treatmentPlanId: encounterId, procedurePerformedIds: [procedureId] }
+  ]) {
+    assert.equal(
+      parseNativeOperationRequest("createInvoice", { headers: bearerHeaders, body }).success,
+      true
+    );
+  }
+  for (const body of [
+    {},
+    { treatmentPlanId: encounterId, procedurePerformedIds: [procedureId], total: 100 }
+  ]) {
+    assert.equal(
+      parseNativeOperationRequest("createInvoice", { headers: bearerHeaders, body }).success,
+      false
+    );
+  }
+});
+
 function collectVersionedResponsePaths(definition: RuntimeSchema, path = ""): string[] {
   if (definition["x-clinicos-json-kind"] === "versioned-public") return [path];
   if (definition.type === "array") {

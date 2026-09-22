@@ -30,6 +30,7 @@ export interface MeProfile {
 
 export type MeProblemCode =
   | "AUTH_REQUIRED"
+  | "CLINIC_SELECTION_REQUIRED"
   | "CONTRACT_MISMATCH"
   | "ME_ENDPOINT_NOT_REGISTERED"
   | "NETWORK_UNAVAILABLE"
@@ -107,8 +108,35 @@ export function normalizeMePayload(payload: unknown): MeProfile | MeProblem {
 
   const user = readNestedRecord(payload, ["user", "principal"]);
   const tenant = readNestedRecord(payload, ["tenant", "organization"]);
-  const clinic = readNestedRecord(payload, ["clinic", "currentClinic"]);
-  const roles = normalizeRoles(payload.roles ?? payload.roleKeys ?? payload.role_keys);
+  let clinic = readNestedRecord(payload, ["clinic", "currentClinic"]);
+  let roles = normalizeRoles(payload.roles ?? payload.roleKeys ?? payload.role_keys);
+  // The authoritative /v1/me contract exposes clinic-scoped memberships. Never
+  // derive these roles from Keycloak claims or combine roles across clinics.
+  if ("clinics" in payload) {
+    if (!Array.isArray(payload.clinics) || payload.clinics.length === 0) {
+      return {
+        code: "CONTRACT_MISMATCH",
+        message: "/me did not return a usable clinic membership."
+      };
+    }
+    if (payload.clinics.length !== 1) {
+      return {
+        code: "CLINIC_SELECTION_REQUIRED",
+        message: "A clinic must be selected before this workflow can open.",
+        detail: "This web workflow currently requires one clinic membership; multi-clinic selection is not configured."
+      };
+    }
+    const membership = payload.clinics[0];
+    const tenantId = tenant && readString(tenant, ["id", "tenantId", "tenant_id"]);
+    if (!isRecord(membership) || !tenantId || membership.tenantId !== tenantId) {
+      return {
+        code: "CONTRACT_MISMATCH",
+        message: "/me returned a clinic outside the current tenant context."
+      };
+    }
+    clinic = membership;
+    roles = normalizeRoles(membership.roleSlugs);
+  }
   const permissions = readStringArray(payload.permissions);
 
   if (!user || !tenant || !clinic || roles.length === 0) {

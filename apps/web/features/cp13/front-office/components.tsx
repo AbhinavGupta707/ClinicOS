@@ -345,6 +345,7 @@ export function FrontOfficePatientSearchPanel(props: {
 
 export function FrontOfficePatientWorkspacePanel(props: {
   readonly dayState?: FrontOfficeLoadState<FrontOfficeDayData>;
+  readonly timeZone?: string;
   readonly onOpenFullProfile: (patientId: string) => void;
   readonly state: FrontOfficeLoadState<FrontOfficePatientWorkspaceData>;
 }) {
@@ -360,6 +361,13 @@ export function FrontOfficePatientWorkspacePanel(props: {
   const patientId = displayField(patient, "id", "");
   const source = displayField(patient, "source", "Not recorded");
   const dayData = props.dayState?.status === "ready" ? props.dayState.data : null;
+  const dayProblem = !props.dayState
+    ? "Clinic-day context has not been loaded."
+    : props.dayState.status === "loading"
+      ? "Loading clinic-day context…"
+      : props.dayState.status !== "ready"
+        ? props.dayState.message
+        : null;
   const appointments =
     dayData?.dashboard.clinicDayAppointments.filter(
       (appointment) => appointment.patientId === patientId
@@ -416,17 +424,31 @@ export function FrontOfficePatientWorkspacePanel(props: {
       <div className="cp13-patient-workspace__grid">
         <article className="cp13-patient-panel cp13-patient-panel--appointments">
           <h3>Appointments</h3>
-          {appointments.length === 0 ? (
+          {dayData?.dashboard.appointmentsTruncated ? (
+            <p role="status">
+              This clinic day&apos;s appointment list is incomplete. Further appointments may not be
+              shown.
+            </p>
+          ) : null}
+          {dayProblem ? (
+            <p role="status">{dayProblem}</p>
+          ) : appointments.length === 0 ? (
             <div className="cp13-patient-empty">
               <CalendarDays size={23} strokeWidth={1.6} aria-hidden="true" />
-              <strong>No appointment on today&apos;s clinic day.</strong>
+              <strong>
+                {dayData?.dashboard.appointmentsTruncated
+                  ? "No appointment appears in the loaded portion of this clinic day."
+                  : "No appointment on today's clinic day."}
+              </strong>
               <span>Other visits remain available from the full profile.</span>
             </div>
           ) : (
             <ul>
               {appointments.map((appointment) => (
                 <li key={appointment.id}>
-                  <time>{formatClinicTimestamp(appointment.startAt)}</time>
+                  <time dateTime={appointment.startAt}>
+                    {formatClinicTimestamp(appointment.startAt, props.timeZone)}
+                  </time>
                   <strong>{appointment.appointmentTypeName}</strong>
                   <span>{humanize(appointment.status)}</span>
                 </li>
@@ -435,23 +457,21 @@ export function FrontOfficePatientWorkspacePanel(props: {
           )}
         </article>
         <article className="cp13-patient-panel">
-          <h3>
-            Current queue <span>{queue.length}</span>
-          </h3>
+          <h3>Current queue {dayData ? <span>{queue.length}</span> : null}</h3>
           <p>
-            {queue.length
-              ? displayField(queue[0] ?? {}, "status", "Waiting")
-              : "Not currently in the queue."}
+            {dayProblem ??
+              (queue.length
+                ? displayField(queue[0] ?? {}, "status", "Waiting")
+                : "No queue entry in the loaded results.")}
           </p>
         </article>
         <article className="cp13-patient-panel">
-          <h3>
-            Open tasks <span>{tasks.length}</span>
-          </h3>
+          <h3>Open tasks {dayData ? <span>{tasks.length}</span> : null}</h3>
           <p>
-            {tasks.length
-              ? displayField(tasks[0] ?? {}, "title", "Open clinic task")
-              : "No open tasks for today."}
+            {dayProblem ??
+              (tasks.length
+                ? displayField(tasks[0] ?? {}, "title", "Open clinic task")
+                : "No open tasks in the loaded clinic-day results.")}
           </p>
         </article>
         <article className="cp13-patient-panel">
@@ -463,10 +483,13 @@ export function FrontOfficePatientWorkspacePanel(props: {
           </p>
         </article>
         <article className="cp13-patient-panel">
-          <h3>
-            Leads <span>{leads.length}</span>
-          </h3>
-          <p>{leads.length ? "A linked lead is available for review." : "No linked open leads."}</p>
+          <h3>Leads {dayData ? <span>{leads.length}</span> : null}</h3>
+          <p>
+            {dayProblem ??
+              (leads.length
+                ? "A linked lead is available for review."
+                : "No linked open leads in the loaded results.")}
+          </p>
         </article>
         <article className="cp13-patient-panel cp13-patient-panel--summary">
           <h3>Clinical summary</h3>

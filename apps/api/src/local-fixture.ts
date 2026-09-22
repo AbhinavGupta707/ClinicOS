@@ -1846,6 +1846,22 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
             ? this.#providerIsEligible(scope, input.targetRecordId)
             : Boolean(await this.findAppointmentById(scope, input.targetRecordId));
       if (!targetExists) return null;
+      if (expectedTargetRecordType === "patient") {
+        const repeatsRecordedResolution = row.resolutionAction === "link_existing" &&
+          row.resolutionTargetRecordId === input.targetRecordId;
+        const candidate = this.migrationConflicts.some((conflict) =>
+          matchesScope(conflict, scope) && conflict.batchId === batchId && conflict.rowId === rowId &&
+          conflict.targetRecordType === "patient" && conflict.targetRecordId === input.targetRecordId &&
+          ["duplicate_patient", "verified_record_overlap"].includes(conflict.conflictType) &&
+          (conflict.status === "open" || repeatsRecordedResolution)
+        );
+        const canonicalTarget = this.importedRecordLinks.some((link) =>
+          matchesScope(link, scope) && link.sourceSystem === batch.sourceSystem &&
+          link.externalRecordId === row.externalRecordId && link.targetRecordType === "patient" &&
+          link.targetRecordId === input.targetRecordId && link.verificationStatus !== "rolled_back"
+        );
+        if (!candidate && !canonicalTarget) return null;
+      }
       if (
         expectedTargetRecordType === "appointment" &&
         !(await this.#appointmentMatchesImport(
@@ -2111,14 +2127,16 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         return reconciliationBatch?.sourceSystem === link.sourceSystem;
       });
       const hasCommittedAppointmentDependency =
-        link.targetRecordType === "provider_user" &&
+        (link.targetRecordType === "provider_user" || link.targetRecordType === "patient") &&
         this.migrationRows.some((row) => {
           if (
             !matchesScope(row, scope) ||
             row.batchId === batchId ||
             row.status !== "committed" ||
             row.normalizedRecord?.recordType !== "appointment" ||
-            row.normalizedRecord.providerExternalReference !== link.externalRecordId
+            (link.targetRecordType === "patient"
+              ? row.normalizedRecord.patientExternalReference
+              : row.normalizedRecord.providerExternalReference) !== link.externalRecordId
           ) {
             return false;
           }
@@ -2154,7 +2172,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
             hasLaterReconciliation
               ? "A later committed migration reconciliation depends on this canonical external mapping."
               : hasCommittedAppointmentDependency
-                ? "A committed imported appointment depends on this practitioner mapping."
+                ? `A committed imported appointment depends on this ${link.targetRecordType === "patient" ? "patient" : "practitioner"} mapping.`
               : link.targetRecordType === "appointment"
               ? "Imported appointment has been changed or has downstream operational dependencies."
               : link.targetRecordType === "patient"

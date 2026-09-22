@@ -71,6 +71,9 @@ test("CP7 migration import separates invalid rows, resolves duplicates, commits 
   const duplicateRow = created.body.rows.find((row) => row.matchStatus === "duplicate_candidate");
   assert.ok(duplicateRow);
   assert.equal(duplicateRow.conflicts[0].conflictType, "duplicate_patient");
+  assert.deepEqual(duplicateRow.conflicts[0].evidence.candidatePatient, {
+    fullName: "Rhea Synthetic", phone: "+919876543210"
+  });
 
   await assert.rejects(
     () =>
@@ -146,6 +149,29 @@ test("CP7 migration import separates invalid rows, resolves duplicates, commits 
     repository.importedRecordLinks.every((link) => link.verificationStatus === "rolled_back"),
     true
   );
+});
+
+test("CP7 patient resolution rejects unreviewed same-clinic targets and permits candidate retries", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const dependencies: OperationsDependencies = { repository, auditSink: new InMemoryAuditSink() };
+  const assistant = await operationsContext("seed-assistant", "cp7-patient-candidate-guard");
+  const unrelated = await repository.createPatient({
+    tenantId: assistant.accessContext.tenant.id, clinicId, actorUserId: assistant.accessContext.user.id
+  }, { fullName: "Unrelated Synthetic", phone: "+919999991234", gender: "unknown", source: "manual", sourceDetail: {} });
+  const batch = await createMigrationBatch(assistant, dependencies, {
+    importType: "patients", sourceSystem: "candidate_guard",
+    rows: [{ externalReference: "candidate-1", fullName: "Rhea Synthetic", phone: "+919876543210" }]
+  });
+  const row = batch.body.rows[0];
+  assert.ok(row);
+  await assert.rejects(() => resolveMigrationBatchRow(assistant, dependencies, batch.body.batch.id,
+    row.id, { action: "link_existing", targetRecordId: unrelated.id }), /resolution target is unavailable/);
+  assert.equal((await listMigrationBatchRows(assistant, dependencies, batch.body.batch.id, {})).body.rows[0].status, "needs_review");
+  for (let attempt = 0; attempt < 2; attempt += 1) {
+    const resolved = await resolveMigrationBatchRow(assistant, dependencies, batch.body.batch.id,
+      row.id, { action: "link_existing", targetRecordId: CHECKPOINT1_SEED_IDS.patients.rheaSynthetic });
+    assert.equal(resolved.body.row.resolutionTargetRecordId, CHECKPOINT1_SEED_IDS.patients.rheaSynthetic);
+  }
 });
 
 test("CP7 patient import reconciles exact cross-batch replay and reviews changed linked records", async () => {
@@ -645,7 +671,8 @@ test("source-independent practitioner and appointment imports require exact mapp
   assert.equal(repeatedBlockedRollback.body.blockedLinks.length, 1);
 });
 
-test("practitioner mapping rollback waits for dependent imported appointments", async () => {
+for (const linkExistingPatient of [false, true]) {
+test(`patient and practitioner mappings survive dependent appointments (linked patient: ${linkExistingPatient})`, async () => {
   const repository = new LocalFixtureClinicOperationsRepository();
   const dependencies: OperationsDependencies = { repository };
   const assistant = await operationsContext("seed-assistant", "practitioner-rollback-dependency");
@@ -685,11 +712,17 @@ test("practitioner mapping rollback waits for dependent imported appointments", 
     rows: [
       {
         externalReference: "dependency-patient-1",
-        fullName: "Dependency Patient",
-        phone: "+91 99900 08881"
+        fullName: linkExistingPatient ? "Rhea Synthetic" : "Dependency Patient",
+        phone: linkExistingPatient ? "+919876543210" : "+91 99900 08881"
       }
     ]
   });
+  if (linkExistingPatient) {
+    await resolveMigrationBatchRow(assistant, dependencies, patientBatch.body.batch.id,
+      patientBatch.body.rows[0].id, {
+        action: "link_existing", targetRecordId: CHECKPOINT1_SEED_IDS.patients.rheaSynthetic
+      });
+  }
   await commitMigrationBatch(
     { ...assistant, idempotencyKey: "dependency-patient-commit" },
     dependencies,
@@ -719,6 +752,23 @@ test("practitioner mapping rollback waits for dependent imported appointments", 
     appointmentBatch.body.batch.id,
     {}
   );
+
+  const blockedPatientRollback = await rollbackMigrationBatch(
+    { ...assistant, idempotencyKey: "dependency-patient-blocked" }, dependencies,
+    patientBatch.body.batch.id, {}
+  );
+  assert.equal(blockedPatientRollback.body.batch.state, "partially_committed");
+  assert.equal(blockedPatientRollback.body.blockedLinks.length, 1);
+  assert.match(String(blockedPatientRollback.body.blockedLinks[0].metadata.rollbackBlockedReason),
+    /appointment depends on this patient mapping/);
+  const replay = await createMigrationBatch(assistant, dependencies, {
+    importType: "appointments", sourceSystem,
+    rows: [{ externalReference: "dependency-appointment-1",
+      patientExternalReference: "dependency-patient-1", providerExternalReference: "dependency-doctor-1",
+      appointmentTypeCode: "consultation", startAt: "2099-03-01T09:00:00.000Z",
+      endAt: "2099-03-01T09:30:00.000Z", status: "booked", source: "practo" }]
+  });
+  assert.equal(replay.body.rows[0].status, "ready_to_commit");
 
   const blockedPractitionerRollback = await rollbackMigrationBatch(
     { ...assistant, idempotencyKey: "dependency-practitioner-blocked" },
@@ -755,6 +805,7 @@ test("practitioner mapping rollback waits for dependent imported appointments", 
   );
   assert.equal(practitionerRollback.body.batch.state, "rolled_back");
 });
+}
 
 test("migration creation requires exactly one bounded input source", async () => {
   const dependencies: OperationsDependencies = {

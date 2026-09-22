@@ -8,7 +8,10 @@ Baseline: `mac-latest-20260829` at `2a4cd31f57d892810c5dfb692266b3965412aff2`
 
 Integration branch: `codex/integration/mvp-0`
 
-Authoritative WSL root: `/home/abhinav/code/ClinicOS`
+Checkout roots: macOS `/Volumes/Spectra/Projects/ClinicOS`; WSL
+`/home/abhinav/code/ClinicOS`. Use the current host's checkout and resolve any
+Codex project ID from current registration. Desktop remains read-only. The
+WSL paths in dated evidence describe where those runs occurred.
 
 ## Outcome
 

@@ -28,7 +28,9 @@ export function AuthStatusPanel({ onRetry, problem, status }: AuthStatusPanelPro
         <dl className="state-diagnostics">
           <div>
             <dt>First check</dt>
-            <dd>/v1/me registration, API dev server, and Keycloak/OIDC activation</dd>
+            <dd>{problem.code === "CLINIC_SELECTION_REQUIRED"
+              ? "Clinic membership and clinic-selection configuration"
+              : "/v1/me registration, API dev server, and Keycloak/OIDC activation"}</dd>
           </div>
           <div>
             <dt>Diagnostic code</dt>

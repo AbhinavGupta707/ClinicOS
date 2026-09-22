@@ -10,7 +10,17 @@ test.describe("MVP manual import real-stack acceptance", () => {
   );
   test.use({ baseURL });
 
-  test("stages, commits, and safely rolls back a synthetic patient import", async ({ page }) => {
+  // The API explicitly uses its local synthetic identity adapter, with real
+  // Postgres repositories. Keep /v1/me and every business response unintercepted.
+  // This test-only token hook does not establish production OIDC/session wiring.
+  test.beforeEach(async ({ page }) => {
+    await page.addInitScript(() => {
+      (window as Window & { __clinicOsAccessTokenProvider?: () => string })
+        .__clinicOsAccessTokenProvider = () => "local-synthetic-acceptance";
+    });
+  });
+
+  test("stages, commits, and safely rolls back a synthetic patient import", async ({ page }, testInfo) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
     page.on("console", (message) => {
@@ -88,7 +98,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
 
     await page.screenshot({
       fullPage: true,
-      path: "/tmp/clinicos-mvp-manual-import-committed.png"
+      path: testInfo.outputPath("manual-import-committed.png")
     });
 
     await page.getByLabel(/I understand rollback is best-effort compensation/u).check();
@@ -126,7 +136,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
 
     await page.screenshot({
       fullPage: true,
-      path: "/tmp/clinicos-mvp-manual-import-rolled-back.png"
+      path: testInfo.outputPath("manual-import-rolled-back.png")
     });
 
     expect(pageErrors).toEqual([]);
@@ -135,7 +145,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
 
   test("guides a named doctor mapping and shows the imported appointment on Today", async ({
     page
-  }) => {
+  }, testInfo) => {
     const token = `${Date.now()}-${test.info().retry}`;
     const sourceSystem = `guided_browser_trial_${token}`;
     const patientExternalReference = `guided-patient-${token}`;
@@ -225,7 +235,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
 
       await page.screenshot({
         fullPage: true,
-        path: "/tmp/clinicos-mvp-guided-import-today.png"
+        path: testInfo.outputPath("guided-import-today.png")
       });
     } finally {
       for (const batchId of [...batchIds].reverse()) {
@@ -266,7 +276,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
     expect(new URL(page.url()).search).toBe("");
   });
 
-  test("keeps manual import controls usable on a narrow clinic device", async ({ page }) => {
+  test("keeps manual import controls usable on a narrow clinic device", async ({ page }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/surface/migration-review?scenario=mvp-manual-import-real-stack-mobile");
 
@@ -281,7 +291,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
 
     await page.screenshot({
       fullPage: true,
-      path: "/tmp/clinicos-mvp-manual-import-mobile.png"
+      path: testInfo.outputPath("manual-import-mobile.png")
     });
   });
 });

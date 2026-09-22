@@ -524,11 +524,14 @@ function BatchDetail({
   targetRecordIds: Record<string, string>;
 }) {
   const rollbackAvailable = ["committed", "partially_committed"].includes(batch.status);
-  const openConflictsByRow = new Map(
-    batch.conflicts
-      .filter((conflict) => conflict.status === "unresolved")
-      .map((conflict) => [conflict.rowId, conflict])
-  );
+  const openConflictsByRow = new Map<string, MigrationConflict[]>();
+  for (const conflict of batch.conflicts) {
+    if (conflict.status !== "unresolved") continue;
+    openConflictsByRow.set(conflict.rowId, [
+      ...(openConflictsByRow.get(conflict.rowId) ?? []),
+      conflict
+    ]);
+  }
 
   return (
     <div className="migration-batch-detail import-review" data-testid="migration-selected-batch">
@@ -553,9 +556,15 @@ function BatchDetail({
         <Metric label="Failed" value={String(batch.counts.failed)} />
       </div>
 
+      {batch.conflictsTruncated ? (
+        <p role="status">
+          The batch summary is shortened. Review the conflicts shown with each row.
+        </p>
+      ) : null}
       <div className="cp7-card-list import-review__rows" aria-label="Validated import rows">
         {batch.rows.map((row) => {
-          const conflict = openConflictsByRow.get(row.id);
+          const conflicts = openConflictsByRow.get(row.id) ?? [];
+          const conflict = conflicts[0];
           return (
             <article className="cp7-card cp7-card--compact" key={row.id}>
               <div className="cp7-card__heading">
@@ -573,13 +582,13 @@ function BatchDetail({
                 <RowResolution
                   actionBusy={actionBusy}
                   batch={batch}
-                  conflict={conflict}
+                  conflicts={conflicts}
                   eligibleDoctors={eligibleDoctors}
                   fixtureMode={fixtureMode}
                   onResolve={onResolve}
                   row={row}
                   setTargetRecordIds={setTargetRecordIds}
-                  targetRecordId={targetRecordIds[row.id] ?? conflict.targetRecordId ?? ""}
+                  targetRecordId={targetRecordIds[row.id] ?? ""}
                 />
               ) : null}
             </article>
@@ -639,7 +648,7 @@ function BatchDetail({
 function RowResolution({
   actionBusy,
   batch,
-  conflict,
+  conflicts,
   eligibleDoctors,
   fixtureMode,
   onResolve,
@@ -649,7 +658,7 @@ function RowResolution({
 }: {
   actionBusy: boolean;
   batch: MigrationBatch;
-  conflict: MigrationConflict;
+  conflicts: MigrationConflict[];
   eligibleDoctors: EligibleClinicDoctor[];
   fixtureMode: boolean;
   onResolve: MigrationOperationsPanelProps["onResolve"];
@@ -659,10 +668,36 @@ function RowResolution({
   ) => void;
   targetRecordId: string;
 }) {
+  const conflict =
+    conflicts.find((candidate) => candidate.targetRecordId === targetRecordId) ?? conflicts[0]!;
+  const patientCandidates = [
+    ...new Map(
+      conflicts
+        .filter(
+          (candidate) =>
+            candidate.targetRecordType === "patient" &&
+            candidate.targetRecordId &&
+            candidate.candidatePatient
+        )
+        .map((candidate) => [candidate.targetRecordId!, candidate])
+    ).values()
+  ];
   const targetRecordType =
     conflict.targetRecordType ?? (row.target === "practitioner" ? "provider_user" : row.target);
-  const canCreate = row.target === "patient" && conflict.conflictType === "duplicate_patient";
-  const canLink = row.target !== "appointment" || Boolean(conflict.targetRecordId);
+  const canCreate =
+    row.target === "patient" &&
+    !row.conflictsTruncated &&
+    conflicts.every((candidate) => candidate.conflictType === "duplicate_patient");
+  const canLink =
+    row.target === "patient"
+      ? patientCandidates.length > 0
+      : row.target === "practitioner" || Boolean(conflict.targetRecordId);
+  const validSelection =
+    row.target === "patient"
+      ? patientCandidates.some((candidate) => candidate.targetRecordId === targetRecordId)
+      : row.target === "practitioner"
+        ? eligibleDoctors.some((doctor) => doctor.providerUserId === targetRecordId)
+        : Boolean(targetRecordId && targetRecordId === conflict.targetRecordId);
 
   const resolve = (action: MigrationResolutionAction) =>
     onResolve(batch, row, conflict, {
@@ -678,21 +713,54 @@ function RowResolution({
 
   return (
     <div className="migration-resolution">
-      <p>{conflict.candidateSummary}</p>
+      {conflicts.map((candidate) => (
+        <p key={candidate.id}>{candidate.candidateSummary}</p>
+      ))}
+      {row.conflictsTruncated ? (
+        <p role="status">
+          Only part of this row&apos;s conflict list is available. Confirm identity before linking a
+          listed record, or skip and narrow the source data before staging again. Creating a
+          separate patient is blocked until all matches can be reviewed.
+        </p>
+      ) : null}
       {canLink ? (
         <label>
           <span>
             {row.target === "practitioner"
               ? "Eligible ClinicOS doctor"
-              : "Existing " + row.target + " ID"}
+              : row.target === "patient"
+                ? "Existing ClinicOS patient"
+                : "Existing " + row.target + " ID"}
           </span>
-          {row.target === "practitioner" ? (
+          {row.target === "patient" ? (
+            <>
+              <select
+                data-testid="migration-patient-candidate"
+                disabled={actionBusy}
+                value={targetRecordId}
+                onChange={(event) =>
+                  setTargetRecordIds((current) => ({ ...current, [row.id]: event.target.value }))
+                }
+              >
+                <option value="">Select a patient after checking their identity</option>
+                {patientCandidates.map((candidate) => (
+                  <option key={candidate.targetRecordId} value={candidate.targetRecordId!}>
+                    {candidate.candidatePatient!.fullName} ·{" "}
+                    {candidate.candidatePatient!.phone ?? "No phone recorded"}
+                  </option>
+                ))}
+              </select>
+              <small>
+                Names and contact details are matching evidence, not proof of identity. Confirm with
+                clinic records before linking. If the candidates cannot be distinguished, skip this
+                row for further review.
+              </small>
+            </>
+          ) : row.target === "practitioner" ? (
             <>
               <select
                 data-testid="migration-eligible-doctor"
-                disabled={
-                  actionBusy || Boolean(conflict.targetRecordId) || eligibleDoctors.length === 0
-                }
+                disabled={actionBusy || eligibleDoctors.length === 0}
                 onChange={(event) =>
                   setTargetRecordIds((current) => ({
                     ...current,
@@ -716,7 +784,7 @@ function RowResolution({
             </>
           ) : (
             <input
-              disabled={actionBusy || Boolean(conflict.targetRecordId)}
+              disabled={actionBusy}
               onChange={(event) =>
                 setTargetRecordIds((current) => ({ ...current, [row.id]: event.target.value }))
               }
@@ -727,15 +795,16 @@ function RowResolution({
         </label>
       ) : (
         <small>
-          Correct the missing patient, practitioner, type, or chair mapping and stage a new
-          appointment batch. A generic action cannot bypass dependency checks.
+          {row.target === "patient"
+            ? "Readable candidate identity is unavailable for this older batch. Skip this row and stage it again to review current matches."
+            : "Correct the missing patient, practitioner, type, or chair mapping and stage a new appointment batch. A generic action cannot bypass dependency checks."}
         </small>
       )}
       <div className="surface-actions">
         {canLink ? (
           <Button
             data-testid="cp7-resolve-migration-conflict"
-            disabled={actionBusy || !targetRecordId.trim()}
+            disabled={actionBusy || !validSelection}
             onClick={() => void resolve("link_existing")}
             size="sm"
             variant="secondary"

@@ -311,7 +311,7 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
           ) : isCp13WorkspaceSurface(activeSurface.id) ? (
             <Cp13Workspace
               activeSurfaceId={activeSurface.id}
-              key={activeSurface.id + ":" + (selectedPatientId ?? "")}
+              key={[profile.tenant.id, profile.clinic.id, profile.user.id, activeSurface.id].join(":")}
               onOpenPatient={(patientId) => {
                 rememberSelectedPatient(patientId);
                 setActiveSurfaceId("patients");

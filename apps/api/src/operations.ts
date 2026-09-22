@@ -6185,7 +6185,8 @@ async function parseCreateMigrationBatchInput(
             evidence: {
               differingFields,
               evidenceDigestStatus,
-              existingLinkId: existingLink.id
+              existingLinkId: existingLink.id,
+              candidatePatient: { fullName: linkedPatient.fullName, phone: linkedPatient.phone }
             }
           });
           status = "needs_review";
@@ -6213,7 +6214,10 @@ async function parseCreateMigrationBatchInput(
             targetRecordType: "patient",
             targetRecordId: candidate.patient.id,
             summary: "Potential duplicate patient requires identity review.",
-            evidence: { matchReasons: candidate.reasons, score: candidate.score }
+            evidence: {
+              matchReasons: candidate.reasons, score: candidate.score,
+              candidatePatient: { fullName: candidate.patient.fullName, phone: candidate.patient.phone }
+            }
           });
         }
 

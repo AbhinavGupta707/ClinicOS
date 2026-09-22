@@ -2072,6 +2072,29 @@ export class PostgresClinicOperationsRepository
         ) {
           return null;
         }
+        if (expectedTargetType === "patient") {
+          const repeatsRecordedResolution = existingRow.resolutionAction === "link_existing" &&
+            existingRow.resolutionTargetRecordId === input.targetRecordId;
+          const candidate = await client.query<{ present: boolean }>(
+            `
+              select exists (
+                select 1 from migration_conflicts
+                where tenant_id = $1 and clinic_id = $2 and batch_id = $3 and row_id = $4
+                  and target_record_type = 'patient' and target_record_id = $5
+                  and conflict_type in ('duplicate_patient', 'verified_record_overlap')
+                  and (status = 'open' or $6::boolean)
+              ) or exists (
+                select 1 from imported_record_links
+                where tenant_id = $1 and clinic_id = $2 and source_system = $7
+                  and external_record_id = $8 and target_record_type = 'patient'
+                  and target_record_id = $5 and verification_status <> 'rolled_back'
+              ) as present
+            `,
+            [scope.tenantId, scope.clinicId, batchId, rowId, input.targetRecordId,
+              repeatsRecordedResolution, batch.sourceSystem, existingRow.externalRecordId]
+          );
+          if (!candidate.rows[0]?.present) return null;
+        }
         if (
           expectedTargetType === "provider_user" &&
           !(await this.#findProviderEligibilityInTransaction(client, scope, input.targetRecordId))
@@ -2513,11 +2536,12 @@ export class PostgresClinicOperationsRepository
       const blockedLinks: ImportedRecordLinkRecord[] = [];
 
       for (const link of reaffirmedLinks) {
-        await client.query(
+        const blocked = await client.query<ImportedRecordLinkRow>(
           `
             update imported_record_links
             set metadata = metadata || $4::jsonb
             where tenant_id = $1 and clinic_id = $2 and id = $3
+            returning *
           `,
           [
             scope.tenantId,
@@ -2530,7 +2554,7 @@ export class PostgresClinicOperationsRepository
             })
           ]
         );
-        blockedLinks.push(link);
+        blockedLinks.push(mapImportedRecordLinkRow(blocked.rows[0]));
       }
 
       for (const link of links) {
@@ -2542,8 +2566,8 @@ export class PostgresClinicOperationsRepository
             link
           );
         const hasCommittedAppointmentDependency =
-          link.targetRecordType === "provider_user" &&
-          (await this.#providerLinkHasCommittedAppointmentDependencyInTransaction(
+          (link.targetRecordType === "provider_user" || link.targetRecordType === "patient") &&
+          (await this.#referenceLinkHasCommittedAppointmentDependencyInTransaction(
             client,
             scope,
             batchId,
@@ -2571,17 +2595,18 @@ export class PostgresClinicOperationsRepository
             hasLaterReconciliation
               ? "A later committed migration reconciliation depends on this canonical external mapping."
               : hasCommittedAppointmentDependency
-                ? "A committed imported appointment depends on this practitioner mapping."
+                ? `A committed imported appointment depends on this ${link.targetRecordType === "patient" ? "patient" : "practitioner"} mapping.`
               : link.targetRecordType === "appointment"
               ? "Imported appointment has been changed or has downstream operational dependencies."
               : link.targetRecordType === "patient"
                 ? "Imported patient has downstream clinical or billing dependencies."
                 : "Imported record type cannot be safely deleted by migration rollback.";
-          await client.query(
+          const blocked = await client.query<ImportedRecordLinkRow>(
             `
               update imported_record_links
               set metadata = metadata || $4::jsonb
               where tenant_id = $1 and clinic_id = $2 and id = $3
+              returning *
             `,
             [
               scope.tenantId,
@@ -2593,7 +2618,7 @@ export class PostgresClinicOperationsRepository
               })
             ]
           );
-          blockedLinks.push(link);
+          blockedLinks.push(mapImportedRecordLinkRow(blocked.rows[0]));
           continue;
         }
 
@@ -11472,7 +11497,7 @@ export class PostgresClinicOperationsRepository
     return result.rows[0]?.has_dependency === true;
   }
 
-  async #providerLinkHasCommittedAppointmentDependencyInTransaction(
+  async #referenceLinkHasCommittedAppointmentDependencyInTransaction(
     client: SqlQueryClient,
     scope: RepositoryScope,
     batchId: UUID,
@@ -11500,10 +11525,17 @@ export class PostgresClinicOperationsRepository
             and migration_rows.status = 'committed'
             and migration_batches.source_system = $4
             and migration_rows.normalized_record ->> 'recordType' = 'appointment'
-            and migration_rows.normalized_record ->> 'providerExternalReference' = $5
+            and migration_rows.normalized_record ->> $6::text = $5
         ) as has_dependency
       `,
-      [scope.tenantId, scope.clinicId, batchId, link.sourceSystem, link.externalRecordId]
+      [
+        scope.tenantId,
+        scope.clinicId,
+        batchId,
+        link.sourceSystem,
+        link.externalRecordId,
+        link.targetRecordType === "patient" ? "patientExternalReference" : "providerExternalReference"
+      ]
     );
     return result.rows[0]?.has_dependency === true;
   }

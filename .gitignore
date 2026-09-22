@@ -1,6 +1,8 @@
 .DS_Store
 node_modules/
 .next/
+.next-mvp-acceptance/
+.tsconfig.mvp-acceptance.json
 .expo/
 dist/
 build/
@@ -11,6 +13,8 @@ coverage/
 playwright-report/
 test-results/
 artifacts/
+# Local relocation/PR audit evidence, caches and disposable database files.
+/.audit-spectra-retirement-20260920/
 .env
 .env.*
 !.env.example

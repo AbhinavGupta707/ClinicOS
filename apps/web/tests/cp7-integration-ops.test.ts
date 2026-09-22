@@ -180,6 +180,39 @@ describe("CP7 integration ops workflow", () => {
     });
   });
 
+  it("retains row conflicts and readable candidate identity beyond a truncated batch summary", async () => {
+    const conflict = (id: string, rowId: string) => ({
+      id, rowId, conflictType: "duplicate_patient", status: "open",
+      targetRecordId: `patient-${id}`, targetRecordType: "patient",
+      summary: "Review duplicate identity.",
+      evidence: { candidatePatient: { fullName: `Synthetic ${id}`, phone: "+919999997002" } }
+    });
+    const first = conflict("first", "row-1");
+    const last = conflict("last", "row-100");
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      const url = input.toString();
+      if (url.endsWith("/migration-batches")) return jsonResponse({ migrationBatches: [{
+        batch: { id: "bounded-batch", state: "needs_review", importType: "patients", rowCount: 100,
+          readyRowCount: 0, conflictRowCount: 100, createdAt: "2026-09-20T09:00:00Z", sourceSystem: "synthetic" },
+        conflicts: [first], conflictsTruncated: true,
+        rows: [
+          { id: "row-1", rowNumber: 1, status: "needs_review", importType: "patients", conflicts: [first] },
+          { id: "row-100", rowNumber: 100, status: "needs_review", importType: "patients",
+            conflicts: [last], conflictsTruncated: true }
+        ]
+      }] });
+      return jsonResponse({ providers: createFixtureCp7IntegrationOpsData("2026-09-20").providers, deadLetterEvents: [], clinicDoctors: [] });
+    }));
+    const result = await loadLiveCp7IntegrationOps();
+    expect(result.status).toBe("ready");
+    if (result.status !== "ready") throw new Error("Expected ready migration data.");
+    const batch = result.data.migrationBatches[0]!;
+    expect(batch.conflictsTruncated).toBe(true);
+    expect(batch.conflicts.map((entry) => entry.id)).toEqual(["first", "last"]);
+    expect(batch.conflicts[1]?.candidatePatient).toEqual({ fullName: "Synthetic last", phone: "+919999997002" });
+    expect(batch.rows[1]).toMatchObject({ id: "row-100", conflictsTruncated: true, status: "conflict" });
+  });
+
   it("uses the documented live CP7 route family", async () => {
     const fixture = createFixtureCp7IntegrationOpsData("2026-07-07");
     const durableProviders = fixture.providers.map((provider) =>

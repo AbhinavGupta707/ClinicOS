@@ -5,9 +5,12 @@
 - The current execution programme is the integration-first MVP defined in
   `docs/orchestration/MVP_EXECUTION_PLAN.md`. It is the authoritative scope and
   sequencing document until the owner explicitly closes or replaces it.
-- The authoritative WSL project root is `/home/abhinav/code/ClinicOS`. Historical
-  Mac paths such as `/Users/abhinavgupta/Desktop/ClinicOS` are not valid project
-  roots in this environment.
+- Use the checkout on the current host: `/Volumes/Spectra/Projects/ClinicOS` on
+  macOS and `/home/abhinav/code/ClinicOS` on WSL. Verify the actual working
+  directory, Git root, branch, commit and status before work. Keep the former
+  `/Users/abhinavgupta/Desktop/ClinicOS` copy read-only; historical paths are
+  provenance, not runtime dependencies. Resolve Codex project IDs from current
+  registration for the host's saved project; a filesystem path is never an ID.
 - Preserve the blue-sky specifications as the long-term product direction, but
   reduce present scope to fewer complete vertical slices that prove real clinic
   interoperability and daily usefulness. Enterprise-scale cloud, compliance,
@@ -37,6 +40,11 @@
 - `COMBINED_BUILD_PACK.md` is a packaging artifact and may lag behind individual spec edits.
 
 ## Orchestration And Integration
+
+The checkpoint rules below apply when that checkpoint programme is explicitly active.
+For current MVP work, follow `docs/orchestration/MVP_EXECUTION_PLAN.md` for scope,
+sequencing and orchestration. MVP progress does not close CP14–CP18 external evidence
+or production release gates. Synthetic integration testing is not live clinic approval.
 
 - CP11 is complete at E3. CP12-CP18 use one master orchestrator plus an adaptive number of visible project-scoped Codex worktree lanes. Worker count is not a quota: launch only substantial lanes that are genuinely path-disjoint, independently testable and able to commit useful work from stable inputs. Read `clinic_os_specs_v2/23_PRODUCTION_READINESS_REMEDIATION_PLAN.md`, `clinic_os_specs_v2/24_PRODUCTION_SECURITY_THREAT_MODEL_AND_CONTROLS.md`, `docs/security/PRODUCTION_SECURITY_AND_READINESS_REMEDIATION_REGISTER.md`, `docs/qa/PRODUCTION_READINESS_EVIDENCE_STANDARD.md`, `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`, the active checkpoint packet, `docs/orchestration/MERGE_INTEGRATION_RUNBOOK.md`, `docs/AGENT_MEMORY.md`, and `docs/orchestration/CHECKPOINT_LOG.md` before checkpoint work.
 - At master-orchestrator start, explicitly invoke and follow the available `orchestrate-worktrees` skill. Read its complete `SKILL.md` and referenced runbook before creating or managing any worktree session; keep the skill active for lane design, monitoring, handoff review, merge, verification and sequential-checkpoint control.

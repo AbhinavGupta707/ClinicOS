@@ -92,6 +92,7 @@ export type MigrationImportType = "appointments" | "patients" | "practitioners";
 export type MigrationResolutionAction = "create_new" | "link_existing" | "skip";
 
 export interface MigrationRow {
+  conflictsTruncated?: boolean;
   externalReference: string;
   id: string;
   issue?: string;
@@ -102,6 +103,7 @@ export interface MigrationRow {
 }
 
 export interface MigrationConflict {
+  candidatePatient?: { fullName: string; phone: string | null };
   candidateSummary: string;
   conflictType: MigrationConflictType;
   id: string;
@@ -122,6 +124,7 @@ export interface MigrationCommitState {
 }
 
 export interface MigrationBatch {
+  conflictsTruncated?: boolean;
   commit: MigrationCommitState;
   conflicts: MigrationConflict[];
   counts: {
@@ -439,6 +442,7 @@ export function createFixtureCp7IntegrationOpsData(
           {
             candidateSummary: "Existing verified ClinicOS patient with same phone; keep existing record.",
             conflictType: "duplicate_patient",
+            candidatePatient: { fullName: "Synthetic existing patient", phone: "+919999997002" },
             id: "cp7ConflictDuplicatePatient",
             rowId: "cp7MigrationRowDuplicatePatient",
             status: "unresolved",
@@ -1273,11 +1277,15 @@ function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
   if (!id || !isMigrationBatchStatus(state)) return null;
 
   const rows = readArray(value, ["rows"]).map(normalizeLiveMigrationRow);
-  const conflicts = readArray(value, ["conflicts"]).map(normalizeLiveMigrationConflict);
+  // Each row carries its own bounded conflict slice even when the batch summary is truncated.
+  const conflicts = [
+    ...readArray(value, ["conflicts"]),
+    ...readArray(value, ["rows"]).flatMap((row) => isRecord(row) ? readArray(row, ["conflicts"]) : [])
+  ].map(normalizeLiveMigrationConflict);
   const normalizedRows = rows.filter((row): row is MigrationRow => Boolean(row));
-  const normalizedConflicts = conflicts.filter((conflict): conflict is MigrationConflict =>
-    Boolean(conflict)
-  );
+  const normalizedConflicts = [...new Map(conflicts
+    .filter((conflict): conflict is MigrationConflict => Boolean(conflict))
+    .map((conflict) => [conflict.id, conflict])).values()];
   const openConflicts = normalizedConflicts.some((conflict) => conflict.status === "unresolved");
   const committedRows = readNumber(batch, ["committedRowCount"]) ?? 0;
   const readyRows = readNumber(batch, ["readyRowCount"]) ?? 0;
@@ -1300,6 +1308,7 @@ function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
               : "unavailable"
     },
     conflicts: normalizedConflicts,
+    conflictsTruncated: value.conflictsTruncated === true,
     counts: {
       committed: committedRows,
       conflicts: readNumber(batch, ["conflictRowCount"]) ?? normalizedConflicts.length,
@@ -1354,6 +1363,7 @@ function normalizeLiveMigrationRow(value: unknown): MigrationRow | null {
         `Import row ${rowNumber}`;
 
   return {
+    conflictsTruncated: value.conflictsTruncated === true,
     externalReference,
     id,
     issue:
@@ -1375,7 +1385,13 @@ function normalizeLiveMigrationConflict(value: unknown): MigrationConflict | nul
   if (!id || !rowId) return null;
 
   const conflictType = readString(value, ["conflictType", "type"]);
+  const evidence = isRecord(value.evidence) ? value.evidence : {};
+  const candidate = isRecord(evidence.candidatePatient) ? evidence.candidatePatient : {};
+  const candidateName = readString(candidate, ["fullName"]);
   return {
+    ...(candidateName ? { candidatePatient: {
+      fullName: candidateName, phone: readString(candidate, ["phone"])
+    } } : {}),
     candidateSummary: readString(value, ["summary", "candidateSummary"]) ?? "Migration row needs review.",
     conflictType: normalizeMigrationConflictType(conflictType),
     id,

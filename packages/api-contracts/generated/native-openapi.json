@@ -23022,9 +23022,7 @@
             "application/json": {
               "schema": {
                 "additionalProperties": false,
-                "description": "Line items, prices, tax, discounts and totals are not writable. The server derives them from accepted procedure evidence.",
-                "maxProperties": 4,
-                "oneOf": [
+                "anyOf": [
                   {
                     "additionalProperties": true,
                     "required": [
@@ -23040,6 +23038,8 @@
                     "type": "object"
                   }
                 ],
+                "description": "Line items, prices, tax, discounts and totals are not writable. The server derives them from accepted procedure evidence.",
+                "maxProperties": 4,
                 "properties": {
                   "dueAt": {
                     "format": "date-time",

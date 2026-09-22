@@ -4793,6 +4793,13 @@ button.cp6-card:hover {
   border-bottom: 0;
 }
 
+.import-review__rows .cp7-card__heading > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .import-commit-gate {
   background: #edf5f2;
   border-color: #d2e3dc;

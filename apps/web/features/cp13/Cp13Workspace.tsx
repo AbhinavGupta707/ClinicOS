@@ -3,7 +3,7 @@
 import type { ClinicOsApiClient } from "@clinic-os/api-client-generated";
 import { Button } from "@clinic-os/ui";
 import { Search } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 
 import { createCp13ApiClient } from "@/lib/cp13-api-client";
 import type { MeProfile } from "@/lib/me";
@@ -92,6 +92,37 @@ export function Cp13Workspace(props: {
   );
 }
 
+function PatientPreparationRuntime(props: {
+  readonly patientId: string;
+  readonly client: ClinicOsApiClient;
+  readonly dayState: FrontOfficeLoadState<FrontOfficeDayData>;
+  readonly onOpenFullProfile: (patientId: string) => void;
+  readonly timeZone?: string;
+}) {
+  const [state, setState] = useState<FrontOfficeLoadState<FrontOfficePatientWorkspaceData>>({
+    status: "loading"
+  });
+  useEffect(() => {
+    let active = true;
+    void loadFrontOfficePatientWorkspace(props.client, { patientId: props.patientId }).then(
+      (result) => {
+        if (active) setState(result);
+      }
+    );
+    return () => {
+      active = false;
+    };
+  }, [props.client, props.patientId]);
+  return (
+    <FrontOfficePatientWorkspacePanel
+      dayState={props.dayState}
+      state={state}
+      onOpenFullProfile={props.onOpenFullProfile}
+      timeZone={props.timeZone}
+    />
+  );
+}
+
 function FrontOfficeRuntime(props: {
   readonly client: ClinicOsApiClient;
   readonly allowPatientSelection: boolean;
@@ -105,36 +136,38 @@ function FrontOfficeRuntime(props: {
   const [dayState, setDayState] = useState<FrontOfficeLoadState<FrontOfficeDayData>>({
     status: "loading"
   });
-  const [patientState, setPatientState] = useState<
-    FrontOfficeLoadState<FrontOfficePatientWorkspaceData>
-  >({ status: "loading" });
   const [searchState, setSearchState] = useState<
     FrontOfficeLoadState<FrontOfficePatientSearchData> | { status: "idle" }
   >({ status: "idle" });
+  const dayRequest = useRef(0);
+  const searchRequest = useRef(0);
+
+  useEffect(
+    () => () => {
+      dayRequest.current += 1;
+      searchRequest.current += 1;
+    },
+    [props.client]
+  );
 
   const loadDay = useCallback(async () => {
+    const request = ++dayRequest.current;
     setDayState({ status: "loading" });
-    setDayState(await loadFrontOfficeDay(props.client));
+    const result = await loadFrontOfficeDay(props.client);
+    if (request === dayRequest.current) setDayState(result);
   }, [props.client]);
-
-  const loadPatient = useCallback(async () => {
-    if (!patientId) return;
-    setPatientState({ status: "loading" });
-    setPatientState(await loadFrontOfficePatientWorkspace(props.client, { patientId }));
-  }, [patientId, props.client]);
 
   const searchPatients = useCallback(
     async (query: string) => {
+      const request = ++searchRequest.current;
       setSearchState({ status: "loading" });
-      setSearchState(await searchFrontOfficePatients(props.client, query));
+      const result = await searchFrontOfficePatients(props.client, query);
+      if (request === searchRequest.current) setSearchState(result);
     },
     [props.client]
   );
 
   useEffect(() => void loadDay(), [loadDay]);
-  useEffect(() => {
-    if (patientId) void loadPatient();
-  }, [loadPatient, patientId]);
 
   if (!props.allowPatientSelection) {
     return (
@@ -162,10 +195,13 @@ function FrontOfficeRuntime(props: {
       />
       <div className="cp13-patient-browser__content">
         {patientId ? (
-          <FrontOfficePatientWorkspacePanel
+          <PatientPreparationRuntime
+            key={patientId}
+            patientId={patientId}
+            client={props.client}
             dayState={dayState}
             onOpenFullProfile={props.onOpenPatientProfile}
-            state={patientState}
+            timeZone={props.timeZone}
           />
         ) : (
           <section className="cp13-patient-welcome" data-testid="cp13-patient-welcome">

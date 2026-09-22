@@ -44,6 +44,8 @@ test.describe("Checkpoint 7 integration ops workflow smoke", () => {
     await expect(page.getByText("Scheduled sync").locator("..")).toContainText("Not configured");
     await expect(page.getByText("Source freshness").locator("..")).toContainText("Unknown");
     await expect(page.getByTestId("cp7-migration-status")).toContainText("Needs review");
+    await expect(page.getByTestId("cp7-resolve-migration-conflict")).toBeDisabled();
+    await page.getByTestId("migration-patient-candidate").selectOption("cp7ExistingPatient");
     await page.getByTestId("cp7-resolve-migration-conflict").click();
     await expect(page.getByTestId("cp7-migration-status")).toContainText("Ready to commit");
     await page.getByTestId("cp7-commit-migration-batch").click();

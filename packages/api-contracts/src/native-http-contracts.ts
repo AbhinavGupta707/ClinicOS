@@ -2152,7 +2152,7 @@ function cp5Operations(): HttpOperationContract[] {
         },
         [],
         {
-          oneOf: [
+          anyOf: [
             { type: "object", required: ["treatmentPlanId"], additionalProperties: true },
             { type: "object", required: ["procedurePerformedIds"], additionalProperties: true }
           ],

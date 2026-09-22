@@ -393,7 +393,12 @@ try {
     /REPOSITORY_MVP_SLICE_ROLLBACK/u
   );
   assert.equal(await concurrentMigrationReplayProbe(repository, tenantA, pool), true);
-  assert.equal(await sourceIndependentMigrationProbe(repository, tenantA, pool), true);
+  for (const linkExistingPatient of [false, true]) {
+    assert.equal(
+      await sourceIndependentMigrationProbe(repository, tenantA, pool, linkExistingPatient),
+      true
+    );
+  }
   assert.equal(await concurrentBatchCommitRollbackProbe(repository, tenantA, pool), true);
   assert.equal(await concurrentReconciliationRollbackProbe(repository, tenantA, pool), true);
 
@@ -622,7 +627,12 @@ async function concurrentMigrationReplayProbe(repository, scope, connectionPool)
   return true;
 }
 
-async function sourceIndependentMigrationProbe(repository, scope, connectionPool) {
+async function sourceIndependentMigrationProbe(
+  repository,
+  scope,
+  connectionPool,
+  linkExistingPatient
+) {
   const token = randomUUID();
   const sourceSystem = `repository_source_independent_${token}`;
   for (const importType of ["patients", "practitioners", "appointments"]) {
@@ -785,9 +795,58 @@ async function sourceIndependentMigrationProbe(repository, scope, connectionPool
     sourceSystem,
     sourceFileName: "synthetic-patients.json",
     sourceChecksum: sha256({ token, type: "patients" }),
-    state: "ready_to_commit",
-    rows: [migrationReadyRow("patients", patientExternalId, patientRecord)]
+    state: linkExistingPatient ? "needs_review" : "ready_to_commit",
+    rows: [
+      {
+        ...migrationReadyRow("patients", patientExternalId, patientRecord),
+        ...(linkExistingPatient
+          ? {
+              status: "needs_review",
+              matchStatus: "duplicate_candidate",
+              conflicts: [
+                {
+                  conflictType: "duplicate_patient",
+                  severity: "blocking",
+                  targetRecordType: "patient",
+                  targetRecordId: CHECKPOINT1_SEED_IDS.patients.rheaSynthetic,
+                  summary: "Synthetic candidate for the link-only rollback probe."
+                }
+              ]
+            }
+          : {})
+      }
+    ]
   });
+  if (linkExistingPatient) {
+    const unrelated = await repository.createPatient(scope, {
+      fullName: `Unrelated Review Candidate ${token}`,
+      phone: phoneForToken(randomUUID()),
+      gender: "unknown",
+      source: "manual",
+      sourceDetail: { evidence: "candidate_guard" }
+    });
+    assert.equal(
+      await repository.resolveMigrationRow(scope, patientBatch.batch.id, patientBatch.rows[0].id, {
+        action: "link_existing",
+        targetRecordType: "patient",
+        targetRecordId: unrelated.id
+      }),
+      null,
+      "an existing patient outside this row's reviewed candidates must be rejected"
+    );
+    assert.equal(
+      (await repository.listMigrationRows(scope, patientBatch.batch.id))[0]?.status,
+      "needs_review"
+    );
+    assert.ok(
+      await repository.resolveMigrationRow(scope, patientBatch.batch.id, patientBatch.rows[0].id, {
+        action: "link_existing",
+        targetRecordType: "patient",
+        targetRecordId: CHECKPOINT1_SEED_IDS.patients.rheaSynthetic,
+        note: "Verify link-only patient dependency protection."
+      })
+    );
+  }
   const patientCommit = await repository.commitMigrationBatch(scope, patientBatch.batch.id, {
     idempotencyKey: `source-independent-patient-${token}`
   });
@@ -822,15 +881,15 @@ async function sourceIndependentMigrationProbe(repository, scope, connectionPool
   let practitionerRollbackPromise;
   try {
     await blockingClient.query("begin");
-    const practitionerLockKey = JSON.stringify([
+    const dependencyLockKey = JSON.stringify([
       scope.tenantId,
       scope.clinicId,
       sourceSystem,
-      practitionerExternalId,
-      "provider_user"
+      linkExistingPatient ? patientExternalId : practitionerExternalId,
+      linkExistingPatient ? "patient" : "provider_user"
     ]);
     await blockingClient.query("select pg_advisory_xact_lock(hashtextextended($1::text, 0))", [
-      practitionerLockKey
+      dependencyLockKey
     ]);
     appointmentCommitPromise = repository.commitMigrationBatch(scope, appointmentBatch.batch.id, {
       idempotencyKey: `source-independent-appointment-${token}`
@@ -838,8 +897,8 @@ async function sourceIndependentMigrationProbe(repository, scope, connectionPool
     await waitForAdvisoryLockWaiters(blockingClient, 1);
     practitionerRollbackPromise = repository.rollbackMigrationBatch(
       scope,
-      practitionerBatch.batch.id,
-      { idempotencyKey: `source-independent-practitioner-blocked-${token}` }
+      linkExistingPatient ? patientBatch.batch.id : practitionerBatch.batch.id,
+      { idempotencyKey: `source-independent-reference-blocked-${token}` }
     );
     await waitForAdvisoryLockWaiters(blockingClient, 2);
     await blockingClient.query("commit");
@@ -864,6 +923,36 @@ async function sourceIndependentMigrationProbe(repository, scope, connectionPool
   assert.equal(blockedPractitionerRollback?.batch.state, "partially_committed");
   assert.equal(blockedPractitionerRollback?.blockedLinks.length, 1);
 
+  const blockedPatientRollback = await repository.rollbackMigrationBatch(
+    scope,
+    patientBatch.batch.id,
+    {
+      idempotencyKey: `source-independent-patient-blocked-again-${token}`
+    }
+  );
+  assert.equal(blockedPatientRollback?.blockedLinks.length, 1);
+  assert.match(
+    String(blockedPatientRollback.blockedLinks[0].metadata.rollbackBlockedReason),
+    /patient mapping/
+  );
+  assert.equal(typeof blockedPatientRollback.blockedLinks[0].metadata.rollbackBlockedAt, "string");
+  const blockedPatientRetry = await repository.rollbackMigrationBatch(
+    scope,
+    patientBatch.batch.id,
+    { idempotencyKey: `source-independent-patient-blocked-again-${token}` }
+  );
+  assert.deepEqual(
+    blockedPatientRetry?.blockedLinks,
+    blockedPatientRollback.blockedLinks,
+    "the first blocked response must include the same persisted explanation as its retry"
+  );
+  const retainedLinks = await repository.listImportedRecordLinksByExternalIds(scope, {
+    sourceSystem,
+    targetRecordType: "patient",
+    externalRecordIds: [patientExternalId]
+  });
+  assert.equal(retainedLinks[0]?.targetRecordId, patientId);
+
   const appointmentRollback = await repository.rollbackMigrationBatch(
     scope,
     appointmentBatch.batch.id,
@@ -875,7 +964,7 @@ async function sourceIndependentMigrationProbe(repository, scope, connectionPool
     idempotencyKey: `source-independent-patient-rollback-${token}`
   });
   assert.equal(patientRollback?.batch.state, "rolled_back");
-  assert.equal(await repository.findPatientById(scope, patientId), null);
+  assert.equal(Boolean(await repository.findPatientById(scope, patientId)), linkExistingPatient);
   const practitionerRollback = await repository.rollbackMigrationBatch(
     scope,
     practitionerBatch.batch.id,

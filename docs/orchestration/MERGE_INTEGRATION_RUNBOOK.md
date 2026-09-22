@@ -2,6 +2,13 @@
 
 Date: 2026-07-09
 
+Current programme note (2026-09-20): the owner-approved integration-first MVP plan
+controls current sequencing. CP12–CP18 orchestration below remains applicable when
+checkpoint work resumes; it does not require MVP repairs to launch worktree lanes.
+PR #1 targets `mac-latest-20260829`, not `main`. Verify exact branch ancestry,
+corrected-head checks and relocation preservation before any promotion; a local
+implementation merge is not a production release approval.
+
 This runbook optimizes the master orchestration pass after isolated worker lanes finish. For CP12-CP18 it supplements the `orchestrate-worktrees` skill, `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md`, and the active checkpoint packet. Plan 20 remains historical CP0-CP10 context.
 
 ## CP12-CP18 Control Addendum
