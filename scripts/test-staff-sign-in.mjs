@@ -219,7 +219,9 @@ try {
   }));
   await app.listen(0, "127.0.0.1");
   const apiOrigin = `http://127.0.0.1:${app.getHttpServer().address().port}`;
-  const health = await (await fetch(`${apiOrigin}/health/ready`)).json();
+  const healthResponse = await fetch(`${apiOrigin}/health/ready`);
+  assert.equal(healthResponse.status, 200);
+  const health = await healthResponse.json();
   assert.equal(health.repository_mode, "postgres");
   assert.equal(health.auth_mode, "keycloak_jwks");
   stage = "web build and activation";
@@ -249,6 +251,19 @@ try {
   const web = launch("web", ["server/start.mts"], webRoot, webEnv);
   await ready(`${webOrigin}/auth/health`, web);
   mark("real worker, API, and BFF ready");
+  stage = "exact public auth-route boundaries";
+  for (const path of ["/auth/unknown", "/auth/%63allback", "/auth/login/extra"]) {
+    const response = await fetch(`${webOrigin}${path}`, { redirect: "manual" });
+    assert.equal(response.status, 404);
+    assert.equal(response.headers.get("set-cookie"), null);
+  }
+  const wrongMethod = await fetch(`${webOrigin}/auth/login`, {
+    method: "POST",
+    redirect: "manual"
+  });
+  assert.equal(wrongMethod.status, 400);
+  assert.equal(wrongMethod.headers.get("set-cookie"), null);
+  mark("unknown, encoded and wrong-method auth routes cannot create sessions");
   browser = await chromium.launch({ headless: true });
   let context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
   let page = await context.newPage();
@@ -259,6 +274,20 @@ try {
     await page.locator("#password").fill(password);
     await page.locator("#kc-login").click();
   };
+  stage = "unregistered identity denial";
+  await database.query("delete from user_identities where issuer=$1 and subject=$2", [
+    issuer,
+    userId
+  ]);
+  await login();
+  await page.waitForURL(`${webOrigin}/?signIn=denied`);
+  assert.equal((await context.request.get(`${webOrigin}/auth/session`)).status(), 401);
+  mark("unregistered identity denied without a browser session");
+  await database.query(
+    "insert into user_identities (id,user_id,provider,issuer,subject) values ($1,$2,'keycloak',$3,$4)",
+    [randomUUID(), ownerId, issuer, userId]
+  );
+  await delay(1200);
   stage = "missing MFA denial";
   await login();
   await page.waitForURL(`${webOrigin}/?signIn=denied`);
@@ -304,12 +333,45 @@ try {
   const me = await context.request.get(`${webOrigin}/bff/v1/me`);
   assert.equal(me.status(), 200);
   await page.getByText("Clinic session active", { exact: true }).waitFor();
+  await page.getByTestId("cp13-front-office-day").waitFor();
   await page.screenshot({ path: join(artifacts, "signed-in-desktop.png"), fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   await page.getByRole("button", { name: "Sign out", exact: true }).waitFor();
   await page.screenshot({ path: join(artifacts, "signed-in-mobile.png"), fullPage: true });
   mark("real PKCE, TOTP, cookie-only API, desktop and mobile");
+  stage = "clinic workflows through the cookie BFF";
+  await page.goto(`${webOrigin}/surface/patients`);
+  await page.getByLabel("Search by name or phone").fill("Rhea Synthetic");
+  await page.getByRole("button", { name: "Search", exact: true }).click();
+  await page
+    .locator(".cp13-patient-search > ul button")
+    .filter({ hasText: "Rhea Synthetic" })
+    .click();
+  await page.getByTestId("cp13-front-office-patient").waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  await page.getByRole("button", { name: "Open full profile" }).click();
+  await page.getByTestId("cp13-clinical-runtime").waitFor();
+  await page.goto(`${webOrigin}/surface/migration-review`);
+  await page.getByTestId("cp7-migration-operations").waitFor();
+  await page.getByTestId("migration-source-system").waitFor();
+  assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
+  const otherClinic = (
+    await database.query(
+      "select id from clinics where slug='isolation-dental-clinic' and tenant_id <> $1",
+      [tenantId]
+    )
+  ).rows[0]?.id;
+  assert.ok(otherClinic, "A second synthetic tenant must exist for isolation acceptance.");
+  assert.equal(
+    (
+      await context.request.get(`${webOrigin}/bff/v1/patients?query=Ira`, {
+        headers: { "X-Clinic-Id": otherClinic }
+      })
+    ).status(),
+    403
+  );
+  mark("Today, patient search/profile, import controls and cross-tenant denial");
   stage = "CSRF and authenticated API validation";
   const endpoint = `${webOrigin}/bff/v1/migration-batches`;
   const body = { source_system: "synthetic-sign-in", entity_type: "patients" };
@@ -396,6 +458,16 @@ try {
   }
   mark("global audit delivered to PostgreSQL");
   stage = "worker failure and recovery";
+  const logoutCount = async () =>
+    Number(
+      (
+        await database.query(
+          "select count(*) as count from identity_security_audit_events where subject=$1 and issuer=$2 and action='auth.session.revoked' and reason_code='logout'",
+          [userId, issuer]
+        )
+      ).rows[0].count
+    );
+  const beforeOutageLogouts = await logoutCount();
   await context.clearCookies();
   await delay(31_000); // Fresh OTP and post-authority-change authentication.
   await login();
@@ -421,7 +493,29 @@ try {
   });
   await ready(`http://127.0.0.1:${workerPort}/health/ready`, recoveredWorker);
   await ready(`${webOrigin}/auth/health`, web);
+  for (let i = 0; (await logoutCount()) <= beforeOutageLogouts; i++) {
+    assert.ok(i < 40, "Outage logout audit must be delivered after recovery.");
+    await delay(250);
+  }
   mark("audit worker outage blocks admission and recovers");
+  stage = "real idle-session expiry";
+  await context.clearCookies();
+  await delay(31_000);
+  await login();
+  await page.locator("#otp").fill(totp(otpSecret));
+  await page.locator("#kc-login").click();
+  await page.waitForURL(`${webOrigin}/`);
+  await page.getByTestId("cp13-front-office-day").waitFor();
+  const idleCookie = (await context.cookies(webOrigin)).find(
+    (value) => value.name === "clinicos_session"
+  );
+  assert.ok(idleCookie);
+  await page.goto("about:blank"); // No background app activity can extend this idle session.
+  await delay(305_000);
+  // Re-present the token even if the browser's cookie clock expired it.
+  await context.addCookies([{ ...idleCookie, expires: Math.floor(Date.now() / 1000) + 60 }]);
+  assert.equal((await context.request.get(`${webOrigin}/bff/v1/me`)).status(), 401);
+  mark("real five-minute idle-session expiry");
   stage = "complete";
 } catch (error) {
   // Never persist browser traces/HTML, callback URLs, passwords, tokens, or TOTP enrollment screens.
@@ -561,15 +655,25 @@ async function terminate(child) {
   await child.closed;
 }
 async function ready(url, child) {
+  let diagnosis = [];
   for (let attempt = 0; attempt < 120; attempt++) {
     assert.equal(child.exitCode, null, "Owned process exited before readiness.");
     try {
-      if ((await fetch(url, { signal: AbortSignal.timeout(1000) })).status === 200) return;
+      const response = await fetch(url, { signal: AbortSignal.timeout(1000) });
+      if (response.status === 200) return;
+      const payload = await response.json();
+      diagnosis = (payload.checks ?? []).map((check) => ({
+        name: /^[a-z_]{1,80}$/.test(check.name) ? check.name : "other",
+        status: ["healthy", "degraded", "unhealthy"].includes(check.status)
+          ? check.status
+          : "unknown"
+      }));
     } catch {
       /* bounded poll */
     }
     await delay(250);
   }
+  console.error(JSON.stringify({ stage, health: diagnosis }));
   throw new Error("Readiness timed out.");
 }
 async function freePort() {

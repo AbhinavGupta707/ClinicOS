@@ -126,4 +126,20 @@ describe("raw direct-loopback request boundary", () => {
     );
     expect((await transport.send(input)).headers).toEqual({ "content-type": "text/plain" });
   });
+  it("pins outbound authority to configured loopback and rejects URL credentials or fragments", async () => {
+    expect(() => new BoundedApiTransport("https://attacker.test")).toThrow();
+    const transport = new BoundedApiTransport(origin);
+    const destinations: string[] = [];
+    const fetcher = vi.fn(async (url: URL) => { destinations.push(String(url)); return new Response("ok"); });
+    vi.stubGlobal("fetch", fetcher);
+    const input = { url: `${origin}/v1/patients?query=Rhea`, method: "GET", headers: {},
+      body: null, timeoutMs: 1000, maximumResponseBytes: 4 };
+    for (const url of ["http://attacker.test/v1/me", "http://127.0.0.1:3001/v1/me",
+      "http://user:pass@127.0.0.1:3000/v1/me", `${origin}/v1/me#fragment`]) {
+      await expect(transport.send({ ...input, url })).rejects.toThrow(/destination/);
+    }
+    expect(fetcher).not.toHaveBeenCalled();
+    await transport.send(input);
+    expect(destinations).toEqual([input.url]);
+  });
 });

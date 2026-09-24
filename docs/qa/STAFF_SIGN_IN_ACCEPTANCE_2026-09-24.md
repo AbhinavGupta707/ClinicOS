@@ -20,7 +20,9 @@ only authenticated API route families. API/database authority remains canonical;
 Keycloak does not assign ClinicOS clinical permissions.
 
 The worker delivers required identity events to the global append-only PostgreSQL
-audit sink. Its expiring readiness lease gates web/API admission. It also reaps
+audit sink. Its expiring readiness lease gates login and clinic API admission.
+Session inspection and sign-out still require the durable stores and required
+audit writes, but can revoke access while delivery is temporarily stopped. It also reaps
 expired session and revocation state in bounded batches. Clinical audit events
 retain their existing path.
 
@@ -74,9 +76,36 @@ focused production dependencies together.
 
 ## Verification and remaining gates
 
-First local pass: 1,062 workspace tests, typecheck, lint, workspace checks, secret
-scan and optimized web build passed. Final review fixes and exact-head CI results
-must supersede these first-pass results before merge approval.
+Local regression: 1,064 workspace tests passed, followed by affected auth/web
+reruns after review fixes (73 auth and 137 web tests; 1,068 total at this revision).
+Typecheck, lint, workspace checks, secret scan and optimized web build passed.
+Three image-contract checks also passed. Native browser inspection verified the
+built unavailable state and Retry. The older Browser Use backend was unavailable;
+the in-app Computer Use browser provided this inspection. No local Docker or
+database services were started.
+
+The first CI candidate `c136d1a5` passed shared build, workspace/type checks,
+migrations, real Redis OAuth/audit, repository/worker tests, API fault recovery,
+workspace tests/build, and legacy real-stack import acceptance. The new identity
+trial stopped at worker readiness. Previous repository fault fixtures leave old
+outbox rows, so the next candidate reinitializes the job's disposable database
+before identity acceptance and records bounded health-component diagnostics. It
+does not weaken worker health. This is still under verification.
+
+CodeQL reported five new findings on that first candidate. Outbound API transport
+now constructs authority solely from validated server configuration, with tests
+rejecting foreign hosts/ports, URL credentials, fragments and redirects. Two
+password-hash findings concern HMAC-SHA256 over a 256-bit random session ID with
+independent lookup/CSRF keys, not human passwords. Two bypass findings concern
+exact public login/callback route dispatch; method, boundary, OAuth state/PKCE,
+nonce, subject, current authority and MFA checks still execute inside those routes.
+Independent review found no bypass. Negative method and real route probes support
+the narrowly scoped false-positive assessment; no query is disabled globally.
+
+Exact-head identity acceptance, image runtime/security and final CodeQL disposition
+must be checked on PR #5 before merge approval. The packaged web image is also
+started without a network or credentials in CI to verify generated output,
+unconfigured identity rejection, non-root execution and graceful shutdown.
 
 `scripts/test-staff-sign-in.mjs` refuses to run outside a marked disposable GitHub
 Actions database. It registers its own synthetic realm/user/client through the

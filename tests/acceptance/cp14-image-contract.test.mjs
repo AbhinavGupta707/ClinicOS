@@ -4,7 +4,7 @@ import test from "node:test";
 
 const services = [
   { name: "api", command: 'CMD ["node", "apps/api/src/main.ts"]', port: 4100 },
-  { name: "web", command: 'CMD ["node", "apps/web/server.js"]', port: 3000 },
+  { name: "web", command: 'CMD ["node", "apps/web/server/start.mts"]', port: 3000 },
   { name: "worker", command: 'CMD ["apps/worker/dist/main.js"]', port: 3001 }
 ];
 
@@ -43,7 +43,12 @@ test("CP14 CI builds and scans every application image on an ARM64 runner", asyn
   assert.match(workflow, /severity: HIGH,CRITICAL/u);
 });
 
-test("CP14 Next production build emits a standalone server", async () => {
+test("staff identity web image packages its raw request boundary with generated Next output", async () => {
   const nextConfig = await readFile("apps/web/next.config.mjs", "utf8");
-  assert.match(nextConfig, /output: "standalone"/u);
+  assert.doesNotMatch(nextConfig, /output: "standalone"/u);
+  const dockerfile = await readFile("infra/images/web/Dockerfile", "utf8");
+  assert.match(dockerfile, /\/workspace\/apps\/web\/server/u);
+  assert.match(dockerfile, /\/workspace\/apps\/web\/\.next/u);
+  const workflow = await readFile(".github/workflows/security.yml", "utf8");
+  assert.match(workflow, /bash infra\/images\/web\/test-runtime\.sh/u);
 });

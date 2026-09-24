@@ -126,6 +126,24 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      # The repository and import probes intentionally leave outbox fault evidence.
+      # Give identity acceptance its own clean database; do not weaken worker health.
+      - name: Reinitialize and mark disposable database for identity acceptance
+        run: |
+          npm run db:reset:local && npm run db:migrate && npm run db:grant-runtime && npm run db:seed:local && npm run db:verify
+          node --input-type=module <<'NODE'
+          import assert from 'node:assert/strict';
+          import { Client } from 'pg';
+          assert.equal(process.env.GITHUB_ACTIONS, 'true');
+          const token = process.env.CLINICOS_MVP_DATABASE_TOKEN;
+          assert.match(token, /^[a-f0-9]{32}$/);
+          const client = new Client({ connectionString: 'postgresql://clinic_os:clinic_os@127.0.0.1:5432/clinic_os' });
+          try {
+            await client.connect();
+            await client.query(`comment on database clinic_os is 'ClinicOS disposable MVP acceptance ${token}'`);
+          } finally { await client.end(); }
+          NODE
+
       - name: Real Keycloak staff sign-in and audit delivery
         env:
           CLINICOS_STAFF_SIGN_IN_E2E_ENABLED: "true"

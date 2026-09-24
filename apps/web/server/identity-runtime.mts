@@ -283,12 +283,17 @@ export function createStaffIdentityRuntime(
 export class BoundedApiTransport implements Cp14ApiTransport {
   readonly origin: string;
   constructor(origin: string) {
-    this.origin = origin;
+    this.origin = loopbackOrigin(origin);
   }
   async send(input: Parameters<Cp14ApiTransport["send"]>[0]) {
-    if (new URL(input.url).origin !== this.origin)
+    const supplied = new URL(input.url);
+    if (supplied.origin !== this.origin || supplied.username || supplied.password || supplied.hash)
       throw new Error("API destination is not allowed.");
-    const response = await fetch(input.url, {
+    // Authority comes exclusively from server configuration, never request data.
+    const destination = new URL(this.origin);
+    destination.pathname = supplied.pathname;
+    destination.search = supplied.search;
+    const response = await fetch(destination, {
       method: input.method,
       headers: input.headers,
       body: input.body ? new Uint8Array(input.body) : undefined,
