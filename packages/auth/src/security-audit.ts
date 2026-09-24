@@ -132,6 +132,7 @@ export function validateRequiredSecurityAuditIntent(
   if (intent.action === "auth.mfa.denied") {
     if (
       !Array.isArray(intent.roleSlugs) ||
+      (intent.reasonCode === "privileged_role" && intent.roleSlugs.length === 0) ||
       intent.roleSlugs.length > 16 ||
       new Set(intent.roleSlugs).size !== intent.roleSlugs.length ||
       intent.roleSlugs.some(

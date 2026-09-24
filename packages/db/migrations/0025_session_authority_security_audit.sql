@@ -1,5 +1,24 @@
 -- Durable generations, not wall-clock timestamps or a hash of current grants: a
 -- revoke/regrant between requests must never resurrect an older browser session.
+-- role_permissions was historically a global installation ledger. Bootstrap may
+-- read only visible roles; writes must belong to the active tenant. In particular,
+-- a cross-tenant role_id move cannot hide the new parent from invoker triggers.
+alter table role_permissions enable row level security;
+alter table role_permissions force row level security;
+create policy role_permissions_visible_role_read on role_permissions for select
+using (exists (select 1 from public.roles where id = role_permissions.role_id));
+create policy role_permissions_tenant_insert on role_permissions for insert
+with check (exists (select 1 from public.roles where id = role_permissions.role_id
+  and tenant_id = clinic_os.current_tenant_id()));
+create policy role_permissions_tenant_update on role_permissions for update
+using (exists (select 1 from public.roles where id = role_permissions.role_id
+  and tenant_id = clinic_os.current_tenant_id()))
+with check (exists (select 1 from public.roles where id = role_permissions.role_id
+  and tenant_id = clinic_os.current_tenant_id()));
+create policy role_permissions_tenant_delete on role_permissions for delete
+using (exists (select 1 from public.roles where id = role_permissions.role_id
+  and tenant_id = clinic_os.current_tenant_id()));
+
 alter table users add column authority_generation uuid not null default gen_random_uuid();
 alter table tenants add column authority_generation uuid not null default gen_random_uuid();
 
@@ -125,3 +144,18 @@ $$;
 create trigger security_audit_no_mutation before update or delete or truncate
 on identity_security_audit_events for each statement
 execute function clinic_os.deny_security_audit_mutation();
+
+-- Defeat pre-existing broad default privileges inside this migration transaction;
+-- safety must not depend on a later local provisioning command.
+revoke all on table identity_security_audit_events from public;
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'clinic_os_runtime') then
+    revoke all on table identity_security_audit_events from clinic_os_runtime;
+  end if;
+  if exists (select 1 from pg_roles where rolname = 'clinic_os_worker') then
+    revoke all on table identity_security_audit_events from clinic_os_worker;
+    grant select, insert on table identity_security_audit_events to clinic_os_worker;
+  end if;
+end;
+$$;

@@ -39,11 +39,20 @@ export class SecurityAuditSinkError extends Error {
 export class PostgresSecurityAuditSink implements DurableSecurityAuditSink {
   readonly durability = "durable_append_only" as const;
   readonly #pool: AuditSqlPool;
+  readonly #commandTimeoutMs: number;
 
-  constructor(pool: AuditSqlPool) {
+  constructor(pool: AuditSqlPool, options: { commandTimeoutMs?: number } = {}) {
     if (typeof pool.connect !== "function")
       throw new Error("Security audit requires an owned connection pool.");
     this.#pool = pool;
+    this.#commandTimeoutMs = options.commandTimeoutMs ?? 5_000;
+    if (
+      !Number.isSafeInteger(this.#commandTimeoutMs) ||
+      this.#commandTimeoutMs < 100 ||
+      this.#commandTimeoutMs > 10_000
+    ) {
+      throw new Error("Invalid security audit command deadline.");
+    }
   }
 
   async append(raw: RequiredSecurityAuditIntent): Promise<void> {
@@ -119,14 +128,19 @@ export class PostgresSecurityAuditSink implements DurableSecurityAuditSink {
         }),
         () => {
           acquisitionExpired = true;
-        }
+        },
+        this.#commandTimeoutMs
       );
       const rawClient = client!;
       client = {
         query: <T>(sql: string, values?: readonly unknown[]) =>
-          deadline(rawClient.query<T>(sql, values), () => {
-            discard = true;
-          }),
+          deadline(
+            rawClient.query<T>(sql, values),
+            () => {
+              discard = true;
+            },
+            this.#commandTimeoutMs
+          ),
         release: (failed) => rawClient.release(failed)
       };
       await client.query("begin isolation level read committed");
@@ -155,7 +169,11 @@ function sha256(value: string): string {
   return createHash("sha256").update(value).digest("hex");
 }
 
-async function deadline<T>(operation: Promise<T>, expired: () => void): Promise<T> {
+async function deadline<T>(
+  operation: Promise<T>,
+  expired: () => void,
+  milliseconds: number
+): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
     return await Promise.race([
@@ -164,7 +182,7 @@ async function deadline<T>(operation: Promise<T>, expired: () => void): Promise<
         timer = setTimeout(() => {
           expired();
           reject(new SecurityAuditSinkError("dependency_unavailable"));
-        }, 5_000);
+        }, milliseconds);
       })
     ]);
   } finally {

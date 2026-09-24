@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import { PostgresIdentityRepository } from "@clinic-os/db";
 import { CurrentSessionAuthorityResolver } from "@clinic-os/auth";
 
@@ -147,6 +148,71 @@ export async function testCurrentSessionAuthority(pool) {
       userGeneration,
       "callers cannot restore an old generation"
     );
+
+    // Moving an identity/assignment must invalidate both the former and new owner.
+    const newUser = randomUUID();
+    await client.query(
+      "insert into users (id, display_name) values ($1, 'Synthetic authority move')",
+      [newUser]
+    );
+    const generations = async () =>
+      (
+        await client.query(
+          "select id, authority_generation from users where id = any($1::uuid[]) order by id",
+          [[user, newUser]]
+        )
+      ).rows;
+    for (const [table, predicate, parameters] of [
+      [
+        "user_identities",
+        "provider = 'keycloak' and issuer = $2 and subject = $3",
+        [identity.issuer, identity.subject]
+      ],
+      ["user_role_assignments", "tenant_id = $2 and role_id = $3", [tenant, role]]
+    ]) {
+      const before = await generations();
+      await scope();
+      const moved = await client.query(
+        `update ${table} set user_id = $1 where user_id = $4 and ${predicate}`,
+        [newUser, ...parameters, user]
+      );
+      assert.equal(moved.rowCount, 1);
+      const after = await generations();
+      assert.ok(
+        after.every(
+          (row, index) => row.authority_generation !== before[index].authority_generation
+        ),
+        `${table}: invalidate both owners`
+      );
+      await client.query(`update ${table} set user_id = $1 where user_id = $4 and ${predicate}`, [
+        user,
+        ...parameters,
+        newUser
+      ]);
+    }
+
+    // Role-grant writes cannot target a hidden parent role in another tenant.
+    const foreignRole = randomUUID();
+    await client.query("select set_config('app.tenant_id', $1, true)", [otherTenant]);
+    await client.query(
+      "insert into roles (id, tenant_id, slug, display_name) values ($1, $2, $3, 'Synthetic foreign role')",
+      [foreignRole, otherTenant, `synthetic-${foreignRole}`]
+    );
+    await scope();
+    for (const [sql, values] of [
+      [
+        "insert into role_permissions (role_id, permission_key) values ($1, 'patient.read')",
+        [foreignRole]
+      ],
+      [
+        "update role_permissions set role_id = $1 where role_id = $2 and permission_key = 'patient.read'",
+        [foreignRole, role]
+      ]
+    ]) {
+      await client.query("savepoint denied_foreign_grant");
+      await assert.rejects(client.query(sql, values), { code: "42501" });
+      await client.query("rollback to savepoint denied_foreign_grant");
+    }
   } finally {
     try {
       await client.query("rollback");

@@ -245,3 +245,109 @@ test("changed acknowledgements preserve replacement evidence and fail readiness"
   assert.equal(h.pending.length, 1);
   await assert.rejects(h.dispatcher.readiness());
 });
+
+test("privileged-role MFA evidence needs a role; break-glass denial may precede a product role", () => {
+  assert.throws(() =>
+    validateRequiredSecurityAuditIntent({
+      ...intent(),
+      action: "auth.mfa.denied",
+      reasonCode: "privileged_role",
+      roleSlugs: []
+    })
+  );
+  assert.equal(
+    validateRequiredSecurityAuditIntent({
+      ...intent(),
+      action: "auth.mfa.denied",
+      reasonCode: "break_glass",
+      roleSlugs: []
+    }).action,
+    "auth.mfa.denied"
+  );
+});
+
+test(
+  "a timed-out commit destroys its connection, retains Redis evidence, and retries idempotently",
+  { timeout: 3000 },
+  async () => {
+    let hangCommit = true;
+    const commands: string[] = [];
+    const releases: boolean[] = [];
+    let storedDigest: string | undefined;
+    const pending = [item("synthetic-timeout")];
+    const source: PendingSecurityAuditSource = {
+      async scanPendingAudits() {
+        return { nextCursor: "0", items: [...pending] };
+      },
+      async acknowledgePendingAudit() {
+        pending.pop();
+        return "acknowledged";
+      },
+      async readiness() {}
+    };
+    const pool = {
+      async connect() {
+        let attemptedDigest = "";
+        return {
+          async query(sql: string, values?: readonly unknown[]) {
+            commands.push(sql);
+            if (sql.startsWith("insert into")) attemptedDigest = String(values?.[1]);
+            if (sql.startsWith("select payload_digest,"))
+              return { rows: [{ payload_digest: storedDigest ?? attemptedDigest, matches: true }] };
+            if (sql === "commit") {
+              storedDigest ??= attemptedDigest;
+              if (hangCommit) return new Promise(() => {});
+            }
+            return { rows: [] };
+          },
+          release(discard: boolean) {
+            releases.push(discard);
+          }
+        } as never;
+      }
+    };
+    const sink = new PostgresSecurityAuditSink(pool, { commandTimeoutMs: 100 });
+    const dispatcher = new SecurityAuditDispatcher({ source, sink, now: () => now });
+    await assert.rejects(dispatcher.runOnce());
+    assert.equal(pending.length, 1);
+    assert.ok(storedDigest);
+    assert.equal(commands.includes("rollback"), false);
+    assert.deepEqual(releases, [true]);
+    hangCommit = false;
+    await new SecurityAuditDispatcher({ source, sink, now: () => now }).runOnce();
+    assert.equal(pending.length, 0);
+    assert.deepEqual(releases, [true, false]);
+  }
+);
+
+test(
+  "a pool acquisition arriving after the deadline is discarded and never queried",
+  { timeout: 3000 },
+  async () => {
+    let complete: (client: never) => void = () => {};
+    let released = false;
+    let queries = 0;
+    const sink = new PostgresSecurityAuditSink(
+      {
+        connect: () =>
+          new Promise((resolve) => {
+            complete = resolve;
+          })
+      },
+      { commandTimeoutMs: 100 }
+    );
+    await assert.rejects(sink.append(intent()));
+    complete({
+      async query() {
+        queries++;
+        return { rows: [] };
+      },
+      release(discard: boolean) {
+        released = discard;
+      }
+    } as never);
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(released, true);
+    assert.equal(queries, 0);
+  }
+);

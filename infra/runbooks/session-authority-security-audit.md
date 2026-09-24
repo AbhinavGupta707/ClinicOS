@@ -19,7 +19,10 @@ invalidate sessions conservatively.
 The repository reads identity and both generations in one statement and rejects
 multiple active memberships. Database role grants must match the fixed domain
 permission map; unknown roles or drift fail closed for both API and web authority.
-Custom editable role grants are not supported by this scope. The resolver includes
+Role-grant RLS restricts writes to the current tenant and reads to visible parent
+roles, including the read-only identity bootstrap. Cross-tenant grant moves cannot
+hide the new parent from invalidation triggers. Custom editable role grants are
+not supported by this scope. The resolver includes
 the application permission map in the revision so code changes also invalidate
 sessions, and consults the repository on every use without a cache. Supply a fresh
 pool-backed repository, not a long-lived caller transaction. Dependency failures
@@ -57,7 +60,8 @@ for pre-membership events. Existing clinical `audit_events` RLS is unchanged.
 
 The sink compares both payload digest and canonical JSON on replay. A matching
 record commits before Redis acknowledgement. A conflicting payload never overwrites
-evidence. PostgreSQL grants only SELECT/INSERT to the worker; the generic runtime
+evidence. The canonical migration itself revokes inherited default privileges and grants
+only SELECT/INSERT to the existing worker role; the generic runtime
 role has no access. Forced RLS permits only the exact deduplication-key lookup,
 not unscoped global enumeration. Update/delete/truncate are denied by both grants
 and an immutable-evidence trigger. Security exports need a separately reviewed

@@ -511,7 +511,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
           // ignore a database permission edit and reissue the previous authority.
           if (
             !CLINIC_ROLE_SLUGS.includes(row.role_slug) ||
-            JSON.stringify(row.role_permissions) !==
+            JSON.stringify([...row.role_permissions].sort()) !==
               JSON.stringify([...permissionsForRoles([row.role_slug])].sort())
           ) {
             throw new Error("Installed role permissions differ from application authority.");
