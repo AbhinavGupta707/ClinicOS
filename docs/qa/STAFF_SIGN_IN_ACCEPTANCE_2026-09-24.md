@@ -95,7 +95,13 @@ readiness and auth-route negatives, but timed out in its first browser sign-in.
 Its security workflow passed all image, SCA and CodeQL jobs. The trial now runs
 on its own disposable runner, independent of the fault-fixture database, and
 records only fixed route/status labels and bounded callback failure classifications.
-Sign-in acceptance remains open.
+Candidate `98c2660f` narrowed the failure to token verification after a successful
+provider browser round trip. Review found that the OIDC JWKS parser rejected a
+whole set when Keycloak also published encryption or other-algorithm public keys.
+It now selects only the fixed RS256 signing-key class, rejects malformed or
+ambiguous eligible keys, and retains all token signature/issuer/audience checks.
+A mixed-key regression and negative key-use cases cover this compatibility fix.
+The replacement sign-in trial remains pending; no successful sign-in is claimed.
 
 Review also found a shutdown race between in-flight audit delivery/final lease
 withdrawal and adapter closure. The worker now drains its own audit loop before
@@ -140,3 +146,5 @@ for this identity slice. It does not complete the broader blue-sky programme.
 - [Keycloak 25 AMR execution references](https://raw.githubusercontent.com/keycloak/keycloak/25.0.6/services/src/main/java/org/keycloak/protocol/oidc/utils/AmrUtils.java).
 - [Keycloak authenticator registration](https://raw.githubusercontent.com/keycloak/keycloak/25.0.6/services/src/main/java/org/keycloak/services/resources/admin/AuthenticationManagementResource.java).
 - [Keycloak session logout](https://raw.githubusercontent.com/keycloak/keycloak/25.0.6/services/src/main/java/org/keycloak/protocol/oidc/endpoints/LogoutEndpoint.java).
+
+- [Keycloak 25 mixed public-key publication](https://github.com/keycloak/keycloak/blob/25.0.6/services/src/main/java/org/keycloak/protocol/oidc/utils/JWKSServerUtils.java).

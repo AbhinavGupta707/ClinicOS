@@ -120,6 +120,29 @@ describe("CP14 official Keycloak OIDC BFF client", () => {
     });
   });
 
+  it("selects only valid RS256 signing keys from a mixed Keycloak public-key set", async () => {
+    const mixed = new TestTransport();
+    const signingKey = mixed.jwksKeys[0]!;
+    const encryptionKey = { ...signingKey, kid: "encryption-key-0001", alg: "RSA-OAEP", use: "enc" };
+    mixed.jwksKeys = [encryptionKey, { kty: "EC", alg: "ES256", use: "sig", kid: "ec-key-0001" }, signingKey];
+    await expect(client(mixed).exchangeAuthorizationCode(exchangeInput())).resolves.toMatchObject({
+      idTokenSubject: "keycloak-subject-0001"
+    });
+    for (const keys of [
+      [encryptionKey],
+      [{ ...signingKey, use: "enc" }],
+      [{ ...signingKey, n: "invalid" }],
+      [{ ...signingKey, key_ops: ["sign"] }],
+      [signingKey, signingKey]
+    ]) {
+      const rejected = new TestTransport();
+      rejected.jwksKeys = keys;
+      await expect(client(rejected).exchangeAuthorizationCode(exchangeInput())).rejects.toMatchObject({
+        code: "exchange_rejected"
+      });
+    }
+  });
+
   it("requires exact OIDC azp binding for multi-audience ID tokens and rejects ambiguous audiences", async () => {
     const invalidClaims = [
       { aud: [clientId, "another-client"] },
@@ -248,6 +271,9 @@ class TestTransport implements KeycloakOidcHttpTransport {
   tokenResponse: KeycloakOidcHttpResponse = tokenResponse();
   revocationResponse: KeycloakOidcHttpResponse = jsonResponse(200, {});
   transportFailure: Error | null = null;
+  jwksKeys: Record<string, unknown>[] = [{
+    kty: "RSA", alg: "RS256", use: "sig", kid: keyId, n: publicJwk.n, e: publicJwk.e
+  }];
 
   async request(input: KeycloakOidcHttpRequest): Promise<KeycloakOidcHttpResponse> {
     this.requests.push(structuredClone(input));
@@ -256,16 +282,7 @@ class TestTransport implements KeycloakOidcHttpTransport {
       return jsonResponse(
         200,
         {
-          keys: [
-            {
-              kty: "RSA",
-              alg: "RS256",
-              use: "sig",
-              kid: keyId,
-              n: publicJwk.n,
-              e: publicJwk.e
-            }
-          ]
+          keys: this.jwksKeys
         },
         { "cache-control": "public, max-age=60" }
       );

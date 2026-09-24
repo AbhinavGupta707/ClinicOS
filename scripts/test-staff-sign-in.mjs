@@ -281,28 +281,37 @@ try {
     await page.locator("#kc-login").click();
     stage = loginStage;
   };
-  const observeResponses = (observedContext) => observedContext.on("response", (response) => {
-    const url = new URL(response.url());
-    let route;
-    if (url.origin === webOrigin && ["/auth/login", "/auth/callback", "/auth/session"].includes(url.pathname)) {
-      route = url.pathname;
-    } else if (url.origin === webOrigin && url.pathname === "/") {
-      const outcome = url.searchParams.get("signIn");
-      route = ["denied", "unavailable"].includes(outcome) ? `sign-in ${outcome}` : "app root";
-    } else if (url.origin === issuerBase && response.request().isNavigationRequest()) {
-      route = "provider navigation";
-    }
-    if (route) {
-      browserResponses.push({ route, status: response.status() });
-      if (browserResponses.length > 40) browserResponses.shift();
-    }
-  });
+  const observeResponses = (observedContext) =>
+    observedContext.on("response", (response) => {
+      const url = new URL(response.url());
+      let route;
+      if (
+        url.origin === webOrigin &&
+        ["/auth/login", "/auth/callback", "/auth/session"].includes(url.pathname)
+      ) {
+        route = url.pathname;
+      } else if (url.origin === webOrigin && url.pathname === "/") {
+        const outcome = url.searchParams.get("signIn");
+        route = ["denied", "unavailable"].includes(outcome) ? `sign-in ${outcome}` : "app root";
+      } else if (url.origin === issuerBase && response.request().isNavigationRequest()) {
+        route = "provider navigation";
+      }
+      if (route) {
+        browserResponses.push({ route, status: response.status() });
+        if (browserResponses.length > 40) browserResponses.shift();
+      }
+    });
   observeResponses(context);
   stage = "unregistered identity denial";
-  await database.query("delete from user_identities where issuer=$1 and subject=$2", [
-    issuer,
-    userId
-  ]);
+  const removedIdentity = await database.query(
+    "delete from user_identities where issuer=$1 and subject=$2",
+    [issuer, userId]
+  );
+  assert.equal(
+    removedIdentity.rowCount,
+    1,
+    "Unregistered-user trial must remove its exact identity mapping."
+  );
   await login();
   await page.waitForURL(`${webOrigin}/?signIn=denied`);
   assert.equal((await context.request.get(`${webOrigin}/auth/session`)).status(), 401);

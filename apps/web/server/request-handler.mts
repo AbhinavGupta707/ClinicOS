@@ -223,6 +223,7 @@ export function createStaffRequestHandler(env: Readonly<Record<string, string | 
             event: "identity.callback.failed",
             requestId,
             status,
+            phase: error instanceof KeycloakOidcClientError ? error.phase : null,
             reason: error instanceof KeycloakOidcClientError ? error.code
               : error instanceof AuthenticationError ? "identity_denied"
               : error instanceof OAuthFlowError ? "transaction_denied"
