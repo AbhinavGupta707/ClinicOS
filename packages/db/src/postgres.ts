@@ -304,6 +304,7 @@ import type {
   DentalFindingMutationResult,
   IdentityAccessSnapshot,
   IdentityRepository,
+  VerifiedKeycloakIdentity,
   IncidentSearchFilter,
   InventoryExceptionFilter,
   LabCaseSearchFilter,
@@ -394,9 +395,12 @@ export class PostgresIdentityRepository implements IdentityRepository {
     this.#client = client;
   }
 
-  async findAccessByKeycloakSubject(subject: string): Promise<IdentityAccessSnapshot | null> {
+  async findAccessByKeycloakIdentity(
+    identity: VerifiedKeycloakIdentity
+  ): Promise<IdentityAccessSnapshot | null> {
+    const identityStatements = buildSetLocalIdentityRlsStatements(identity);
     return withTransaction(this.#client, async (client) => {
-      for (const statement of buildSetLocalIdentityRlsStatements(subject)) {
+      for (const statement of identityStatements) {
         await client.query(statement.sql, statement.values);
       }
       const result = await client.query<IdentityAccessRow>(
@@ -436,10 +440,20 @@ export class PostgresIdentityRepository implements IdentityRepository {
           and roles.id = user_role_assignments.role_id
         where user_identities.provider = 'keycloak'
           and user_identities.subject = $1
+          and user_identities.issuer = $2
           and memberships.status = 'active'
+          -- The current API has no explicit tenant selector. Never pick an arbitrary tenant.
+          and (select count(*) from memberships as current_memberships
+               where current_memberships.user_id = users.id
+                 and current_memberships.status = 'active') = 1
         order by clinics.slug, roles.slug
       `,
-        [subject]
+        [identity.subject, identity.issuer]
+      );
+
+      // A transaction-bound caller must not retain bootstrap read authority after this lookup.
+      await client.query(
+        "select set_config('app.identity_issuer', '', true), set_config('app.identity_subject', '', true)"
       );
 
       if (result.rows.length === 0) return null;

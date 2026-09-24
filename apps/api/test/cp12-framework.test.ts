@@ -270,7 +270,7 @@ test("Redis budget adapter consumes atomically and fails closed when Redis is un
 
 test("invalid mutation responses roll back before completion and cannot be replayed", async () => {
   const identityRepository = new LocalFixtureIdentityRepository();
-  const snapshot = await identityRepository.findAccessByKeycloakSubject("seed-assistant");
+  const snapshot = await identityRepository.findAccessByKeycloakIdentity({ issuer: "http://localhost:8080/realms/clinic-os-local", subject: "seed-assistant" });
   assert.ok(snapshot);
   const coordinator = new RecordingTransactionalMutationCoordinator();
   const pipeline = new ClinicOsRequestPipeline({
@@ -323,7 +323,7 @@ test("invalid mutation responses roll back before completion and cannot be repla
 
 test("nested response version sources derive canonical ETags and reject mismatched effect headers", async () => {
   const identityRepository = new LocalFixtureIdentityRepository();
-  const snapshot = await identityRepository.findAccessByKeycloakSubject("seed-assistant");
+  const snapshot = await identityRepository.findAccessByKeycloakIdentity({ issuer: "http://localhost:8080/realms/clinic-os-local", subject: "seed-assistant" });
   assert.ok(snapshot);
   const access = {
     context: buildAccessContext({
@@ -609,7 +609,7 @@ test("authentication precedes malformed resource disclosure", async (t) => {
 
 test("clinic-scoped central permission and doctor-role predicates deny cross-clinic union leakage", async (t) => {
   const baseIdentity = new LocalFixtureIdentityRepository();
-  const baseSnapshot = await baseIdentity.findAccessByKeycloakSubject("seed-doctor");
+  const baseSnapshot = await baseIdentity.findAccessByKeycloakIdentity({ issuer: "http://localhost:8080/realms/clinic-os-local", subject: "seed-doctor" });
   assert.ok(baseSnapshot);
   const secondClinicId = "10000000-0000-4000-8000-000000000102";
   const secondClinic = {
@@ -619,7 +619,7 @@ test("clinic-scoped central permission and doctor-role predicates deny cross-cli
     displayName: "Synthetic Second Clinic"
   };
   const identityRepository = {
-    async findAccessByKeycloakSubject() {
+    async findAccessByKeycloakIdentity() {
       return {
         ...baseSnapshot,
         clinics: [...baseSnapshot.clinics, secondClinic],

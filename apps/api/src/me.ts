@@ -41,7 +41,10 @@ export async function getMe(
   }
 
   const principal = principalFromVerifiedKeycloakClaims(request.verifiedKeycloakClaims, dependencies.keycloak);
-  const snapshot = await dependencies.identityRepository.findAccessByKeycloakSubject(principal.subject);
+  const snapshot = await dependencies.identityRepository.findAccessByKeycloakIdentity({
+    issuer: principal.issuer,
+    subject: principal.subject
+  });
 
   if (!snapshot) {
     throw new ApiError(403, "PERMISSION_DENIED", "Authenticated identity is not registered for ClinicOS.", {

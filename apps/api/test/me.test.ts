@@ -1,6 +1,18 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { getMe } from "../src/index.ts";
+import { getMe, LocalFixtureIdentityRepository } from "../src/index.ts";
+
+test("/me cannot resolve a matching subject registered under a different issuer", async () => {
+  const issuer = "https://accepted.example/realms/clinic-os";
+  const identityRepository = new LocalFixtureIdentityRepository("https://other.example/realms/clinic-os");
+  await assert.rejects(getMe({
+    requestId: "synthetic-issuer-mismatch",
+    verifiedKeycloakClaims: { sub: "seed-doctor", iss: issuer, aud: "clinicos-api", exp: 2_000_000_000 }
+  }, {
+    keycloak: { expectedIssuer: issuer, acceptedAudiences: ["clinicos-api"], now: new Date("2026-09-22T12:00:00Z") },
+    identityRepository
+  }), { status: 403, code: "PERMISSION_DENIED" });
+});
 
 const tenant = {
   id: "10000000-0000-4000-8000-000000000001",
@@ -41,8 +53,8 @@ test("/me returns tenant, clinic, role, permission, and Keycloak subject context
         now: new Date("2026-07-06T10:00:00Z")
       },
       identityRepository: {
-        async findAccessByKeycloakSubject(subject) {
-          assert.equal(subject, "seed-doctor");
+        async findAccessByKeycloakIdentity(identity) {
+          assert.deepEqual(identity, { issuer: "http://localhost:8080/realms/clinicos-local", subject: "seed-doctor" });
           return {
             tenant,
             clinics: [clinic],
@@ -117,7 +129,7 @@ test("/me rejects an authenticated Keycloak identity that is not registered", as
             now: new Date("2026-07-06T10:00:00Z")
           },
           identityRepository: {
-            async findAccessByKeycloakSubject() {
+            async findAccessByKeycloakIdentity() {
               return null;
             }
           }

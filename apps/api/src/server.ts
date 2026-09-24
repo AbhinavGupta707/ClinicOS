@@ -777,7 +777,7 @@ function createRuntimeComposition(
   let tokenRevocationStore: RedisTokenRevocationStore | undefined;
   const repositorySet = useFixtureRepository
     ? {
-        identityRepository: new LocalFixtureIdentityRepository(),
+        identityRepository: new LocalFixtureIdentityRepository(buildExpectedIssuer(parsed.data)),
         operationsRepository: new LocalFixtureClinicOperationsRepository(),
         auditSink: new InMemoryAuditSink()
       }
@@ -2073,7 +2073,10 @@ async function resolveAccessContext(input: {
     acceptedAudiences: [input.acceptedAudience, input.config.auth.keycloakClientId, "clinicos-api"],
     acceptedClientIds: [input.acceptedAudience, input.config.auth.keycloakClientId]
   });
-  const snapshot = await input.identityRepository.findAccessByKeycloakSubject(principal.subject);
+  const snapshot = await input.identityRepository.findAccessByKeycloakIdentity({
+    issuer: principal.issuer,
+    subject: principal.subject
+  });
 
   if (!snapshot) {
     throw new ApiError(
