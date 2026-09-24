@@ -105,7 +105,13 @@ Candidate `8b961cab` then completed the provider round trip and correctly denied
 an unregistered identity. Its next test stopped because Keycloak legitimately
 remembers the account on `prompt=login` and shows only a password field. The runner
 now verifies that displayed account before submitting its password, while retaining
-fresh authentication. Full sign-in acceptance remains pending.
+fresh authentication. Candidate `e32d89f3` proved MFA denial and successful real PKCE/TOTP sign-in,
+cookie-only clinic access, Today, patient search/profile, import controls, mobile
+layout and cross-tenant denial. The next stop was a test expecting 400 instead of
+the API's canonical 422 validation response; the assertion is corrected. Refresh
+acceptance now waits past both the original token lifetime and the API's clock
+allowance, so continued access requires actual refresh. Logout, recovery and idle
+expiry remain pending until the complete replacement run passes.
 
 Review also found a shutdown race between in-flight audit delivery/final lease
 withdrawal and adapter closure. The worker now drains its own audit loop before

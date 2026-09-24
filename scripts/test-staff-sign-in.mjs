@@ -431,14 +431,16 @@ try {
       "Idempotency-Key": randomUUID()
     }
   });
-  assert.equal(admitted.status(), 400);
+  assert.equal(admitted.status(), 422);
   assert.equal((await admitted.json()).error.code, "VALIDATION_ERROR");
   assert.equal((await context.request.get(`${webOrigin}/v1/me`)).status(), 404);
   mark("CSRF rejection and authenticated API validation");
   stage = "real refresh";
-  await delay(35_000);
+  // Beyond the realm's 60s access lifetime AND the API's 30s clock allowance.
+  // Continued access now requires a real refresh, not just reuse of the first token.
+  await delay(95_000);
   assert.equal((await context.request.get(`${webOrigin}/bff/v1/me`)).status(), 200);
-  mark("rotating Keycloak refresh");
+  mark("Keycloak refresh beyond the original access-token expiry");
   stage = "logout and revoked-cookie rejection";
   const logout = await context.request.post(`${webOrigin}/auth/logout`, {
     data: {},
