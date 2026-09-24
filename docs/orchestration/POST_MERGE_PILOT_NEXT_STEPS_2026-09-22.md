@@ -54,6 +54,11 @@ exact tested head. The next scoped identity change is the
 [issuer-bound database/API lookup](../../infra/runbooks/issuer-bound-identity-bootstrap.md);
 it does not itself complete authority revisions, audit dispatch or browser login.
 
+The follow-up [authority and audit slice](../../infra/runbooks/session-authority-security-audit.md)
+implements durable authority generations, current lookup, a global audit sink and
+optional worker delivery. Full BFF composition, JML/bearer revocation wiring and
+activation remain pending; no provider or clinic gate is closed by these adapters.
+
 1. **Authoritative identity and audit composition.** Bind verified issuer plus
    subject to current tenant/user/membership/clinic/role state and a stable
    authority revision. The existing subject-only repository must not become a

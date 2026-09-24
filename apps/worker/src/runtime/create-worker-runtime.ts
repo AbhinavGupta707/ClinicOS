@@ -32,12 +32,14 @@ export interface WorkerRuntimeOptions {
   readonly outboxPollIntervalMs: number;
   readonly outboxMaxAttempts: number;
   readonly providerReconciliation?: WorkerBackgroundRuntimePort;
+  readonly identitySecurityAudit?: WorkerBackgroundRuntimePort;
 }
 
 export interface WorkerRuntime {
   readonly processor: OutboxProcessor;
   readonly healthRegistry: ReturnType<typeof createWorkerHealthRegistry>;
   readonly providerReconciliation?: WorkerBackgroundRuntimePort;
+  readonly identitySecurityAudit?: WorkerBackgroundRuntimePort;
   start(signal?: AbortSignal): Promise<void>;
 }
 
@@ -63,6 +65,9 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): WorkerRuntim
     ...(options.temporalClient ? { temporalClient: options.temporalClient } : {}),
     ...(options.observability ? { observability: options.observability } : {}),
     ...(options.backpressure ? { backpressure: options.backpressure } : {}),
+    ...(options.identitySecurityAudit
+      ? { identitySecurityAudit: options.identitySecurityAudit }
+      : {}),
     ...(options.providerReconciliation
       ? { providerReconciliation: options.providerReconciliation }
       : {})
@@ -71,12 +76,16 @@ export function createWorkerRuntime(options: WorkerRuntimeOptions): WorkerRuntim
   return {
     processor,
     healthRegistry,
+    ...(options.identitySecurityAudit
+      ? { identitySecurityAudit: options.identitySecurityAudit }
+      : {}),
     ...(options.providerReconciliation
       ? { providerReconciliation: options.providerReconciliation }
       : {}),
     start: async (signal) => {
       await Promise.all([
         processor.start(signal),
+        ...(options.identitySecurityAudit ? [options.identitySecurityAudit.start(signal)] : []),
         ...(options.providerReconciliation ? [options.providerReconciliation.start(signal)] : [])
       ]);
     }

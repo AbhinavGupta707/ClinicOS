@@ -47,17 +47,18 @@ is:
    `deduplication_key`;
 3. on an existing key, require the stored canonical payload digest to match or page security;
 4. commit the database transaction;
-5. only then call `acknowledgePendingAudit(deduplicationKey)`;
+5. only then call `acknowledgePendingAudit(scannedItem)`; exact-value compare-and-delete
+   protects replacement evidence from stale workers;
 6. retry after crashes. Delivery is at-least-once and the database key makes it exactly-once at the
    authoritative sink.
 
 The current tenant-required `audit_events` table cannot safely receive login/pre-membership events
-because it requires a tenant. Before composition, the master-owned canonical migration must create
+because it requires a tenant. Migration 0025 now creates
 `identity_security_audit_events` as the global append-only partition with this exact logical
 contract (PostgreSQL types may use the repository's equivalent bounded domains):
 
 - `id uuid primary key default gen_random_uuid()` and `deduplication_key varchar(384) not null
-unique`;
+unique` (the stored key is a domain-separated SHA-256 of the raw producer key);
 - `payload_digest char(64) not null` constrained to lowercase SHA-256 hex, `schema_version smallint
 not null check (schema_version = 1)`, and `canonical_payload jsonb not null`;
 - bounded `action`, `subject`, `reason_code`, nullable `issuer` and `authorized_party`, with action-
@@ -71,6 +72,10 @@ occurred_at desc)`; the existing immutable-evidence trigger (or an equivalent tr
   update/delete;
 - an insert/select-only dispatcher role: revoke update/delete/truncate, permit no generic runtime
   role write, and include this partition in the immutable security export/retention path.
+
+The implemented resolver, sink, dispatcher and worker binding are documented in
+[the current authority/audit runbook](session-authority-security-audit.md). Full
+BFF composition and the live gates below remain pending.
 
 The dispatcher transaction computes SHA-256 over canonical JSON, inserts with `ON CONFLICT
 (deduplication_key) DO NOTHING`, then selects the stored digest under the same transaction. A digest

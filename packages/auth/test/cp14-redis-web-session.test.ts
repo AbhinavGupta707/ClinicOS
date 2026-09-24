@@ -235,7 +235,7 @@ test("Redis revocation is replay-safe and required audits remain pending until d
   const page = await store.scanPendingAudits();
   assert.equal(page.items.length, 3);
   assert.equal(new Set(page.items.map((item) => item.deduplicationKey)).size, 3);
-  assert.equal(await store.acknowledgePendingAudit(page.items[0]!.deduplicationKey), true);
+  assert.equal(await store.acknowledgePendingAudit(page.items[0]!), "acknowledged");
   assert.equal((await store.scanPendingAudits()).items.length, 2);
 });
 
@@ -468,7 +468,19 @@ class HashRedisDouble implements RedisScriptClient {
       const values = [...this.hash.entries()].filter(([field]) => field.includes(":audit-field:"));
       return ["0", values.flat()];
     }
-    if (marker?.includes(":ack-audit")) return this.hash.delete(a[0]!) ? 1 : 0;
+    if (marker?.includes(":ack-audit")) {
+      const current = this.hash.get(a[0]!);
+      if (current === undefined) return "missing";
+      if (current !== a[1]) return "changed";
+      this.hash.delete(a[0]!);
+      return "acknowledged";
+    }
+    if (marker?.includes(":persist-audit")) {
+      const current = this.hash.get(a[0]!);
+      if (current !== undefined) return current === a[1] ? "retained" : "conflict";
+      this.hash.set(a[0]!, a[1]!);
+      return "retained";
+    }
     if (marker?.includes(":purge-expired")) {
       let deleted = 0;
       for (const [field, raw] of [...this.hash.entries()]) {
@@ -561,3 +573,39 @@ function audit(suffix: string): RequiredSecurityAuditIntent {
 function plus(milliseconds: number): Date {
   return new Date(baseNow.getTime() + milliseconds);
 }
+
+test("standalone audits reject replacement and stale acknowledgements cannot erase new evidence", async () => {
+  const redis = new HashRedisDouble();
+  const store = makeStore(redis);
+  const outbox = store.requiredAuditOutbox();
+  await outbox.persistRequired(audit("standalone"));
+  await outbox.persistRequired(audit("standalone"));
+  const first = (await store.scanPendingAudits()).items[0]!;
+  await assert.rejects(
+    outbox.persistRequired({ ...audit("standalone"), reasonCode: "changed_reason" })
+  );
+  const replacement = JSON.parse(first.serializedRecord);
+  replacement.intent.reasonCode = "changed_reason";
+  redis.hash.set(first.field, JSON.stringify(replacement));
+  assert.equal(await store.acknowledgePendingAudit(first), "changed");
+  assert.equal((await store.scanPendingAudits()).items.length, 1);
+  const current = (await store.scanPendingAudits()).items[0]!;
+  assert.equal(await store.acknowledgePendingAudit(current), "acknowledged");
+  assert.equal(await store.acknowledgePendingAudit(current), "missing");
+});
+
+test(
+  "stalled Redis audit commands have a bounded sanitized failure",
+  { timeout: 2000 },
+  async () => {
+    const redis = new HashRedisDouble();
+    redis.eval = async () => new Promise(() => {});
+    const store = new RedisWebSessionStore({
+      client: redis,
+      keyHmacSecret: Buffer.alloc(32, 9),
+      now: () => baseNow,
+      commandTimeoutMs: 100
+    });
+    await assert.rejects(store.scanPendingAudits(), RedisWebSessionStoreError);
+  }
+);

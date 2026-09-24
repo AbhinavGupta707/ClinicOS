@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
+import { testCurrentSessionAuthority } from "./test-session-authority.mjs";
 import { testIssuerBoundIdentityBootstrap } from "./test-identity-bootstrap.mjs";
 import {
   CHECKPOINT1_SEED_IDS,
@@ -73,6 +74,7 @@ try {
     null
   );
   await testIssuerBoundIdentityBootstrap(pool);
+  await testCurrentSessionAuthority(pool);
 
   const noContext = await pool.query(
     `select

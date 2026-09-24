@@ -21,6 +21,7 @@ export interface WorkerHealthOptions {
   readonly providerAdapters?: readonly ExternalAdapter[];
   readonly observability?: ObservabilityRuntime;
   readonly backpressure?: WorkerBackpressurePort;
+  readonly identitySecurityAudit?: Pick<WorkerBackgroundRuntimePort, "healthCheck">;
   readonly providerReconciliation?: Pick<WorkerBackgroundRuntimePort, "healthCheck">;
 }
 
@@ -44,6 +45,12 @@ export function createWorkerHealthRegistry(options: WorkerHealthOptions): Health
         const decision = await options.backpressure!.observe();
         return createHealthCheckResult("backpressure", decision.state);
       }
+    });
+  }
+  if (options.identitySecurityAudit) {
+    registry.register({
+      name: "identity_security_audit_dispatcher",
+      check: () => options.identitySecurityAudit!.healthCheck()
     });
   }
   if (options.providerReconciliation) {

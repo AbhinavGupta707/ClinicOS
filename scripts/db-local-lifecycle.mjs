@@ -229,6 +229,12 @@ async function grantRuntimePrivileges() {
     );
     await client.query("revoke all on table provider_callback_routes from clinic_os_worker");
     await client.query(
+      "revoke all on table identity_security_audit_events from clinic_os_runtime, clinic_os_worker"
+    );
+    await client.query(
+      "grant select, insert on table identity_security_audit_events to clinic_os_worker"
+    );
+    await client.query(
       "revoke update, delete, truncate on table outbox_events from clinic_os_runtime"
     );
   } finally {

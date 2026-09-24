@@ -16,3 +16,5 @@ export * from "./outbox/types.js";
 export * from "./postgres/postgres-outbox-repository.js";
 export * from "./runtime/config.js";
 export * from "./runtime/create-worker-runtime.js";
+
+export * from "./identity/security-audit-runtime.js";

@@ -665,6 +665,9 @@ export class LocalFixtureIdentityRepository implements IdentityRepository {
     const userId = CHECKPOINT1_SEED_IDS.users[seedUser.key];
 
     return {
+      authorityRevision: createHash("sha256")
+        .update(JSON.stringify(["synthetic-fixture-v1", identity, userId, seedUser.roleSlug]))
+        .digest("hex"),
       tenant,
       clinics: [clinic],
       user: {

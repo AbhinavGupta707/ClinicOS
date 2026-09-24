@@ -278,6 +278,8 @@ export interface RedisSecurityAuditOutboxPage {
     field: string;
     deduplicationKey: string;
     intent: RequiredSecurityAuditIntent;
+    /** Opaque compare-and-delete receipt; never include it in diagnostics. */
+    serializedRecord: string;
   }[];
 }
 
@@ -286,6 +288,7 @@ export interface RedisWebSessionStoreOptions extends RedisRuntimeClientOptions {
   keyPrefix?: string;
   maximumTtlMs?: number;
   pollIntervalMs?: number;
+  commandTimeoutMs?: number;
   now: () => Date;
   sleep?: (milliseconds: number) => Promise<void>;
 }
@@ -314,12 +317,20 @@ export class RedisWebSessionStore implements WebSessionStore {
   readonly #keys: OpaqueRedisKeyspace;
   readonly #maximumTtlMs: number;
   readonly #pollIntervalMs: number;
+  readonly #commandTimeoutMs: number;
   readonly #now: () => Date;
   readonly #sleep: (milliseconds: number) => Promise<void>;
 
   constructor(options: RedisWebSessionStoreOptions) {
     if (typeof options.now !== "function") throw invalidInput();
     this.#redis = new RedisRuntimeDependency(options);
+    this.#commandTimeoutMs = options.commandTimeoutMs ?? 3_000;
+    if (
+      !Number.isSafeInteger(this.#commandTimeoutMs) ||
+      this.#commandTimeoutMs < 100 ||
+      this.#commandTimeoutMs > 10_000
+    )
+      throw invalidInput();
     this.#keys = new OpaqueRedisKeyspace({
       prefix: options.keyPrefix ?? "clinicos:web-session:v1",
       hmacKey: options.keyHmacSecret
@@ -350,9 +361,10 @@ export class RedisWebSessionStore implements WebSessionStore {
 
   async readiness(): Promise<void> {
     try {
-      await this.#redis.ping();
-      const result = await this.#redis.evaluate(
-        `-- clinicos:cp14:web-session:readiness
+      await this.#bounded(() => this.#redis.ping());
+      const result = await this.#bounded(() =>
+        this.#redis.evaluate(
+          `-- clinicos:cp14:web-session:readiness
 local kind = redis.call('TYPE', KEYS[1])
 if type(kind) == 'table' then kind = kind['ok'] end
 if kind ~= 'none' and kind ~= 'hash' then return 'invalid' end
@@ -360,8 +372,9 @@ local write = redis.call('SET', KEYS[2], ARGV[1], 'PX', 5000)
 if type(write) == 'table' then write = write['ok'] end
 if write ~= 'OK' then return 'invalid' end
 return 'ready'`,
-        [this.stateAndAuditHashKey, this.#keys.singleton("readiness")],
-        [String(trustedInstant(this.#now()).getTime())]
+          [this.stateAndAuditHashKey, this.#keys.singleton("readiness")],
+          [String(trustedInstant(this.#now()).getTime())]
+        )
       );
       if (result !== "ready") throw new Error("invalid readiness response");
     } catch {
@@ -370,7 +383,30 @@ return 'ready'`,
   }
 
   async close(): Promise<void> {
-    await this.#redis.close();
+    await this.#bounded(() => this.#redis.close());
+  }
+
+  /** Standalone denial evidence; session mutations continue using their atomic state/outbox commands. */
+  requiredAuditOutbox() {
+    return {
+      atomicity: "durable_transactional_outbox" as const,
+      persistRequired: async (intent: RequiredSecurityAuditIntent): Promise<void> => {
+        const record = auditRecord(intent);
+        const raw = JSON.stringify(record);
+        const result = await this.#eval(
+          `-- clinicos:cp14:web-session:persist-audit
+local old = redis.call('HGET', KEYS[1], ARGV[1])
+if old then
+  if old == ARGV[2] then return 'retained' end
+  return 'conflict'
+end
+redis.call('HSET', KEYS[1], ARGV[1], ARGV[2])
+return 'retained'`,
+          [this.#auditField(record.deduplicationKey), raw]
+        );
+        if (result !== "retained") throw corruptResponse();
+      }
+    };
   }
 
   async create(
@@ -717,21 +753,37 @@ return 'ready'`,
       const raw = pairs[index + 1];
       if (typeof field !== "string" || typeof raw !== "string") throw corruptResponse();
       const record = parseAuditRecord(raw);
-      items.push({ field, deduplicationKey: record.deduplicationKey, intent: record.intent });
+      if (field !== this.#auditField(record.deduplicationKey)) throw corruptResponse();
+      items.push({
+        field,
+        deduplicationKey: record.deduplicationKey,
+        intent: record.intent,
+        serializedRecord: raw
+      });
     }
     return { nextCursor: result[0], items };
   }
 
   /** Acknowledge only after the authoritative audit sink durably accepts the deduplication key. */
-  async acknowledgePendingAudit(deduplicationKey: string): Promise<boolean> {
-    const intentField = this.#auditField(deduplicationKey);
+  async acknowledgePendingAudit(
+    item: Pick<
+      RedisSecurityAuditOutboxPage["items"][number],
+      "deduplicationKey" | "serializedRecord"
+    >
+  ): Promise<"acknowledged" | "missing" | "changed"> {
+    const intentField = this.#auditField(item.deduplicationKey);
+    if (parseAuditRecord(item.serializedRecord).deduplicationKey !== item.deduplicationKey)
+      throw invalidInput();
     const result = await this.#eval(
-      "-- clinicos:cp14:web-session:ack-audit\nreturn redis.call('HDEL', KEYS[1], ARGV[1])",
-      [intentField]
+      `-- clinicos:cp14:web-session:ack-audit
+local current = redis.call('HGET', KEYS[1], ARGV[1])
+if not current then return 'missing' end
+if current ~= ARGV[2] then return 'changed' end
+redis.call('HDEL', KEYS[1], ARGV[1])
+return 'acknowledged'`,
+      [intentField, item.serializedRecord]
     );
-    const numeric = Number(result);
-    if (numeric === 0) return false;
-    if (numeric === 1) return true;
+    if (result === "acknowledged" || result === "missing" || result === "changed") return result;
     throw corruptResponse();
   }
 
@@ -786,9 +838,25 @@ return {page[1], tostring(#expired)}`,
 
   async #eval(script: string, args: readonly string[]): Promise<unknown> {
     try {
-      return await this.#redis.evaluate(script, [this.stateAndAuditHashKey], args);
+      return await this.#bounded(() =>
+        this.#redis.evaluate(script, [this.stateAndAuditHashKey], args)
+      );
     } catch {
       throw dependencyUnavailable();
+    }
+  }
+
+  async #bounded<T>(operation: () => Promise<T>): Promise<T> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      return await Promise.race([
+        operation(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(dependencyUnavailable()), this.#commandTimeoutMs);
+        })
+      ]);
+    } finally {
+      clearTimeout(timer);
     }
   }
 }
@@ -874,6 +942,7 @@ function auditRecord(intentInput: RequiredSecurityAuditIntent): RedisAuditRecord
 }
 
 function parseAuditRecord(raw: string): RedisAuditRecord {
+  if (typeof raw !== "string" || Buffer.byteLength(raw) > 8_192) throw corruptResponse();
   let value: unknown;
   try {
     value = JSON.parse(raw);

@@ -167,6 +167,8 @@ export type {
 } from "@clinic-os/domain";
 
 export interface IdentityAccessSnapshot {
+  /** Changes on any persisted user/tenant authority mutation, including revoke/regrant. */
+  authorityRevision: string;
   tenant: Tenant;
   user: ClinicUser;
   memberships: TenantMembership[];
