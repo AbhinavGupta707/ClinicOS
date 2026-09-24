@@ -9,7 +9,8 @@ const env = {
   DATABASE_URL: "postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os",
   REDIS_URL: "redis://127.0.0.1:6379",
   TEMPORAL_ADDRESS: "127.0.0.1:7233",
-  KEYCLOAK_BASE_URL: "http://127.0.0.1:8080",
+  // Match the exact issuer registered by db:seed:local; loopback aliases are different issuers.
+  KEYCLOAK_BASE_URL: "http://localhost:8080",
   KEYCLOAK_REALM: "clinic-os-local",
   KEYCLOAK_CLIENT_ID: "clinic-os-web",
   S3_REGION: "ap-south-1",

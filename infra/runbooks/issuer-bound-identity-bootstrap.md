@@ -58,6 +58,12 @@ Current verification runs database changes on disposable synthetic CI services.
   migration rollback; real API/Postgres browser acceptance exercises import,
   Today and patient handoff against the migrated schema.
 
+Synthetic API/readiness/browser runners must use the exact issuer seeded by
+`db:seed:local`: `http://localhost:8080/realms/clinic-os-local`. A loopback alias
+such as `127.0.0.1`, or a dummy port, is a different issuer and must be denied.
+The browser runner's local auth fixture issues synthetic claims without making
+OIDC calls; using the correct issuer does not enable live authentication.
+
 This is the identity lookup foundation. It does not supply a stable membership
 authority revision, global pre-membership audit sink/dispatcher, web BFF routes,
 complete browser login or live-clinic approval. Global identity administration
