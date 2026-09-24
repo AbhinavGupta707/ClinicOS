@@ -12,3 +12,6 @@ export * from "./security-audit.ts";
 export * from "./security-audit-dispatcher.ts";
 export * from "./postgres-security-audit-sink.ts";
 export * from "./web-session.ts";
+export * from "./redis-token-revocation.ts";
+export * from "./staff-identity-configuration.ts";
+export * from "./audit-delivery-health.ts";

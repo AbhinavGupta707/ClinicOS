@@ -169,6 +169,8 @@ export type {
 export interface IdentityAccessSnapshot {
   /** Changes on any persisted user/tenant authority mutation, including revoke/regrant. */
   authorityRevision: string;
+  /** Tokens must originate from an interactive authentication after this cutoff. */
+  authenticationValidAfter: string;
   tenant: Tenant;
   user: ClinicUser;
   memberships: TenantMembership[];

@@ -22,6 +22,7 @@ import {
   type WebSessionRefreshClaimResult,
   type WebSessionRefreshWaitResult,
   type WebSessionRevocationReason,
+  type WebSessionRevocationRecorder,
   type WebSessionRotateResult,
   type WebSessionStoredEntry,
   type WebSessionStore
@@ -1401,10 +1402,14 @@ class TestMobileVault implements MobileTokenVault {
 function createWebSessionManager(
   store: WebSessionStore,
   expectedIssuer = "https://identity.example/realms/clinic-os",
-  productionLike = false
+  productionLike = false,
+  revocations?: WebSessionRevocationRecorder,
+  providerRevoker?: ConstructorParameters<typeof WebSessionManager>[0]["providerRevoker"]
 ): WebSessionManager {
   return new WebSessionManager({
     store,
+    revocations,
+    providerRevoker,
     policy: {
       productionLike,
       expectedIssuer,
@@ -1516,3 +1521,68 @@ function sequence(prefix: string): () => string {
   let value = 0;
   return () => `${prefix}-${++value}`;
 }
+
+
+test("API revocation is confirmed before cookie-family logout; uncertainty cannot report success", async () => {
+  const store = new TestWebSessionStore();
+  const reasons: string[] = [];
+  let fail = true;
+  const manager = createWebSessionManager(store, undefined, false, {
+    async record(input) {
+      reasons.push(input.reason);
+      assert.equal(input.keycloakSessionId, "keycloak-session-001");
+      if (fail) throw new Error("Redis uncertainty");
+    }
+  });
+  const session = await createWebSession(manager, "subject-00001", tokenSet(now));
+  await assert.rejects(manager.revoke(session, "logout", now), /Redis uncertainty/);
+  assert.equal((await manager.inspect(session, activeAuthority("authority-revision-1"), now)).subject, "subject-00001");
+  fail = false;
+  await manager.revoke(session, "logout", now);
+  await assert.rejects(manager.inspect(session, activeAuthority("authority-revision-1"), now), /unavailable/);
+  assert.deepEqual(reasons, ["logout", "logout"]);
+});
+
+test("authority revocation invokes the same API marker boundary", async () => {
+  const reasons: string[] = [];
+  const manager = createWebSessionManager(new TestWebSessionStore(), undefined, false, {
+    async record(input) { reasons.push(input.reason); }
+  });
+  const session = await createWebSession(manager, "subject-00001", tokenSet(now));
+  await assert.rejects(manager.inspect(session, activeAuthority("authority-revision-2"), now));
+  assert.deepEqual(reasons, ["authority_changed"]);
+});
+
+test("a provider refresh cannot downgrade an established MFA session", async () => {
+  const manager = createWebSessionManager(new TestWebSessionStore());
+  const sessionId = await createWebSession(manager, "subject-mfa-0001", {
+    ...tokenSet(now), accessExpiresAt: new Date(now.getTime() + 30_000)
+  });
+  let executed = false;
+  await assert.rejects(manager.withAccessToken({ sessionId, authorityResolver: activeAuthority("authority-revision-1"),
+    tokenRefresher: { refresh: async () => ({ ...refreshedTokenSet("subject-mfa-0001", now), amr: ["pwd"], acr: null }) },
+    now: new Date(now.getTime() + 1000), execute: async () => { executed = true; }
+  }), (error) => error instanceof WebSessionError && error.code === "refresh_rejected");
+  assert.equal(executed, false);
+  await assert.rejects(manager.inspect(sessionId, activeAuthority("authority-revision-1"), now));
+});
+
+test("authority invalidation ends provider SSO after durable local revocation, including uncertainty", async () => {
+  for (const unavailable of [false, true]) {
+    const order: string[] = [];
+    let sessionId: string;
+    const manager = createWebSessionManager(new TestWebSessionStore(), undefined, false,
+      { async record() { order.push("marker"); } },
+      { async revoke(input) {
+        order.push("provider");
+        assert.equal(input.subject, "subject-00001");
+        // Even an unavailable provider cannot bring the local family back.
+        await assert.rejects(manager.inspect(sessionId, activeAuthority("authority-revision-1"), now));
+        if (unavailable) throw new Error("provider unavailable");
+      } });
+    sessionId = await createWebSession(manager, "subject-00001", tokenSet(now));
+    await assert.rejects(manager.inspect(sessionId, activeAuthority("authority-revision-2"), now));
+    assert.deepEqual(order, ["marker", "provider"]);
+    await assert.rejects(manager.inspect(sessionId, activeAuthority("authority-revision-1"), now));
+  }
+});

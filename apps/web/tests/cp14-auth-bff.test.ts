@@ -14,6 +14,15 @@ const now = new Date("2026-07-10T12:00:00.000Z");
 const issuer = "https://identity.example/realms/clinic-os";
 
 describe("CP14 same-origin BFF", () => {
+  it("rejects wrong-method login and callback requests before OAuth or session creation", async () => {
+    const runtime = newRuntime({});
+    for (const method of ["POST", "PUT", "DELETE"]) {
+      await expect(runtime.beginLogin(request(method, "/auth/login"), now))
+        .rejects.toMatchObject({ code: "BAD_REQUEST" });
+      await expect(runtime.completeLogin(request(method, "/auth/callback"), now))
+        .rejects.toMatchObject({ code: "BAD_REQUEST" });
+    }
+  });
   it("fails closed without the confidential client secret", () => {
     expect(() => newRuntime({ clientSecret: null })).toThrow(/client secret is missing/);
   });
@@ -461,6 +470,7 @@ function newRuntime(input: {
     },
     transactions: new TestTransactions(),
     sessions,
+    admitIdentity: async () => ({ active: true, authorityRevision: "authority-revision-1" }),
     authorityResolver: {
       resolve: async () => ({ active: true, authorityRevision: "authority-revision-1" })
     },

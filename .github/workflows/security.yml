@@ -135,6 +135,10 @@ jobs:
         if: matrix.service == 'media-scanner'
         run: infra/images/media-scanner/test-runtime.sh clinicos-media-scanner:${{ github.sha }}
 
+      - name: Exercise packaged web entrypoint and graceful shutdown
+        if: matrix.service == 'web'
+        run: bash infra/images/web/test-runtime.sh clinicos-web:${{ github.sha }}
+
       - name: Verify packaged worker SDK and workflow bundle
         if: matrix.service == 'worker'
         run: >-
