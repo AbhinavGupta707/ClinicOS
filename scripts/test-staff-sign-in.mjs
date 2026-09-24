@@ -530,12 +530,17 @@ try {
   await page.locator("#otp").fill(totp(otpSecret));
   await page.locator("#kc-login").click();
   await page.waitForURL(`${webOrigin}/`);
-  await page.getByText("Clinic session active", { exact: true }).waitFor();
+  // The session badge is intentionally hidden on mobile; require loaded clinic data.
+  await page.getByTestId("cp13-front-office-day").waitFor();
+  await page.getByRole("button", { name: "Sign out", exact: true }).click({ trial: true });
+  stage = "graceful audit worker stop";
   await terminate(worker);
   assert.equal(worker.exitCode, 0, "Audit worker must drain and shut down gracefully.");
+  stage = "audit outage blocks clinic requests";
   await delay(11_000);
   assert.equal((await fetch(`${webOrigin}/auth/health`)).status, 503);
   assert.equal((await context.request.get(`${webOrigin}/bff/v1/me`)).status(), 503);
+  stage = "UI logout while audit delivery is paused";
   // Real UI sign-out still records revocation and durable audits when delivery is paused.
   await page.getByRole("button", { name: "Sign out", exact: true }).click();
   await page.getByText("Your ClinicOS session is closed.", { exact: true }).waitFor();
@@ -543,6 +548,7 @@ try {
   assert.equal(await page.getByText("Clinic session active", { exact: true }).count(), 0);
   assert.equal((await context.request.get(`${webOrigin}/auth/session`)).status(), 401);
   mark("sign-out during audit delivery outage keeps clinic content closed");
+  stage = "audit delivery recovery";
   const recoveredWorker = launch("worker-recovery", ["apps/worker/dist/main.js"], root, {
     ...common,
     WORKER_DATABASE_URL: "postgresql://clinic_os_worker:clinic_os_worker@127.0.0.1:5432/clinic_os",

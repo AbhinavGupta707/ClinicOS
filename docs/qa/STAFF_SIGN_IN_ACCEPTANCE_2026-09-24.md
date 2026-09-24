@@ -1,7 +1,8 @@
 # Staff sign-in acceptance — 24 September 2026
 
-Status: implementation under verification. This document does not approve a live
-clinic deployment. The current slice composes the identity foundations merged in
+Status: implementation and acceptance record for [PR #5](https://github.com/AbhinavGupta707/ClinicOS/pull/5).
+The PR records the latest reviewed commit and CI outcome; candidate history below
+does not replace exact-head checks. This document does not approve a live clinic deployment. The current slice composes the identity foundations merged in
 PRs #3 and #4 on `mac-latest-20260829`.
 
 ## Supported boundary
@@ -110,8 +111,12 @@ cookie-only clinic access, Today, patient search/profile, import controls, mobil
 layout and cross-tenant denial. The next stop was a test expecting 400 instead of
 the API's canonical 422 validation response; the assertion is corrected. Refresh
 acceptance now waits past both the original token lifetime and the API's clock
-allowance, so continued access requires actual refresh. Logout, recovery and idle
-expiry remain pending until the complete replacement run passes.
+allowance, so continued access requires actual refresh. Candidate `cbbd87ba` additionally proved refresh, provider logout, old-cookie
+rejection, re-login, authority revoke/regrant denial and global PostgreSQL audit
+delivery. Its outage setup then waited for a desktop-only status badge at a mobile
+viewport. The trial now waits for the loaded Today surface and a reachable Sign out
+control. Recovery and idle expiry were still pending at that candidate; the final
+full run is the acceptance gate.
 
 Review also found a shutdown race between in-flight audit delivery/final lease
 withdrawal and adapter closure. The worker now drains its own audit loop before
