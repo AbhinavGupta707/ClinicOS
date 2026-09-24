@@ -375,11 +375,24 @@ try {
   assert.equal(me.status(), 200);
   await page.getByText("Clinic session active", { exact: true }).waitFor();
   await page.getByTestId("cp13-front-office-day").waitFor();
-  await page.screenshot({ path: join(artifacts, "signed-in-desktop.png"), fullPage: true });
+  await page.screenshot({
+    path: join(artifacts, "signed-in-desktop.png"),
+    fullPage: true,
+    animations: "disabled"
+  });
   await page.setViewportSize({ width: 390, height: 844 });
+  await page.getByRole("button", { name: "Open navigation", exact: true }).click();
+  await page.getByRole("button", { name: "Close navigation", exact: true }).click();
+  await page.waitForFunction(
+    () => document.querySelector(".clinic-nav").getBoundingClientRect().right <= 0
+  );
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-  await page.getByRole("button", { name: "Sign out", exact: true }).waitFor();
-  await page.screenshot({ path: join(artifacts, "signed-in-mobile.png"), fullPage: true });
+  await page.getByRole("button", { name: "Sign out", exact: true }).click({ trial: true });
+  await page.screenshot({
+    path: join(artifacts, "signed-in-mobile.png"),
+    fullPage: true,
+    animations: "disabled"
+  });
   mark("real PKCE, TOTP, cookie-only API, desktop and mobile");
   stage = "clinic workflows through the cookie BFF";
   await page.goto(`${webOrigin}/surface/patients`);
