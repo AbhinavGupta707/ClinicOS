@@ -57,6 +57,8 @@ let adminToken;
 let adminExpiresAt = 0;
 let stage = "database provenance";
 const passed = [];
+// Fixed route labels and status codes only: never retain OAuth query strings or form bodies.
+const browserResponses = [];
 const mark = (name) => {
   passed.push(name);
   console.log(`PASS ${name}`);
@@ -269,11 +271,33 @@ try {
   let page = await context.newPage();
   page.setDefaultTimeout(15_000);
   const login = async () => {
+    const loginStage = stage;
+    stage = `${loginStage}: open provider`;
     await page.goto(`${webOrigin}/auth/login`);
+    stage = `${loginStage}: credentials form`;
     await page.locator("#username").fill(username);
     await page.locator("#password").fill(password);
+    stage = `${loginStage}: submit credentials`;
     await page.locator("#kc-login").click();
+    stage = loginStage;
   };
+  const observeResponses = (observedContext) => observedContext.on("response", (response) => {
+    const url = new URL(response.url());
+    let route;
+    if (url.origin === webOrigin && ["/auth/login", "/auth/callback", "/auth/session"].includes(url.pathname)) {
+      route = url.pathname;
+    } else if (url.origin === webOrigin && url.pathname === "/") {
+      const outcome = url.searchParams.get("signIn");
+      route = ["denied", "unavailable"].includes(outcome) ? `sign-in ${outcome}` : "app root";
+    } else if (url.origin === issuerBase && response.request().isNavigationRequest()) {
+      route = "provider navigation";
+    }
+    if (route) {
+      browserResponses.push({ route, status: response.status() });
+      if (browserResponses.length > 40) browserResponses.shift();
+    }
+  });
+  observeResponses(context);
   stage = "unregistered identity denial";
   await database.query("delete from user_identities where issuer=$1 and subject=$2", [
     issuer,
@@ -310,6 +334,7 @@ try {
   await admin(`${realmPath}/users/${userId}/logout`, "POST");
   await context.close();
   context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  observeResponses(context);
   page = await context.newPage();
   page.setDefaultTimeout(15_000);
   await delay(31_000); // Avoid reusing the enrollment OTP.
@@ -476,6 +501,7 @@ try {
   await page.waitForURL(`${webOrigin}/`);
   await page.getByText("Clinic session active", { exact: true }).waitFor();
   await terminate(worker);
+  assert.equal(worker.exitCode, 0, "Audit worker must drain and shut down gracefully.");
   await delay(11_000);
   assert.equal((await fetch(`${webOrigin}/auth/health`)).status, 503);
   assert.equal((await context.request.get(`${webOrigin}/bff/v1/me`)).status(), 503);
@@ -560,6 +586,7 @@ try {
         passed: stage === "complete" && cleanup.every((item) => item.passed),
         stage,
         checks: passed,
+        browserResponses,
         cleanup,
         data: "synthetic disposable CI only; authority cutoffs intentionally advance; stack discarded with runner",
         productionProxy: "not activated",

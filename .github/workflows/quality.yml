@@ -126,21 +126,53 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
-      # The repository and import probes intentionally leave outbox fault evidence.
-      # Give identity acceptance its own clean database; do not weaken worker health.
-      - name: Reinitialize and mark disposable database for identity acceptance
+      - name: Dependency audit
+        run: npm run security:audit
+
+      - name: Secret scan
+        run: npm run security:secrets
+
+  staff-identity:
+    # A separate runner keeps fault-fixture outbox state out of the real sign-in trial.
+    name: real staff identity acceptance
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+
+      - name: Setup Node
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "22.22.2"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build real identity process outputs
+        run: npm run build:shared && npm run build --workspace=@clinic-os/api && npm run build --workspace=@clinic-os/worker
+
+      - name: Bootstrap migrated synthetic database
+        run: npm run db:bootstrap
+
+      - name: Install acceptance browser on the disposable CI runner
+        run: node node_modules/@playwright/test/cli.js install --with-deps chromium
+
+      - name: Mark this CI job's disposable synthetic database
         run: |
-          npm run db:reset:local && npm run db:migrate && npm run db:grant-runtime && npm run db:seed:local && npm run db:verify
           node --input-type=module <<'NODE'
           import assert from 'node:assert/strict';
+          import { randomBytes } from 'node:crypto';
+          import { appendFile } from 'node:fs/promises';
           import { Client } from 'pg';
           assert.equal(process.env.GITHUB_ACTIONS, 'true');
-          const token = process.env.CLINICOS_MVP_DATABASE_TOKEN;
-          assert.match(token, /^[a-f0-9]{32}$/);
+          const token = randomBytes(16).toString('hex');
           const client = new Client({ connectionString: 'postgresql://clinic_os:clinic_os@127.0.0.1:5432/clinic_os' });
           try {
             await client.connect();
             await client.query(`comment on database clinic_os is 'ClinicOS disposable MVP acceptance ${token}'`);
+            await appendFile(process.env.GITHUB_ENV, `CLINICOS_MVP_DATABASE_TOKEN=${token}\n`);
           } finally { await client.end(); }
           NODE
 
@@ -158,9 +190,3 @@ jobs:
           path: artifacts/staff-sign-in
           if-no-files-found: warn
           retention-days: 14
-
-      - name: Dependency audit
-        run: npm run security:audit
-
-      - name: Secret scan
-        run: npm run security:secrets

@@ -17,6 +17,7 @@ import {
 } from "@clinic-os/security";
 import { Cp14BffError, type Cp14BffRequest } from "../lib/cp14-session/bff-contract.ts";
 import { createStaffIdentityRuntime } from "./identity-runtime.mts";
+import { KeycloakOidcClientError } from "../lib/cp14-session/keycloak-oidc-client.ts";
 
 export const PRIVATE_HEADERS = {
   "cache-control": "private, no-store, max-age=0",
@@ -216,6 +217,19 @@ export function createStaffRequestHandler(env: Readonly<Record<string, string | 
                   : 503;
         if (status === 401) response.setHeader("set-cookie", identity.sessions.clearCookie());
         if (path === "/auth/callback") {
+          // Fixed classifications support investigation without logging provider errors,
+          // authorization codes, cookies, claims or callback query strings.
+          console.error(JSON.stringify({
+            event: "identity.callback.failed",
+            requestId,
+            status,
+            reason: error instanceof KeycloakOidcClientError ? error.code
+              : error instanceof AuthenticationError ? "identity_denied"
+              : error instanceof OAuthFlowError ? "transaction_denied"
+              : error instanceof WebSessionError ? "session_denied"
+              : error instanceof BoundaryError ? "boundary_denied"
+              : error instanceof Cp14BffError ? error.code : "dependency_unavailable"
+          }));
           response.statusCode = 303;
           response.setHeader(
             "location",

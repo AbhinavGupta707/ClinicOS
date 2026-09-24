@@ -20,6 +20,7 @@ export class SecurityAuditRuntime {
   readonly #publish?: (healthy: boolean) => Promise<void>;
   #running = false;
   #failed = true;
+  #completion: Promise<void> | undefined;
 
   constructor(input: {
     dispatcher: SecurityAuditDispatchPort;
@@ -46,6 +47,16 @@ export class SecurityAuditRuntime {
   async start(signal?: AbortSignal): Promise<void> {
     if (this.#running) throw new Error("Security audit runtime is already running.");
     this.#running = true;
+    this.#completion = this.#run(signal);
+    await this.#completion;
+  }
+
+  /** After abort, wait for delivery and the final lease update before closing adapters. */
+  async drain(): Promise<void> {
+    await this.#completion;
+  }
+
+  async #run(signal?: AbortSignal): Promise<void> {
     let failures = 0;
     try {
       while (!signal?.aborted) {
@@ -77,8 +88,13 @@ export class SecurityAuditRuntime {
             event: "worker.security_audit.unavailable"
           });
         }
+        if (signal?.aborted) break;
         if (this.#publish) {
-          try { await this.#dispatcher.readiness(); await this.#publish(!this.#failed); }
+          try {
+            await this.#dispatcher.readiness();
+            if (signal?.aborted) break;
+            await this.#publish(!this.#failed);
+          }
           catch { this.#failed = true; await this.#publish(false).catch(() => undefined); }
         }
         try {
@@ -88,9 +104,9 @@ export class SecurityAuditRuntime {
         }
       }
     } finally {
-      this.#running = false;
       this.#failed = true;
       await this.#publish?.(false).catch(() => undefined);
+      this.#running = false;
     }
   }
 

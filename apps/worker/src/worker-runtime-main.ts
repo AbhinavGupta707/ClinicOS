@@ -285,23 +285,39 @@ export async function runWorker(
             server.close((error) => (error ? reject(error) : resolve()));
           })
         : Promise.resolve();
-      const results = await Promise.allSettled([
-        serverClose,
-        repository.close(),
-        activityPool?.end() ?? Promise.resolve(),
-        reconciliationPool?.end() ?? Promise.resolve(),
-        observability.shutdown(),
-        staffAuditStore?.close(), staffAuditPool?.end(), staffAuditHealth?.close(), staffRevocations?.close()
-      ]);
-      const rejected = results.filter((result) => result.status === "rejected").length;
-      const telemetryResult = results[4];
-      const telemetryErrors =
-        telemetryResult?.status === "fulfilled" ? telemetryResult.value.errors : [];
-      if (rejected > 0 || telemetryErrors.length > 0) {
-        logger.error("worker shutdown completed with bounded cleanup failures", {
-          event: "worker.shutdown.failed",
-          errorCode: rejected > 0 ? "RESOURCE_CLOSE_FAILED" : telemetryErrors[0]
-        });
+      const shutdownDeadline = setTimeout(() => {
+        logger.error("worker shutdown deadline exceeded", { event: "worker.shutdown.timeout" });
+        process.exit(1);
+      }, 25_000);
+      shutdownDeadline.unref();
+      try {
+        // The aggregate runtime can reject before this independent loop settles.
+        // Keep its Redis/DB adapters alive through delivery and final lease withdrawal.
+        const auditDrain = await Promise.allSettled([identitySecurityAudit?.drain()]);
+        if (auditDrain.some((result) => result.status === "rejected")) {
+          process.exitCode = 1;
+          logger.error("security audit drain failed", { event: "worker.security_audit.drain_failed" });
+        }
+        const results = await Promise.allSettled([
+          serverClose,
+          repository.close(),
+          activityPool?.end() ?? Promise.resolve(),
+          reconciliationPool?.end() ?? Promise.resolve(),
+          observability.shutdown(),
+          staffAuditStore?.close(), staffAuditPool?.end(), staffAuditHealth?.close(), staffRevocations?.close()
+        ]);
+        const rejected = results.filter((result) => result.status === "rejected").length;
+        const telemetryResult = results[4];
+        const telemetryErrors =
+          telemetryResult?.status === "fulfilled" ? telemetryResult.value.errors : [];
+        if (rejected > 0 || telemetryErrors.length > 0) {
+          logger.error("worker shutdown completed with bounded cleanup failures", {
+            event: "worker.shutdown.failed",
+            errorCode: rejected > 0 ? "RESOURCE_CLOSE_FAILED" : telemetryErrors[0]
+          });
+        }
+      } finally {
+        clearTimeout(shutdownDeadline);
       }
     })();
     return stopPromise;

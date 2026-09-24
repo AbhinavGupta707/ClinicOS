@@ -90,7 +90,18 @@ workspace tests/build, and legacy real-stack import acceptance. The new identity
 trial stopped at worker readiness. Previous repository fault fixtures leave old
 outbox rows, so the next candidate reinitializes the job's disposable database
 before identity acceptance and records bounded health-component diagnostics. It
-does not weaken worker health. This is still under verification.
+does not weaken worker health. Candidate `0b6e7725` then passed worker/API/BFF
+readiness and auth-route negatives, but timed out in its first browser sign-in.
+Its security workflow passed all image, SCA and CodeQL jobs. The trial now runs
+on its own disposable runner, independent of the fault-fixture database, and
+records only fixed route/status labels and bounded callback failure classifications.
+Sign-in acceptance remains open.
+
+Review also found a shutdown race between in-flight audit delivery/final lease
+withdrawal and adapter closure. The worker now drains its own audit loop before
+closing adapters, with a bounded process shutdown deadline. The deferred-delivery
+regression and all 60 worker tests pass; real graceful termination is an explicit
+acceptance assertion.
 
 CodeQL reported five new findings on that first candidate. Outbound API transport
 now constructs authority solely from validated server configuration, with tests
