@@ -17,7 +17,9 @@ RUN mvn --batch-mode --no-transfer-progress -N help:effective-pom -Doutput=/out/
     && python3 /build/verify-source-build.py effective /build/source /out
 # Run the selected upstream server reactor's unit tests as part of the build.
 # The external upstream testsuite is separate from this bounded image build.
-RUN mvn --batch-mode --no-transfer-progress -T2 -DskipTestsuite -DskipExamples \
+# Keep the reactor serial: the pinned OpenAPI generator/filter uses JVM-global
+# system properties (keycloak.classes.dir), which are unsafe across parallel mojos.
+RUN mvn --batch-mode --no-transfer-progress -T1 -DskipTestsuite -DskipExamples \
     -pl quarkus/deployment,quarkus/dist -am clean install \
     && mkdir /out/keycloak \
     && tar -xzf quarkus/dist/target/keycloak-26.7.4.tar.gz -C /out/keycloak --strip-components=1 \

@@ -12,6 +12,10 @@ library inventory are checked by `verify-source-build.py`. No compiled JAR is
 overlaid onto an existing distribution, and no vulnerability is suppressed.
 
 The selected upstream server reactor runs its unit tests during compilation.
+It runs with one Maven reactor thread. The pinned OpenAPI generator sets shared
+JVM system properties, including the admin-v2 filter's `keycloak.classes.dir`;
+the parallel reactor intermittently lost that property in CI. Serial execution
+removes that concurrency without skipping schema generation or unit tests.
 This is not the entire upstream integration testsuite. The later `kc.sh build`
 optimizes the distribution for PostgreSQL, health and metrics. CI then verifies
 the assembled ARM64 image, realm import, client credentials and worker claims,
