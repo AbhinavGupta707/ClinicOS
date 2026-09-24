@@ -10,6 +10,14 @@ spec.loader.exec_module(gate)
 
 
 class DependencyGateTests(unittest.TestCase):
+    def test_reactor_keeps_shared_openapi_properties_serial_and_tests_enabled(self):
+        dockerfile = pathlib.Path(__file__).with_name("Dockerfile").read_text()
+        reactor = next(line for line in dockerfile.splitlines()
+                       if line.startswith("RUN mvn") and "-DskipTestsuite" in line)
+        self.assertIn(" -T1 ", reactor)
+        self.assertNotIn("-DskipTests ", reactor)
+        self.assertNotIn("-Dmaven.test.skip", reactor)
+
     def check(self, netty="4.1.137.Final", bc="1.85", omit=None):
         entries = [("io.netty", "netty-handler", netty),
                    ("io.netty", "netty-codec-http2", netty),

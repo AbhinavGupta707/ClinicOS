@@ -153,7 +153,9 @@ import {
   normalizeClinicalNoteContent,
   normalizePhone,
   toDentalFindingSnapshotFinding,
-  systemClock
+  systemClock,
+  CLINIC_ROLE_SLUGS,
+  permissionsForRoles
 } from "@clinic-os/domain";
 import { buildSetLocalIdentityRlsStatements, buildSetLocalRlsStatements } from "./rls.ts";
 import {
@@ -411,6 +413,8 @@ export class PostgresIdentityRepository implements IdentityRepository {
           tenants.legal_name as tenant_legal_name,
           tenants.display_name as tenant_display_name,
           tenants.status as tenant_status,
+          tenants.authority_generation as tenant_authority_generation,
+          users.authority_generation as user_authority_generation,
           users.id as user_id,
           users.display_name as user_display_name,
           users.email as user_email,
@@ -424,6 +428,8 @@ export class PostgresIdentityRepository implements IdentityRepository {
           clinics.timezone as clinic_timezone,
           clinic_user_assignments.status as clinic_assignment_status,
           roles.slug as role_slug,
+          array(select permission_key from role_permissions
+                where role_id = roles.id order by permission_key) as role_permissions,
           user_role_assignments.clinic_id as role_clinic_id
         from user_identities
         join users on users.id = user_identities.user_id
@@ -459,6 +465,12 @@ export class PostgresIdentityRepository implements IdentityRepository {
       if (result.rows.length === 0) return null;
 
       const first = result.rows[0];
+      if (
+        !UUID_PATTERN.test(first.tenant_authority_generation) ||
+        !UUID_PATTERN.test(first.user_authority_generation)
+      ) {
+        throw new Error("Current identity authority generation is unavailable.");
+      }
       const tenant: Tenant = {
         id: first.tenant_id,
         slug: first.tenant_slug,
@@ -495,6 +507,15 @@ export class PostgresIdentityRepository implements IdentityRepository {
         });
 
         if (row.role_slug) {
+          // The product currently has fixed, code-defined role grants. Do not silently
+          // ignore a database permission edit and reissue the previous authority.
+          if (
+            !CLINIC_ROLE_SLUGS.includes(row.role_slug) ||
+            JSON.stringify([...row.role_permissions].sort()) !==
+              JSON.stringify([...permissionsForRoles([row.role_slug])].sort())
+          ) {
+            throw new Error("Installed role permissions differ from application authority.");
+          }
           roleAssignments.push({
             tenantId: row.tenant_id,
             clinicId: row.role_clinic_id,
@@ -505,6 +526,19 @@ export class PostgresIdentityRepository implements IdentityRepository {
       }
 
       return {
+        authorityRevision: createHash("sha256")
+          .update(
+            JSON.stringify([
+              "database-authority-v1",
+              identity.issuer,
+              identity.subject,
+              tenant.id,
+              user.id,
+              first.tenant_authority_generation,
+              first.user_authority_generation
+            ])
+          )
+          .digest("hex"),
         tenant,
         user,
         memberships: [
@@ -13286,6 +13320,8 @@ class TransactionBoundSqlClient implements SqlConnectionFactory {
 }
 
 interface IdentityAccessRow {
+  tenant_authority_generation: string;
+  user_authority_generation: string;
   tenant_id: UUID;
   tenant_slug: string;
   tenant_legal_name: string;
@@ -13304,6 +13340,7 @@ interface IdentityAccessRow {
   clinic_timezone: string;
   clinic_assignment_status: ClinicAssignment["status"];
   role_slug: RoleAssignment["roleSlug"] | null;
+  role_permissions: string[];
   role_clinic_id: UUID | null;
 }
 

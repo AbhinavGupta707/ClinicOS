@@ -1,4 +1,5 @@
 export * from "./authorization.ts";
+export * from "./current-session-authority.ts";
 export * from "./keycloak.ts";
 export * from "./me.ts";
 export * from "./mobile-token.ts";
@@ -8,4 +9,6 @@ export * from "./redis-runtime.ts";
 export * from "./redis-oauth-transaction-store.ts";
 export * from "./redis-web-session-store.ts";
 export * from "./security-audit.ts";
+export * from "./security-audit-dispatcher.ts";
+export * from "./postgres-security-audit-sink.ts";
 export * from "./web-session.ts";

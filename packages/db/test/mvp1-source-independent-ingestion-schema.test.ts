@@ -10,7 +10,7 @@ const migration = readFileSync(
 const postgresRepository = readFileSync(new URL("../src/postgres.ts", import.meta.url), "utf8");
 
 test("MVP1 schema enables patient, practitioner, and appointment ingestion", () => {
-  assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "024");
+  assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "025");
   for (const table of ["migration_batches", "migration_rows", "imported_record_links"]) {
     assert.match(
       migration,

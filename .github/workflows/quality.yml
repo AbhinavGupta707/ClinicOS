@@ -47,6 +47,12 @@ jobs:
           CLINICOS_OAUTH_REDIS_TEST_URL: redis://127.0.0.1:6379
         run: node --test packages/auth/test/redis-oauth.integration.mts
 
+      - name: Global security audit delivery against real Redis and PostgreSQL
+        env:
+          CLINICOS_SECURITY_AUDIT_TEST_ENABLED: "true"
+          PILOT_SYNTHETIC_DATA_ONLY: "true"
+        run: node --test packages/auth/test/security-audit.integration.mts
+
       - name: Durable Temporal workflow recovery and replay
         env:
           DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
