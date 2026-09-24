@@ -275,7 +275,14 @@ try {
     stage = `${loginStage}: open provider`;
     await page.goto(`${webOrigin}/auth/login`);
     stage = `${loginStage}: credentials form`;
-    await page.locator("#username").fill(username);
+    assert.equal(new URL(page.url()).origin, issuerBase);
+    await page.locator("#password").waitFor();
+    if (await page.locator("#username").count()) {
+      await page.locator("#username").fill(username);
+    } else {
+      // Keycloak prompt=login may remember the account but still require its password.
+      assert.equal((await page.locator("#kc-attempted-username").textContent()).trim(), username);
+    }
     await page.locator("#password").fill(password);
     stage = `${loginStage}: submit credentials`;
     await page.locator("#kc-login").click();
@@ -331,7 +338,7 @@ try {
   await admin(`${realmPath}/users/${userId}`, "PUT", { requiredActions: ["CONFIGURE_TOTP"] });
   await login();
   // Keycloak's official enrollment page exposes the manual seed to the user; keep it in memory only.
-  await page.getByText("Unable to scan?", { exact: false }).click();
+  await page.locator("#mode-manual").click();
   const otpSecret = (await page.locator("#kc-totp-secret-key").textContent()).replace(/\s/g, "");
   assert.match(otpSecret, /^[A-Z2-7]+$/);
   await page.locator("#totp").fill(totp(otpSecret));

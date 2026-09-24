@@ -101,7 +101,11 @@ whole set when Keycloak also published encryption or other-algorithm public keys
 It now selects only the fixed RS256 signing-key class, rejects malformed or
 ambiguous eligible keys, and retains all token signature/issuer/audience checks.
 A mixed-key regression and negative key-use cases cover this compatibility fix.
-The replacement sign-in trial remains pending; no successful sign-in is claimed.
+Candidate `8b961cab` then completed the provider round trip and correctly denied
+an unregistered identity. Its next test stopped because Keycloak legitimately
+remembers the account on `prompt=login` and shows only a password field. The runner
+now verifies that displayed account before submitting its password, while retaining
+fresh authentication. Full sign-in acceptance remains pending.
 
 Review also found a shutdown race between in-flight audit delivery/final lease
 withdrawal and adapter closure. The worker now drains its own audit loop before
