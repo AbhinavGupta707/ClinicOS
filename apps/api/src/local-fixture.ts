@@ -5,6 +5,7 @@ import {
   CHECKPOINT1_SEED_USERS,
   DueGenerationInputError,
   assertStableMigrationExternalReferences,
+  assertVerifiedKeycloakIdentity,
   type AppointmentSearchFilter,
   type AcceptTreatmentPlanInput,
   type AmendClinicalNoteInput,
@@ -68,6 +69,7 @@ import {
   type CreateLabVendorInput,
   type CreateStockLedgerEntryInput,
   type IdentityAccessSnapshot,
+  type VerifiedKeycloakIdentity,
   type IdentityRepository,
   type IncidentSearchFilter,
   type InventoryExceptionFilter,
@@ -643,9 +645,19 @@ const CP6_OWNER_DASHBOARD_FIXTURE: OwnerDashboardProjectionData = {
 };
 
 export class LocalFixtureIdentityRepository implements IdentityRepository {
-  async findAccessByKeycloakSubject(subject: string): Promise<IdentityAccessSnapshot | null> {
+  readonly #issuer: string;
+
+  constructor(issuer = "http://localhost:8080/realms/clinic-os-local") {
+    this.#issuer = issuer;
+  }
+
+  async findAccessByKeycloakIdentity(
+    identity: VerifiedKeycloakIdentity
+  ): Promise<IdentityAccessSnapshot | null> {
+    assertVerifiedKeycloakIdentity(identity);
+    if (identity.issuer !== this.#issuer) return null;
     const seedUser = CHECKPOINT1_SEED_USERS.find(
-      (candidate) => candidate.keycloakSubject === subject
+      (candidate) => candidate.keycloakSubject === identity.subject
     );
 
     if (!seedUser) return null;

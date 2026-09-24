@@ -48,6 +48,12 @@ Neither a provider key nor a passing Keycloak protocol smoke closes that gap.
 
 ## Next implementation sequence
 
+PR #2's durable OAuth adapter is merged at `0eef0f89`. The
+[review record](../qa/PR2_REVIEW_AND_MERGE_2026-09-22.md) binds acceptance to its
+exact tested head. The next scoped identity change is the
+[issuer-bound database/API lookup](../../infra/runbooks/issuer-bound-identity-bootstrap.md);
+it does not itself complete authority revisions, audit dispatch or browser login.
+
 1. **Authoritative identity and audit composition.** Bind verified issuer plus
    subject to current tenant/user/membership/clinic/role state and a stable
    authority revision. The existing subject-only repository must not become a

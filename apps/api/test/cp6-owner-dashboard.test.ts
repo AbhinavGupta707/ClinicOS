@@ -167,14 +167,14 @@ test("CP6 owner dashboard route enforces analytics role and clinic scope", async
 });
 
 async function operationsContext(subject: string): Promise<OperationsRequestContext> {
-  const identityRepository = new LocalFixtureIdentityRepository();
+  const identityRepository = new LocalFixtureIdentityRepository(expectedIssuer);
   const principal = principalFromVerifiedKeycloakClaims(createClaims(subject), {
     expectedIssuer,
     acceptedAudiences: [acceptedAudience],
     acceptedClientIds: [acceptedAudience],
     now: new Date("2026-07-07T08:00:00.000Z")
   });
-  const snapshot = await identityRepository.findAccessByKeycloakSubject(subject);
+  const snapshot = await identityRepository.findAccessByKeycloakIdentity({ issuer: expectedIssuer, subject });
   assert.ok(snapshot);
 
   return {

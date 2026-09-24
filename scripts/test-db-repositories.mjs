@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import { setTimeout as delay } from "node:timers/promises";
 import { Pool } from "pg";
+import { testIssuerBoundIdentityBootstrap } from "./test-identity-bootstrap.mjs";
 import {
   CHECKPOINT1_SEED_IDS,
   PostgresClinicOperationsRepository,
@@ -31,17 +32,24 @@ const tenantBScope = {
   clinicId: tenantB.clinicId,
   actorUserId: tenantB.ownerUserId
 };
+const identityIssuer = "http://localhost:8080/realms/clinic-os-local";
 const fixedClock = { now: () => new Date("2026-07-09T12:00:00.000Z") };
 const pool = new Pool({ connectionString: databaseUrl, max: 3 });
 
 try {
   const identityRepository = new PostgresIdentityRepository(pool);
-  const tenantAIdentity = await identityRepository.findAccessByKeycloakSubject("seed-owner");
-  const tenantBIdentity =
-    await identityRepository.findAccessByKeycloakSubject("seed-isolation-owner");
-  const unknownIdentity = await identityRepository.findAccessByKeycloakSubject(
-    "unknown-synthetic-subject"
-  );
+  const tenantAIdentity = await identityRepository.findAccessByKeycloakIdentity({
+    issuer: identityIssuer,
+    subject: "seed-owner"
+  });
+  const tenantBIdentity = await identityRepository.findAccessByKeycloakIdentity({
+    issuer: identityIssuer,
+    subject: "seed-isolation-owner"
+  });
+  const unknownIdentity = await identityRepository.findAccessByKeycloakIdentity({
+    issuer: identityIssuer,
+    subject: "unknown-synthetic-subject"
+  });
   assert.equal(tenantAIdentity?.tenant.id, tenantA.tenantId);
   assert.deepEqual(
     tenantAIdentity?.clinics.map((clinic) => clinic.id),
@@ -57,10 +65,19 @@ try {
     [tenantB.clinicId]
   );
   assert.equal(unknownIdentity, null);
+  assert.equal(
+    await identityRepository.findAccessByKeycloakIdentity({
+      issuer: "https://unregistered.example/realms/clinic-os",
+      subject: "seed-owner"
+    }),
+    null
+  );
+  await testIssuerBoundIdentityBootstrap(pool);
 
   const noContext = await pool.query(
     `select
        nullif(current_setting('app.identity_subject', true), '') as identity_subject,
+       nullif(current_setting('app.identity_issuer', true), '') as identity_issuer,
        nullif(current_setting('app.tenant_id', true), '') as tenant_id,
        (select count(*)::integer from clinics) as clinics,
        (select count(*)::integer from memberships) as memberships,
@@ -68,6 +85,7 @@ try {
   );
   assert.deepEqual(noContext.rows[0], {
     identity_subject: null,
+    identity_issuer: null,
     tenant_id: null,
     clinics: 0,
     memberships: 0,
@@ -405,11 +423,13 @@ try {
   const postOperationsContext = await pool.query(
     `select
        nullif(current_setting('app.identity_subject', true), '') as identity_subject,
+       nullif(current_setting('app.identity_issuer', true), '') as identity_issuer,
        nullif(current_setting('app.tenant_id', true), '') as tenant_id,
        (select count(*)::integer from patients) as patients`
   );
   assert.deepEqual(postOperationsContext.rows[0], {
     identity_subject: null,
+    identity_issuer: null,
     tenant_id: null,
     patients: 0
   });
@@ -418,6 +438,7 @@ try {
     JSON.stringify(
       {
         identityBootstrapIsolation: "pass",
+        issuerBoundReadOnlyBootstrap: "pass",
         pooledContextReset: "pass",
         repositoryTenantIsolation: "pass",
         domainAuditOutboxCommit: "pass",

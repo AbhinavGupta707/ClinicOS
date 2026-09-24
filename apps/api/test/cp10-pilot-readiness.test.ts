@@ -109,14 +109,14 @@ async function operationsContext(
   subject: string,
   requestId: string
 ): Promise<OperationsRequestContext> {
-  const identityRepository = new LocalFixtureIdentityRepository();
+  const identityRepository = new LocalFixtureIdentityRepository(expectedIssuer);
   const principal = principalFromVerifiedKeycloakClaims(createClaims(subject), {
     acceptedAudiences: [acceptedAudience],
     acceptedClientIds: [acceptedAudience],
     expectedIssuer,
     now: new Date("2026-07-07T08:00:00.000Z")
   });
-  const snapshot = await identityRepository.findAccessByKeycloakSubject(subject);
+  const snapshot = await identityRepository.findAccessByKeycloakIdentity({ issuer: expectedIssuer, subject });
   assert.ok(snapshot);
 
   return {

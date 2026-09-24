@@ -107,7 +107,7 @@ test("CP4 dental charting denies accountant and wrong-tenant chart reads", async
 });
 
 async function operationsContext(subject: string): Promise<OperationsRequestContext> {
-  const identityRepository = new LocalFixtureIdentityRepository();
+  const identityRepository = new LocalFixtureIdentityRepository(expectedIssuer);
   const claims = {
     ...createClaims(subject),
     exp: Math.floor(new Date("2026-07-07T08:00:00.000Z").getTime() / 1000) + 300
@@ -118,7 +118,7 @@ async function operationsContext(subject: string): Promise<OperationsRequestCont
     acceptedClientIds: [acceptedAudience],
     now: new Date("2026-07-07T08:00:00.000Z")
   });
-  const snapshot = await identityRepository.findAccessByKeycloakSubject(subject);
+  const snapshot = await identityRepository.findAccessByKeycloakIdentity({ issuer: expectedIssuer, subject });
   assert.ok(snapshot);
 
   return {

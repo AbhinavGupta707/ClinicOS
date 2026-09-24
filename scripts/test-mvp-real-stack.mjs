@@ -69,7 +69,8 @@ const apiEnv = {
   CLINIC_OS_ENV: "local",
   DATABASE_URL: databaseUrl.href,
   REDIS_URL: redisUrl.href,
-  KEYCLOAK_BASE_URL: "http://127.0.0.1:1",
+  // The fixture issues claims only; it performs no OIDC calls. Match the seeded identity exactly.
+  KEYCLOAK_BASE_URL: "http://localhost:8080",
   KEYCLOAK_REALM: "clinic-os-local",
   KEYCLOAK_CLIENT_ID: "clinic-os-web",
   TEMPORAL_ADDRESS: "127.0.0.1:1",

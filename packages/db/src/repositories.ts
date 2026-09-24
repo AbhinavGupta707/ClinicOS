@@ -176,7 +176,15 @@ export interface IdentityAccessSnapshot {
 }
 
 export interface IdentityRepository {
-  findAccessByKeycloakSubject(subject: string): Promise<IdentityAccessSnapshot | null>;
+  /** Both fields must come from an already signature-verified, accepted Keycloak token. */
+  findAccessByKeycloakIdentity(
+    identity: VerifiedKeycloakIdentity
+  ): Promise<IdentityAccessSnapshot | null>;
+}
+
+export interface VerifiedKeycloakIdentity {
+  issuer: string;
+  subject: string;
 }
 
 export interface PatientRepository {
