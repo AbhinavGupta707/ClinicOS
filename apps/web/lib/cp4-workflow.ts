@@ -1,3 +1,4 @@
+import { staffFetch } from "./staff-session";
 import type { ClinicRole } from "./roles";
 
 export type Cp4WorkflowSource = "api" | "cp4_fixture";
@@ -1146,7 +1147,7 @@ async function fetchEndpoint(
   params: Record<string, string>,
   signal?: AbortSignal
 ): Promise<EndpointResponse> {
-  const response = await fetch(buildWorkflowUrl(path, params), {
+  const response = await staffFetch(buildWorkflowUrl(path, params), {
     credentials: "include",
     headers: {
       Accept: "application/json"
@@ -1180,7 +1181,7 @@ async function writeEndpoint(
   body: unknown,
   signal?: AbortSignal
 ) {
-  const response = await fetch(buildWorkflowUrl(path), {
+  const response = await staffFetch(buildWorkflowUrl(path), {
     body: JSON.stringify(body),
     credentials: "include",
     headers: {

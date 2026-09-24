@@ -3,7 +3,6 @@ const acceptanceBuild = process.env.CLINICOS_MVP_IMPORT_E2E_ENABLED === "true";
 /** @type {import('next').NextConfig} */
 const nextConfig = {
   reactStrictMode: true,
-  output: "standalone",
   // Keep the explicitly local acceptance build separate from deployable output.
   ...(acceptanceBuild ? {
     distDir: ".next-mvp-acceptance",
@@ -12,7 +11,7 @@ const nextConfig = {
   transpilePackages: ["@clinic-os/ui"],
   async rewrites() {
     const apiUrl = process.env.CLINIC_OS_API_INTERNAL_URL?.trim().replace(/\/+$/u, "");
-    if (!apiUrl) return [];
+    if (!apiUrl || process.env.CLINICOS_STAFF_SIGN_IN_ENABLED === "true") return [];
 
     const parsed = new URL(apiUrl);
     if (!new Set(["http:", "https:"]).has(parsed.protocol)) {

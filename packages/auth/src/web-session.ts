@@ -206,6 +206,11 @@ export interface WebSessionProviderRevoker {
   }): Promise<void>;
 }
 
+export interface WebSessionRevocationRecorder {
+  record(input: { subject: string; issuer: string; keycloakSessionId: string | null;
+    reason: WebSessionRevocationReason; now: Date }): Promise<void>;
+}
+
 interface StoredWebSessionRecord {
   schemaVersion: 2;
   recordVersion: number;
@@ -300,11 +305,15 @@ export class WebSessionManager {
   readonly #store: WebSessionStore;
   readonly #policy: NormalizedWebSessionPolicy;
   readonly #randomBytes: (size: number) => Buffer;
+  readonly #revocations?: WebSessionRevocationRecorder;
+  readonly #providerRevoker?: WebSessionProviderRevoker;
 
   constructor(input: {
     store: WebSessionStore;
     policy: WebSessionPolicy;
     randomBytesImpl?: (size: number) => Buffer;
+    revocations?: WebSessionRevocationRecorder;
+    providerRevoker?: WebSessionProviderRevoker;
   }) {
     if (input.store.atomicity !== "session_state_and_required_audit_outbox") {
       throw new Error(
@@ -314,6 +323,8 @@ export class WebSessionManager {
     this.#store = input.store;
     this.#policy = normalizePolicy(input.policy);
     this.#randomBytes = input.randomBytesImpl ?? randomBytes;
+    this.#revocations = input.revocations;
+    this.#providerRevoker = input.providerRevoker;
   }
 
   get cookieName(): string {
@@ -489,6 +500,9 @@ export class WebSessionManager {
       throw new WebSessionError("invalid_session", "Session record could not be verified.");
     }
     const absoluteExpiresAt = new Date(record.absoluteExpiresAt);
+    // Record the API cutoff first. Uncertain writes cannot report logout success.
+    await this.#revocations?.record({ subject: record.subject, issuer: record.issuer,
+      keycloakSessionId: record.keycloakSessionId, reason, now: revokedAt });
     const revocation = await this.#store.revokeSessionFamily({
       sessionKey,
       familyKey: envelope.familyKey,
@@ -718,6 +732,12 @@ export class WebSessionManager {
         return this.#revokeUncertainRefresh(current);
       }
 
+      // A refresh must never downgrade a previously established MFA session.
+      if (hasMfaEvidence({ amr: current.record.amr, acr: current.record.acr }, this.#policy.mfaAssurancePolicy) &&
+          !hasMfaEvidence({ amr: refreshed.amr, acr: refreshed.acr }, this.#policy.mfaAssurancePolicy)) {
+        await this.#revokeLoaded(current, "refresh_rejected", null);
+        throw new WebSessionError("refresh_rejected", "Refreshed authentication assurance was downgraded.");
+      }
       let nextRecord: StoredWebSessionRecord;
       let nextEnvelope: WebSessionEnvelope;
       let completed: boolean;
@@ -791,6 +811,8 @@ export class WebSessionManager {
     reason: WebSessionRevocationReason,
     refreshAuditAction: "auth.refresh.replay_detected" | "auth.refresh.recovery_uncertain" | null
   ): Promise<void> {
+    await this.#revocations?.record({ subject: loaded.record.subject, issuer: loaded.record.issuer,
+      keycloakSessionId: loaded.record.keycloakSessionId, reason, now: loaded.now });
     const sessionRevoked = this.#sessionAudit(
       loaded.record,
       loaded.envelope.familyKey,
@@ -811,7 +833,7 @@ export class WebSessionManager {
             sessionRevoked
           ]
         : [sessionRevoked];
-    await this.#store.revokeSessionFamily({
+    const result = await this.#store.revokeSessionFamily({
       sessionKey: loaded.sessionKey,
       familyKey: loaded.envelope.familyKey,
       reason,
@@ -819,6 +841,14 @@ export class WebSessionManager {
       expiresAt: new Date(loaded.record.absoluteExpiresAt),
       requiredAudits
     });
+    if (result === "revoked" && this.#providerRevoker) {
+      try {
+        await this.#providerRevoker.revoke({ refreshToken: loaded.record.refreshToken,
+          subject: loaded.record.subject, issuer: loaded.record.issuer, authorizedParty: loaded.record.authorizedParty });
+      } catch {
+        throw new WebSessionError("refresh_rejected", "Local access ended; identity-provider logout is unconfirmed.");
+      }
+    }
   }
 
   async #revokeUncertainRefresh(loaded: LoadedSession): Promise<never> {

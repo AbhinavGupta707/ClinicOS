@@ -215,6 +215,25 @@ describe("CP14 official Keycloak OIDC BFF client", () => {
       code: "revocation_unconfirmed"
     });
   });
+
+  it("ends the provider session through the exact confidential-client logout endpoint", async () => {
+    const transport = new TestTransport();
+    const endpoint = `${issuer}/protocol/openid-connect/logout`;
+    const oidc = client(transport, { sessionLogoutEndpoint: endpoint });
+    await oidc.revoke(refreshInput());
+    const request = transport.requests.at(-1)!;
+    expect(request.url).toBe(endpoint);
+    const form = new URLSearchParams(new TextDecoder().decode(request.body ?? new Uint8Array()));
+    expect(Object.fromEntries(form)).toEqual({
+      refresh_token: refreshInput().refreshToken,
+      client_id: clientId,
+      client_secret: clientSecret
+    });
+    transport.revocationResponse = jsonResponse(503, {});
+    await expect(oidc.revoke(refreshInput())).rejects.toMatchObject({ code: "revocation_unconfirmed" });
+    expect(() => client(transport, { sessionLogoutEndpoint: `${endpoint}?redirect=untrusted` }))
+      .toThrow(/configuration is invalid/);
+  });
 });
 
 class ClassifiedRefreshError extends Error {
@@ -251,7 +270,7 @@ class TestTransport implements KeycloakOidcHttpTransport {
         { "cache-control": "public, max-age=60" }
       );
     }
-    if (input.url.endsWith("/protocol/openid-connect/revoke")) {
+    if (input.url.endsWith("/protocol/openid-connect/revoke") || input.url.endsWith("/protocol/openid-connect/logout")) {
       return this.revocationResponse;
     }
     return this.tokenResponse;

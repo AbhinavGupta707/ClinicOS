@@ -17,17 +17,20 @@ export class SecurityAuditRuntime {
   readonly #metrics: MetricRecorder;
   readonly #sleep: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   readonly #pollIntervalMs: number;
+  readonly #publish?: (healthy: boolean) => Promise<void>;
   #running = false;
   #failed = true;
 
   constructor(input: {
     dispatcher: SecurityAuditDispatchPort;
+    publishReadiness?: (healthy: boolean) => Promise<void>;
     logger: Logger;
     metrics: MetricRecorder;
     pollIntervalMs?: number;
     sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   }) {
     this.#dispatcher = input.dispatcher;
+    this.#publish = input.publishReadiness;
     this.#logger = input.logger;
     this.#metrics = input.metrics;
     this.#pollIntervalMs = input.pollIntervalMs ?? 1000;
@@ -74,6 +77,10 @@ export class SecurityAuditRuntime {
             event: "worker.security_audit.unavailable"
           });
         }
+        if (this.#publish) {
+          try { await this.#dispatcher.readiness(); await this.#publish(!this.#failed); }
+          catch { this.#failed = true; await this.#publish(false).catch(() => undefined); }
+        }
         try {
           await this.#sleep(Math.min(10_000, this.#pollIntervalMs * 2 ** failures), signal);
         } catch {
@@ -83,6 +90,7 @@ export class SecurityAuditRuntime {
     } finally {
       this.#running = false;
       this.#failed = true;
+      await this.#publish?.(false).catch(() => undefined);
     }
   }
 

@@ -25,6 +25,7 @@ export interface ClinicOsApiClientOptions {
   readonly baseUrl: string;
   readonly fetchImpl?: typeof fetch;
   readonly getAccessToken?: () => string | null | Promise<string | null>;
+  readonly authentication?: "bearer" | "same_origin_bff";
   readonly clinicId?: string;
   readonly getRequestId?: () => string | undefined;
 }
@@ -577,9 +578,11 @@ export class ClinicOsApiClient {
   async executeWithMetadata<T>(operation: ExecuteInput): Promise<ClinicOsApiResponse<T>> {
     const headers: Record<string, string> = { ...(operation.input.headers ?? {}) };
     if (operation.auth === "bearer") {
-      const token = await this.#options.getAccessToken?.();
-      if (!token) throw new Error("ClinicOS bearer authentication is required for this operation.");
-      headers.authorization = `Bearer ${token}`;
+      if (this.#options.authentication !== "same_origin_bff") {
+        const token = await this.#options.getAccessToken?.();
+        if (!token) throw new Error("ClinicOS bearer authentication is required for this operation.");
+        headers.authorization = `Bearer ${token}`;
+      }
       if (this.#options.clinicId) headers["x-clinic-id"] = this.#options.clinicId;
     }
     const requestId = this.#options.getRequestId?.();

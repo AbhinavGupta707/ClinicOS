@@ -1,3 +1,4 @@
+import { staffFetch } from "./staff-session";
 export type Cp10ReadinessSource = "api" | "cp10_fixture";
 
 export type Cp10PilotReadinessStatus = "ready" | "unavailable" | "deferred" | "blocked";
@@ -441,7 +442,7 @@ function buildUrl(path: string) {
 }
 
 async function fetchEndpoint(path: string, signal?: AbortSignal): Promise<EndpointResponse> {
-  const response = await fetch(buildUrl(path), {
+  const response = await staffFetch(buildUrl(path), {
     credentials: "include",
     headers: {
       Accept: "application/json"

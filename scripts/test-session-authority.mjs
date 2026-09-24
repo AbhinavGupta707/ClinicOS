@@ -15,6 +15,9 @@ export async function testCurrentSessionAuthority(pool) {
   const baseline = await new CurrentSessionAuthorityResolver(
     new PostgresIdentityRepository(pool)
   ).resolve(identity);
+  const cutoffBefore = (
+    await new PostgresIdentityRepository(pool).findAccessByKeycloakIdentity(identity)
+  ).authenticationValidAfter;
   const client = await pool.connect();
   const repository = new PostgresIdentityRepository({
     inTransaction: true,
@@ -55,12 +58,19 @@ export async function testCurrentSessionAuthority(pool) {
       ]
     ]) {
       const before = await resolve();
+      const cutoff = (await repository.findAccessByKeycloakIdentity(identity))
+        .authenticationValidAfter;
       await scope();
       await client.query(`update ${table} set ${deactivate} where ${condition}`, [tenant, user]);
       assert.equal((await resolve()).active, false, `${table} revocation denies access`);
       await scope();
       await client.query(`update ${table} set ${restore} where ${condition}`, [tenant, user]);
       const after = await resolve();
+      assert.ok(
+        Date.parse(
+          (await repository.findAccessByKeycloakIdentity(identity)).authenticationValidAfter
+        ) >= Date.parse(cutoff)
+      );
       assert.equal(after.active, true);
       assert.notEqual(
         after.authorityRevision,
@@ -74,6 +84,8 @@ export async function testCurrentSessionAuthority(pool) {
       ["clinics", "10000000-0000-4000-8000-000000000101", "inactive", "active"]
     ]) {
       const before = await resolve();
+      const cutoff = (await repository.findAccessByKeycloakIdentity(identity))
+        .authenticationValidAfter;
       await scope();
       await client.query(`update ${table} set status = $2 where id = $1`, [key, inactive]);
       assert.equal((await resolve()).active, false);
@@ -226,6 +238,12 @@ export async function testCurrentSessionAuthority(pool) {
     ),
     baseline,
     "authority and generation mutations roll back together"
+  );
+  assert.equal(
+    (await new PostgresIdentityRepository(pool).findAccessByKeycloakIdentity(identity))
+      .authenticationValidAfter,
+    cutoffBefore,
+    "authentication cutoff rolls back with authority"
   );
   console.log(
     JSON.stringify({

@@ -126,6 +126,21 @@ jobs:
           if-no-files-found: warn
           retention-days: 14
 
+      - name: Real Keycloak staff sign-in and audit delivery
+        env:
+          CLINICOS_STAFF_SIGN_IN_E2E_ENABLED: "true"
+          PILOT_SYNTHETIC_DATA_ONLY: "true"
+        run: node scripts/test-staff-sign-in.mjs
+
+      - name: Retain safe staff sign-in evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: staff-sign-in-${{ github.sha }}
+          path: artifacts/staff-sign-in
+          if-no-files-found: warn
+          retention-days: 14
+
       - name: Dependency audit
         run: npm run security:audit
 

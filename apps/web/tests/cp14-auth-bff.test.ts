@@ -461,6 +461,7 @@ function newRuntime(input: {
     },
     transactions: new TestTransactions(),
     sessions,
+    admitIdentity: async () => ({ active: true, authorityRevision: "authority-revision-1" }),
     authorityResolver: {
       resolve: async () => ({ active: true, authorityRevision: "authority-revision-1" })
     },

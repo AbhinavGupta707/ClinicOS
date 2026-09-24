@@ -28,7 +28,8 @@
     "@temporalio/client": "1.22.0",
     "@temporalio/common": "1.22.0",
     "@temporalio/worker": "1.22.0",
-    "pg": "^8.13.1"
+    "pg": "^8.13.1",
+    "@clinic-os/auth": "0.0.0"
   },
   "devDependencies": {
     "@types/node": "^22.10.0",

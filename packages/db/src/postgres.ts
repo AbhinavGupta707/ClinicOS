@@ -415,6 +415,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
           tenants.status as tenant_status,
           tenants.authority_generation as tenant_authority_generation,
           users.authority_generation as user_authority_generation,
+          greatest(users.authentication_valid_after, tenants.authentication_valid_after) as authentication_valid_after,
           users.id as user_id,
           users.display_name as user_display_name,
           users.email as user_email,
@@ -526,6 +527,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
       }
 
       return {
+        authenticationValidAfter: new Date(first.authentication_valid_after).toISOString(),
         authorityRevision: createHash("sha256")
           .update(
             JSON.stringify([
@@ -13320,6 +13322,7 @@ class TransactionBoundSqlClient implements SqlConnectionFactory {
 }
 
 interface IdentityAccessRow {
+  authentication_valid_after: string | Date;
   tenant_authority_generation: string;
   user_authority_generation: string;
   tenant_id: UUID;

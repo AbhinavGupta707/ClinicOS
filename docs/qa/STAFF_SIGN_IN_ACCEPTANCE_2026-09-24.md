@@ -1,0 +1,102 @@
+# Staff sign-in acceptance — 24 September 2026
+
+Status: implementation under verification. This document does not approve a live
+clinic deployment. The current slice composes the identity foundations merged in
+PRs #3 and #4 on `mac-latest-20260829`.
+
+## Supported boundary
+
+The custom Node web entrypoint owns `/auth/login`, `/auth/callback`,
+`/auth/session`, `/auth/logout`, `/auth/health` and `/bff/v1/*`. It inspects the
+connection peer and original headers before Next.js can normalize forwarding
+headers. Interactive activation is restricted to direct-loopback synthetic local
+use. Cloud proxy activation is rejected until an independently verified proxy
+adapter exists. Browser bearer injection is restricted to the separately marked
+synthetic legacy acceptance transport.
+
+The web session stores encrypted tokens in Redis. The browser receives an opaque
+HttpOnly cookie and a CSRF value, never bearer/refresh/ID tokens. The BFF forwards
+only authenticated API route families. API/database authority remains canonical;
+Keycloak does not assign ClinicOS clinical permissions.
+
+The worker delivers required identity events to the global append-only PostgreSQL
+audit sink. Its expiring readiness lease gates web/API admission. It also reaps
+expired session and revocation state in bounded batches. Clinical audit events
+retain their existing path.
+
+Migration 0026 records a monotonic authentication cutoff alongside transactional
+authority generations. A refreshed old login cannot become current solely because
+roles were restored. This cutoff describes the authority mutation instant, not a
+PostgreSQL commit timestamp. It requires synchronized clocks; Keycloak timestamps
+have second precision, so immediate same-second login can require retrying.
+
+App-cookie replacement does not revoke the shared Keycloak SSO session. Logout
+and security invalidation deny the old SID for 24 hours; the accepted synthetic
+realm caps SSO/client sessions at eight hours. Explicit logout also uses the
+official Keycloak session logout endpoint. Unconfirmed provider logout is reported
+as such, without restoring patient content.
+
+## Configuration contract
+
+Default activation is unavailable. Do not use these settings with live patient
+data or behind an unverified proxy. All processes require the same stable
+server-only settings:
+
+| Setting | Contract |
+| --- | --- |
+| `CLINICOS_STAFF_SIGN_IN_ENABLED` | `true`, explicitly |
+| `CLINIC_OS_ENV`, `PILOT_SYNTHETIC_DATA_ONLY` | `local`, `true` |
+| `KEYCLOAK_BASE_URL`, `KEYCLOAK_REALM` | exact HTTP loopback origin and registered realm |
+| `KEYCLOAK_CLIENT_ID` | confidential `clinic-os-web-bff` |
+| `REDIS_URL` | loopback non-cluster writable primary |
+| `CLINICOS_SESSION_KEY` | stable, randomly generated 32-byte canonical base64 secret |
+| `CLINICOS_SESSION_KEY_ID` | encryption-key identifier, default `initial` |
+| `CLINICOS_IDENTITY_NAMESPACE` | shared isolated namespace, default `clinicos:staff:v1` |
+| `CLINICOS_SESSION_IDLE_SECONDS` | 300–1800; default 900 |
+| `DATABASE_URL` | loopback `clinic_os_runtime` role on `clinic_os` |
+| Worker `WORKER_DATABASE_URL` | loopback `clinic_os_worker` role |
+| Web `CLINICOS_WEB_ORIGIN` | exact loopback origin matching the listener port |
+| Web `CLINIC_OS_API_INTERNAL_URL` | exact API loopback origin |
+| Web `CLINICOS_OIDC_CLIENT_SECRET` | confidential-client secret, server only |
+
+Both fixture identity/repository flags must be false. Public environment variables
+must contain no secrets. Register an exact callback, S256 PKCE, API audience,
+refresh rotation, bounded eight-hour SSO/client lifetime, real password/OTP AMR
+execution references and the AMR mapper. Do not copy synthetic credentials into a
+real environment. Do not rotate the shared root key as an ordinary config change:
+retained-key/namespace migration and recovery verification remain an activation
+gate beyond this synthetic slice.
+
+The normal web commands use `server/start.mts`; build shared packages first.
+Next's standalone launcher cannot wrap a custom server. The web image therefore
+packages the custom entrypoint, generated web output, required workspaces and
+focused production dependencies together.
+
+## Verification and remaining gates
+
+First local pass: 1,062 workspace tests, typecheck, lint, workspace checks, secret
+scan and optimized web build passed. Final review fixes and exact-head CI results
+must supersede these first-pass results before merge approval.
+
+`scripts/test-staff-sign-in.mjs` refuses to run outside a marked disposable GitHub
+Actions database. It registers its own synthetic realm/user/client through the
+official local Admin API, runs the actual worker/API/BFF, and drives real browser
+password and TOTP authentication. It retains safe result summaries and dashboard
+screenshots; it does not retain token-bearing traces, HTML or enrollment screens.
+
+The existing four import browser scenarios still provide synthetic-auth evidence;
+they do not replace this real OIDC gate. Schema/Redis/provider/browser checks,
+image builds and image security must pass on the final reviewed commit.
+
+Separate gates remain: production proxy/HTTPS and cookies, managed Redis recovery
+and key rotation, production realm/MFA policy review, retained audit export and
+alerts, authorized real staff onboarding, and the Practo export contract/sample.
+No AI API key, email provider, WhatsApp integration or Clerk installation is needed
+for this identity slice. It does not complete the broader blue-sky programme.
+
+## Official behavior references
+
+- [Next.js custom server packaging](https://nextjs.org/docs/app/guides/custom-server).
+- [Keycloak 25 AMR execution references](https://raw.githubusercontent.com/keycloak/keycloak/25.0.6/services/src/main/java/org/keycloak/protocol/oidc/utils/AmrUtils.java).
+- [Keycloak authenticator registration](https://raw.githubusercontent.com/keycloak/keycloak/25.0.6/services/src/main/java/org/keycloak/services/resources/admin/AuthenticationManagementResource.java).
+- [Keycloak session logout](https://raw.githubusercontent.com/keycloak/keycloak/25.0.6/services/src/main/java/org/keycloak/protocol/oidc/endpoints/LogoutEndpoint.java).

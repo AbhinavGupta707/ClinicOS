@@ -32,6 +32,8 @@ export interface KeycloakOidcClientConfiguration {
   issuer: string;
   tokenEndpoint: string;
   revocationEndpoint: string;
+  /** Official Keycloak session logout; unlike token revocation, ends the SSO session. */
+  sessionLogoutEndpoint?: string;
   clientId: string;
   clientSecret: string;
   redirectUri: string;
@@ -68,6 +70,7 @@ interface NormalizedConfiguration {
   issuer: string;
   tokenEndpoint: string;
   revocationEndpoint: string;
+  sessionLogoutEndpoint?: string;
   jwksEndpoint: string;
   clientId: string;
   clientSecret: string;
@@ -308,10 +311,11 @@ export class KeycloakOidcBffClient implements Cp14OidcTokenClient {
         throw new Error("invalid revocation binding");
       }
       const response = await this.#postForm(
-        this.#configuration.revocationEndpoint,
+        this.#configuration.sessionLogoutEndpoint ?? this.#configuration.revocationEndpoint,
         new URLSearchParams({
-          token: input.refreshToken,
-          token_type_hint: "refresh_token",
+          ...(this.#configuration.sessionLogoutEndpoint
+            ? { refresh_token: input.refreshToken }
+            : { token: input.refreshToken, token_type_hint: "refresh_token" }),
           client_id: this.#configuration.clientId,
           client_secret: this.#configuration.clientSecret
         })
@@ -634,6 +638,8 @@ function normalizeConfiguration(input: KeycloakOidcClientConfiguration): Normali
     issuer,
     tokenEndpoint,
     revocationEndpoint,
+    ...(input.sessionLogoutEndpoint ? { sessionLogoutEndpoint: exactEndpoint(input.sessionLogoutEndpoint, issuer,
+      "/protocol/openid-connect/logout", input.productionLike) } : {}),
     jwksEndpoint,
     clientId: input.clientId,
     clientSecret: input.clientSecret,

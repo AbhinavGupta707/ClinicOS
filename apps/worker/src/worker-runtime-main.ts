@@ -1,3 +1,7 @@
+import { readStaffIdentityConfiguration, staffDatabaseUrl, RedisWebSessionStore, RedisTokenRevocationStore,
+  AuditDeliveryHealth, SecurityAuditDispatcher, PostgresSecurityAuditSink,
+  type AuditSqlPool } from "@clinic-os/auth";
+import { SecurityAuditRuntime } from "./identity/security-audit-runtime.js";
 import { Pool } from "pg";
 import {
   RazorpayCollectionReconciliationClient,
@@ -211,8 +215,41 @@ export async function runWorker(
         })
       : undefined;
 
+  const staffIdentity = readStaffIdentityConfiguration(process.env);
+  const staffAuditPool = staffIdentity ? new Pool({
+    connectionString: staffDatabaseUrl(process.env.WORKER_DATABASE_URL, "clinic_os_worker"),
+    max: 2, connectionTimeoutMillis: 3000, query_timeout: 5000, statement_timeout: 3000
+  }) : undefined;
+  staffAuditPool?.on("error", () => undefined);
+  const staffAuditStore = staffIdentity ? new RedisWebSessionStore({
+    redisUrl: staffIdentity.redisUrl, keyHmacSecret: staffIdentity.storeKey,
+    keyPrefix: `${staffIdentity.namespace}:sessions`, now: () => clock.now()
+  }) : undefined;
+  const staffAuditHealth = staffIdentity ? new AuditDeliveryHealth(staffIdentity) : undefined;
+  const staffRevocations = staffIdentity ? new RedisTokenRevocationStore({
+    redisUrl: staffIdentity.redisUrl, keyHmacSecret: staffIdentity.revocationKey,
+    keyPrefix: `${staffIdentity.namespace}:revocation`, now: () => clock.now()
+  }) : undefined;
+  const dispatcher = staffAuditStore && staffAuditPool ? new SecurityAuditDispatcher({
+    source: staffAuditStore, sink: new PostgresSecurityAuditSink(staffAuditPool as unknown as AuditSqlPool), now: () => clock.now()
+  }) : undefined;
+  let sessionCursor = "0"; let revocationCursor = "0";
+  const identitySecurityAudit = dispatcher && staffAuditStore && staffAuditHealth && staffRevocations
+    ? new SecurityAuditRuntime({
+      dispatcher: {
+        readiness: () => dispatcher.readiness(),
+        async runOnce() {
+          const result = await dispatcher.runOnce();
+          sessionCursor = (await staffAuditStore.purgeExpiredStateBatch({ cursor: sessionCursor, count: 100, now: clock.now() })).nextCursor;
+          revocationCursor = (await staffRevocations.purgeExpiredRevocationsBatch({ cursor: revocationCursor, count: 100, now: clock.now() })).nextCursor;
+          return result;
+        }
+      },
+      publishReadiness: (healthy) => staffAuditHealth.publish(healthy), logger, metrics: observability.metrics
+    }) : undefined;
   const runtime = createWorkerRuntime({
     workerId: env.workerId,
+    ...(identitySecurityAudit ? { identitySecurityAudit } : {}),
     repository,
     handlers: handlers.map((handler) => workerObservability.wrapOutboxHandler(handler)),
     logger,
@@ -253,7 +290,8 @@ export async function runWorker(
         repository.close(),
         activityPool?.end() ?? Promise.resolve(),
         reconciliationPool?.end() ?? Promise.resolve(),
-        observability.shutdown()
+        observability.shutdown(),
+        staffAuditStore?.close(), staffAuditPool?.end(), staffAuditHealth?.close(), staffRevocations?.close()
       ]);
       const rejected = results.filter((result) => result.status === "rejected").length;
       const telemetryResult = results[4];

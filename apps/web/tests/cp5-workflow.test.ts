@@ -29,6 +29,7 @@ describe("CP5 checkout workflow", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+    vi.unstubAllEnvs();
   });
 
   it("creates invoices only from completed procedure evidence and keeps payment requests unpaid", () => {
