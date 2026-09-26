@@ -6,6 +6,10 @@ import {
 } from "../core/scoped-repository-port.ts";
 
 export const DATA_INTEGRATIONS_OPERATIONS = [
+  "createImportRun",
+  "listImportRuns",
+  "findImportRunById",
+  "stageImportRunBatch",
   "createMigrationBatch",
   "listMigrationBatches",
   "findMigrationBatchById",

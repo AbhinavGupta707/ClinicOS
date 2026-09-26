@@ -5163,3 +5163,16 @@ button.cp6-card:hover {
     grid-column: 1 / -1;
   }
 }
+
+/* Persisted manual import workspace; controls remain reachable on narrow devices. */
+.import-run-controls { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 1.5rem; padding: 1.25rem; background: var(--surface, #fff); border: 1px solid var(--border, #e2e5e2); border-radius: 16px; }
+.import-run-controls > *, .import-run-controls label { min-width: 0; }
+.import-run-controls label { display: grid; gap: .5rem; }
+.import-run-controls input, .import-run-controls select { box-sizing: border-box; width: 100%; min-width: 0; padding: .75rem; border: 1px solid #ccd4d0; border-radius: 8px; background: #fff; color: #20332b; }
+.import-run-controls p, .import-run-summary p { overflow-wrap: anywhere; line-height: 1.6; }
+.import-run-controls button { margin: .5rem .5rem 0 0; }
+.import-run-summary { padding: 1.25rem; border: 1px solid #d9e4dd; border-radius: 16px; background: #f4f8f5; }
+.import-run-summary dl { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: .75rem; }
+.import-run-summary dt { font-size: .85rem; }
+.import-run-summary dd { margin: .3rem 0 0; font-size: 1.4rem; font-weight: 600; }
+@media (max-width: 640px) { .import-run-controls { grid-template-columns: minmax(0, 1fr); } .import-run-summary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } }

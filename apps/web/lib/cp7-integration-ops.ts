@@ -148,6 +148,7 @@ export interface MigrationBatch {
 }
 
 export interface CreateMigrationBatchRequest {
+  importRunId?: string;
   csv: string;
   importType: MigrationImportType;
   sourceFileName?: string | null;
@@ -333,6 +334,14 @@ const MIGRATION_TRIAL_ORDER: readonly MigrationImportType[] = [
 ];
 
 export type MigrationTrialStepState = "complete" | "current" | "upcoming";
+
+export function getInitialImportRunStep(batches: readonly MigrationBatch[]): MigrationImportType {
+  return MIGRATION_TRIAL_ORDER.find((type) => {
+    const batch = batches.find((item) => item.importType === type);
+    return !batch || batch.counts.committed === 0 || batch.counts.ready > 0 ||
+      batch.conflicts.some((conflict) => conflict.status === "unresolved");
+  }) ?? "appointments";
+}
 
 export function getMigrationTrialStepStates(
   batches: readonly MigrationBatch[],
@@ -1024,6 +1033,7 @@ export async function createLiveMigrationBatch(
     "/v1/migration-batches",
     {
       csv: input.csv,
+      ...(input.importRunId ? { importRunId: input.importRunId } : {}),
       importType: input.importType,
       sourceFileName: input.sourceFileName?.trim() || null,
       sourceSystem: input.sourceSystem.trim()
@@ -1205,7 +1215,7 @@ function normalizeCp7LivePayload(input: {
   };
 }
 
-function normalizeClinicDoctors(payload: unknown): EligibleClinicDoctor[] | null {
+export function normalizeClinicDoctors(payload: unknown): EligibleClinicDoctor[] | null {
   if (!isRecord(payload) || !Array.isArray(payload.clinicDoctors)) return null;
 
   const doctors = payload.clinicDoctors.map((value) => {
@@ -1268,7 +1278,7 @@ function readArray(payload: unknown, keys: string[]) {
   return [];
 }
 
-function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
+export function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
   if (isMigrationBatch(value)) return value;
   if (!isRecord(value) || !isRecord(value.batch)) return null;
 

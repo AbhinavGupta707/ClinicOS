@@ -65,6 +65,7 @@ import type {
   UpdateTaskInput,
   UpdateTreatmentPlanInput
 } from "@clinic-os/db";
+import { ImportRunRepositoryError } from "@clinic-os/db";
 import {
   assertAppointmentTransition,
   assertEncounterTransition,
@@ -1054,9 +1055,48 @@ export async function createMigrationBatch(
 ) {
   authorize(context, { permission: "migration.manage" });
   const scope = scopeFrom(context);
+  const request = objectBody(body);
+  const importRunId = optionalUuid(request.importRunId, "importRunId");
+  if (importRunId) {
+    const importType = requiredString(request.importType, "importType");
+    if (!["patients", "practitioners", "appointments"].includes(importType)) {
+      throw validation("Import run step is not supported.", {});
+    }
+    const sourceSystem = requiredString(request.sourceSystem, "sourceSystem");
+    const csv = requiredString(request.csv, "csv");
+    if (request.rows !== undefined) throw validation("Import run steps require canonical CSV.", {});
+    const sourceFileName = optionalNullableString(request.sourceFileName, "sourceFileName") ?? null;
+    const importStepDigest = sha256Json({ importType, sourceSystem, sourceFileName, csv });
+    const run = await dependencies.repository.findImportRunById(scope, importRunId, true);
+    if (!run) throw notFound("Import run not found.", { import_run_id: importRunId });
+    if (run.run.sourceSystem !== sourceSystem) {
+      throw conflict("Import source does not match this run.");
+    }
+    const existing = run.batches.find((detail) => detail.batch.importType === importType);
+    if (existing) {
+      if (existing.batch.importStepDigest !== importStepDigest) {
+        throw conflict("This import step has different content.");
+      }
+      return ok(toMigrationBatchResponse(existing));
+    }
+    const prepared = await parseCreateMigrationBatchInput(scope, dependencies, body);
+    const staged = await mapImportRunRepositoryErrors(() => dependencies.repository.stageImportRunBatch(scope, {
+      ...prepared, importRunId, importStepDigest
+    }));
+    if (staged.created) await recordMigrationBatchCreation(context, dependencies, staged.detail);
+    return staged.created ? created(toMigrationBatchResponse(staged.detail)) : ok(toMigrationBatchResponse(staged.detail));
+  }
   const input = await parseCreateMigrationBatchInput(scope, dependencies, body);
   const detail = await dependencies.repository.createMigrationBatch(scope, input);
+  await recordMigrationBatchCreation(context, dependencies, detail);
+  return created(toMigrationBatchResponse(detail));
+}
 
+async function recordMigrationBatchCreation(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  detail: MigrationBatchDetail
+): Promise<void> {
   await audit(context, dependencies, "migration.batch.created", {
     resourceType: "migration_batch",
     resourceId: detail.batch.id,
@@ -1080,8 +1120,66 @@ export async function createMigrationBatch(
       conflictRowCount: detail.batch.conflictRowCount
     }
   });
+}
 
-  return created(toMigrationBatchResponse(detail));
+export async function createImportRun(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "migration.manage" });
+  const input = objectBody(body);
+  const id = uuidField(input.id, "id");
+  const sourceSystem = requiredString(input.sourceSystem, "sourceSystem");
+  const result = await mapImportRunRepositoryErrors(() =>
+    dependencies.repository.createImportRun(scopeFrom(context), { id, sourceSystem })
+  );
+  if (result.created) {
+    await audit(context, dependencies, "migration.run.created", {
+      resourceType: "import_run", resourceId: result.run.id,
+      metadata: { sourceSystem }
+    });
+  }
+  return result.created ? created({ run: result.run }) : ok({ run: result.run });
+}
+
+export async function listImportRuns(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { limit?: string | null; cursor?: string | null }
+) {
+  authorize(context, { permission: "migration.manage" });
+  const limit = parseOptionalLimit(filter.limit, 25, 100);
+  const cursor = filter.cursor ? uuidField(filter.cursor, "cursor") : null;
+  return ok(await mapImportRunRepositoryErrors(() =>
+    dependencies.repository.listImportRuns(scopeFrom(context), limit, cursor)));
+}
+
+export async function getImportRun(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  runId: UUID
+) {
+  authorize(context, { permission: "migration.manage" });
+  const detail = await dependencies.repository.findImportRunById(scopeFrom(context), runId);
+  if (!detail) throw notFound("Import run not found.", { import_run_id: runId });
+  return ok({
+    run: detail.run,
+    batches: detail.batches.map(toMigrationBatchResponse),
+    status: detail.status,
+    reconciliation: detail.reconciliation
+  });
+}
+
+async function mapImportRunRepositoryErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try { return await operation(); }
+  catch (error) {
+    if (error instanceof ImportRunRepositoryError) {
+      if (error.reason === "not_found") throw notFound(error.message, {});
+      throw conflict(error.message);
+    }
+    throw error;
+  }
 }
 
 export async function getMigrationBatch(

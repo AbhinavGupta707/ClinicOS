@@ -54,6 +54,7 @@ export const STAFF_API_PREFIXES = [
   "/v1/me",
   "/v1/media",
   "/v1/migration-batches",
+  "/v1/migration-runs",
   "/v1/owner-dashboard",
   "/v1/patients",
   "/v1/pilot-readiness",

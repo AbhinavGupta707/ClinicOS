@@ -91,6 +91,8 @@ export interface MigrationBatchRecord {
   sourceSystem: string;
   sourceFileName: string | null;
   sourceChecksum: string | null;
+  importRunId: UUID | null;
+  importStepDigest: string | null;
   state: MigrationBatchState;
   uploadedByUserId: UUID;
   committedByUserId: UUID | null;
@@ -107,6 +109,39 @@ export interface MigrationBatchRecord {
   rolledBackAt: string | null;
   createdAt: string;
   updatedAt: string;
+}
+
+export const IMPORT_RUN_STEPS = ["patients", "practitioners", "appointments"] as const;
+export type ImportRunStep = (typeof IMPORT_RUN_STEPS)[number];
+
+export interface ImportRunRecord {
+  id: UUID;
+  tenantId: UUID;
+  clinicId: UUID;
+  sourceSystem: string;
+  createdByUserId: UUID;
+  createdAt: string;
+}
+
+export interface ImportRunReconciliation {
+  received: number;
+  valid: number;
+  invalid: number;
+  needsReview: number;
+  ready: number;
+  committed: number;
+  skipped: number;
+  rolledBack: number;
+  failed: number;
+  reconciled: number;
+  missingSourceAssessment: "unknown";
+}
+
+export interface ImportRunDetail {
+  run: ImportRunRecord;
+  batches: MigrationBatchDetail[];
+  status: "awaiting_patients" | "awaiting_practitioners" | "awaiting_appointments" | "review_required" | "partial" | "complete" | "rolled_back";
+  reconciliation: ImportRunReconciliation;
 }
 
 export interface MigrationValidationIssue {
@@ -218,6 +253,54 @@ export interface MigrationBatchDetail {
   batch: MigrationBatchRecord;
   rows: MigrationRowRecord[];
   conflicts: MigrationConflictRecord[];
+}
+
+export function summarizeImportRun(
+  run: ImportRunRecord,
+  batches: readonly MigrationBatchDetail[],
+  reconciledByBatchId: Readonly<Record<string, number>> = {}
+): ImportRunDetail {
+  const reconciliation: ImportRunReconciliation = {
+    received: 0, valid: 0, invalid: 0, needsReview: 0, ready: 0,
+    committed: 0, skipped: 0, rolledBack: 0, failed: 0, reconciled: 0,
+    missingSourceAssessment: "unknown"
+  };
+  for (const detail of batches) {
+    for (const row of detail.rows) {
+      reconciliation.received += 1;
+      if (row.status !== "invalid") reconciliation.valid += 1;
+      switch (row.status) {
+        case "invalid": reconciliation.invalid += 1; break;
+        case "needs_review": reconciliation.needsReview += 1; break;
+        case "ready_to_commit": reconciliation.ready += 1; break;
+        case "committed": reconciliation.committed += 1; break;
+        case "skipped": reconciliation.skipped += 1; break;
+        case "rolled_back": reconciliation.rolledBack += 1; break;
+        case "failed": reconciliation.failed += 1; break;
+      }
+    }
+    reconciliation.reconciled += Math.min(
+      Math.max(0, reconciledByBatchId[detail.batch.id] ?? 0),
+      detail.rows.filter((row) => row.status === "committed").length
+    );
+  }
+  const stepBatches = new Map(batches.map((detail) => [detail.batch.importType, detail]));
+  const nextStep = IMPORT_RUN_STEPS.find((step) => !stepBatches.has(step));
+  const hasReview = reconciliation.needsReview > 0 || reconciliation.ready > 0;
+  const hasExceptions = reconciliation.invalid > 0 || reconciliation.skipped > 0 ||
+    reconciliation.failed > 0 || reconciliation.rolledBack > 0;
+  const status: ImportRunDetail["status"] =
+    batches.length > 0 && batches.every((detail) => detail.batch.state === "rolled_back")
+      ? "rolled_back" :
+    hasReview ? "review_required" :
+    hasExceptions ? "partial" :
+    nextStep
+      ? (batches.length === 0 || batches.every((detail) =>
+          ["committed", "partially_committed"].includes(detail.batch.state) &&
+          detail.batch.committedRowCount > 0) ? `awaiting_${nextStep}` : "partial")
+      : batches.every((detail) => detail.batch.state === "committed")
+        ? "complete" : "partial";
+  return { run, batches: [...batches], status, reconciliation };
 }
 
 export interface ImportedRecordLinkRecord {

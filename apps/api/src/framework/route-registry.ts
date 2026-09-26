@@ -132,6 +132,9 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Objec
   listDeadLetterEvents: ["migration.manage"],
   replayDeadLetterEvent: ["migration.manage"],
   listMigrationBatches: ["migration.manage"],
+  listImportRuns: ["migration.manage"],
+  createImportRun: ["migration.manage"],
+  getImportRun: ["migration.manage"],
   createMigrationBatch: ["migration.manage"],
   getMigrationBatch: ["migration.manage"],
   listMigrationBatchRows: ["migration.manage"],
@@ -343,9 +346,9 @@ function createPolicy(operation: HttpOperationContract): RouteSecurityPolicy {
 }
 
 function assertApplicationRouteRegistry(): void {
-  if (ACTIVE_NATIVE_HTTP_OPERATIONS.length !== 136) {
+  if (ACTIVE_NATIVE_HTTP_OPERATIONS.length !== 139) {
     throw new Error(
-      `ClinicOS application route registry expected exactly 136 operations; received ${ACTIVE_NATIVE_HTTP_OPERATIONS.length}.`
+      `ClinicOS application route registry expected exactly 139 operations; received ${ACTIVE_NATIVE_HTTP_OPERATIONS.length}.`
     );
   }
   const operationIds = new Set(ACTIVE_NATIVE_HTTP_OPERATIONS.map(({ operationId }) => operationId));

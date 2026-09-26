@@ -3085,6 +3085,31 @@ function inventoryOperations(): HttpOperationContract[] {
 }
 
 function cp7Operations(): HttpOperationContract[] {
+  const importRunRecord = responseSchema({
+    id: uuid,
+    tenantId: uuid,
+    clinicId: uuid,
+    sourceSystem: shortText,
+    createdByUserId: uuid,
+    createdAt: dateTime
+  });
+  const importRunReconciliation = responseSchema({
+    received: nonNegativeInteger,
+    valid: nonNegativeInteger,
+    invalid: nonNegativeInteger,
+    needsReview: nonNegativeInteger,
+    ready: nonNegativeInteger,
+    committed: nonNegativeInteger,
+    skipped: nonNegativeInteger,
+    rolledBack: nonNegativeInteger,
+    failed: nonNegativeInteger,
+    reconciled: nonNegativeInteger,
+    missingSourceAssessment: schema.enum(["unknown"])
+  });
+  const importRunStatus = schema.enum([
+    "awaiting_patients", "awaiting_practitioners", "awaiting_appointments",
+    "review_required", "partial", "complete", "rolled_back"
+  ]);
   const migrationBatchStatuses = [
     "uploaded",
     "parsed",
@@ -3097,6 +3122,40 @@ function cp7Operations(): HttpOperationContract[] {
     "rolled_back"
   ] as const;
   return [
+    operation({
+      operationId: "listImportRuns",
+      checkpoint: "CP7",
+      method: "GET",
+      path: "/v1/migration-runs",
+      summary: "List clinic-scoped operator import runs with a bounded cursor",
+      tags: ["Migration"],
+      mutation: false,
+      queryProperties: { limit: schema.integer({ minimum: 1, maximum: 100 }), cursor: uuid },
+      success: { 200: responseSchema({ runs: schema.array(importRunRecord, { maxItems: 100 }), nextCursor: schema.nullable(uuid) }) }
+    }),
+    operation({
+      operationId: "createImportRun",
+      checkpoint: "CP7",
+      method: "POST",
+      path: "/v1/migration-runs",
+      summary: "Create or recover an immutable operator import run",
+      tags: ["Migration"],
+      phi: "write",
+      body: bodySchema({ id: uuid, sourceSystem: shortText }, ["id", "sourceSystem"]),
+      success: { 200: responseSchema({ run: importRunRecord }), 201: responseSchema({ run: importRunRecord }) }
+    }),
+    operation({
+      operationId: "getImportRun",
+      checkpoint: "CP7",
+      method: "GET",
+      path: "/v1/migration-runs/{runId}",
+      summary: "Get exact batches and reconciliation for one operator import run",
+      tags: ["Migration"],
+      phi: "read",
+      pathProperties: { runId: uuid },
+      mutation: false,
+      success: { 200: responseSchema({ run: importRunRecord, batches: schema.array(entity, { maxItems: 3 }), status: importRunStatus, reconciliation: importRunReconciliation }) }
+    }),
     operation({
       operationId: "listProviderHealth",
       checkpoint: "CP7",
@@ -3168,6 +3227,7 @@ function cp7Operations(): HttpOperationContract[] {
           sourceSystem: shortText,
           sourceFileName: nullableText,
           sourceChecksum: schema.nullable(schema.sha256({ minLength: 64, maxLength: 64 })),
+          importRunId: uuid,
           csv: schema.string({ minLength: 1, maxLength: 900_000 }),
           rows: schema.array(WRITABLE_JSON_SCHEMA, { minItems: 1, maxItems: 100 })
         },
@@ -3180,6 +3240,13 @@ function cp7Operations(): HttpOperationContract[] {
         }
       ),
       success: {
+        200: responseSchema({
+          batch: entity,
+          rows: entities,
+          conflicts: entities,
+          returnedConflictCount: nonNegativeInteger,
+          conflictsTruncated: schema.boolean()
+        }),
         201: responseSchema({
           batch: entity,
           rows: entities,

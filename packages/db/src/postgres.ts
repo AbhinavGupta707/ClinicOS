@@ -68,6 +68,8 @@ import type {
   IntegrationDeadLetterRecord,
   MigrationBatchDetail,
   MigrationBatchRecord,
+  ImportRunDetail,
+  ImportRunRecord,
   MigrationCommitRecord,
   MigrationCommitResult,
   MigrationConflictRecord,
@@ -155,7 +157,8 @@ import {
   toDentalFindingSnapshotFinding,
   systemClock,
   CLINIC_ROLE_SLUGS,
-  permissionsForRoles
+  permissionsForRoles,
+  summarizeImportRun
 } from "@clinic-os/domain";
 import { buildSetLocalIdentityRlsStatements, buildSetLocalRlsStatements } from "./rls.ts";
 import {
@@ -165,6 +168,7 @@ import {
 import { createRepositoryPortTransactionLease } from "./modules/core/scoped-repository-port.ts";
 import {
   assertStableMigrationExternalReferences,
+  ImportRunRepositoryError,
   DueGenerationConfigurationError,
   DueGenerationInputError
 } from "./repositories.ts";
@@ -270,6 +274,9 @@ import type {
   CreateLeadInput,
   CreateMediaUploadReservationInput,
   CreateMigrationBatchInput,
+  StageImportRunBatchInput,
+  StageImportRunBatchResult,
+  ImportRunListResult,
   CreatePatientInput,
   CreatePatientInstructionInput,
   CreatePrescriptionInput,
@@ -1842,12 +1849,145 @@ export class PostgresClinicOperationsRepository
     });
   }
 
+  async createImportRun(
+    scope: RepositoryScope,
+    input: { id: UUID; sourceSystem: string }
+  ): Promise<{ run: ImportRunRecord; created: boolean }> {
+    return this.#withRls(scope, async (client) => {
+      const inserted = await client.query<ImportRunRow>(
+        `insert into import_runs (id, tenant_id, clinic_id, source_system, created_by_user_id)
+         values ($1, $2, $3, $4, $5)
+         on conflict do nothing returning *`,
+        [input.id, scope.tenantId, scope.clinicId, input.sourceSystem, scope.actorUserId]
+      );
+      if (inserted.rows[0]) return { run: mapImportRunRow(inserted.rows[0]), created: true };
+      const existing = await client.query<ImportRunRow>(
+        `select * from import_runs where tenant_id = $1 and clinic_id = $2 and id = $3`,
+        [scope.tenantId, scope.clinicId, input.id]
+      );
+      if (!existing.rows[0] || existing.rows[0].source_system !== input.sourceSystem) {
+        throw new ImportRunRepositoryError("source_mismatch", "Import run identity is already in use.");
+      }
+      return { run: mapImportRunRow(existing.rows[0]), created: false };
+    });
+  }
+
+  async listImportRuns(scope: RepositoryScope, limit: number, cursor: UUID | null = null): Promise<ImportRunListResult> {
+    return this.#withRls(scope, async (client) => {
+      const bounded = Math.max(1, Math.min(limit, 100));
+      const cursorRows = cursor ? (await client.query<ImportRunRow>(
+        `select * from import_runs where tenant_id = $1 and clinic_id = $2 and id = $3`,
+        [scope.tenantId, scope.clinicId, cursor]
+      )).rows : [];
+      if (cursor && !cursorRows[0]) throw new ImportRunRepositoryError("not_found", "Import run cursor not found.");
+      const rows = (await client.query<ImportRunRow>(
+        `select * from import_runs where tenant_id = $1 and clinic_id = $2
+         and ($3::uuid is null or (created_at, id) < (
+           (select cursor_run.created_at from import_runs cursor_run
+            where cursor_run.tenant_id = $1 and cursor_run.clinic_id = $2 and cursor_run.id = $3), $3::uuid))
+         order by created_at desc, id desc limit $4`,
+        [scope.tenantId, scope.clinicId, cursor, bounded + 1]
+      )).rows;
+      return { runs: rows.slice(0, bounded).map(mapImportRunRow),
+        nextCursor: rows.length > bounded ? rows[bounded - 1]!.id : null };
+    });
+  }
+
+  async findImportRunById(scope: RepositoryScope, runId: UUID, forStage = false): Promise<ImportRunDetail | null> {
+    return this.#withRls(scope, async (client) => {
+      const rows = (await client.query<ImportRunRow>(
+        `select * from import_runs where tenant_id = $1 and clinic_id = $2 and id = $3
+         ${forStage ? "for update" : "for share"}`,
+        [scope.tenantId, scope.clinicId, runId]
+      )).rows;
+      if (!rows[0]) return null;
+      const batches = (await client.query<{ id: UUID }>(
+        `select id from migration_batches where tenant_id = $1 and clinic_id = $2 and import_run_id = $3
+         order by case import_type when 'patients' then 0 when 'practitioners' then 1 else 2 end for share`,
+        [scope.tenantId, scope.clinicId, runId]
+      )).rows;
+      const details: MigrationBatchDetail[] = [];
+      const unchangedByBatchId: Record<string, number> = {};
+      for (const batch of batches) {
+        const detail = await this.#findMigrationBatchDetailInTransaction(client, scope, batch.id);
+        if (!detail) continue;
+        details.push(detail);
+        const commits = (await client.query<{ summary: Record<string, unknown> }>(
+          `select summary from migration_commits where tenant_id = $1 and clinic_id = $2
+           and batch_id = $3 and action = 'commit' order by started_at desc limit 1`,
+          [scope.tenantId, scope.clinicId, batch.id]
+        )).rows;
+        const count = commits[0]?.summary?.reconciledRows;
+        if (typeof count === "number") unchangedByBatchId[batch.id] = count;
+      }
+      return summarizeImportRun(mapImportRunRow(rows[0]), details, unchangedByBatchId);
+    });
+  }
+
+  async stageImportRunBatch(
+    scope: RepositoryScope,
+    input: StageImportRunBatchInput
+  ): Promise<StageImportRunBatchResult> {
+    return this.#withRls(scope, async (client) => {
+      const runRows = (await client.query<ImportRunRow>(
+        `select * from import_runs where tenant_id = $1 and clinic_id = $2 and id = $3 for update`,
+        [scope.tenantId, scope.clinicId, input.importRunId]
+      )).rows;
+      if (!runRows[0]) throw new ImportRunRepositoryError("not_found", "Import run not found.");
+      if (runRows[0].source_system !== input.sourceSystem) {
+        throw new ImportRunRepositoryError("source_mismatch", "Import source does not match this run.");
+      }
+      const existing = (await client.query<MigrationBatchRow>(
+        `select * from migration_batches where tenant_id = $1 and clinic_id = $2
+         and import_run_id = $3 and import_type = $4`,
+        [scope.tenantId, scope.clinicId, input.importRunId, input.importType]
+      )).rows[0];
+      if (existing) {
+        if (existing.import_step_digest !== input.importStepDigest) {
+          throw new ImportRunRepositoryError("step_conflict", "This import step has different content.");
+        }
+        const detail = await this.#findMigrationBatchDetailInTransaction(client, scope, existing.id);
+        if (!detail) throw new Error("Import step disappeared while reading it.");
+        return { detail, created: false };
+      }
+      const order = ["patients", "practitioners", "appointments"] as const;
+      const stepIndex = order.indexOf(input.importType as (typeof order)[number]);
+      if (stepIndex < 0) throw new ImportRunRepositoryError("step_conflict", "Unsupported run step.");
+      if (stepIndex > 0) {
+        const prior = (await client.query<MigrationBatchRow>(
+          `select * from migration_batches where tenant_id = $1 and clinic_id = $2
+           and import_run_id = $3 and import_type = $4 for share`,
+          [scope.tenantId, scope.clinicId, input.importRunId, order[stepIndex - 1]]
+        )).rows[0];
+        if (!prior || !["committed", "partially_committed"].includes(prior.state) ||
+            Number(prior.committed_row_count) === 0 || Number(prior.ready_row_count) > 0 ||
+            Number(prior.conflict_row_count) > 0) {
+          throw new ImportRunRepositoryError("prerequisite", "Commit accepted rows in the previous import step first.");
+        }
+      }
+      const detail = await this.#createMigrationBatchInTransaction(client, scope, input);
+      return { detail, created: true };
+    });
+  }
+
   async createMigrationBatch(
     scope: RepositoryScope,
     input: CreateMigrationBatchInput
   ): Promise<MigrationBatchDetail> {
+    if ("importRunId" in input || "importStepDigest" in input) {
+      throw new ImportRunRepositoryError("step_conflict", "Use the import run staging contract.");
+    }
     assertStableMigrationExternalReferences(input);
-    return this.#withRls(scope, async (client) => {
+    return this.#withRls(scope, (client) => this.#createMigrationBatchInTransaction(client, scope, input));
+  }
+
+  async #createMigrationBatchInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    input: CreateMigrationBatchInput | StageImportRunBatchInput
+  ): Promise<MigrationBatchDetail> {
+    assertStableMigrationExternalReferences(input);
+    {
       const batchResult = await client.query<MigrationBatchRow>(
         `
           insert into migration_batches (
@@ -1857,10 +1997,12 @@ export class PostgresClinicOperationsRepository
             source_system,
             source_file_name,
             source_checksum,
+            import_run_id,
+            import_step_digest,
             state,
             uploaded_by_user_id
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
           returning *
         `,
         [
@@ -1870,6 +2012,8 @@ export class PostgresClinicOperationsRepository
           input.sourceSystem,
           input.sourceFileName ?? null,
           input.sourceChecksum ?? null,
+          "importRunId" in input ? input.importRunId : null,
+          "importStepDigest" in input ? input.importStepDigest : null,
           input.state,
           scope.actorUserId
         ]
@@ -1952,7 +2096,7 @@ export class PostgresClinicOperationsRepository
       const detail = await this.#findMigrationBatchDetailInTransaction(client, scope, batch.id);
       if (!detail) throw new Error("Migration batch was not found after creation.");
       return detail;
-    });
+    }
   }
 
   async listMigrationBatches(
@@ -13516,6 +13660,8 @@ interface MigrationBatchRow {
   source_system: string;
   source_file_name: string | null;
   source_checksum: string | null;
+  import_run_id: UUID | null;
+  import_step_digest: string | null;
   state: MigrationBatchRecord["state"];
   uploaded_by_user_id: UUID;
   committed_by_user_id: UUID | null;
@@ -13532,6 +13678,15 @@ interface MigrationBatchRow {
   rolled_back_at: Date | string | null;
   created_at: Date | string;
   updated_at: Date | string;
+}
+
+interface ImportRunRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  source_system: string;
+  created_by_user_id: UUID;
+  created_at: Date | string;
 }
 
 interface MigrationRowRow {
@@ -15156,6 +15311,8 @@ function mapMigrationBatchRow(row: MigrationBatchRow): MigrationBatchRecord {
     sourceSystem: row.source_system,
     sourceFileName: row.source_file_name,
     sourceChecksum: row.source_checksum,
+    importRunId: row.import_run_id ?? null,
+    importStepDigest: row.import_step_digest ?? null,
     state: row.state,
     uploadedByUserId: row.uploaded_by_user_id,
     committedByUserId: row.committed_by_user_id,
@@ -15172,6 +15329,17 @@ function mapMigrationBatchRow(row: MigrationBatchRow): MigrationBatchRecord {
     rolledBackAt: row.rolled_back_at ? toIso(row.rolled_back_at) : null,
     createdAt: toIso(row.created_at),
     updatedAt: toIso(row.updated_at)
+  };
+}
+
+function mapImportRunRow(row: ImportRunRow): ImportRunRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    sourceSystem: row.source_system,
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at)
   };
 }
 

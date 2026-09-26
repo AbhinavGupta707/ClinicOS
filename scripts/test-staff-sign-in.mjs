@@ -11,6 +11,7 @@ import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "pg";
 import { chromium } from "@playwright/test";
+import { staffImportAcceptance } from "./staff-import-acceptance.mjs";
 
 assert.equal(process.env.GITHUB_ACTIONS, "true", "Disposable CI only.");
 assert.equal(process.env.CLINICOS_STAFF_SIGN_IN_E2E_ENABLED, "true");
@@ -211,14 +212,15 @@ try {
   await ready(`http://127.0.0.1:${workerPort}/health/ready`, worker);
   stage = "durable API registration";
   const { createRuntimeApiNestApplication } = await import("@clinic-os/api");
-  ({ app } = await createRuntimeApiNestApplication({
+  const apiRuntimeEnv = {
     ...common,
     TEMPORAL_ADDRESS: "127.0.0.1:1",
     S3_BUCKET: "clinic-os-synthetic-acceptance",
     S3_REGION: "ap-south-1",
     AWS_REGION: "ap-south-1",
     AWS_DR_REGION: "ap-south-2"
-  }));
+  };
+  ({ app } = await createRuntimeApiNestApplication(apiRuntimeEnv));
   await app.listen(0, "127.0.0.1");
   const apiOrigin = `http://127.0.0.1:${app.getHttpServer().address().port}`;
   const healthResponse = await fetch(`${apiOrigin}/health/ready`);
@@ -407,8 +409,7 @@ try {
   await page.getByRole("button", { name: "Open full profile" }).click();
   await page.getByTestId("cp13-clinical-runtime").waitFor();
   await page.goto(`${webOrigin}/surface/migration-review`);
-  await page.getByTestId("cp7-migration-operations").waitFor();
-  await page.getByTestId("migration-source-system").waitFor();
+  await page.getByTestId("migration-new-source-system").waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
   const otherClinic = (
     await database.query(
@@ -448,6 +449,24 @@ try {
   assert.equal((await admitted.json()).error.code, "VALIDATION_ERROR");
   assert.equal((await context.request.get(`${webOrigin}/v1/me`)).status(), 404);
   mark("CSRF rejection and authenticated API validation");
+  stage = "durable operator import through real staff identity";
+  await staffImportAcceptance({
+    page,
+    context,
+    webOrigin,
+    clinicId,
+    runId,
+    artifacts,
+    mark,
+    restartApi: async (whileStopped) => {
+      const port = Number(new URL(apiOrigin).port);
+      await app.close();
+      await whileStopped();
+      ({ app } = await createRuntimeApiNestApplication(apiRuntimeEnv));
+      await app.listen(port, "127.0.0.1");
+      assert.equal((await fetch(`${apiOrigin}/health/ready`)).status, 200);
+    }
+  });
   stage = "real refresh";
   // Beyond the realm's 60s access lifetime AND the API's 30s clock allowance.
   // Continued access now requires a real refresh, not just reuse of the first token.
@@ -583,6 +602,22 @@ try {
 } catch (error) {
   // Never persist browser traces/HTML, callback URLs, passwords, tokens, or TOTP enrollment screens.
   console.error(`Staff sign-in acceptance failed during: ${stage}; ${error.name}`);
+  // Keep assertion diagnostics useful without retaining provider URLs, payloads or credentials.
+  const importFrame =
+    typeof error.stack === "string"
+      ? error.stack.match(/staff-import-acceptance\.mjs:(\d+):(\d+)/u)
+      : null;
+  if (importFrame) console.error(`Synthetic import assertion at line ${importFrame[1]}`);
+  if (error.code === "ERR_ASSERTION") {
+    const safeValue = (value) =>
+      typeof value === "number" || typeof value === "boolean" ? value : "redacted";
+    console.error(
+      JSON.stringify({
+        assertionActual: safeValue(error.actual),
+        assertionExpected: safeValue(error.expected)
+      })
+    );
+  }
   process.exitCode = 1;
 } finally {
   const cleanup = [];

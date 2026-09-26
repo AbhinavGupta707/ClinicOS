@@ -97,6 +97,7 @@ import {
   createLabVendor,
   createLead,
   createMigrationBatch,
+  createImportRun,
   completeMediaUpload,
   createSignedMediaAccess,
   createInvoicePaymentRequest,
@@ -122,8 +123,10 @@ import {
   getEncounter,
   getInvoice,
   getMigrationBatch,
+  getImportRun,
   getPilotReadiness,
   listMigrationBatches,
+  listImportRuns,
   getPatientDentalChart,
   getPatient,
   getPatientPrepSummary,
@@ -1267,6 +1270,19 @@ async function routeOperationsRequest(input: {
       pathUuid(deadLetterReplayMatch[1], "deadLetterEventId"),
       body
     );
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/migration-runs") {
+    return listImportRuns(operationsContext, dependencies, {
+      limit: url.searchParams.get("limit"), cursor: url.searchParams.get("cursor")
+    });
+  }
+  if (input.request.method === "POST" && pathname === "/v1/migration-runs") {
+    return createImportRun(operationsContext, dependencies, body);
+  }
+  const importRunMatch = pathname.match(/^\/v1\/migration-runs\/([^/]+)$/);
+  if (input.request.method === "GET" && importRunMatch) {
+    return getImportRun(operationsContext, dependencies, pathUuid(importRunMatch[1], "runId"));
   }
 
   if (input.request.method === "GET" && pathname === "/v1/migration-batches") {

@@ -31,6 +31,28 @@ const bearerHeaders = {
   "content-type": "application/json"
 };
 
+test("operator import run response requires explicit honest status and reconciliation", () => {
+  const run = {
+    id: patientId, tenantId: patientId, clinicId: patientId,
+    sourceSystem: "manual_trial", createdByUserId: patientId,
+    createdAt: "2026-09-20T09:00:00.000Z"
+  };
+  const reconciliation = {
+    received: 1, valid: 0, invalid: 1, needsReview: 0, ready: 0,
+    committed: 0, skipped: 0, rolledBack: 0, failed: 0, reconciled: 0,
+    missingSourceAssessment: "unknown"
+  };
+  assert.equal(parseNativeOperationResponse("getImportRun", 200, {
+    run, batches: [], status: "partial", reconciliation
+  }).success, true);
+  assert.equal(parseNativeOperationResponse("getImportRun", 200, {
+    run, batches: [], status: "synchronized", reconciliation
+  }).success, false);
+  assert.equal(parseNativeOperationResponse("getImportRun", 200, {
+    run, batches: [], status: "partial", reconciliation: { ...reconciliation, received: -1 }
+  }).success, false);
+});
+
 test("patient preparation permits no appointment in runtime and generated contracts", () => {
   const summary = {
     patient: { id: patientId, fullName: "Synthetic Patient", phone: null, dateOfBirth: null, gender: "unknown" },
@@ -78,7 +100,7 @@ function collectVersionedResponsePaths(definition: RuntimeSchema, path = ""): st
 }
 
 test("active native registry covers identity/health and every implemented checkpoint", () => {
-  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 136);
+  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 139);
   const checkpoints = new Set(
     ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.checkpoint)
   );
@@ -104,7 +126,7 @@ test("active native registry covers identity/health and every implemented checkp
   assert.equal(new Set(routeKeys).size, routeKeys.length);
   assert.equal(
     new Set(ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.operationId)).size,
-    136
+    139
   );
 });
 

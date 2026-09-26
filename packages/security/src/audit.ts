@@ -536,6 +536,12 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: false
   },
+  "migration.run.created": {
+    category: "integration",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
   "migration.row.resolved": {
     category: "integration",
     riskLevel: "high",

@@ -20,12 +20,14 @@ import {
   type FormEvent,
   useEffect,
   useMemo,
+  useRef,
   useState
 } from "react";
 
 import {
   getCanonicalMigrationCsvTemplate,
   getMigrationTrialStepStates,
+  getInitialImportRunStep,
   MIGRATION_BATCH_STATUS_LABELS,
   MIGRATION_IMPORT_TYPE_LABELS,
   type CreateMigrationBatchRequest,
@@ -40,6 +42,7 @@ import {
 } from "@/lib/cp7-integration-ops";
 
 interface MigrationOperationsPanelProps {
+  run?: { id: string; sourceSystem: string };
   actionBusy: boolean;
   batches: MigrationBatch[];
   eligibleDoctors: EligibleClinicDoctor[];
@@ -68,6 +71,7 @@ const RESOLVABLE_STATES = new Set<MigrationBatchStatus>([
 ]);
 
 export function MigrationOperationsPanel({
+  run,
   actionBusy,
   batches,
   eligibleDoctors,
@@ -83,11 +87,18 @@ export function MigrationOperationsPanel({
   const [statusFilter, setStatusFilter] = useState<MigrationBatchStatus | typeof ALL_BATCH_STATES>(
     ALL_BATCH_STATES
   );
-  const [importType, setImportType] = useState<MigrationImportType>("patients");
+  const [importType, setImportType] = useState<MigrationImportType>(() =>
+    run ? getInitialImportRunStep(batches) : "patients"
+  );
   const [inputMode, setInputMode] = useState<ImportInputMode>("file");
-  const [sourceSystem, setSourceSystem] = useState("manual_trial");
-  const [sourceFileName, setSourceFileName] = useState("synthetic-patients.csv");
-  const [csv, setCsv] = useState(() => getCanonicalMigrationCsvTemplate("patients"));
+  const [sourceSystem, setSourceSystem] = useState(run?.sourceSystem ?? "manual_trial");
+  const [sourceFileName, setSourceFileName] = useState(
+    run ? "patients.csv" : "synthetic-patients.csv"
+  );
+  const [csv, setCsv] = useState(() => (run ? "" : getCanonicalMigrationCsvTemplate("patients")));
+  const fileReadSequence = useRef(0);
+  const [fileError, setFileError] = useState<string | null>(null);
+  const [readingFile, setReadingFile] = useState(false);
   const [hasSelectedFile, setHasSelectedFile] = useState(false);
   const [rollbackConfirmed, setRollbackConfirmed] = useState(false);
   const [targetRecordIds, setTargetRecordIds] = useState<Record<string, string>>({});
@@ -103,8 +114,9 @@ export function MigrationOperationsPanel({
     () => getMigrationTrialStepStates(batches, sourceSystem),
     [batches, sourceSystem]
   );
-  const selectedBatch =
-    filteredBatches.find((batch) => batch.id === selectedBatchId) ?? filteredBatches[0] ?? null;
+  const selectedBatch = run
+    ? (batches.find((batch) => batch.importType === importType) ?? null)
+    : (filteredBatches.find((batch) => batch.id === selectedBatchId) ?? filteredBatches[0] ?? null);
   const lastCommittedAt = batches
     .flatMap((batch) => (batch.commit.committedAt ? [batch.commit.committedAt] : []))
     .sort((left, right) => right.localeCompare(left))[0];
@@ -118,15 +130,45 @@ export function MigrationOperationsPanel({
 
   const handleImportTypeChange = (nextImportType: MigrationImportType) => {
     setImportType(nextImportType);
-    setSourceFileName("synthetic-" + nextImportType + ".csv");
-    setCsv(getCanonicalMigrationCsvTemplate(nextImportType));
+    setSourceFileName((run ? "" : "synthetic-") + nextImportType + ".csv");
+    fileReadSequence.current += 1;
+    setReadingFile(false);
+    setFileError(null);
+    setCsv(run ? "" : getCanonicalMigrationCsvTemplate(nextImportType));
     setHasSelectedFile(false);
   };
 
+  useEffect(
+    () => () => {
+      fileReadSequence.current += 1;
+    },
+    []
+  );
+
   const readFile = async (file: File) => {
-    setSourceFileName(file.name);
-    setCsv(await file.text());
-    setHasSelectedFile(true);
+    if (actionBusy) return;
+    const sequence = ++fileReadSequence.current;
+    setFileError(null);
+    setCsv("");
+    setHasSelectedFile(false);
+    if (file.size > 256_000) {
+      setReadingFile(false);
+      setFileError("Choose a CSV smaller than 256 KB, containing at most 100 rows.");
+      return;
+    }
+    setReadingFile(true);
+    try {
+      const contents = await file.text();
+      if (sequence !== fileReadSequence.current) return;
+      setSourceFileName(file.name);
+      setCsv(contents);
+      setHasSelectedFile(true);
+    } catch {
+      if (sequence === fileReadSequence.current)
+        setFileError("The file could not be read. Choose it again.");
+    } finally {
+      if (sequence === fileReadSequence.current) setReadingFile(false);
+    }
   };
 
   const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
@@ -142,7 +184,9 @@ export function MigrationOperationsPanel({
 
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (actionBusy || readingFile || !csv.trim()) return;
     await onCreate({
+      ...(run ? { importRunId: run.id } : {}),
       csv,
       importType,
       sourceFileName,
@@ -192,6 +236,14 @@ export function MigrationOperationsPanel({
             </div>
           ) : (
             <form className="migration-import-form import-form" onSubmit={handleSubmit}>
+              {run && selectedBatch ? (
+                <p role="status">
+                  This step already has a saved file. An identical retry recovers it. To correct its
+                  content, start a new run with the same import name.
+                </p>
+              ) : null}
+              {fileError ? <p role="alert">{fileError}</p> : null}
+              {readingFile ? <p role="status">Reading file…</p> : null}
               <div className="import-input-tabs" role="tablist" aria-label="How to add CSV data">
                 <button
                   aria-controls="migration-file-panel"
@@ -260,7 +312,12 @@ export function MigrationOperationsPanel({
                   <textarea
                     data-testid="migration-csv"
                     disabled={actionBusy}
-                    onChange={(event) => setCsv(event.target.value)}
+                    onChange={(event) => {
+                      fileReadSequence.current += 1;
+                      setReadingFile(false);
+                      setFileError(null);
+                      setCsv(event.target.value);
+                    }}
                     required
                     rows={8}
                     value={csv}
@@ -276,7 +333,7 @@ export function MigrationOperationsPanel({
                 <span>Import name</span>
                 <input
                   data-testid="migration-source-system"
-                  disabled={actionBusy}
+                  disabled={actionBusy || Boolean(run)}
                   maxLength={120}
                   onChange={(event) => setSourceSystem(event.target.value)}
                   placeholder="For example: Healthy Roots trial"
@@ -321,7 +378,7 @@ export function MigrationOperationsPanel({
               <div className="surface-actions migration-import-form__actions">
                 <Button
                   data-testid="migration-stage-batch"
-                  disabled={actionBusy || !sourceSystem.trim() || !csv.trim()}
+                  disabled={actionBusy || readingFile || !sourceSystem.trim() || !csv.trim()}
                   icon={<FileUp size={16} />}
                   type="submit"
                 >
@@ -330,13 +387,16 @@ export function MigrationOperationsPanel({
                 <Button
                   disabled={actionBusy}
                   onClick={() => {
-                    setCsv(template);
+                    fileReadSequence.current += 1;
+                    setReadingFile(false);
+                    setFileError(null);
+                    setCsv(run ? "" : template);
                     setHasSelectedFile(false);
                   }}
                   type="button"
                   variant="ghost"
                 >
-                  Reset template
+                  {run ? "Clear input" : "Reset template"}
                 </Button>
               </div>
             </form>
@@ -414,9 +474,9 @@ export function MigrationOperationsPanel({
 
       <details className="import-history">
         <summary>
-          <span>Import history</span>
+          <span>{run ? "Files in this run" : "Import history"}</span>
           <span>
-            {filteredBatches.length} run{filteredBatches.length === 1 ? "" : "s"}
+            {filteredBatches.length} file{filteredBatches.length === 1 ? "" : "s"}
           </span>
         </summary>
         <div className="import-history__controls">
@@ -464,7 +524,10 @@ export function MigrationOperationsPanel({
                     : "migration-run-card"
                 }
                 key={batch.id}
-                onClick={() => onSelectBatch(batch.id)}
+                onClick={() => {
+                  if (run) handleImportTypeChange(batch.importType);
+                  onSelectBatch(batch.id);
+                }}
                 type="button"
               >
                 <span>
