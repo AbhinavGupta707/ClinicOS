@@ -9,7 +9,7 @@ const migration = readFileSync(
 );
 
 test("CP16 schema adds provider-neutral exchange consent and least-privilege permissions", () => {
-  assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "026");
+  assert.equal(LATEST_DATABASE_SCHEMA_VERSION, "027");
   assert.match(migration, /'clinical_data_exchange'/u);
   assert.match(migration, /'interoperability\.fhir_r4\.export'/u);
   assert.match(migration, /'interoperability\.fhir_r4\.import'/u);

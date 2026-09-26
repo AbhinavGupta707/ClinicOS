@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { randomUUID } from "node:crypto";
 import test from "node:test";
 import { buildAccessContext, principalFromVerifiedKeycloakClaims } from "@clinic-os/auth";
 import { CHECKPOINT1_SEED_IDS } from "@clinic-os/db";
@@ -7,6 +8,9 @@ import {
   commitMigrationBatch,
   createClinicOsApiServer,
   createMigrationBatch,
+  createImportRun,
+  getImportRun,
+  listImportRuns,
   InMemoryAuditSink,
   listDeadLetterEvents,
   listMigrationBatches,
@@ -24,6 +28,108 @@ import {
 const expectedIssuer = "http://localhost:8080/realms/clinicos-local";
 const acceptedAudience = "clinic-os-api";
 const clinicId = CHECKPOINT1_SEED_IDS.clinicId;
+
+test("operator import run recovers immutable steps and reconciles a three-phase CSV import", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const auditSink = new InMemoryAuditSink();
+  const dependencies: OperationsDependencies = { repository, auditSink };
+  const assistant = await operationsContext("seed-assistant", "import-run");
+  const accountant = await operationsContext("seed-accountant", "import-run-denied");
+  const id = randomUUID();
+  const sourceSystem = `manual_run_${id}`;
+  await assert.rejects(() => createImportRun(accountant, dependencies, { id, sourceSystem }), /missing_permission/);
+  assert.equal((await createImportRun(assistant, dependencies, { id, sourceSystem })).status, 201);
+  assert.equal((await createImportRun(assistant, dependencies, { id, sourceSystem })).status, 200);
+  await assert.rejects(() => createImportRun(assistant, dependencies, { id, sourceSystem: "different" }), /already in use/);
+  assert.equal(auditSink.events.filter((event) => event.action === "migration.run.created").length, 1);
+  const patient = {
+    importRunId: id, importType: "patients", sourceSystem, sourceFileName: "patients.csv",
+    csv: "external_reference,full_name,phone\npatient-1,Run Patient,+91 99900 01111"
+  };
+  await assert.rejects(() => createMigrationBatch(assistant, dependencies, {
+    ...patient, importType: "appointments"
+  }), /previous import step/);
+  const patientBatch = await createMigrationBatch(assistant, dependencies, patient);
+  assert.equal(patientBatch.status, 201);
+  const replay = await createMigrationBatch(assistant, dependencies, { ...patient, sourceChecksum: "f".repeat(64) });
+  assert.equal(replay.status, 200);
+  assert.equal(replay.body.batch.id, patientBatch.body.batch.id);
+  assert.equal(auditSink.events.filter((event) => event.action === "migration.batch.created").length, 1);
+  await assert.rejects(() => createMigrationBatch(assistant, dependencies, {
+    ...patient, csv: patient.csv.replace("Run Patient", "Changed Patient")
+  }), /different content/);
+  await assert.rejects(() => createMigrationBatch(assistant, dependencies, {
+    ...patient, sourceSystem: "another_source"
+  }), /does not match/);
+  await commitMigrationBatch(assistant, dependencies, patientBatch.body.batch.id, {});
+
+  const practitioner = await createMigrationBatch(assistant, dependencies, {
+    importRunId: id, importType: "practitioners", sourceSystem, sourceFileName: "practitioners.csv",
+    csv: "external_reference,display_name,email,phone\ndoctor-1,Run Doctor,,"
+  });
+  assert.equal(practitioner.status, 201);
+  await resolveMigrationBatchRow(assistant, dependencies, practitioner.body.batch.id,
+    practitioner.body.rows[0].id, {
+      action: "link_existing", targetRecordId: CHECKPOINT1_SEED_IDS.users.doctor
+    });
+  await commitMigrationBatch(assistant, dependencies, practitioner.body.batch.id, {});
+  const appointment = await createMigrationBatch(assistant, dependencies, {
+    importRunId: id, importType: "appointments", sourceSystem, sourceFileName: "appointments.csv",
+    csv: "external_reference,patient_external_reference,provider_external_reference,appointment_type_code,chair_code,start_at,end_at,status,source\nappointment-1,patient-1,doctor-1,consultation,op-1,2026-09-01T09:00:00.000Z,2026-09-01T09:30:00.000Z,booked,manual"
+  });
+  assert.equal(appointment.status, 201);
+  await commitMigrationBatch(assistant, dependencies, appointment.body.batch.id, {});
+  const lateReplay = await createMigrationBatch(assistant, dependencies, {
+    ...patient, sourceChecksum: "0".repeat(64)
+  });
+  assert.equal(lateReplay.status, 200);
+  assert.equal(lateReplay.body.batch.id, patientBatch.body.batch.id);
+  const detail = await getImportRun(assistant, dependencies, id);
+  assert.equal(detail.body.status, "complete");
+  assert.deepEqual(detail.body.batches.map((entry) => entry.batch.importType), ["patients", "practitioners", "appointments"]);
+  assert.deepEqual(detail.body.reconciliation, {
+    received: 3, valid: 3, invalid: 0, needsReview: 0, ready: 0,
+    committed: 3, skipped: 0, rolledBack: 0, failed: 0, reconciled: 0,
+    missingSourceAssessment: "unknown"
+  });
+  assert.equal("rawPayload" in detail.body.batches[0].rows[0], false);
+  const list = await listImportRuns(assistant, dependencies, { limit: "1" });
+  assert.equal(list.body.runs[0].id, id);
+  assert.equal(list.body.nextCursor, null);
+  const laterId = randomUUID();
+  await createImportRun(assistant, dependencies, { id: laterId, sourceSystem });
+  const firstPage = await listImportRuns(assistant, dependencies, { limit: "1" });
+  assert.ok(firstPage.body.nextCursor);
+  const secondPage = await listImportRuns(assistant, dependencies, {
+    limit: "1", cursor: firstPage.body.nextCursor
+  });
+  assert.equal(secondPage.body.runs.length, 1);
+  assert.notEqual(secondPage.body.runs[0].id, firstPage.body.runs[0].id);
+  await assert.rejects(() => listImportRuns(assistant, dependencies, {
+    limit: "1", cursor: randomUUID()
+  }), /cursor not found/);
+});
+
+test("operator run retains rejected rows as partial truth after accepted import", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const dependencies: OperationsDependencies = { repository };
+  const assistant = await operationsContext("seed-assistant", "import-run-partial");
+  const id = randomUUID();
+  const sourceSystem = `manual_run_${id}`;
+  await createImportRun(assistant, dependencies, { id, sourceSystem });
+  const batch = await createMigrationBatch(assistant, dependencies, {
+    importRunId: id, importType: "patients", sourceSystem, sourceFileName: "patients.csv",
+    csv: "external_reference,full_name,phone\nvalid-1,Valid Patient,+91 99900 01111\ninvalid-1,,123"
+  });
+  await commitMigrationBatch(assistant, dependencies, batch.body.batch.id, {});
+  const detail = await getImportRun(assistant, dependencies, id);
+  assert.equal(detail.body.status, "partial");
+  assert.equal(detail.body.reconciliation.received, 2);
+  assert.equal(detail.body.reconciliation.committed, 1);
+  assert.equal(detail.body.reconciliation.invalid, 1);
+  assert.equal(detail.body.reconciliation.valid, 1);
+  assert.equal(detail.body.reconciliation.missingSourceAssessment, "unknown");
+});
 
 test("CP7 migration import separates invalid rows, resolves duplicates, commits idempotently, and rolls back imports", async () => {
   const repository = new LocalFixtureClinicOperationsRepository();

@@ -44,10 +44,9 @@ test.describe("MVP manual import real-stack acceptance", () => {
     await expect(page.getByTestId("cp7-integration-ops-workspace")).toBeVisible();
     await expect(page.getByTestId("cp7-fixture-alert")).toHaveCount(0);
     await expect(page.getByLabel("Workflow API mode")).toContainText("Live boundary");
+    await startRun(page, sourceSystem);
     await expect(page.getByText("Scheduled sync").locator("..")).toContainText("Not configured");
     await expect(page.getByText("Source freshness").locator("..")).toContainText("Unknown");
-
-    await page.getByTestId("migration-source-system").fill(sourceSystem);
     await page.getByTestId("migration-input-tab-paste").click();
     await page.getByTestId("migration-csv").fill(csv);
     await page.getByTestId("migration-stage-batch").click();
@@ -186,7 +185,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
 
     try {
       await page.goto("/surface/migration-review?scenario=mvp-guided-import-real-stack");
-      await page.getByTestId("migration-source-system").fill(sourceSystem);
+      await startRun(page, sourceSystem);
 
       await stageAndCommitBatch(page, "patients", patientCsv, batchIds);
       await expect(page.locator('.migration-trial-step[data-state="complete"]')).toContainText(
@@ -280,6 +279,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/surface/migration-review?scenario=mvp-manual-import-real-stack-mobile");
 
+    await startRun(page, `mobile_manual_${Date.now()}`);
     await expect(page.getByTestId("cp7-migration-operations")).toBeVisible();
     await expect(page.getByTestId("migration-stage-batch")).toBeVisible();
     await expect(page.getByText("Scheduled sync").locator("..")).toContainText("Not configured");
@@ -349,4 +349,10 @@ async function commitSelectedBatch(page: Page, onCommitAccepted?: () => void) {
   expect(commitResponse.ok()).toBe(true);
   onCommitAccepted?.();
   await expect(page.getByTestId("cp7-migration-status")).toContainText("Committed");
+}
+
+async function startRun(page: Page, sourceSystem: string) {
+  await page.getByTestId("migration-new-source-system").fill(sourceSystem);
+  await page.getByTestId("migration-create-run").click();
+  await expect(page.getByTestId("migration-source-system")).toHaveValue(sourceSystem);
 }

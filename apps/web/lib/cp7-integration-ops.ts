@@ -148,6 +148,7 @@ export interface MigrationBatch {
 }
 
 export interface CreateMigrationBatchRequest {
+  importRunId?: string;
   csv: string;
   importType: MigrationImportType;
   sourceFileName?: string | null;
@@ -1024,6 +1025,7 @@ export async function createLiveMigrationBatch(
     "/v1/migration-batches",
     {
       csv: input.csv,
+      ...(input.importRunId ? { importRunId: input.importRunId } : {}),
       importType: input.importType,
       sourceFileName: input.sourceFileName?.trim() || null,
       sourceSystem: input.sourceSystem.trim()
@@ -1205,7 +1207,7 @@ function normalizeCp7LivePayload(input: {
   };
 }
 
-function normalizeClinicDoctors(payload: unknown): EligibleClinicDoctor[] | null {
+export function normalizeClinicDoctors(payload: unknown): EligibleClinicDoctor[] | null {
   if (!isRecord(payload) || !Array.isArray(payload.clinicDoctors)) return null;
 
   const doctors = payload.clinicDoctors.map((value) => {
@@ -1268,7 +1270,7 @@ function readArray(payload: unknown, keys: string[]) {
   return [];
 }
 
-function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
+export function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
   if (isMigrationBatch(value)) return value;
   if (!isRecord(value) || !isRecord(value.batch)) return null;
 

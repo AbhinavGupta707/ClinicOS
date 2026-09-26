@@ -24,7 +24,7 @@ test("CP12 module operation ownership is complete, exclusive, and parity-locked"
   );
 
   const ownedOperations = Object.values(CLINIC_MODULE_OPERATION_OWNERS).flat();
-  assert.equal(legacyOperations.length, 142, "legacy repository inventory changed unexpectedly");
+  assert.equal(legacyOperations.length, 146, "legacy repository inventory changed unexpectedly");
   assert.deepEqual(
     [...new Set(ownedOperations)].sort(),
     [...ownedOperations].sort(),

@@ -352,6 +352,12 @@ export type CreateCorrectiveActionRequest = { readonly headers: { readonly "idem
 export type CreateCorrectiveActionResponse = { readonly correctiveAction: VersionedPublicResource };
 export type UpdateCorrectiveActionRequest = { readonly path: { readonly correctiveActionId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly status: "open" | "in_progress" | "completed" | "cancelled"; readonly completionEvidence: WritableJsonObject; readonly verificationEvidence?: WritableJsonObject } };
 export type UpdateCorrectiveActionResponse = { readonly correctiveAction: VersionedPublicResource };
+export type ListImportRunsRequest = { readonly query?: { readonly limit?: number; readonly cursor?: string } };
+export type ListImportRunsResponse = { readonly runs: readonly ({ readonly id: string; readonly tenantId: string; readonly clinicId: string; readonly sourceSystem: string; readonly createdByUserId: string; readonly createdAt: string })[]; readonly nextCursor: string | null };
+export type CreateImportRunRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly id: string; readonly sourceSystem: string } };
+export type CreateImportRunResponse = { readonly run: { readonly id: string; readonly tenantId: string; readonly clinicId: string; readonly sourceSystem: string; readonly createdByUserId: string; readonly createdAt: string } };
+export type GetImportRunRequest = { readonly path: { readonly runId: string } };
+export type GetImportRunResponse = { readonly run: { readonly id: string; readonly tenantId: string; readonly clinicId: string; readonly sourceSystem: string; readonly createdByUserId: string; readonly createdAt: string }; readonly batches: readonly (PublicJsonObject)[]; readonly status: "awaiting_patients" | "awaiting_practitioners" | "awaiting_appointments" | "review_required" | "partial" | "complete" | "rolled_back"; readonly reconciliation: { readonly received: number; readonly valid: number; readonly invalid: number; readonly needsReview: number; readonly ready: number; readonly committed: number; readonly skipped: number; readonly rolledBack: number; readonly failed: number; readonly reconciled: number; readonly missingSourceAssessment: "unknown" } };
 export type ListProviderHealthRequest = Readonly<Record<string, never>>;
 export type ListProviderHealthResponse = { readonly providers: readonly (PublicJsonObject)[] };
 export type ListDeadLetterEventsRequest = { readonly query?: { readonly status?: "unreviewed" | "replay_requested" | "replayed" | "ignored" | "blocked" | "open" | "retry_scheduled" | "resolved" | "discarded"; readonly limit?: number } };
@@ -360,7 +366,7 @@ export type ReplayDeadLetterEventRequest = { readonly path: { readonly deadLette
 export type ReplayDeadLetterEventResponse = { readonly replay: PublicJsonObject };
 export type ListMigrationBatchesRequest = { readonly query?: { readonly status?: "uploaded" | "parsed" | "validated" | "needs_review" | "ready_to_commit" | "committed" | "partially_committed" | "failed" | "rolled_back"; readonly limit?: number } };
 export type ListMigrationBatchesResponse = { readonly migrationBatches: readonly (PublicJsonObject)[] };
-export type CreateMigrationBatchRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly importType: "patients" | "practitioners" | "appointments"; readonly sourceSystem?: string; readonly sourceFileName?: string | null; readonly sourceChecksum?: string | null; readonly csv: string; readonly rows?: readonly (WritableJsonObject)[] } | { readonly importType: "patients" | "practitioners" | "appointments"; readonly sourceSystem?: string; readonly sourceFileName?: string | null; readonly sourceChecksum?: string | null; readonly csv?: string; readonly rows: readonly (WritableJsonObject)[] } };
+export type CreateMigrationBatchRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly importType: "patients" | "practitioners" | "appointments"; readonly sourceSystem?: string; readonly sourceFileName?: string | null; readonly sourceChecksum?: string | null; readonly importRunId?: string; readonly csv: string; readonly rows?: readonly (WritableJsonObject)[] } | { readonly importType: "patients" | "practitioners" | "appointments"; readonly sourceSystem?: string; readonly sourceFileName?: string | null; readonly sourceChecksum?: string | null; readonly importRunId?: string; readonly csv?: string; readonly rows: readonly (WritableJsonObject)[] } };
 export type CreateMigrationBatchResponse = { readonly batch: PublicJsonObject; readonly rows: readonly (PublicJsonObject)[]; readonly conflicts: readonly (PublicJsonObject)[]; readonly returnedConflictCount: number; readonly conflictsTruncated: boolean };
 export type GetMigrationBatchRequest = { readonly path: { readonly batchId: string } };
 export type GetMigrationBatchResponse = { readonly batch: PublicJsonObject; readonly rows: readonly (PublicJsonObject)[]; readonly conflicts: readonly (PublicJsonObject)[]; readonly returnedConflictCount: number; readonly conflictsTruncated: boolean };
@@ -525,6 +531,9 @@ export interface ClinicOsNativeOperationMap {
   readonly listCorrectiveActions: { readonly request: ListCorrectiveActionsRequest; readonly response: ListCorrectiveActionsResponse };
   readonly createCorrectiveAction: { readonly request: CreateCorrectiveActionRequest; readonly response: CreateCorrectiveActionResponse };
   readonly updateCorrectiveAction: { readonly request: UpdateCorrectiveActionRequest; readonly response: UpdateCorrectiveActionResponse };
+  readonly listImportRuns: { readonly request: ListImportRunsRequest; readonly response: ListImportRunsResponse };
+  readonly createImportRun: { readonly request: CreateImportRunRequest; readonly response: CreateImportRunResponse };
+  readonly getImportRun: { readonly request: GetImportRunRequest; readonly response: GetImportRunResponse };
   readonly listProviderHealth: { readonly request: ListProviderHealthRequest; readonly response: ListProviderHealthResponse };
   readonly listDeadLetterEvents: { readonly request: ListDeadLetterEventsRequest; readonly response: ListDeadLetterEventsResponse };
   readonly replayDeadLetterEvent: { readonly request: ReplayDeadLetterEventRequest; readonly response: ReplayDeadLetterEventResponse };
@@ -3036,6 +3045,78 @@ export class ClinicOsApiClient {
     });
   }
 
+  async listImportRuns(input?: ListImportRunsRequest): Promise<ListImportRunsResponse> {
+    return this.execute<ListImportRunsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/migration-runs",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listImportRunsWithMetadata(input?: ListImportRunsRequest): Promise<ClinicOsApiResponse<ListImportRunsResponse>> {
+    return this.executeWithMetadata<ListImportRunsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/migration-runs",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async createImportRun(input: CreateImportRunRequest): Promise<CreateImportRunResponse> {
+    return this.execute<CreateImportRunResponse>({
+      method: "POST",
+      pathTemplate: "/v1/migration-runs",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200,201],
+      input: input ?? {}
+    });
+  }
+
+  async createImportRunWithMetadata(input: CreateImportRunRequest): Promise<ClinicOsApiResponse<CreateImportRunResponse>> {
+    return this.executeWithMetadata<CreateImportRunResponse>({
+      method: "POST",
+      pathTemplate: "/v1/migration-runs",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200,201],
+      input: input ?? {}
+    });
+  }
+
+  async getImportRun(input: GetImportRunRequest): Promise<GetImportRunResponse> {
+    return this.execute<GetImportRunResponse>({
+      method: "GET",
+      pathTemplate: "/v1/migration-runs/{runId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getImportRunWithMetadata(input: GetImportRunRequest): Promise<ClinicOsApiResponse<GetImportRunResponse>> {
+    return this.executeWithMetadata<GetImportRunResponse>({
+      method: "GET",
+      pathTemplate: "/v1/migration-runs/{runId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
   async listProviderHealth(input?: ListProviderHealthRequest): Promise<ListProviderHealthResponse> {
     return this.execute<ListProviderHealthResponse>({
       method: "GET",
@@ -3139,7 +3220,7 @@ export class ClinicOsApiClient {
       auth: "bearer",
       contentType: "application/json",
       bodyEncoding: "json",
-      successStatuses: [201],
+      successStatuses: [200,201],
       input: input ?? {}
     });
   }
@@ -3151,7 +3232,7 @@ export class ClinicOsApiClient {
       auth: "bearer",
       contentType: "application/json",
       bodyEncoding: "json",
-      successStatuses: [201],
+      successStatuses: [200,201],
       input: input ?? {}
     });
   }

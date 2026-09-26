@@ -36,6 +36,10 @@ import {
   type CreateLeadInput,
   type CreateMediaUploadReservationInput,
   type CreateMigrationBatchInput,
+  ImportRunRepositoryError,
+  type StageImportRunBatchInput,
+  type StageImportRunBatchResult,
+  type ImportRunListResult,
   type CreatePatientInput,
   type CreatePatientInstructionInput,
   type CreatePaymentRequestInput,
@@ -211,6 +215,9 @@ import {
   type IntegrationDeadLetterRecord,
   type MigrationBatchDetail,
   type MigrationBatchRecord,
+  type ImportRunDetail,
+  type ImportRunRecord,
+  summarizeImportRun,
   type MigrationCommitRecord,
   type MigrationCommitResult,
   type MigrationConflictRecord,
@@ -892,6 +899,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly attributionTouches: AttributionTouchRecord[] = [];
   readonly outboxEvents: OutboxEventInput[] = [];
   readonly migrationBatches: MigrationBatchRecord[] = [];
+  readonly importRuns: ImportRunRecord[] = [];
   readonly migrationRows: MigrationRowRecord[] = [];
   readonly migrationConflicts: MigrationConflictRecord[] = [];
   readonly migrationCommits: MigrationCommitRecord[] = [];
@@ -1652,9 +1660,87 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
   }
 
+  async createImportRun(scope: RepositoryScope, input: { id: UUID; sourceSystem: string }): Promise<{ run: ImportRunRecord; created: boolean }> {
+    const existing = this.importRuns.find((run) => run.id === input.id);
+    if (existing) {
+      if (!matchesScope(existing, scope) || existing.sourceSystem !== input.sourceSystem) {
+        throw new ImportRunRepositoryError("source_mismatch", "Import run identity is already in use.");
+      }
+      return { run: existing, created: false };
+    }
+    const run: ImportRunRecord = {
+      id: input.id, tenantId: scope.tenantId, clinicId: scope.clinicId,
+      sourceSystem: input.sourceSystem, createdByUserId: scope.actorUserId,
+      createdAt: this.#nowIso()
+    };
+    this.importRuns.push(run);
+    return { run, created: true };
+  }
+
+  async listImportRuns(scope: RepositoryScope, limit: number, cursor: UUID | null = null): Promise<ImportRunListResult> {
+    const runs = this.importRuns.filter((run) => matchesScope(run, scope))
+      .sort((left, right) => right.createdAt.localeCompare(left.createdAt) || right.id.localeCompare(left.id));
+    const index = cursor ? runs.findIndex((run) => run.id === cursor) : -1;
+    if (cursor && index < 0) throw new ImportRunRepositoryError("not_found", "Import run cursor not found.");
+    const bounded = Math.max(1, Math.min(limit, 100));
+    const page = runs.slice(index + 1, index + 1 + bounded);
+    return { runs: page, nextCursor: runs.length > index + 1 + bounded ? page.at(-1)?.id ?? null : null };
+  }
+
+  async findImportRunById(scope: RepositoryScope, runId: UUID, _forStage = false): Promise<ImportRunDetail | null> {
+    const run = this.importRuns.find((item) => matchesScope(item, scope) && item.id === runId);
+    if (!run) return null;
+    const order = ["patients", "practitioners", "appointments"];
+    const batches = this.migrationBatches.filter((batch) => matchesScope(batch, scope) && batch.importRunId === runId)
+      .sort((left, right) => order.indexOf(left.importType) - order.indexOf(right.importType))
+      .map((batch) => this.#migrationBatchDetail(scope, batch));
+    const unchangedByBatchId = Object.fromEntries(this.migrationCommits
+      .filter((commit) => matchesScope(commit, scope) && commit.action === "commit")
+      .map((commit) => [commit.batchId, typeof commit.summary.reconciledRows === "number" ? commit.summary.reconciledRows : 0]));
+    return summarizeImportRun(run, batches, unchangedByBatchId);
+  }
+
+  async stageImportRunBatch(scope: RepositoryScope, input: StageImportRunBatchInput): Promise<StageImportRunBatchResult> {
+    const run = this.importRuns.find((item) => matchesScope(item, scope) && item.id === input.importRunId);
+    if (!run) throw new ImportRunRepositoryError("not_found", "Import run not found.");
+    if (run.sourceSystem !== input.sourceSystem) {
+      throw new ImportRunRepositoryError("source_mismatch", "Import source does not match this run.");
+    }
+    const existing = this.migrationBatches.find((batch) => matchesScope(batch, scope) &&
+      batch.importRunId === run.id && batch.importType === input.importType);
+    if (existing) {
+      if (existing.importStepDigest !== input.importStepDigest) {
+        throw new ImportRunRepositoryError("step_conflict", "This import step has different content.");
+      }
+      return { detail: this.#migrationBatchDetail(scope, existing), created: false };
+    }
+    const order = ["patients", "practitioners", "appointments"] as const;
+    const index = order.indexOf(input.importType as (typeof order)[number]);
+    if (index < 0) throw new ImportRunRepositoryError("step_conflict", "Unsupported run step.");
+    if (index > 0) {
+      const prior = this.migrationBatches.find((batch) => matchesScope(batch, scope) &&
+        batch.importRunId === run.id && batch.importType === order[index - 1]);
+      if (!prior || !["committed", "partially_committed"].includes(prior.state) ||
+        prior.committedRowCount === 0 || prior.readyRowCount > 0 || prior.conflictRowCount > 0) {
+        throw new ImportRunRepositoryError("prerequisite", "Commit accepted rows in the previous import step first.");
+      }
+    }
+    return { detail: await this.#createMigrationBatchUnchecked(scope, input), created: true };
+  }
+
   async createMigrationBatch(
     scope: RepositoryScope,
     input: CreateMigrationBatchInput
+  ): Promise<MigrationBatchDetail> {
+    if ("importRunId" in input || "importStepDigest" in input) {
+      throw new ImportRunRepositoryError("step_conflict", "Use the import run staging contract.");
+    }
+    return this.#createMigrationBatchUnchecked(scope, input);
+  }
+
+  async #createMigrationBatchUnchecked(
+    scope: RepositoryScope,
+    input: CreateMigrationBatchInput | StageImportRunBatchInput
   ): Promise<MigrationBatchDetail> {
     assertStableMigrationExternalReferences(input);
     const now = this.#nowIso();
@@ -1666,6 +1752,8 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       sourceSystem: input.sourceSystem,
       sourceFileName: input.sourceFileName ?? null,
       sourceChecksum: input.sourceChecksum ?? null,
+      importRunId: (input as StageImportRunBatchInput).importRunId ?? null,
+      importStepDigest: (input as StageImportRunBatchInput).importStepDigest ?? null,
       state: input.state,
       uploadedByUserId: scope.actorUserId,
       committedByUserId: null,

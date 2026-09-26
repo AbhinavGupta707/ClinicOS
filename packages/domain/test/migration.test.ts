@@ -8,10 +8,35 @@ import {
   parsePatientMigrationCsv,
   parsePractitionerMigrationCsv,
   summarizeMigrationBatchState,
+  summarizeImportRun,
+  type ImportRunRecord,
+  type MigrationBatchDetail,
   validateAppointmentImportRow,
   validatePractitionerImportRow,
   validatePatientImportRow
 } from "../src/index.ts";
+
+test("import run reconciliation partitions row states and keeps missing-source assessment unknown", () => {
+  const id = asUuid("10000000-0000-4000-8000-000000000001");
+  const run = { id, tenantId: id, clinicId: id, sourceSystem: "manual",
+    createdByUserId: id, createdAt: "2026-09-01T00:00:00.000Z" } satisfies ImportRunRecord;
+  const rows = ["committed", "invalid", "skipped", "failed"].map((status) => ({ status })) as MigrationBatchDetail["rows"];
+  const detail = {
+    batch: { id, importType: "patients", state: "partially_committed" },
+    rows, conflicts: []
+  } as MigrationBatchDetail;
+  const result = summarizeImportRun(run, [detail], { [id]: 1 });
+  assert.equal(result.status, "partial");
+  assert.deepEqual(result.reconciliation, {
+    received: 4, valid: 3, invalid: 1, needsReview: 0, ready: 0,
+    committed: 1, skipped: 1, rolledBack: 0, failed: 1, reconciled: 1,
+    missingSourceAssessment: "unknown"
+  });
+  assert.equal(result.reconciliation.received,
+    result.reconciliation.invalid + result.reconciliation.needsReview +
+    result.reconciliation.ready + result.reconciliation.committed +
+    result.reconciliation.skipped + result.reconciliation.rolledBack + result.reconciliation.failed);
+});
 
 test("patient migration requires a stable external reference", () => {
   const [draft] = parsePatientMigrationCsv(

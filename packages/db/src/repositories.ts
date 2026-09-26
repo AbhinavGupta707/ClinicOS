@@ -84,6 +84,8 @@ import type {
   MediaType,
   MigrationBatchDetail,
   MigrationBatchRecord,
+  ImportRunDetail,
+  ImportRunRecord,
   MigrationBatchState,
   MigrationCommitResult,
   MigrationConflictRecord,
@@ -312,6 +314,30 @@ export interface CreateMigrationBatchInput {
   sourceChecksum?: string | null;
   state: MigrationBatchRecord["state"];
   rows: CreateMigrationRowInput[];
+}
+
+export class ImportRunRepositoryError extends Error {
+  readonly reason: "not_found" | "source_mismatch" | "step_conflict" | "prerequisite";
+  constructor(reason: ImportRunRepositoryError["reason"], message: string) {
+    super(message);
+    this.reason = reason;
+    this.name = "ImportRunRepositoryError";
+  }
+}
+
+export interface StageImportRunBatchInput extends CreateMigrationBatchInput {
+  importRunId: UUID;
+  importStepDigest: string;
+}
+
+export interface StageImportRunBatchResult {
+  detail: MigrationBatchDetail;
+  created: boolean;
+}
+
+export interface ImportRunListResult {
+  runs: ImportRunRecord[];
+  nextCursor: UUID | null;
 }
 
 const STABLE_IDENTITY_MIGRATION_TYPES = new Set<MigrationImportType>([
@@ -1458,6 +1484,10 @@ export interface ClinicOperationsRepository {
     scope: RepositoryScope,
     input: CreateMigrationBatchInput
   ): Promise<MigrationBatchDetail>;
+  createImportRun(scope: RepositoryScope, input: { id: UUID; sourceSystem: string }): Promise<{ run: ImportRunRecord; created: boolean }>;
+  listImportRuns(scope: RepositoryScope, limit: number, cursor?: UUID | null): Promise<ImportRunListResult>;
+  findImportRunById(scope: RepositoryScope, runId: UUID, forStage?: boolean): Promise<ImportRunDetail | null>;
+  stageImportRunBatch(scope: RepositoryScope, input: StageImportRunBatchInput): Promise<StageImportRunBatchResult>;
   listMigrationBatches(
     scope: RepositoryScope,
     filter?: MigrationBatchSearchFilter
