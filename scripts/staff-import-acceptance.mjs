@@ -215,13 +215,43 @@ export async function staffImportAcceptance({
     for (const type of ["appointments", "practitioners", "patients"]) {
       const batch = run.batches.find((d) => d.batch.importType === type).batch;
       const result = await post(`/v1/migration-batches/${batch.id}/rollback`);
-      assert.equal(result.blockedLinks.length, 0);
+      // Opening the profile above creates durable patient-linked access audit.
+      // That is a real downstream dependency: rollback must preserve the patient.
+      if (run === first && type === "patients") {
+        assert.equal(result.blockedLinks.length, 1);
+        assert.equal(result.rows[0].status, "committed");
+      } else assert.equal(result.blockedLinks.length, 0);
     }
   }
-  assert.equal((await get(`/v1/migration-runs/${firstRunId}`)).status, "rolled_back");
+  const retained = await get(`/v1/migration-runs/${firstRunId}`);
+  assert.equal(retained.status, "partial");
+  assert.equal(retained.reconciliation.committed, 1);
+  assert.equal(retained.reconciliation.rolledBack, 2);
+  assert.ok(
+    (await get(`/v1/patients?query=${encodeURIComponent(patientName)}`)).patients.some(
+      (patient) => patient.id === patientId
+    )
+  );
+  mark(
+    "cookie BFF import: changed evidence quarantined and audited patient preserved during rollback"
+  );
+
+  // A separate untouched record proves safe compensation is still available.
+  // Do not open its profile (which would create the audit dependency tested above).
+  const untouchedId = await startRun();
+  const untouchedName = `UnviewedRecovery ${runId}`;
+  await stage(
+    "patients",
+    `external_reference,full_name,phone\nuntouched-${runId},${untouchedName},+918${Date.now().toString().slice(-9)}`
+  );
+  await commit();
+  const untouched = await get(`/v1/migration-runs/${untouchedId}`);
+  const compensated = await post(`/v1/migration-batches/${untouched.batches[0].batch.id}/rollback`);
+  assert.equal(compensated.blockedLinks.length, 0);
+  assert.equal((await get(`/v1/migration-runs/${untouchedId}`)).status, "rolled_back");
   assert.equal(
-    (await get(`/v1/patients?query=${encodeURIComponent(patientName)}`)).patients.length,
+    (await get(`/v1/patients?query=${encodeURIComponent(untouchedName)}`)).patients.length,
     0
   );
-  mark("cookie BFF import: changed evidence quarantined, guarded and reverse-order rollback");
+  mark("cookie BFF import: untouched record safely rolled back");
 }

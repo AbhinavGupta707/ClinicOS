@@ -44,7 +44,9 @@ real patient data.
   review and shows unavailable. It never invents a successful completion.
 - Rollback is best-effort compensation. Records with later changes or dependencies
   remain protected. Review blocked counts; reverse-order rollback may be possible
-  for untouched imports (appointments, practitioners, patients). Rollback is not
+  for untouched imports (appointments, practitioners, patients). Opening a patient
+  profile creates a patient-linked access audit record, which can itself block
+  deletion. Rollback is not
   a general undo mechanism for subsequent clinic activity.
 - Existing ungrouped migration batches remain available through the integration
   operations surface and existing API. They are not silently assigned to a new run.
@@ -71,7 +73,8 @@ this work is considered merge-ready.
 The combined staff acceptance imports all three files, reopens the run, loses a
 completed stage response, retries it, restarts only its owned API process, checks
 Today/search, repeats the dataset without duplicate identities, quarantines
-changed evidence, and checks guarded plus reverse-order rollback. The one
+changed evidence, and checks guarded reverse-order rollback, preservation after an audited patient
+profile read, and safe compensation of a separate untouched patient. The one
 intentional response-loss hook forwards the actual request to the API before
 aborting delivery; no business response is fabricated. Ordinary success flows
 remain unintercepted. Synthetic tests do not prove a real clinic's source mapping,
