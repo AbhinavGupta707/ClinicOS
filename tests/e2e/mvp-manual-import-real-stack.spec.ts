@@ -46,7 +46,9 @@ test.describe("MVP manual import real-stack acceptance", () => {
     await expect(page.getByLabel("Workflow API mode")).toContainText("Live boundary");
     await startRun(page, sourceSystem);
     await expect(page.getByText("Scheduled sync").locator("..")).toContainText("Not configured");
-    await expect(page.getByText("Source freshness").locator("..")).toContainText("Unknown");
+    await expect(page.getByText("Source freshness", { exact: true }).locator("..")).toContainText(
+      "Unknown"
+    );
     await page.getByTestId("migration-input-tab-paste").click();
     await page.getByTestId("migration-csv").fill(csv);
     await page.getByTestId("migration-stage-batch").click();
@@ -202,7 +204,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
         label: "Dr Kabir Doctor"
       });
       await page.getByTestId("cp7-resolve-migration-conflict").click();
-      await expect(page.getByTestId("cp7-action-message")).toContainText("resolution was recorded");
+      await expect(page.getByTestId("cp7-action-message")).toContainText("Review decision saved");
       await commitSelectedBatch(page, () => batchIds.push(practitionerBatchId));
 
       await page.getByTestId("migration-trial-step-appointments").click();
@@ -333,7 +335,7 @@ async function resolvePatientDuplicateIfNeeded(page: Page) {
     });
     await expect(createSeparatePatient).toBeVisible();
     await createSeparatePatient.click();
-    await expect(page.getByTestId("cp7-action-message")).toContainText("resolution was recorded");
+    await expect(page.getByTestId("cp7-action-message")).toContainText("Review decision saved");
   }
 }
 
