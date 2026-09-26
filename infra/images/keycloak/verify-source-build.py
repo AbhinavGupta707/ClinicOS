@@ -8,6 +8,7 @@ import xml.etree.ElementTree as ET
 
 NETTY = "4.1.137.Final"
 BC = "1.85"
+FREEMARKER = "2.3.35"
 NS = {"m": "http://maven.apache.org/POM/4.0.0"}
 BOMS = {
     "io/netty/netty-bom/4.1.137.Final/netty-bom-4.1.137.Final.pom":
@@ -40,9 +41,18 @@ def check_effective(path):
         if group == "org.bouncycastle" and artifact.endswith("-jdk18on"):
             require(version == BC, f"Unaligned BC artifact: {artifact}:{version}")
             checked[artifact] = version
-    for artifact in ("netty-handler", "netty-codec-http2", "bcprov-jdk18on", "bcpkix-jdk18on", "bcutil-jdk18on"):
+        if group == "org.freemarker" and artifact == "freemarker":
+            require(version == FREEMARKER, f"Unexpected FreeMarker version: {version}")
+            checked[artifact] = version
+    for artifact in ("netty-handler", "netty-codec-http2", "bcprov-jdk18on", "bcpkix-jdk18on", "bcutil-jdk18on", "freemarker"):
         require(artifact in checked, f"Missing managed artifact: {artifact}")
     return checked
+
+
+def check_freemarker_runtime(jars):
+    matches = [jar for jar in jars if "freemarker" in jar.name.lower()]
+    require(len(matches) == 1 and matches[0].name == f"org.freemarker.freemarker-{FREEMARKER}.jar",
+            "Expected exactly one patched FreeMarker runtime JAR")
 
 
 def main():
@@ -59,6 +69,7 @@ def main():
     distribution = output / "keycloak"
     jars = sorted((distribution / "lib").rglob("*.jar"))
     require(bool(jars), "Missing built distribution libraries")
+    check_freemarker_runtime(jars)
     libraries = []
     for jar in jars:
         name = jar.name

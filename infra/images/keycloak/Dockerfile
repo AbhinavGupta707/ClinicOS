@@ -48,7 +48,7 @@ RUN apk add --no-cache wget \
 FROM ${JAVA_RUNTIME_IMAGE}
 
 LABEL org.opencontainers.image.title="ClinicOS Keycloak security rebuild" \
-      org.opencontainers.image.version="26.7.4-clinicos.1" \
+      org.opencontainers.image.version="26.7.4-clinicos.2" \
       org.opencontainers.image.base.name="eclipse-temurin:21-jre-alpine" \
       io.clinicos.keycloak.source-revision="aa9fe3fba0c6cd5770f19a49378c55f4378cf544"
 

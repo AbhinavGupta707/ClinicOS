@@ -1,5 +1,12 @@
 --- a/pom.xml
 +++ b/pom.xml
+@@ -117,5 +117,5 @@
+         <kerby.version>2.1.2</kerby.version>
+         <google.zxing.version>3.4.0</google.zxing.version>
+-        <freemarker.version>2.3.32</freemarker.version>
++        <freemarker.version>2.3.35</freemarker.version>
+         <sundrio.version>0.200.0</sundrio.version>
+         <antlr4.version>4.13.2</antlr4.version>
 @@ -334,4 +334,19 @@
          <dependencies>
 +            <!-- ClinicOS security rebuild: align complete dependency families. -->
