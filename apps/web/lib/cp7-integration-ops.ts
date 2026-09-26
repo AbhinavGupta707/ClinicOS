@@ -335,6 +335,14 @@ const MIGRATION_TRIAL_ORDER: readonly MigrationImportType[] = [
 
 export type MigrationTrialStepState = "complete" | "current" | "upcoming";
 
+export function getInitialImportRunStep(batches: readonly MigrationBatch[]): MigrationImportType {
+  return MIGRATION_TRIAL_ORDER.find((type) => {
+    const batch = batches.find((item) => item.importType === type);
+    return !batch || batch.counts.committed === 0 || batch.counts.ready > 0 ||
+      batch.conflicts.some((conflict) => conflict.status === "unresolved");
+  }) ?? "appointments";
+}
+
 export function getMigrationTrialStepStates(
   batches: readonly MigrationBatch[],
   sourceSystem: string

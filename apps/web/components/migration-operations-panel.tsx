@@ -27,6 +27,7 @@ import {
 import {
   getCanonicalMigrationCsvTemplate,
   getMigrationTrialStepStates,
+  getInitialImportRunStep,
   MIGRATION_BATCH_STATUS_LABELS,
   MIGRATION_IMPORT_TYPE_LABELS,
   type CreateMigrationBatchRequest,
@@ -87,17 +88,7 @@ export function MigrationOperationsPanel({
     ALL_BATCH_STATES
   );
   const [importType, setImportType] = useState<MigrationImportType>(() =>
-    run
-      ? (batches.find(
-          (batch) =>
-            batch.counts.ready > 0 ||
-            batch.conflicts.some((conflict) => conflict.status === "unresolved")
-        )?.importType ??
-        (["patients", "practitioners", "appointments"] as const).find(
-          (type) => !batches.some((batch) => batch.importType === type)
-        ) ??
-        "appointments")
-      : "patients"
+    run ? getInitialImportRunStep(batches) : "patients"
   );
   const [inputMode, setInputMode] = useState<ImportInputMode>("file");
   const [sourceSystem, setSourceSystem] = useState(run?.sourceSystem ?? "manual_trial");

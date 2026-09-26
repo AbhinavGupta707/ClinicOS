@@ -1,6 +1,10 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { createCp13ApiClient } from "../lib/cp13-api-client";
-import { createLiveMigrationBatch } from "../lib/cp7-integration-ops";
+import {
+  createLiveMigrationBatch,
+  createFixtureCp7IntegrationOpsData,
+  getInitialImportRunStep
+} from "../lib/cp7-integration-ops";
 import { importRunStorageKey, readImportRunId, loadImportRunWorkspace } from "../lib/import-runs";
 import { createSyntheticMeFixture } from "../lib/dev-fixture";
 
@@ -12,6 +16,23 @@ afterEach(() => {
 });
 
 describe("operator import run boundaries", () => {
+  it("reopens the first blocked or missing step without advancing an invalid-only file", () => {
+    const batch = createFixtureCp7IntegrationOpsData().migrationBatches[0]!;
+    expect(getInitialImportRunStep([])).toBe("patients");
+    const committed = {
+      ...batch,
+      importType: "patients" as const,
+      conflicts: [],
+      counts: { ...batch.counts, committed: 1, ready: 0 }
+    };
+    expect(getInitialImportRunStep([committed])).toBe("practitioners");
+    expect(
+      getInitialImportRunStep([
+        { ...committed, counts: { ...committed.counts, committed: 0, invalid: 1 } }
+      ])
+    ).toBe("patients");
+  });
+
   it("isolates the resume pointer by tenant, clinic and user and rejects non-identifiers", () => {
     const profile = createSyntheticMeFixture();
     const key = importRunStorageKey(profile);
