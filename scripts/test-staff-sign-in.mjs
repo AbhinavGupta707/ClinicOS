@@ -602,6 +602,22 @@ try {
 } catch (error) {
   // Never persist browser traces/HTML, callback URLs, passwords, tokens, or TOTP enrollment screens.
   console.error(`Staff sign-in acceptance failed during: ${stage}; ${error.name}`);
+  // Keep assertion diagnostics useful without retaining provider URLs, payloads or credentials.
+  const importFrame =
+    typeof error.stack === "string"
+      ? error.stack.match(/staff-import-acceptance\.mjs:(\d+):(\d+)/u)
+      : null;
+  if (importFrame) console.error(`Synthetic import assertion at line ${importFrame[1]}`);
+  if (error.code === "ERR_ASSERTION") {
+    const safeValue = (value) =>
+      typeof value === "number" || typeof value === "boolean" ? value : "redacted";
+    console.error(
+      JSON.stringify({
+        assertionActual: safeValue(error.actual),
+        assertionExpected: safeValue(error.expected)
+      })
+    );
+  }
   process.exitCode = 1;
 } finally {
   const cleanup = [];
