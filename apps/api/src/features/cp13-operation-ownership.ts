@@ -1,3 +1,4 @@
+export const APPOINTMENT_REVIEW_OPERATION_IDS = Object.freeze(["createAppointmentImport", "stageAppointmentObservations", "sealAppointmentImport", "listAppointmentImports", "getAppointmentImport", "reviewAppointmentObservation"] as const);
 export const DAILY_WORKFLOW_DISCOVERY_OPERATION_IDS = Object.freeze(["previewPatientDuplicates", "listPatientIntakeHistory", "listLabReconciliations", "listPatientEncounters", "listEncounterPrescriptions", "listPatientTreatmentPlans", "listPatientInvoices", "listUninvoicedPatientProcedures", "listSopTemplates", "listSopSchedules", "listInventoryCheckRuns", "listClinicStaff", "getPatientDemographics", "searchBillingPatients", "listPatientInstructions", "listClinicSetup", "saveClinicSetup", "listClinicAccess", "saveClinicAccess"] as const);
 
 export const CP13_FRONT_OFFICE_OPERATION_IDS = Object.freeze([
@@ -61,6 +62,7 @@ export const CP13_CLINICAL_DENTAL_OPERATION_IDS = Object.freeze([
 export const CP13_TREATMENT_BILLING_PROVIDER_OPERATION_IDS = Object.freeze([] as const);
 
 export const CP13_TREATMENT_BILLING_CLINIC_OPERATION_IDS = Object.freeze([
+  "executeFinancialCommand", "getFinancialAccount", "getFinancialDay",
   "listPricebookProcedures",
   "createPatientTreatmentPlan",
   "updateTreatmentPlan",
@@ -117,6 +119,7 @@ export const CP13_CONTINUITY_OPERATIONS_OPERATION_IDS = Object.freeze([
 ] as const);
 
 export const CP13_CLINIC_DAY_OPERATION_OWNERS = Object.freeze({
+  appointmentReview: APPOINTMENT_REVIEW_OPERATION_IDS,
   workflowDiscovery: DAILY_WORKFLOW_DISCOVERY_OPERATION_IDS,
   frontOffice: CP13_FRONT_OFFICE_OPERATION_IDS,
   clinicalDental: CP13_CLINICAL_DENTAL_OPERATION_IDS,
@@ -139,6 +142,7 @@ export const ALL_CP13_CLINIC_DAY_OPERATION_IDS = Object.freeze(
 ) as readonly Cp13ClinicDayOperationId[];
 
 export const ALL_CP13_CLINIC_FEATURE_OPERATION_IDS = Object.freeze([
+  ...APPOINTMENT_REVIEW_OPERATION_IDS,
   ...DAILY_WORKFLOW_DISCOVERY_OPERATION_IDS,
   ...CP13_FRONT_OFFICE_OPERATION_IDS,
   ...CP13_CLINICAL_DENTAL_OPERATION_IDS,

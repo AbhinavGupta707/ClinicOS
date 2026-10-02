@@ -1,3 +1,6 @@
+import {createAppointmentImport,stageAppointmentObservations,sealAppointmentImport,listAppointmentImports,getAppointmentImport,lockAppointmentObservation,decideAppointmentObservation} from "./appointment-observations.ts";
+import {FinancialConflict,executeFinancialCommand,getFinancialAccount,getFinancialDay,refreshInvoiceFinancialState} from "./financial-operations.ts";
+import type {FinancialCommandInput} from "@clinic-os/domain";
 import {providerScheduleCoversAppointment} from "@clinic-os/domain";
 import { sqlCalendarDate } from "./sql-calendar-date.ts";
 import {lockClinicConfiguration,assertActiveClinicDoctor, assertActiveClinicAssignee,ClinicSetupConflict,listClinicAccess,saveClinicAccess,listClinicSetup,saveClinicSetup,type ClinicAccessInput,type ClinicSetupKind,type ClinicSetupInput} from "./clinic-setup.ts";
@@ -805,6 +808,16 @@ export class PostgresClinicOperationsRepository
       return { records, nextCursor: page.nextCursor };
     });
   }
+  async createAppointmentImport(scope:RepositoryScope,input:Parameters<typeof createAppointmentImport>[2]) {return this.#withRls(scope,c=>createAppointmentImport(c,scope,input));}
+  async stageAppointmentObservations(scope:RepositoryScope,id:string,input:Parameters<typeof stageAppointmentObservations>[3]) {return this.#withRls(scope,c=>stageAppointmentObservations(c,scope,id,input));}
+  async sealAppointmentImport(scope:RepositoryScope,id:string) {return this.#withRls(scope,c=>sealAppointmentImport(c,scope,id,this.#clock.now()));}
+  async listAppointmentImports(scope:RepositoryScope,cursor?:string) {return this.#withRls(scope,c=>listAppointmentImports(c,scope,cursor));}
+  async getAppointmentImport(scope:RepositoryScope,id:string,offset?:number) {return this.#withRls(scope,c=>getAppointmentImport(c,scope,id,offset));}
+  async lockAppointmentObservation(scope:RepositoryScope,id:string,rowId:string) {return this.#withRls(scope,c=>lockAppointmentObservation(c,scope,id,rowId));}
+  async decideAppointmentObservation(scope:RepositoryScope,id:string,rowId:string,input:Parameters<typeof decideAppointmentObservation>[4]) {return this.#withRls(scope,c=>decideAppointmentObservation(c,scope,id,rowId,input,this.#clock.now()));}
+  async executeFinancialCommand(scope:RepositoryScope,input:FinancialCommandInput) {return this.#withRls(scope,c=>executeFinancialCommand(c,scope,input,this.#clock.now()));}
+  async getFinancialAccount(scope:RepositoryScope,patientId:UUID,cursor?:string,advanceCursor?:string) {return this.#withRls(scope,c=>getFinancialAccount(c,scope,patientId,cursor,advanceCursor));}
+  async getFinancialDay(scope:RepositoryScope,date:string,entryCursor?:string,dueCursor?:string) {return this.#withRls(scope,c=>getFinancialDay(c,scope,date,entryCursor,dueCursor));}
   async listPatientInvoices(scope: RepositoryScope, patientId: UUID, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<InvoiceDetail>> {
     return this.#withRls(scope, async (client) => {
       const page = await this.#workflowRows<{ id: UUID }>(client, scope, "invoices", patientId, " and patient_id = $3", filter);
@@ -9725,8 +9738,10 @@ export class PostgresClinicOperationsRepository
       );
       assertInvoiceReceiptable({ invoice: detail.invoice, payments: candidatePayments });
       const payments = candidatePayments.filter(
-        (payment) => isSettledPaymentTransaction(payment) && !payment.receiptId
+        (payment) => isSettledPaymentTransaction(payment) && payment.method !== "advance_allocation" && !payment.receiptId
       );
+      const adjusted = await client.query<{ present: boolean }>(`select exists(select 1 from financial_entries where tenant_id=$1 and clinic_id=$2 and payment_transaction_id=any($3::uuid[]) and kind in ('payment_refund','payment_reversal')) as present`,[scope.tenantId,scope.clinicId,payments.map(p=>p.id)]);
+      if(adjusted.rows[0].present) throw new FinancialConflict("An adjusted payment cannot receive a new original receipt. Use its original payment and adjustment evidence.");
       const allocations = payments.map((payment) => ({
         paymentTransactionId: payment.id,
         amountMinor: payment.amountMinor
@@ -12971,6 +12986,7 @@ export class PostgresClinicOperationsRepository
     scope: RepositoryScope,
     invoiceId: UUID
   ): Promise<InvoiceDetail | null> {
+    if (!(await this.#findInvoiceRowInTransaction(client, scope, invoiceId))) return null;
     await this.#recalculateInvoicePaymentStateInTransaction(client, scope, invoiceId);
     const invoice = await this.#findInvoiceRowInTransaction(client, scope, invoiceId);
     if (!invoice) return null;
@@ -13055,62 +13071,7 @@ export class PostgresClinicOperationsRepository
     scope: RepositoryScope,
     invoiceId: UUID
   ): Promise<void> {
-    const invoice = await this.#findInvoiceRowInTransaction(client, scope, invoiceId);
-    if (!invoice) return;
-    const payments = (
-      await client.query<PaymentTransactionRow>(
-        `
-          select *
-          from payment_transactions
-          where tenant_id = $1 and clinic_id = $2 and invoice_id = $3
-        `,
-        [scope.tenantId, scope.clinicId, invoiceId]
-      )
-    ).rows.map(mapPaymentTransactionRow);
-    const requestCount = Number(
-      (
-        await client.query<{ count: string }>(
-          `
-            select count(*) as count
-            from payment_requests
-            where tenant_id = $1 and clinic_id = $2 and invoice_id = $3
-          `,
-          [scope.tenantId, scope.clinicId, invoiceId]
-        )
-      ).rows[0]?.count ?? 0
-    );
-    const paidMinor = payments
-      .filter((payment) => isSettledPaymentTransaction(payment))
-      .reduce((total, payment) => total + payment.amountMinor, 0);
-    const refundedMinor = payments
-      .filter((payment) => payment.status === "refunded")
-      .reduce((total, payment) => total + payment.amountMinor, 0);
-    const hasReconciliationIssue = payments.some(
-      (payment) =>
-        payment.status === "reconciliation_required" ||
-        payment.reconciliationStatus === "requires_review"
-    );
-    const paymentStatus = calculateInvoicePaymentStatus({
-      totalMinor: invoice.totalMinor,
-      paidMinor,
-      refundedMinor,
-      hasPaymentRequest: requestCount > 0,
-      hasReconciliationIssue,
-      invoiceStatus: invoice.status
-    });
-
-    await client.query(
-      `
-        update invoices
-        set
-          paid_minor = $4,
-          refunded_minor = $5,
-          balance_minor = greatest(total_minor - $4 + $5, 0),
-          payment_status = $6
-        where tenant_id = $1 and clinic_id = $2 and id = $3
-      `,
-      [scope.tenantId, scope.clinicId, invoiceId, paidMinor, refundedMinor, paymentStatus]
-    );
+    await refreshInvoiceFinancialState(client, scope, invoiceId);
   }
 
   async #ensureDentalChartInTransaction(
@@ -14961,6 +14922,8 @@ interface InvoiceRow {
   updated_by_user_id: UUID | null;
   created_at: Date | string;
   updated_at: Date | string;
+  credited_minor?: string;
+  financial_version?: string;
 }
 
 interface CheckoutRecallGenerationCandidateRow extends InvoiceRow {
@@ -16883,6 +16846,8 @@ function mapInvoiceRow(row: InvoiceRow): InvoiceRecord {
     totalMinor: Number(row.total_minor),
     paidMinor: Number(row.paid_minor),
     refundedMinor: Number(row.refunded_minor),
+    creditedMinor: Number(row.credited_minor ?? 0),
+    financialVersion: Number(row.financial_version ?? 1),
     balanceMinor: Number(row.balance_minor),
     treatmentPlanId: row.treatment_plan_id,
     issuedAt: toIso(row.issued_at),

@@ -324,6 +324,24 @@ export type CreateInvoicePaymentRequestRequest = { readonly path: { readonly inv
 export type CreateInvoicePaymentRequestResponse = { readonly invoice: PublicJsonObject; readonly paymentRequest: PublicJsonObject; readonly provider: PublicJsonObject } | { readonly invoice: PublicJsonObject; readonly paymentIntent: PublicJsonObject; readonly provider: PublicJsonObject };
 export type RecordInvoiceManualPaymentRequest = { readonly path: { readonly invoiceId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly amountMinor: number; readonly currency?: "INR"; readonly method: "cash" | "upi" | "card" | "bank_transfer" | "cheque" | "other"; readonly reason: string; readonly reference: string; readonly receivedAt?: string | null; readonly evidence: WritableJsonObject } };
 export type RecordInvoiceManualPaymentResponse = { readonly invoice: PublicJsonObject; readonly transaction: PublicJsonObject; readonly reconciliationItem: PublicJsonObject | null; readonly replayed: boolean };
+export type ExecuteFinancialCommandRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly kind: "invoice_credit" | "payment_reversal" | "payment_refund" | "advance_received" | "advance_allocated" | "advance_returned" | "allocation_reversed" | "expense" | "expense_reversal"; readonly patientId?: string; readonly invoiceId?: string; readonly invoiceItemId?: string; readonly paymentTransactionId?: string; readonly targetEntryId?: string; readonly expectedVersion?: number; readonly amountMinor?: number; readonly method?: "cash" | "upi" | "card" | "bank_transfer" | "cheque" | "other"; readonly reason: string; readonly reference: string } };
+export type ExecuteFinancialCommandResponse = { readonly entry: PublicJsonObject };
+export type GetFinancialAccountRequest = { readonly path: { readonly patientId: string }; readonly query?: { readonly cursor?: string; readonly advanceCursor?: string } };
+export type GetFinancialAccountResponse = { readonly account: PublicJsonObject };
+export type GetFinancialDayRequest = { readonly query?: { readonly date?: string; readonly entryCursor?: string; readonly dueCursor?: string } };
+export type GetFinancialDayResponse = { readonly day: PublicJsonObject };
+export type CreateAppointmentImportRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly sourceSystem?: string; readonly digest?: string; readonly rowCount?: number } };
+export type CreateAppointmentImportResponse = { readonly import: PublicJsonObject };
+export type ListAppointmentImportsRequest = { readonly query?: { readonly cursor?: string } };
+export type ListAppointmentImportsResponse = { readonly imports: readonly (PublicJsonObject)[]; readonly nextCursor: string | null };
+export type GetAppointmentImportRequest = { readonly path: { readonly importId: string }; readonly query?: { readonly offset?: number } };
+export type GetAppointmentImportResponse = { readonly import: PublicJsonObject; readonly rows: readonly (PublicJsonObject)[]; readonly counts: readonly (PublicJsonObject)[]; readonly nextOffset: number | null };
+export type StageAppointmentObservationsRequest = { readonly path: { readonly importId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly offset?: number; readonly rows?: readonly ({ readonly date?: string; readonly patientNumber?: string; readonly patientName?: string; readonly doctorName?: string; readonly status?: "Scheduled" | "Cancelled" })[] } };
+export type StageAppointmentObservationsResponse = { readonly receipt: PublicJsonObject };
+export type SealAppointmentImportRequest = { readonly path: { readonly importId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: Readonly<Record<string, never>> };
+export type SealAppointmentImportResponse = { readonly import: PublicJsonObject };
+export type ReviewAppointmentObservationRequest = { readonly path: { readonly importId: string; readonly rowId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly decision: "history" | "exclude" | "link" | "create"; readonly reason: string; readonly confirmedDetails?: boolean; readonly appointmentId?: string; readonly patientId?: string; readonly booking?: { readonly patientId: string; readonly providerUserId: string; readonly appointmentTypeId: string; readonly chairId?: string | null; readonly startAt: string; readonly endAt: string } } };
+export type ReviewAppointmentObservationResponse = { readonly observation: PublicJsonObject };
 export type GetOwnerDashboardRequest = { readonly query?: { readonly from?: string; readonly to?: string } };
 export type GetOwnerDashboardResponse = { readonly dashboard: PublicJsonObject };
 export type ListTasksRequest = { readonly query?: { readonly cursor?: string; readonly status?: "open" | "in_progress" | "done" | "cancelled"; readonly dueDate?: string; readonly dueBefore?: string; readonly assignedToUserId?: string; readonly patientId?: string; readonly sourceWorkflow?: "manual" | "appointment_confirmation" | "recall_generation" | "post_op_follow_up" | "payment_follow_up" | "sop_run" | "lab_case" | "inventory_check" | "incident_capa" | "system"; readonly limit?: number } };
@@ -565,6 +583,15 @@ export interface ClinicOsNativeOperationMap {
   readonly createPatientInstruction: { readonly request: CreatePatientInstructionRequest; readonly response: CreatePatientInstructionResponse };
   readonly createInvoicePaymentRequest: { readonly request: CreateInvoicePaymentRequestRequest; readonly response: CreateInvoicePaymentRequestResponse };
   readonly recordInvoiceManualPayment: { readonly request: RecordInvoiceManualPaymentRequest; readonly response: RecordInvoiceManualPaymentResponse };
+  readonly executeFinancialCommand: { readonly request: ExecuteFinancialCommandRequest; readonly response: ExecuteFinancialCommandResponse };
+  readonly getFinancialAccount: { readonly request: GetFinancialAccountRequest; readonly response: GetFinancialAccountResponse };
+  readonly getFinancialDay: { readonly request: GetFinancialDayRequest; readonly response: GetFinancialDayResponse };
+  readonly createAppointmentImport: { readonly request: CreateAppointmentImportRequest; readonly response: CreateAppointmentImportResponse };
+  readonly listAppointmentImports: { readonly request: ListAppointmentImportsRequest; readonly response: ListAppointmentImportsResponse };
+  readonly getAppointmentImport: { readonly request: GetAppointmentImportRequest; readonly response: GetAppointmentImportResponse };
+  readonly stageAppointmentObservations: { readonly request: StageAppointmentObservationsRequest; readonly response: StageAppointmentObservationsResponse };
+  readonly sealAppointmentImport: { readonly request: SealAppointmentImportRequest; readonly response: SealAppointmentImportResponse };
+  readonly reviewAppointmentObservation: { readonly request: ReviewAppointmentObservationRequest; readonly response: ReviewAppointmentObservationResponse };
   readonly getOwnerDashboard: { readonly request: GetOwnerDashboardRequest; readonly response: GetOwnerDashboardResponse };
   readonly listTasks: { readonly request: ListTasksRequest; readonly response: ListTasksResponse };
   readonly createTask: { readonly request: CreateTaskRequest; readonly response: CreateTaskResponse };
@@ -2777,6 +2804,222 @@ export class ClinicOsApiClient {
       contentType: "application/json",
       bodyEncoding: "json",
       successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async executeFinancialCommand(input: ExecuteFinancialCommandRequest): Promise<ExecuteFinancialCommandResponse> {
+    return this.execute<ExecuteFinancialCommandResponse>({
+      method: "POST",
+      pathTemplate: "/v1/financial-operations",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async executeFinancialCommandWithMetadata(input: ExecuteFinancialCommandRequest): Promise<ClinicOsApiResponse<ExecuteFinancialCommandResponse>> {
+    return this.executeWithMetadata<ExecuteFinancialCommandResponse>({
+      method: "POST",
+      pathTemplate: "/v1/financial-operations",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async getFinancialAccount(input: GetFinancialAccountRequest): Promise<GetFinancialAccountResponse> {
+    return this.execute<GetFinancialAccountResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/financial-account",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getFinancialAccountWithMetadata(input: GetFinancialAccountRequest): Promise<ClinicOsApiResponse<GetFinancialAccountResponse>> {
+    return this.executeWithMetadata<GetFinancialAccountResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/financial-account",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getFinancialDay(input?: GetFinancialDayRequest): Promise<GetFinancialDayResponse> {
+    return this.execute<GetFinancialDayResponse>({
+      method: "GET",
+      pathTemplate: "/v1/financial-day",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getFinancialDayWithMetadata(input?: GetFinancialDayRequest): Promise<ClinicOsApiResponse<GetFinancialDayResponse>> {
+    return this.executeWithMetadata<GetFinancialDayResponse>({
+      method: "GET",
+      pathTemplate: "/v1/financial-day",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async createAppointmentImport(input: CreateAppointmentImportRequest): Promise<CreateAppointmentImportResponse> {
+    return this.execute<CreateAppointmentImportResponse>({
+      method: "POST",
+      pathTemplate: "/v1/appointment-imports",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async createAppointmentImportWithMetadata(input: CreateAppointmentImportRequest): Promise<ClinicOsApiResponse<CreateAppointmentImportResponse>> {
+    return this.executeWithMetadata<CreateAppointmentImportResponse>({
+      method: "POST",
+      pathTemplate: "/v1/appointment-imports",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [201],
+      input: input ?? {}
+    });
+  }
+
+  async listAppointmentImports(input?: ListAppointmentImportsRequest): Promise<ListAppointmentImportsResponse> {
+    return this.execute<ListAppointmentImportsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/appointment-imports",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listAppointmentImportsWithMetadata(input?: ListAppointmentImportsRequest): Promise<ClinicOsApiResponse<ListAppointmentImportsResponse>> {
+    return this.executeWithMetadata<ListAppointmentImportsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/appointment-imports",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getAppointmentImport(input: GetAppointmentImportRequest): Promise<GetAppointmentImportResponse> {
+    return this.execute<GetAppointmentImportResponse>({
+      method: "GET",
+      pathTemplate: "/v1/appointment-imports/{importId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getAppointmentImportWithMetadata(input: GetAppointmentImportRequest): Promise<ClinicOsApiResponse<GetAppointmentImportResponse>> {
+    return this.executeWithMetadata<GetAppointmentImportResponse>({
+      method: "GET",
+      pathTemplate: "/v1/appointment-imports/{importId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async stageAppointmentObservations(input: StageAppointmentObservationsRequest): Promise<StageAppointmentObservationsResponse> {
+    return this.execute<StageAppointmentObservationsResponse>({
+      method: "POST",
+      pathTemplate: "/v1/appointment-imports/{importId}/rows",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async stageAppointmentObservationsWithMetadata(input: StageAppointmentObservationsRequest): Promise<ClinicOsApiResponse<StageAppointmentObservationsResponse>> {
+    return this.executeWithMetadata<StageAppointmentObservationsResponse>({
+      method: "POST",
+      pathTemplate: "/v1/appointment-imports/{importId}/rows",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async sealAppointmentImport(input: SealAppointmentImportRequest): Promise<SealAppointmentImportResponse> {
+    return this.execute<SealAppointmentImportResponse>({
+      method: "POST",
+      pathTemplate: "/v1/appointment-imports/{importId}/seal",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async sealAppointmentImportWithMetadata(input: SealAppointmentImportRequest): Promise<ClinicOsApiResponse<SealAppointmentImportResponse>> {
+    return this.executeWithMetadata<SealAppointmentImportResponse>({
+      method: "POST",
+      pathTemplate: "/v1/appointment-imports/{importId}/seal",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async reviewAppointmentObservation(input: ReviewAppointmentObservationRequest): Promise<ReviewAppointmentObservationResponse> {
+    return this.execute<ReviewAppointmentObservationResponse>({
+      method: "POST",
+      pathTemplate: "/v1/appointment-imports/{importId}/rows/{rowId}/review",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async reviewAppointmentObservationWithMetadata(input: ReviewAppointmentObservationRequest): Promise<ClinicOsApiResponse<ReviewAppointmentObservationResponse>> {
+    return this.executeWithMetadata<ReviewAppointmentObservationResponse>({
+      method: "POST",
+      pathTemplate: "/v1/appointment-imports/{importId}/rows/{rowId}/review",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
       input: input ?? {}
     });
   }

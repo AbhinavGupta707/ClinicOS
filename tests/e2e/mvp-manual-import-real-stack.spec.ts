@@ -48,7 +48,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
     await expect(page.getByTestId("cp7-fixture-alert")).toHaveCount(0);
     await expect(page.getByLabel("Workflow API mode")).toContainText("Live boundary");
     await startRun(page, sourceSystem);
-    await expect(page.getByText("Scheduled sync").locator("..")).toContainText("Not configured");
+    await expect(page.getByText("Scheduled sync", { exact: true }).locator("..")).toContainText("Not configured");
     await expect(page.getByText("Source freshness", { exact: true }).locator("..")).toContainText(
       "Unknown"
     );
@@ -289,7 +289,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
     await startRun(page, `mobile_manual_${Date.now()}`);
     await expect(page.getByTestId("cp7-migration-operations")).toBeVisible();
     await expect(page.getByTestId("migration-stage-batch")).toBeVisible();
-    await expect(page.getByText("Scheduled sync").locator("..")).toContainText("Not configured");
+    await expect(page.getByText("Scheduled sync", { exact: true }).locator("..")).toContainText("Not configured");
 
     const horizontalOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth

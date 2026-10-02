@@ -10,6 +10,13 @@ import {
 } from "@clinic-os/security";
 
 const OPERATION_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  executeFinancialCommand: ["billing.write"], getFinancialAccount: ["billing.read"], getFinancialDay: ["billing.read", "analytics.read"],
+  createAppointmentImport: ["migration.manage", "patient.read"],
+  stageAppointmentObservations: ["migration.manage", "patient.read"],
+  sealAppointmentImport: ["migration.manage", "patient.read"],
+  listAppointmentImports: ["migration.manage", "patient.read"],
+  getAppointmentImport: ["migration.manage", "patient.read"],
+  reviewAppointmentObservation: ["migration.manage", "patient.read", "schedule.write"],
   listPatientEncounters: ["patient.read", "patient.phi.read", "clinical.note.read"],
   listEncounterPrescriptions: ["patient.read", "patient.phi.read", "prescription.write"],
   listPatientTreatmentPlans: ["patient.read", "patient.phi.read", "dental.chart.read"],

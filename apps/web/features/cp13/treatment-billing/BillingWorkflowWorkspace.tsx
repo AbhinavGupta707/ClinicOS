@@ -1,5 +1,6 @@
 "use client";
 
+import { FinancialOperationsPanel } from "./FinancialOperationsPanel";
 import {
   Fragment,
   useCallback,
@@ -264,6 +265,7 @@ function BillingPatientSearch(props: {
 }
 
 export function BillingWorkflowWorkspace(props: BillingWorkflowWorkspaceProps) {
+  const [financialView,setFinancialView]=useState(false);
   const financialOnly = can(props.profile, "billing.read") && !can(props.profile, "patient.read");
   const [billingSelection, setBillingSelection] = useState<{ id: string; name: string } | null>(
     null
@@ -299,6 +301,7 @@ export function BillingWorkflowWorkspace(props: BillingWorkflowWorkspaceProps) {
 
   return (
     <div className="billing-workflow-workspace">
+      <nav aria-label="Billing workflows"><button disabled={action.locked} onClick={()=>setFinancialView(false)}>Treatment and checkout</button><button disabled={action.locked} onClick={()=>setFinancialView(true)}>Accounts and reconciliation</button></nav>
       <fieldset disabled={action.locked}>
         {financialOnly ? (
           <BillingPatientSearch
@@ -334,7 +337,8 @@ export function BillingWorkflowWorkspace(props: BillingWorkflowWorkspaceProps) {
       {!props.patientId ? <p>Choose a patient to continue.</p> : null}
       {identity.loading && props.patientId && !financialOnly ? <p>Loading patient…</p> : null}
       {identity.error && !financialOnly ? <p role="alert">{identity.error}</p> : null}
-      {context ? (
+      {financialView ? <FinancialOperationsPanel key={`${props.patientId}:${revision}`} {...props} locked={action.locked} mutate={action.execute} onSaved={()=>setRevision(v=>v+1)} /> : null}
+      {context && !financialView ? (
         <Fragment key={`${context.patientId}:${revision}`}>
           <h1>{patientName}</h1>
           {clinical && can(props.profile, "dental.chart.read") ? (
@@ -1400,7 +1404,9 @@ function InvoiceDetail(
         }),
         `Subtotal: ${formatInrMinor(invoice.subtotalMinor)}`,
         `Tax: ${formatInrMinor(invoice.taxMinor)}`,
-        `Total: ${formatInrMinor(invoice.totalMinor)}`,
+        `Original total: ${formatInrMinor(invoice.totalMinor)}`,
+        `Credited: ${formatInrMinor(invoice.creditedMinor ?? 0)}`,
+        `Returned: ${formatInrMinor(invoice.refundedMinor ?? 0)}`,
         `Paid: ${formatInrMinor(invoice.paidMinor)}`,
         `Balance: ${formatInrMinor(invoice.balanceMinor)}`
       ]);
@@ -1417,7 +1423,8 @@ function InvoiceDetail(
         `Patient: ${props.patientName}`,
         `Invoice: ${fieldText(invoice, "invoiceNumber")}`,
         `Generated: ${clinicDisplayTime(fieldText(receipt, "generatedAt"), timeZone)}`,
-        `Received: ${formatInrMinor(receipt.amountMinor)}`,
+        `Received at receipt creation: ${formatInrMinor(receipt.amountMinor)}`,
+        "Subsequent corrections and returns are recorded separately in the patient financial account.",
         ...valueList(receipt.paymentAllocations).map(
           (allocation) => `Payment allocation: ${formatInrMinor(record(allocation).amountMinor)}`
         )

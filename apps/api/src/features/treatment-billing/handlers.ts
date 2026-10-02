@@ -1,3 +1,4 @@
+import {handleFinancialOperation} from "./financial-handlers.ts";
 import { createHash } from "node:crypto";
 import { permissionsForScope, roleSlugsForScope } from "@clinic-os/auth";
 import {
@@ -54,6 +55,7 @@ export function createTreatmentBillingHandlerMap(
   dependencies: TreatmentBillingHandlerFactoryInput
 ): TreatmentBillingClinicHandlerMap {
   const handlers = {
+    executeFinancialCommand: handleFinancialOperation, getFinancialAccount: handleFinancialOperation, getFinancialDay: handleFinancialOperation,
     listPricebookProcedures: handleListPricebookProcedures,
     createPatientTreatmentPlan: handleCreatePatientTreatmentPlan,
     updateTreatmentPlan: handleUpdateTreatmentPlan,
@@ -847,6 +849,7 @@ function isExpectedWorkflowInvariant(message: string): boolean {
     /invoice balance/iu,
     /payment request amount/iu,
     /receipt generation/iu,
+    /adjusted payment cannot receive/iu,
     /settled.*payment evidence/iu,
     /pricebook procedure/iu
   ].some((pattern) => pattern.test(message));

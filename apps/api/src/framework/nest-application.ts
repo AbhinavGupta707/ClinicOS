@@ -221,6 +221,15 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
 
   // New daily-workflow routes use the same guarded native pipeline as the migrated features.
   class DailyWorkflowController {
+    createAppointmentImport(request:ParsedIncomingRequest,response:ServerResponse){return executeAndSend(pipeline,request,response);}
+    stageAppointmentObservations(request:ParsedIncomingRequest,response:ServerResponse){return executeAndSend(pipeline,request,response);}
+    sealAppointmentImport(request:ParsedIncomingRequest,response:ServerResponse){return executeAndSend(pipeline,request,response);}
+    listAppointmentImports(request:ParsedIncomingRequest,response:ServerResponse){return executeAndSend(pipeline,request,response);}
+    getAppointmentImport(request:ParsedIncomingRequest,response:ServerResponse){return executeAndSend(pipeline,request,response);}
+    reviewAppointmentObservation(request:ParsedIncomingRequest,response:ServerResponse){return executeAndSend(pipeline,request,response);}
+    executeFinancialCommand(request:ParsedIncomingRequest,response:ServerResponse) {return executeAndSend(pipeline,request,response);}
+    getFinancialAccount(request:ParsedIncomingRequest,response:ServerResponse) {return executeAndSend(pipeline,request,response);}
+    getFinancialDay(request:ParsedIncomingRequest,response:ServerResponse) {return executeAndSend(pipeline,request,response);}
     previewPatientDuplicates(request:ParsedIncomingRequest,response:ServerResponse) {return executeAndSend(pipeline,request,response); }
     listClinicSetup(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
     saveClinicSetup(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
@@ -243,6 +252,15 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
     listLabReconciliations(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
   }
   Controller()(DailyWorkflowController);
+  decorateRoute(DailyWorkflowController,"createAppointmentImport",Post("v1/appointment-imports"));
+  decorateRoute(DailyWorkflowController,"listAppointmentImports",Get("v1/appointment-imports"));
+  decorateRoute(DailyWorkflowController,"getAppointmentImport",Get("v1/appointment-imports/:importId"));
+  decorateRoute(DailyWorkflowController,"stageAppointmentObservations",Post("v1/appointment-imports/:importId/rows"));
+  decorateRoute(DailyWorkflowController,"sealAppointmentImport",Post("v1/appointment-imports/:importId/seal"));
+  decorateRoute(DailyWorkflowController,"reviewAppointmentObservation",Post("v1/appointment-imports/:importId/rows/:rowId/review"));
+  decorateRoute(DailyWorkflowController,"executeFinancialCommand",Post("v1/financial-operations"));
+  decorateRoute(DailyWorkflowController,"getFinancialAccount",Get("v1/patients/:patientId/financial-account"));
+  decorateRoute(DailyWorkflowController,"getFinancialDay",Get("v1/financial-day"));
   decorateRoute(DailyWorkflowController,"previewPatientDuplicates",Post("v1/patients/duplicate-review"));
   decorateRoute(DailyWorkflowController,"listClinicSetup",Get("v1/clinic-setup/:kind"));
   decorateRoute(DailyWorkflowController,"saveClinicSetup",Post("v1/clinic-setup/:kind"));

@@ -31,6 +31,7 @@ import { KeycloakOidcBffClient } from "../lib/cp14-session/keycloak-oidc-client.
 export const STAFF_API_PREFIXES = [
   "/v1/abdm",
   "/v1/ai-scribe",
+  "/v1/appointment-imports",
   "/v1/appointment-types",
   "/v1/appointments",
   "/v1/audit-events",
@@ -47,6 +48,8 @@ export const STAFF_API_PREFIXES = [
   "/v1/dental-findings",
   "/v1/encounters",
   "/v1/fhir",
+  "/v1/financial-day",
+  "/v1/financial-operations",
   "/v1/form-templates",
   "/v1/incidents",
   "/v1/inventory",

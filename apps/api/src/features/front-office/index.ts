@@ -465,6 +465,11 @@ async function handleListAppointments(
   return ok({ appointments });
 }
 
+export async function createReviewedSourceAppointment(request: ClinicFeatureOperationRequest,context: ClinicFeatureExecutionContext) {
+  if(request.operationId !== 'reviewAppointmentObservation') throw new Error('Reviewed source booking requires its registered operation.');
+  return handleCreateAppointment(request,context);
+}
+
 async function handleCreateAppointment(
   request: ClinicFeatureOperationRequest,
   context: ClinicFeatureExecutionContext
@@ -835,7 +840,8 @@ async function bookAppointment(
       conflictOverride: false
     }
   });
-  await appendOutbox(request, context, {
+  // Review is a server-registered operation; client booking fields cannot opt out.
+  if (request.operationId !== "reviewAppointmentObservation") await appendOutbox(request, context, {
     eventType: "appointment.confirmation_requested",
     aggregateType: "appointment",
     aggregateId: appointment.id,

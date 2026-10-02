@@ -127,6 +127,14 @@ jobs:
           DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
         run: node scripts/test-patient-file-repositories.mjs
 
+      - name: Financial and appointment repository integrity
+        env:
+          CLINICOS_MVP_TEST_DATABASE_DISPOSABLE: "true"
+          PILOT_SYNTHETIC_DATA_ONLY: "true"
+          DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
+          MIGRATION_DATABASE_URL: postgresql://clinic_os_migrator:clinic_os_migrator@127.0.0.1:5432/clinic_os
+        run: node scripts/test-financial-appointment-repositories.mjs
+
       - name: Daily workflow UI against real API and PostgreSQL
         env:
           CLINICOS_MVP_IMPORT_E2E_ENABLED: "true"

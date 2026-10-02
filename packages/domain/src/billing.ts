@@ -222,6 +222,8 @@ export interface InvoiceRecord {
   totalMinor: number;
   paidMinor: number;
   refundedMinor: number;
+  creditedMinor?: number;
+  financialVersion?: number;
   balanceMinor: number;
   treatmentPlanId: UUID | null;
   issuedAt: string;
@@ -574,7 +576,7 @@ export function assertInvoiceReceiptable(input: {
   }
 
   const availablePayments = input.payments.filter(
-    (payment) => isSettledPaymentTransaction(payment) && !payment.receiptId
+    (payment) => isSettledPaymentTransaction(payment) && payment.method !== "advance_allocation" && !payment.receiptId
   );
 
   if (availablePayments.length === 0) {

@@ -1,3 +1,5 @@
+import type {createAppointmentImport,stageAppointmentObservations,sealAppointmentImport,listAppointmentImports,getAppointmentImport,lockAppointmentObservation,decideAppointmentObservation} from "./appointment-observations.ts";
+import type {FinancialCommandInput} from "@clinic-os/domain";
 import type { ClinicSetupKind, ClinicSetupRecord, ClinicSetupInput, ClinicAccessPerson, ClinicAccessInput } from "./clinic-setup.ts";
 import type { PatientFileManifest, PatientFileDetail } from "./patient-import-files.ts";
 import type {
@@ -1423,6 +1425,16 @@ export interface WorkflowPage<T> { readonly records: readonly T[]; readonly next
 export interface ClinicStaffSummary { readonly id: UUID; readonly displayName: string; }
 
 export interface ClinicOperationsRepository {
+  createAppointmentImport(scope:RepositoryScope,input:Parameters<typeof createAppointmentImport>[2]):ReturnType<typeof createAppointmentImport>;
+  stageAppointmentObservations(scope:RepositoryScope,id:string,input:Parameters<typeof stageAppointmentObservations>[3]):ReturnType<typeof stageAppointmentObservations>;
+  sealAppointmentImport(scope:RepositoryScope,id:string):ReturnType<typeof sealAppointmentImport>;
+  listAppointmentImports(scope:RepositoryScope,cursor?:string):ReturnType<typeof listAppointmentImports>;
+  getAppointmentImport(scope:RepositoryScope,id:string,offset?:number):ReturnType<typeof getAppointmentImport>;
+  lockAppointmentObservation(scope:RepositoryScope,id:string,rowId:string):ReturnType<typeof lockAppointmentObservation>;
+  decideAppointmentObservation(scope:RepositoryScope,id:string,rowId:string,input:Parameters<typeof decideAppointmentObservation>[4]):ReturnType<typeof decideAppointmentObservation>;
+  executeFinancialCommand(scope:RepositoryScope,input:FinancialCommandInput):Promise<Record<string,unknown>>;
+  getFinancialAccount(scope:RepositoryScope,patientId:UUID,cursor?:string,advanceCursor?:string):Promise<Record<string,unknown>>;
+  getFinancialDay(scope:RepositoryScope,date:string,entryCursor?:string,dueCursor?:string):Promise<Record<string,unknown>>;
   listPatientEncounters(scope: RepositoryScope, patientId: UUID, filter?: WorkflowPageFilter): Promise<WorkflowPage<EncounterRecord>>;
   listEncounterPrescriptions(scope: RepositoryScope, encounterId: UUID, filter?: WorkflowPageFilter): Promise<WorkflowPage<PrescriptionRecord>>;
   listPatientTreatmentPlans(scope: RepositoryScope, patientId: UUID, filter?: WorkflowPageFilter): Promise<WorkflowPage<TreatmentPlanDetail>>;

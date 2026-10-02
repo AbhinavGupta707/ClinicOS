@@ -460,7 +460,7 @@ export function parseOperationRequest(
   const normalizedHeaders = normalizeHeaders(input.headers);
   const locations = [
     ["path", operation.request.path, input.path ?? {}],
-    ["query", operation.request.query, normalizeQuery(input.query)],
+    ["query", operation.request.query, normalizeQuery(input.query, operation.request.query)],
     ["headers", operation.request.headers, normalizedHeaders]
   ] as const;
   const issues: OperationRequestIssue[] = [];
@@ -578,11 +578,15 @@ function normalizeHeaders(input: unknown): Record<string, unknown> {
   );
 }
 
-function normalizeQuery(input: unknown): unknown {
+function normalizeQuery(input: unknown, definition: RuntimeSchema): unknown {
   if (input instanceof URLSearchParams) {
     return Object.fromEntries(
       [...input.entries()].map(([key, value]) => {
-        if (key === "limit") return [key, Number(value)];
+        if (
+          definition.properties?.[key]?.type === "integer" &&
+          /^(?:0|[1-9]\d*|-[1-9]\d*)$/.test(value)
+        )
+          return [key, Number(value)];
         if (value === "true") return [key, true];
         if (value === "false") return [key, false];
         return [key, value];

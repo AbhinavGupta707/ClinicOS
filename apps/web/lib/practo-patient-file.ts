@@ -40,7 +40,7 @@ const failure = (message: string): never => {
 // Two passes over the local File: preflight retains only IDs/hashes/counts, then
 // upload regenerates at most 100 minimized rows at a time. No raw-file buffer,
 // browser persistence, original filename, or excluded field values leave here.
-async function* csvRecords(file: Blob, signal?: AbortSignal): AsyncGenerator<string[]> {
+export async function* streamPracticeCsvRecords(file: Blob, signal?: AbortSignal): AsyncGenerator<string[]> {
   if (file.size > PATIENT_FILE_MAX_BYTES)
     failure("This patient import supports files up to 25 MiB. No rows were sent.");
   const reader = file.stream().getReader();
@@ -154,7 +154,7 @@ export async function* patientFileChunks(
     output = [];
     return chunk;
   };
-  for await (const row of csvRecords(file, signal)) {
+  for await (const row of streamPracticeCsvRecords(file, signal)) {
     signal?.throwIfAborted();
     if (!headers) {
       headers = row;

@@ -100,7 +100,7 @@ function collectVersionedResponsePaths(definition: RuntimeSchema, path = ""): st
 }
 
 test("active native registry covers identity/health and every implemented checkpoint", () => {
-  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 163);
+  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 172);
   const checkpoints = new Set(
     ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.checkpoint)
   );
@@ -126,7 +126,7 @@ test("active native registry covers identity/health and every implemented checkp
   assert.equal(new Set(routeKeys).size, routeKeys.length);
   assert.equal(
     new Set(ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.operationId)).size,
-    163
+    172
   );
 });
 
@@ -830,4 +830,13 @@ test("appointment PATCH accepts one reviewed change and rejects mixed/incomplete
     { schedule: { ...schedule, durationMinutes: 0 }, changeReason: "Invalid duration" },
     { schedule: { ...schedule, patientId }, changeReason: "Patient identity cannot change" }
   ]) assert.equal(request(body).success, false, JSON.stringify(body));
+});
+
+
+test('query integers follow their registered schema, including appointment review pages',()=>{
+ for(const offset of ['0','50','5000']) {
+  const parsed=parseNativeOperationRequest('getAppointmentImport',{headers:{authorization:bearerHeaders.authorization},path:{importId:patientId},query:new URLSearchParams({offset})});
+  assert.equal(parsed.success,true);
+ }
+ for(const offset of ['5001','-1','1.5','false','', ' 50 ']) assert.equal(parseNativeOperationRequest('getAppointmentImport',{headers:{authorization:bearerHeaders.authorization},path:{importId:patientId},query:new URLSearchParams({offset})}).success,false);
 });

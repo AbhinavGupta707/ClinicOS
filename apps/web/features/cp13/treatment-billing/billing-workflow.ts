@@ -150,7 +150,7 @@ export function receiptablePayments(invoice: PublicJsonObject): PublicJsonObject
     .map(record)
     .filter(
       (payment) =>
-        !fieldText(payment, "receiptId") &&
+        !fieldText(payment, "receiptId") && fieldText(payment, "method") !== "advance_allocation" &&
         ((fieldText(payment, "status") === "manually_recorded" &&
           fieldText(payment, "verificationStatus") === "not_required_manual") ||
           (fieldText(payment, "status") === "succeeded" &&

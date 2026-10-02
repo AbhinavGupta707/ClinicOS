@@ -42,6 +42,7 @@ import {
   type ProviderHealthCard
 } from "@/lib/cp7-integration-ops";
 import type { MeProfile } from "@/lib/me";
+import { AppointmentImportWorkspace } from "./appointment-import-workspace";
 import { MigrationRunWorkspace } from "@/components/migration-run-workspace";
 import { MigrationOperationsPanel } from "@/components/migration-operations-panel";
 
@@ -68,13 +69,17 @@ export function isCp7WorkflowSurface(surfaceId: string) {
 export function IntegrationOpsWorkflow(props: IntegrationOpsWorkflowProps) {
   if (props.activeSurfaceId === "migration-review" && !isCp7FixtureAllowed()) {
     return (
-      <MigrationRunWorkspace
+      <ReviewedMigrationWorkspace
         key={`${props.profile.tenant.id}:${props.profile.clinic.id}:${props.profile.user.id}`}
         profile={props.profile}
       />
     );
   }
   return <LegacyIntegrationOpsWorkflow {...props} />;
+}
+
+function ReviewedMigrationWorkspace({profile}:{profile:MeProfile}) {
+ return <><MigrationRunWorkspace profile={profile}/><AppointmentImportWorkspace profile={profile}/></>;
 }
 
 function LegacyIntegrationOpsWorkflow({ activeSurfaceId, profile }: IntegrationOpsWorkflowProps) {

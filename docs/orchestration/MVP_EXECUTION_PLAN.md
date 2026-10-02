@@ -195,6 +195,20 @@ Before connector-specific MVP1 code begins, obtain:
 
 ## Decision log
 
+- 2026-09-26: owner authorized financial operations and one additional high-value
+  slice. Advances/allocation/returns, full-line credits, manual refunds and payment
+  corrections, expenses, account history and clinic-day movements now use scoped
+  immutable evidence and atomic audit/outbox. The second slice is minimized,
+  reviewed Practo appointment evidence: history/exclude/link or explicitly create
+  a verified upcoming booking, without guessing duration or claiming recurring
+  sync. Fresh migrations 0030/0031, repository integrity probes, 1,184 workspace
+  tests and 20 distinct real API/PostgreSQL browser cases passed. See
+  [the implementation plan](FINANCE_AND_APPOINTMENT_REVIEW_PLAN_2026-09-26.md) and
+  [acceptance evidence](../qa/FINANCE_AND_APPOINTMENT_ACCEPTANCE_2026-09-26.md).
+  Work remains local and uncommitted. Staff rehearsal, real source semantics and
+  identity/provider acceptance remain open; this does not establish Practo parity
+  or a production release.
+
 - 2026-09-26: owner authorized the remaining daily frontend gaps before a
   walkthrough. The active CP13 screens now connect named patient/edit/duplicate
   review, clinic setup and existing-staff access, week planning, intake/consent,

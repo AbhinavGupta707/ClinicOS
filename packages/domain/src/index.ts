@@ -28,3 +28,5 @@ export * from "./cp15/meta-whatsapp/index.ts";
 export * from "./cp15/razorpay/index.ts";
 
 export * from "./intake-validation.ts";
+export * from './financial-operations.ts';
+export * from './appointment-observations.ts';

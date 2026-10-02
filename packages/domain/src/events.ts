@@ -68,6 +68,7 @@ export const DOMAIN_EVENT_TYPES = [
   "payment.succeeded",
   "payment.failed",
   "payment.manually_recorded",
+  "financial.entry.recorded",
   "payment.reconciliation_required",
   "workflow.cp13.continuity_due_generation.requested",
   "workflow.cp13.sop_due_generation.requested",
@@ -203,6 +204,7 @@ export const CP5_PAYMENT_EVENT_TYPES = [
   "payment.failed",
   "payment.refunded",
   "payment.manually_recorded",
+  "financial.entry.recorded",
   "payment.reconciliation_required"
 ] as const;
 

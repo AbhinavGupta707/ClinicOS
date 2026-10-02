@@ -169,6 +169,8 @@ async function discover(
             status: i.status,
             paymentStatus: i.paymentStatus,
             totalMinor: i.totalMinor,
+            creditedMinor: i.creditedMinor ?? 0,
+            financialVersion: i.financialVersion ?? 1,
             paidMinor: i.paidMinor,
             balanceMinor: i.balanceMinor,
             currency: i.currency,

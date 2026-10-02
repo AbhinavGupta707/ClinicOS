@@ -3748,6 +3748,2309 @@
         ]
       }
     },
+    "/v1/appointment-imports": {
+      "get": {
+        "description": "Discover saved source appointment files. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "operationId": "listAppointmentImports",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 2,
+                  "properties": {
+                    "imports": {
+                      "items": {
+                        "$ref": "#/components/schemas/PublicJsonObject"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "nextCursor": {
+                      "format": "uuid",
+                      "maxLength": 36,
+                      "minLength": 36,
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "imports",
+                    "nextCursor"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request is malformed or ambiguous.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Authentication is required or invalid.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The verified identity is not authorized for the scoped operation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The tenant-scoped resource does not exist.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request conflicts with current workflow or idempotency state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeds its declared body budget.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed runtime contract validation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeded an application abuse budget.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed without exposing internal details.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A required dependency or configured capability is unavailable.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Discover saved source appointment files",
+        "tags": [
+          "Migration"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP7",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "mode": "none",
+          "replaySemantics": "This operation has no client mutation effect.",
+          "required": false
+        },
+        "x-clinicos-native-enforcement": "body-parser-only",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "read",
+        "x-clinicos-required-master-wiring": [
+          "Invoke the runtime contract before the native or NestJS handler."
+        ]
+      },
+      "post": {
+        "description": "Start or recover a source observation file. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "operationId": "createAppointmentImport",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "maxProperties": 3,
+                "properties": {
+                  "digest": {
+                    "maxLength": 4096,
+                    "pattern": "^[a-f0-9]{64}$",
+                    "type": "string"
+                  },
+                  "rowCount": {
+                    "maximum": 5000,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "sourceSystem": {
+                    "maxLength": 100,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              }
+            }
+          },
+          "required": true,
+          "x-maximum-bytes": 1048576
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 1,
+                  "properties": {
+                    "import": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    }
+                  },
+                  "required": [
+                    "import"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "idempotency-replayed": {
+                "description": "Literal wire value false on first execution and true when the response was replayed from the persisted idempotency record.",
+                "schema": {
+                  "description": "Required wire boolean: false on first execution and true when a persisted response is replayed.",
+                  "enum": [
+                    "false",
+                    "true"
+                  ],
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request is malformed or ambiguous.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Authentication is required or invalid.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The verified identity is not authorized for the scoped operation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The tenant-scoped resource does not exist.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request conflicts with current workflow or idempotency state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeds its declared body budget.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed runtime contract validation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeded an application abuse budget.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed without exposing internal details.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A required dependency or configured capability is unavailable.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Start or recover a source observation file",
+        "tags": [
+          "Migration"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP7",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "header": "idempotency-key",
+          "mode": "header",
+          "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+          "required": true
+        },
+        "x-clinicos-native-enforcement": "body-parser-only",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "write",
+        "x-clinicos-required-master-wiring": [
+          "Invoke the runtime contract before the native or NestJS handler.",
+          "Persist and replay idempotency records by actor, clinic, operation, key, and request digest."
+        ]
+      }
+    },
+    "/v1/appointment-imports/{importId}": {
+      "get": {
+        "description": "Read source evidence and saved decisions. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "operationId": "getAppointmentImport",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "importId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "offset",
+            "required": false,
+            "schema": {
+              "maximum": 5000,
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 4,
+                  "properties": {
+                    "counts": {
+                      "items": {
+                        "$ref": "#/components/schemas/PublicJsonObject"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    },
+                    "import": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    },
+                    "nextOffset": {
+                      "maximum": 2147483647,
+                      "minimum": 0,
+                      "type": [
+                        "integer",
+                        "null"
+                      ]
+                    },
+                    "rows": {
+                      "items": {
+                        "$ref": "#/components/schemas/PublicJsonObject"
+                      },
+                      "maxItems": 100,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "import",
+                    "rows",
+                    "counts",
+                    "nextOffset"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request is malformed or ambiguous.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Authentication is required or invalid.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The verified identity is not authorized for the scoped operation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The tenant-scoped resource does not exist.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request conflicts with current workflow or idempotency state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeds its declared body budget.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed runtime contract validation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeded an application abuse budget.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed without exposing internal details.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A required dependency or configured capability is unavailable.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Read source evidence and saved decisions",
+        "tags": [
+          "Migration"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP7",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "mode": "none",
+          "replaySemantics": "This operation has no client mutation effect.",
+          "required": false
+        },
+        "x-clinicos-native-enforcement": "body-parser-only",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "read",
+        "x-clinicos-required-master-wiring": [
+          "Invoke the runtime contract before the native or NestJS handler."
+        ]
+      }
+    },
+    "/v1/appointment-imports/{importId}/rows": {
+      "post": {
+        "description": "Stage bounded minimized source observations. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "operationId": "stageAppointmentObservations",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "importId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "maxProperties": 2,
+                "properties": {
+                  "offset": {
+                    "maximum": 4999,
+                    "minimum": 0,
+                    "type": "integer"
+                  },
+                  "rows": {
+                    "items": {
+                      "additionalProperties": false,
+                      "maxProperties": 5,
+                      "properties": {
+                        "date": {
+                          "maxLength": 19,
+                          "minLength": 19,
+                          "type": "string"
+                        },
+                        "doctorName": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "patientName": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "patientNumber": {
+                          "maxLength": 200,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "status": {
+                          "enum": [
+                            "Scheduled",
+                            "Cancelled"
+                          ]
+                        }
+                      },
+                      "required": [],
+                      "type": "object"
+                    },
+                    "maxItems": 100,
+                    "minItems": 1,
+                    "type": "array"
+                  }
+                },
+                "required": [],
+                "type": "object"
+              }
+            }
+          },
+          "required": true,
+          "x-maximum-bytes": 1048576
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 1,
+                  "properties": {
+                    "receipt": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    }
+                  },
+                  "required": [
+                    "receipt"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "idempotency-replayed": {
+                "description": "Literal wire value false on first execution and true when the response was replayed from the persisted idempotency record.",
+                "schema": {
+                  "description": "Required wire boolean: false on first execution and true when a persisted response is replayed.",
+                  "enum": [
+                    "false",
+                    "true"
+                  ],
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request is malformed or ambiguous.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Authentication is required or invalid.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The verified identity is not authorized for the scoped operation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The tenant-scoped resource does not exist.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request conflicts with current workflow or idempotency state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeds its declared body budget.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed runtime contract validation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeded an application abuse budget.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed without exposing internal details.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A required dependency or configured capability is unavailable.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Stage bounded minimized source observations",
+        "tags": [
+          "Migration"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP7",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "header": "idempotency-key",
+          "mode": "header",
+          "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+          "required": true
+        },
+        "x-clinicos-native-enforcement": "body-parser-only",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "write",
+        "x-clinicos-required-master-wiring": [
+          "Invoke the runtime contract before the native or NestJS handler.",
+          "Persist and replay idempotency records by actor, clinic, operation, key, and request digest."
+        ]
+      }
+    },
+    "/v1/appointment-imports/{importId}/rows/{rowId}/review": {
+      "post": {
+        "description": "Record a human review and atomic booking handoff. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "operationId": "reviewAppointmentObservation",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "importId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "rowId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "maxProperties": 6,
+                "properties": {
+                  "appointmentId": {
+                    "format": "uuid",
+                    "maxLength": 36,
+                    "minLength": 36,
+                    "type": "string"
+                  },
+                  "booking": {
+                    "additionalProperties": false,
+                    "maxProperties": 6,
+                    "properties": {
+                      "appointmentTypeId": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "type": "string"
+                      },
+                      "chairId": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "type": [
+                          "string",
+                          "null"
+                        ]
+                      },
+                      "endAt": {
+                        "format": "date-time",
+                        "maxLength": 40,
+                        "minLength": 20,
+                        "type": "string"
+                      },
+                      "patientId": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "type": "string"
+                      },
+                      "providerUserId": {
+                        "format": "uuid",
+                        "maxLength": 36,
+                        "minLength": 36,
+                        "type": "string"
+                      },
+                      "startAt": {
+                        "format": "date-time",
+                        "maxLength": 40,
+                        "minLength": 20,
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "patientId",
+                      "providerUserId",
+                      "appointmentTypeId",
+                      "startAt",
+                      "endAt"
+                    ],
+                    "type": "object"
+                  },
+                  "confirmedDetails": {
+                    "type": "boolean"
+                  },
+                  "decision": {
+                    "enum": [
+                      "history",
+                      "exclude",
+                      "link",
+                      "create"
+                    ]
+                  },
+                  "patientId": {
+                    "format": "uuid",
+                    "maxLength": 36,
+                    "minLength": 36,
+                    "type": "string"
+                  },
+                  "reason": {
+                    "maxLength": 1000,
+                    "minLength": 1,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "decision",
+                  "reason"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true,
+          "x-maximum-bytes": 1048576
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 1,
+                  "properties": {
+                    "observation": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    }
+                  },
+                  "required": [
+                    "observation"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "idempotency-replayed": {
+                "description": "Literal wire value false on first execution and true when the response was replayed from the persisted idempotency record.",
+                "schema": {
+                  "description": "Required wire boolean: false on first execution and true when a persisted response is replayed.",
+                  "enum": [
+                    "false",
+                    "true"
+                  ],
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request is malformed or ambiguous.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Authentication is required or invalid.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The verified identity is not authorized for the scoped operation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The tenant-scoped resource does not exist.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request conflicts with current workflow or idempotency state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeds its declared body budget.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed runtime contract validation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeded an application abuse budget.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed without exposing internal details.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A required dependency or configured capability is unavailable.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Record a human review and atomic booking handoff",
+        "tags": [
+          "Migration"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP7",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "header": "idempotency-key",
+          "mode": "header",
+          "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+          "required": true
+        },
+        "x-clinicos-native-enforcement": "body-parser-only",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "write",
+        "x-clinicos-required-master-wiring": [
+          "Invoke the runtime contract before the native or NestJS handler.",
+          "Persist and replay idempotency records by actor, clinic, operation, key, and request digest."
+        ]
+      }
+    },
+    "/v1/appointment-imports/{importId}/seal": {
+      "post": {
+        "description": "Verify source file completeness before review. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "operationId": "sealAppointmentImport",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "importId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "maxProperties": 1,
+                "properties": {},
+                "required": [],
+                "type": "object"
+              }
+            }
+          },
+          "required": true,
+          "x-maximum-bytes": 1048576
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 1,
+                  "properties": {
+                    "import": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    }
+                  },
+                  "required": [
+                    "import"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "idempotency-replayed": {
+                "description": "Literal wire value false on first execution and true when the response was replayed from the persisted idempotency record.",
+                "schema": {
+                  "description": "Required wire boolean: false on first execution and true when a persisted response is replayed.",
+                  "enum": [
+                    "false",
+                    "true"
+                  ],
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request is malformed or ambiguous.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Authentication is required or invalid.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The verified identity is not authorized for the scoped operation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The tenant-scoped resource does not exist.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request conflicts with current workflow or idempotency state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeds its declared body budget.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed runtime contract validation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeded an application abuse budget.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed without exposing internal details.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A required dependency or configured capability is unavailable.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Verify source file completeness before review",
+        "tags": [
+          "Migration"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP7",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "header": "idempotency-key",
+          "mode": "header",
+          "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+          "required": true
+        },
+        "x-clinicos-native-enforcement": "body-parser-only",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "write",
+        "x-clinicos-required-master-wiring": [
+          "Invoke the runtime contract before the native or NestJS handler.",
+          "Persist and replay idempotency records by actor, clinic, operation, key, and request digest."
+        ]
+      }
+    },
     "/v1/appointment-types": {
       "get": {
         "description": "List appointment type configuration. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
@@ -20858,6 +23161,785 @@
           "The HTTP mutation coordinator and durable interoperability adapters must reuse one PostgreSQL transaction for replay, conditional versions, domain effects, audit and outbox.",
           "The interoperability adapter, not the generic version mapper, owns the conditional source and reconciliation version checks.",
           "Keep core FHIR disabled until the durable adapters and protected-payload KMS key are configured."
+        ]
+      }
+    },
+    "/v1/financial-day": {
+      "get": {
+        "description": "Read clinic-day financial movements and current dues. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "operationId": "getFinancialDay",
+        "parameters": [
+          {
+            "in": "query",
+            "name": "date",
+            "required": false,
+            "schema": {
+              "format": "date",
+              "maxLength": 10,
+              "minLength": 10,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "entryCursor",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "dueCursor",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 1,
+                  "properties": {
+                    "day": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    }
+                  },
+                  "required": [
+                    "day"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request is malformed or ambiguous.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Authentication is required or invalid.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The verified identity is not authorized for the scoped operation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The tenant-scoped resource does not exist.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request conflicts with current workflow or idempotency state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeds its declared body budget.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed runtime contract validation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeded an application abuse budget.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed without exposing internal details.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A required dependency or configured capability is unavailable.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Read clinic-day financial movements and current dues",
+        "tags": [
+          "Billing"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP5",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "mode": "none",
+          "replaySemantics": "This operation has no client mutation effect.",
+          "required": false
+        },
+        "x-clinicos-native-enforcement": "body-parser-only",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "read",
+        "x-clinicos-required-master-wiring": [
+          "Invoke the runtime contract before the native or NestJS handler."
+        ]
+      }
+    },
+    "/v1/financial-operations": {
+      "post": {
+        "description": "Record auditable manual financial evidence. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "operationId": "executeFinancialCommand",
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "maxProperties": 11,
+                "properties": {
+                  "amountMinor": {
+                    "maximum": 2147483647,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "expectedVersion": {
+                    "maximum": 2147483647,
+                    "minimum": 1,
+                    "type": "integer"
+                  },
+                  "invoiceId": {
+                    "format": "uuid",
+                    "maxLength": 36,
+                    "minLength": 36,
+                    "type": "string"
+                  },
+                  "invoiceItemId": {
+                    "format": "uuid",
+                    "maxLength": 36,
+                    "minLength": 36,
+                    "type": "string"
+                  },
+                  "kind": {
+                    "enum": [
+                      "invoice_credit",
+                      "payment_reversal",
+                      "payment_refund",
+                      "advance_received",
+                      "advance_allocated",
+                      "advance_returned",
+                      "allocation_reversed",
+                      "expense",
+                      "expense_reversal"
+                    ]
+                  },
+                  "method": {
+                    "enum": [
+                      "cash",
+                      "upi",
+                      "card",
+                      "bank_transfer",
+                      "cheque",
+                      "other"
+                    ]
+                  },
+                  "patientId": {
+                    "format": "uuid",
+                    "maxLength": 36,
+                    "minLength": 36,
+                    "type": "string"
+                  },
+                  "paymentTransactionId": {
+                    "format": "uuid",
+                    "maxLength": 36,
+                    "minLength": 36,
+                    "type": "string"
+                  },
+                  "reason": {
+                    "maxLength": 1000,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "reference": {
+                    "maxLength": 160,
+                    "minLength": 1,
+                    "type": "string"
+                  },
+                  "targetEntryId": {
+                    "format": "uuid",
+                    "maxLength": 36,
+                    "minLength": 36,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "reason",
+                  "reference"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true,
+          "x-maximum-bytes": 1048576
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 1,
+                  "properties": {
+                    "entry": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    }
+                  },
+                  "required": [
+                    "entry"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "idempotency-replayed": {
+                "description": "Literal wire value false on first execution and true when the response was replayed from the persisted idempotency record.",
+                "schema": {
+                  "description": "Required wire boolean: false on first execution and true when a persisted response is replayed.",
+                  "enum": [
+                    "false",
+                    "true"
+                  ],
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request is malformed or ambiguous.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Authentication is required or invalid.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The verified identity is not authorized for the scoped operation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The tenant-scoped resource does not exist.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request conflicts with current workflow or idempotency state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeds its declared body budget.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed runtime contract validation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeded an application abuse budget.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed without exposing internal details.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A required dependency or configured capability is unavailable.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Record auditable manual financial evidence",
+        "tags": [
+          "Billing"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP5",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "header": "idempotency-key",
+          "mode": "header",
+          "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+          "required": true
+        },
+        "x-clinicos-native-enforcement": "body-parser-only",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "write",
+        "x-clinicos-required-master-wiring": [
+          "Invoke the runtime contract before the native or NestJS handler.",
+          "Persist and replay idempotency records by actor, clinic, operation, key, and request digest."
         ]
       }
     },
@@ -48173,6 +51255,353 @@
           "The HTTP mutation coordinator and durable interoperability adapters must reuse one PostgreSQL transaction for replay, conditional versions, domain effects, audit and outbox.",
           "The interoperability adapter, not the generic version mapper, owns the conditional source and reconciliation version checks.",
           "Keep core FHIR disabled until the durable adapters and protected-payload KMS key are configured."
+        ]
+      }
+    },
+    "/v1/patients/{patientId}/financial-account": {
+      "get": {
+        "description": "Read patient financial evidence and balances. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "operationId": "getFinancialAccount",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "patientId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "advanceCursor",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 1,
+                  "properties": {
+                    "account": {
+                      "$ref": "#/components/schemas/PublicJsonObject"
+                    }
+                  },
+                  "required": [
+                    "account"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request is malformed or ambiguous.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Authentication is required or invalid.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The verified identity is not authorized for the scoped operation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The tenant-scoped resource does not exist.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request conflicts with current workflow or idempotency state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeds its declared body budget.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed runtime contract validation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeded an application abuse budget.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed without exposing internal details.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A required dependency or configured capability is unavailable.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Read patient financial evidence and balances",
+        "tags": [
+          "Billing"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP5",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "mode": "none",
+          "replaySemantics": "This operation has no client mutation effect.",
+          "required": false
+        },
+        "x-clinicos-native-enforcement": "body-parser-only",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "read",
+        "x-clinicos-required-master-wiring": [
+          "Invoke the runtime contract before the native or NestJS handler."
         ]
       }
     },

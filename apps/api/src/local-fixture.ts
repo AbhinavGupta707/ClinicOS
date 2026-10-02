@@ -1076,6 +1076,16 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     const page=fixtureWorkflowPage(this.treatmentPlans.filter(record => matchesScope(record,scope) && record.patientId === patientId),filter);
     return {records:page.records.map(record=>(this.treatmentPlanDetail(scope,record.id))),nextCursor:page.nextCursor};
   }
+  async createAppointmentImport():Promise<never> {throw new Error("Appointment observations require the synthetic PostgreSQL harness.");}
+  async stageAppointmentObservations():Promise<never> {throw new Error("Appointment observations require the synthetic PostgreSQL harness.");}
+  async sealAppointmentImport():Promise<never> {throw new Error("Appointment observations require the synthetic PostgreSQL harness.");}
+  async listAppointmentImports():Promise<never> {throw new Error("Appointment observations require the synthetic PostgreSQL harness.");}
+  async getAppointmentImport():Promise<never> {throw new Error("Appointment observations require the synthetic PostgreSQL harness.");}
+  async lockAppointmentObservation():Promise<never> {throw new Error("Appointment observations require the synthetic PostgreSQL harness.");}
+  async decideAppointmentObservation():Promise<never> {throw new Error("Appointment observations require the synthetic PostgreSQL harness.");}
+  async executeFinancialCommand():Promise<Record<string,unknown>> {throw new Error("Financial evidence requires the synthetic PostgreSQL test harness.");}
+  async getFinancialAccount():Promise<Record<string,unknown>> {throw new Error("Financial evidence requires the synthetic PostgreSQL test harness.");}
+  async getFinancialDay():Promise<Record<string,unknown>> {throw new Error("Financial evidence requires the synthetic PostgreSQL test harness.");}
   async listPatientInvoices(scope: RepositoryScope, patientId: UUID, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<InvoiceDetail>> {
     const page=fixtureWorkflowPage(this.invoices.filter(record => matchesScope(record,scope) && record.patientId === patientId),filter);
     return {records:page.records.map(record=>(this.invoiceDetail(scope,record.id))),nextCursor:page.nextCursor};

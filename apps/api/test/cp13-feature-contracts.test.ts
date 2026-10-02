@@ -12,6 +12,7 @@ import type { ClinicFeatureOperationHandler } from "../src/features/contracts.ts
 import {
   ALL_CP13_CLINIC_DAY_OPERATION_IDS,
   ALL_CP13_CLINIC_FEATURE_OPERATION_IDS,
+  APPOINTMENT_REVIEW_OPERATION_IDS,
   CP13_CLINIC_DAY_OPERATION_OWNERS,
   CP13_TREATMENT_BILLING_CLINIC_OPERATION_IDS,
   CP13_TREATMENT_BILLING_PROVIDER_OPERATION_IDS
@@ -20,7 +21,7 @@ import { runClinicFeatureOperation } from "../src/features/runtime.ts";
 
 test("CP13 clinic-day ownership covers CP2-CP6 exactly once", () => {
   const expected = ACTIVE_NATIVE_HTTP_OPERATIONS.filter((operation) =>
-    ["CP2", "CP3", "CP4", "CP5", "CP6"].includes(operation.checkpoint)
+    ["CP2", "CP3", "CP4", "CP5", "CP6"].includes(operation.checkpoint) || APPOINTMENT_REVIEW_OPERATION_IDS.includes(operation.operationId as never)
   ).map((operation) => operation.operationId);
   const owned = Object.values(CP13_CLINIC_DAY_OPERATION_OWNERS).flat();
 
@@ -33,10 +34,10 @@ test("CP13 clinic-day ownership covers CP2-CP6 exactly once", () => {
 test("CP13 ownership keeps shared compatibility files out of worker path design", () => {
   assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.frontOffice.length, 27);
   assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.clinicalDental.length, 23);
-  assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.treatmentBilling.length, 11);
+  assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.treatmentBilling.length, 14);
   assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.continuityOperations.length, 34);
   assert.deepEqual(CP13_TREATMENT_BILLING_PROVIDER_OPERATION_IDS, []);
-  assert.equal(CP13_TREATMENT_BILLING_CLINIC_OPERATION_IDS.length, 11);
+  assert.equal(CP13_TREATMENT_BILLING_CLINIC_OPERATION_IDS.length, 14);
   assert.equal(ALL_CP13_CLINIC_FEATURE_OPERATION_IDS.length, Object.values(CP13_CLINIC_DAY_OPERATION_OWNERS).flat().length);
   assert.equal(new Set(ALL_CP13_CLINIC_FEATURE_OPERATION_IDS).size, ALL_CP13_CLINIC_FEATURE_OPERATION_IDS.length);
   assert.equal(

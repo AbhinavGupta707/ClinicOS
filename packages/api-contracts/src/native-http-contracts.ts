@@ -501,6 +501,8 @@ export const ACTIVE_NATIVE_HTTP_OPERATIONS: readonly HttpOperationContract[] = [
   ...cp3Operations(),
   ...cp4Operations(),
   ...cp5Operations(),
+  ...financialOperations(),
+  ...appointmentReviewOperations(),
   ...cp6Operations(),
   ...cp7Operations(),
   ...cp8Operations(),
@@ -4175,5 +4177,25 @@ function workflowDiscoveryOperations(): HttpOperationContract[] {
   operation({operationId:"searchBillingPatients",checkpoint:"CP5",method:"GET",path:"/v1/billing/patients",summary:"Search named patients with clinic billing evidence",tags:["Billing"],mutation:false,phi:"read",queryProperties:{query:schema.string({minLength:2,maxLength:200})},success:{200:responseSchema({patients:schema.array(responseSchema({id:uuid,fullName:shortText}),{maxItems:50})})}}),
   operation({operationId:"listClinicStaff",checkpoint:"CP3",method:"GET",path:"/v1/clinic-staff",summary:"List active clinic staff names",tags:["Daily workflow"],mutation:false,success:{200:responseSchema({staff:schema.array(responseSchema({id:uuid,displayName:shortText}),{maxItems:500})})}}),
   operation({operationId:"getPatientDemographics",checkpoint:"CP3",method:"GET",path:"/v1/patients/{patientId}/demographics",pathProperties:{patientId:uuid},summary:"Read the demographic fields allowed for front-desk editing",tags:["Patients"],phi:"read",mutation:false,success:{200:singleVersionedEntity("patient")}})
+ ];
+}
+
+function financialOperations():HttpOperationContract[] {return [
+ operation({operationId:"executeFinancialCommand",checkpoint:"CP5",method:"POST",path:"/v1/financial-operations",summary:"Record auditable manual financial evidence",tags:["Billing"],phi:"write",body:bodySchema({kind:schema.enum(["invoice_credit","payment_reversal","payment_refund","advance_received","advance_allocated","advance_returned","allocation_reversed","expense","expense_reversal"]),patientId:uuid,invoiceId:uuid,invoiceItemId:uuid,paymentTransactionId:uuid,targetEntryId:uuid,expectedVersion:positiveInteger,amountMinor:positiveInteger,method:schema.enum(["cash","upi","card","bank_transfer","cheque","other"]),reason:schema.string({minLength:1,maxLength:1000}),reference:schema.string({minLength:1,maxLength:160})},["kind","reason","reference"]),success:{201:singleEntity("entry")}}),
+ operation({operationId:"getFinancialAccount",checkpoint:"CP5",method:"GET",path:"/v1/patients/{patientId}/financial-account",summary:"Read patient financial evidence and balances",tags:["Billing"],phi:"read",pathProperties:{patientId:uuid},mutation:false,queryProperties:{cursor:uuid,advanceCursor:uuid},success:{200:singleEntity("account")}}),
+ operation({operationId:"getFinancialDay",checkpoint:"CP5",method:"GET",path:"/v1/financial-day",summary:"Read clinic-day financial movements and current dues",tags:["Billing"],phi:"read",mutation:false,queryProperties:{date,entryCursor:uuid,dueCursor:uuid},success:{200:singleEntity("day")}})
+];}
+
+function appointmentReviewOperations():HttpOperationContract[]{
+ const bounded=schema.string({minLength:1,maxLength:200});
+ const row=bodySchema({date:schema.string({minLength:19,maxLength:19}),patientNumber:bounded,patientName:bounded,doctorName:bounded,status:schema.enum(['Scheduled','Cancelled'])});
+ const importId={importId:uuid};
+ return [
+ operation({operationId:'createAppointmentImport',checkpoint:'CP7',method:'POST',path:'/v1/appointment-imports',summary:'Start or recover a source observation file',tags:['Migration'],phi:'write',body:bodySchema({sourceSystem:schema.string({minLength:1,maxLength:100}),digest:schema.string({pattern:'^[a-f0-9]{64}$'}),rowCount:schema.integer({minimum:1,maximum:5000})}),success:{201:singleEntity('import')}}),
+ operation({operationId:'listAppointmentImports',checkpoint:'CP7',method:'GET',path:'/v1/appointment-imports',summary:'Discover saved source appointment files',tags:['Migration'],phi:'read',mutation:false,queryProperties:{cursor:uuid},success:{200:responseSchema({imports:entities,nextCursor:schema.nullable(uuid)})}}),
+ operation({operationId:'getAppointmentImport',checkpoint:'CP7',method:'GET',path:'/v1/appointment-imports/{importId}',summary:'Read source evidence and saved decisions',tags:['Migration'],phi:'read',mutation:false,pathProperties:importId,queryProperties:{offset:schema.integer({minimum:0,maximum:5000})},success:{200:responseSchema({import:entity,rows:entities,counts:entities,nextOffset:schema.nullable(nonNegativeInteger)})}}),
+ operation({operationId:'stageAppointmentObservations',checkpoint:'CP7',method:'POST',path:'/v1/appointment-imports/{importId}/rows',summary:'Stage bounded minimized source observations',tags:['Migration'],phi:'write',pathProperties:importId,body:bodySchema({offset:schema.integer({minimum:0,maximum:4999}),rows:schema.array(row,{minItems:1,maxItems:100})}),success:{200:singleEntity('receipt')}}),
+ operation({operationId:'sealAppointmentImport',checkpoint:'CP7',method:'POST',path:'/v1/appointment-imports/{importId}/seal',summary:'Verify source file completeness before review',tags:['Migration'],phi:'write',pathProperties:importId,body:bodySchema({},[]),success:{200:singleEntity('import')}}),
+ operation({operationId:'reviewAppointmentObservation',checkpoint:'CP7',method:'POST',path:'/v1/appointment-imports/{importId}/rows/{rowId}/review',summary:'Record a human review and atomic booking handoff',tags:['Migration'],phi:'write',pathProperties:{...importId,rowId:uuid},body:bodySchema({decision:schema.enum(['history','exclude','link','create']),reason:schema.string({minLength:1,maxLength:1000}),confirmedDetails:schema.boolean(),appointmentId:uuid,patientId:uuid,booking:bodySchema({patientId:uuid,providerUserId:uuid,appointmentTypeId:uuid,chairId:optionalUuid,startAt:dateTime,endAt:dateTime},['patientId','providerUserId','appointmentTypeId','startAt','endAt'])},['decision','reason']),success:{200:singleEntity('observation')}})
  ];
 }

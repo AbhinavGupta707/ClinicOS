@@ -641,4 +641,317 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
     expect(clinical.status()).toBe(403);
     await page.context().close();
   });
+  test("financial account preserves deposits, allocations, credits, refunds and corrections", async ({
+    browser
+  }, info) => {
+    const page = await rolePage(browser, "owner");
+    await choose(page, "checkout");
+    await page.getByRole("button", { name: "Accounts and reconciliation", exact: true }).click();
+    await expect(page.getByTestId("financial-operations")).toBeVisible();
+    const invoices = await api(page, `/v1/patients/${patientId}/invoices`);
+    const invoiceId = invoices.invoices[0].id;
+    async function command(kind: string, amount: string, target?: string) {
+      await page
+        .getByRole("combobox", { name: "Financial action", exact: true })
+        .selectOption(kind);
+      if (
+        [
+          "advance_allocated",
+          "allocation_reversed",
+          "invoice_credit",
+          "payment_refund",
+          "payment_reversal"
+        ].includes(kind)
+      )
+        await page
+          .getByRole("combobox", { name: "Invoice to adjust", exact: true })
+          .selectOption(invoiceId);
+      if (target)
+        await page
+          .getByRole("combobox", { name: "Original financial evidence", exact: true })
+          .selectOption(target);
+      if (["payment_refund", "advance_returned"].includes(kind))
+        await page
+          .getByRole("combobox", { name: "Financial payment method", exact: true })
+          .selectOption("bank_transfer");
+      if (!["invoice_credit", "expense_reversal"].includes(kind))
+        await page.getByLabel("Financial amount in INR").fill(amount);
+      await page
+        .getByLabel("Financial reference", { exact: true })
+        .fill(`SyntheticFinance-${kind}-${randomUUID()}`);
+      await page
+        .getByLabel("Financial reason", { exact: true })
+        .fill("Synthetic reviewed evidence only");
+      await page
+        .getByLabel("I reviewed the account, original evidence and actual money movement.")
+        .check();
+      return (await save(page, "/v1/financial-operations", "Save financial evidence")).entry;
+    }
+    const advance = await command("advance_received", "300");
+    const allocation = await command("advance_allocated", "200", advance.id);
+    await command("allocation_reversed", "50", allocation.id);
+    let invoice = (await api(page, `/v1/invoices/${invoiceId}`)).invoice;
+    expect(invoice.paidMinor).toBe(55000);
+    expect(invoice.balanceMinor).toBe(45000);
+    await command("invoice_credit", "", invoice.items[0].id);
+    const payment = invoice.payments.find(
+      (p: { method: string }) => p.method !== "advance_allocation"
+    );
+    await command("payment_refund", "100", payment.id);
+    await command("payment_reversal", "50", payment.id);
+    await command("advance_returned", "100", advance.id);
+    const expense = await command("expense", "25");
+    await command("expense_reversal", "", expense.id);
+    invoice = (await api(page, `/v1/invoices/${invoiceId}`)).invoice;
+    expect({
+      total: invoice.totalMinor,
+      credit: invoice.creditedMinor,
+      paid: invoice.paidMinor,
+      refund: invoice.refundedMinor,
+      due: invoice.balanceMinor
+    }).toEqual({ total: 100000, credit: 100000, paid: 50000, refund: 10000, due: 0 });
+    expect(invoice.receipts).toHaveLength(1);
+    expect(invoice.receipts[0].amountMinor).toBe(40000);
+    const account = (await api(page, `/v1/patients/${patientId}/financial-account`)).account;
+    expect(account.advances.find((a: { id: string }) => a.id === advance.id).availableMinor).toBe(
+      5000
+    );
+    expect(account.totals.refundableMinor).toBe(40000);
+    expect(
+      account.entries
+        .filter((e: any) => ["payment_refund", "advance_returned"].includes(e.kind))
+        .every((e: any) => e.method === "bank_transfer")
+    ).toBe(true);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await noOverflow(page);
+    await page.screenshot({
+      path: info.outputPath("financial-account-mobile.png"),
+      fullPage: true
+    });
+    await page.context().close();
+  });
+  test("financial retries, concurrent returns and permissions preserve one durable outcome", async ({
+    browser
+  }) => {
+    const page = await rolePage(browser, "owner");
+    const headers = {
+      authorization: "Bearer local-synthetic-owner",
+      "x-clinic-id": clinic,
+      "idempotency-key": randomUUID()
+    };
+    const body = {
+      kind: "advance_received",
+      patientId,
+      amountMinor: 10000,
+      method: "cash",
+      reason: "Synthetic concurrency trial",
+      reference: `SyntheticConcurrent-${tag}`
+    };
+    const a = await page.request.post("/v1/financial-operations", { headers, data: body });
+    expect(a.status(), await a.text()).toBe(201);
+    const entry = (await a.json()).entry;
+    const replay = await page.request.post("/v1/financial-operations", { headers, data: body });
+    expect(replay.status()).toBe(201);
+    expect((await replay.json()).entry.id).toBe(entry.id);
+    const duplicateReference = await page.request.post("/v1/financial-operations", {
+      headers: { ...headers, "idempotency-key": randomUUID() },
+      data: body
+    });
+    expect(duplicateReference.status()).toBe(409);
+
+    const returns = await Promise.all(
+      [0, 1].map((n) =>
+        page.request.post("/v1/financial-operations", {
+          headers: { ...headers, "idempotency-key": randomUUID() },
+          data: {
+            kind: "advance_returned",
+            method: "bank_transfer",
+            patientId,
+            targetEntryId: entry.id,
+            amountMinor: 7000,
+            reason: "Synthetic return",
+            reference: `SyntheticReturn-${tag}-${n}`
+          }
+        })
+      )
+    );
+    expect(returns.map((r) => r.status()).sort()).toEqual([201, 409]);
+    const denied = await page.request.post("/v1/financial-operations", {
+      headers: {
+        ...headers,
+        authorization: "Bearer local-synthetic-receptionist",
+        "idempotency-key": randomUUID()
+      },
+      data: {
+        kind: "expense",
+        amountMinor: 100,
+        method: "cash",
+        reason: "Denied synthetic expense",
+        reference: randomUUID()
+      }
+    });
+    expect(denied.status()).toBe(403);
+    const cross = await page.request.get(`/v1/patients/${patientId}/financial-account`, {
+      headers: { ...headers, "x-clinic-id": "20000000-0000-4000-8000-000000000101" }
+    });
+    expect(cross.status()).toBe(403);
+
+    const invoices = (await api(page, `/v1/patients/${patientId}/invoices`)).invoices;
+    const invoice = (await api(page, `/v1/invoices/${invoices[0].id}`)).invoice;
+    const payment = invoice.payments.find((p: any) => p.method !== "advance_allocation");
+    for (const deniedBody of [
+      {
+        kind: "invoice_credit",
+        invoiceItemId: invoice.items[0].id,
+        expectedVersion: invoice.financialVersion
+      },
+      {
+        kind: "payment_refund",
+        method: "bank_transfer",
+        paymentTransactionId: payment.id,
+        amountMinor: 40001,
+        expectedVersion: invoice.financialVersion
+      },
+      {
+        kind: "payment_reversal",
+        paymentTransactionId: payment.id,
+        amountMinor: 1,
+        expectedVersion: 1
+      }
+    ]) {
+      const r = await page.request.post("/v1/financial-operations", {
+        headers: { ...headers, "idempotency-key": randomUUID() },
+        data: {
+          patientId,
+          invoiceId: invoice.id,
+          reason: "Rejected synthetic adjustment",
+          reference: randomUUID(),
+          ...deniedBody
+        }
+      });
+      expect(r.status(), await r.text()).toBe(409);
+    }
+    const allocation = invoice.payments.find((p: any) => p.method === "advance_allocation");
+    const duplicateReceipt = await page.request.post(`/v1/invoices/${invoice.id}/receipts`, {
+      headers: { ...headers, "idempotency-key": randomUUID() },
+      data: { paymentTransactionIds: [allocation.id] }
+    });
+    expect(duplicateReceipt.status()).toBe(409);
+    const account = (await api(page, `/v1/patients/${patientId}/financial-account`)).account;
+    expect(account.advances.find((a: { id: string }) => a.id === entry.id).availableMinor).toBe(
+      3000
+    );
+    await page.context().close();
+  });
+  test("Practo observations require human review and create or link one actual booking", async ({
+    browser
+  }, info) => {
+    const page = await rolePage(browser, "owner");
+    await page.goto("/surface/migration-review");
+    const panel = page.getByTestId("appointment-import-workspace");
+    await expect(panel).toBeVisible();
+    const future = new Date(`${date()}T00:00:00Z`);
+    future.setUTCDate(future.getUTCDate() + 7);
+    const day = future.toISOString().slice(0, 10);
+    const csv = `Date,Patient Number,Patient Name,Notes,DoctorName,Status,Checked In At,Checked Out At\n'${day} 10:30:00',P-001,${patientName},NEVER_TRANSFER,Source Doctor,'Scheduled',EXCLUDED,EXCLUDED\n'${day} 10:30:00',P-001,${patientName},NEVER_TRANSFER,Source Doctor,'Scheduled',,\n'2015-11-20 11:00:00',P-001,${patientName},NEVER_TRANSFER,Source Doctor,'Cancelled',,\n`;
+    await panel.getByLabel("Appointment source name").fill(`Synthetic Ray ${tag}`);
+    await panel
+      .getByLabel("Practo appointments.csv")
+      .setInputFiles({ name: "appointments.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
+    await expect(panel.getByText("3 observations prepared.", { exact: false })).toBeVisible();
+    await panel.getByLabel("I approve these fields", { exact: false }).check();
+    await panel.getByRole("button", { name: "Save appointment evidence" }).click();
+    await expect(panel.getByText("Source file complete.", { exact: false })).toBeVisible();
+    await expect(
+      panel.getByRole("combobox", { name: "Saved appointment import", exact: true })
+    ).toHaveValue(/[a-f0-9-]{36}/);
+    const runId = await panel
+      .getByRole("combobox", { name: "Saved appointment import", exact: true })
+      .inputValue();
+    const detail = await api(page, `/v1/appointment-imports/${runId}`);
+    expect(detail.rows).toHaveLength(3);
+    expect(JSON.stringify(detail)).not.toContain("NEVER_TRANSFER");
+    expect(JSON.stringify(detail)).not.toContain("EXCLUDED");
+    await panel.getByRole("button", { name: /^Observation 1:/ }).click();
+    await panel
+      .getByRole("combobox", { name: "Observation decision", exact: true })
+      .selectOption("create");
+    await panel.getByLabel("Find patient", { exact: true }).fill(patientName);
+    await panel.getByRole("button", { name: "Search", exact: true }).click();
+    await panel
+      .getByRole("region", { name: "Choose patient", exact: true })
+      .getByRole("button", { name: new RegExp(patientName) })
+      .click();
+    await panel
+      .getByRole("combobox", { name: "Reviewed doctor", exact: true })
+      .selectOption(doctor);
+    await panel
+      .getByRole("combobox", { name: "Reviewed visit type", exact: true })
+      .selectOption("10000000-0000-4000-8000-000000003001");
+    await panel.getByLabel("Reviewed start").fill(`${day}T10:30`);
+    await panel.getByLabel("Reviewed end").fill(`${day}T11:00`);
+    await panel.getByLabel("I verified the patient, source timezone", { exact: false }).check();
+    await panel
+      .getByLabel("Observation review reason")
+      .fill("Synthetic operator confirmed exact planned booking");
+    const reviewed = await save(
+      page,
+      `/v1/appointment-imports/${runId}/rows/${detail.rows[0].id}/review`,
+      "Confirm observation review"
+    );
+    const createdId = reviewed.observation.appointmentId;
+    const replay = await page.request.post(
+      `/v1/appointment-imports/${runId}/rows/${detail.rows[0].id}/review`,
+      {
+        headers: {
+          authorization: "Bearer local-synthetic-owner",
+          "x-clinic-id": clinic,
+          "idempotency-key": randomUUID()
+        },
+        data: { decision: "history", reason: "Must not replace prior review" }
+      }
+    );
+    expect(replay.status()).toBe(409);
+    const linked = await api(
+      page,
+      `/v1/appointment-imports/${runId}/rows/${detail.rows[1].id}/review`,
+      "POST",
+      {
+        decision: "link",
+        reason: "Same booking reviewed explicitly",
+        appointmentId: createdId,
+        patientId,
+        confirmedDetails: true
+      }
+    );
+    expect(linked.observation.appointmentId).toBe(createdId);
+    await panel.getByRole("button", { name: /^Observation 3:/ }).click();
+    await panel
+      .getByLabel("Observation review reason")
+      .fill("Historical cancellation, no attendance inferred");
+    await save(
+      page,
+      `/v1/appointment-imports/${runId}/rows/${detail.rows[2].id}/review`,
+      "Confirm observation review"
+    );
+    const schedule = await api(page, `/v1/appointments?date=${day}&limit=100`);
+    expect(schedule.appointments.filter((a: { id: string }) => a.id === createdId)).toHaveLength(1);
+    await page.setViewportSize({ width: 390, height: 844 });
+    await noOverflow(page);
+    expect(
+      await panel.evaluate((element) =>
+        Array.from(element.querySelectorAll("input,select,textarea,button"))
+          .filter((e) => e.getBoundingClientRect().width > 0)
+          .every((e) => {
+            const r = e.getBoundingClientRect();
+            return r.left >= 0 && r.right <= window.innerWidth + 1;
+          })
+      )
+    ).toBe(true);
+    await page.screenshot({
+      path: info.outputPath("appointment-review-mobile.png"),
+      fullPage: true
+    });
+    await page.context().close();
+  });
 });

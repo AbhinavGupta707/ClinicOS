@@ -255,6 +255,8 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     requiresPatientId: true
   },
   "clinic.configuration.changed": {category:"administration",riskLevel:"high",phiInvolved:false,requiresPatientId:false},
+  "migration.observation.recorded": {category:"operations",riskLevel:"high",phiInvolved:true,requiresPatientId:false},
+  "financial.entry.recorded": { category:"billing", riskLevel:"high", phiInvolved:true, requiresPatientId:false },
   "workflow.records.viewed": { category:"operations", riskLevel:"high", phiInvolved:true, requiresPatientId:false },
   "clinical_prep.viewed": {
     category: "clinical",

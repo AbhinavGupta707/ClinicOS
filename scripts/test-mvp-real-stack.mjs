@@ -292,7 +292,7 @@ try {
   assert.equal(result.stats.flaky, 0);
   assert.equal(
     result.stats.expected,
-    dailyWorkflow ? 5 : frontDeskOnly ? 6 : 12,
+    dailyWorkflow ? 8 : frontDeskOnly ? 6 : 12,
     "Every real-stack scenario must execute."
   );
   if (dailyWorkflow) await verifyDailyWorkflowEvidence();
@@ -346,6 +346,14 @@ async function verifyDailyWorkflowEvidence() {
       (select coalesce(sum(total_minor),0)::int from invoices where patient_id in(select id from p)) total_minor,
       (select coalesce(sum(paid_minor),0)::int from invoices where patient_id in(select id from p)) paid_minor,
       (select coalesce(sum(balance_minor),0)::int from invoices where patient_id in(select id from p)) balance_minor,
+      (select coalesce(sum(credited_minor),0)::int from invoices where patient_id in(select id from p)) credited_minor,
+      (select coalesce(sum(refunded_minor),0)::int from invoices where patient_id in(select id from p)) refunded_minor,
+      (select count(*)::int from financial_entries where patient_id in(select id from p)) financial_entries,
+      (select count(*)::int from audit_events where patient_id in(select id from p) and action='financial.entry.recorded') financial_audits,
+      (select count(*)::int from outbox_events where patient_id in(select id from p) and event_type='financial.entry.recorded') financial_events,
+      (select count(*)::int from appointment_source_observations o join appointment_imports i on i.id=o.import_id where i.source_system like 'Synthetic Ray %' and o.decision<>'pending') reviewed_observations,
+      (select count(*)::int from audit_events where action='migration.observation.recorded' and metadata->>'operation'='createAppointmentImport' and resource_id in(select id::text from appointment_imports where source_system like 'Synthetic Ray %')) source_manifest_audits,
+      (select count(*)::int from outbox_events where event_type='appointment.confirmation_requested' and aggregate_id in(select appointment_id from appointment_source_observations where decision='create')) imported_confirmations,
       (select count(*)::int from outbox_events where patient_id in(select id from p) and event_type='appointment.updated' and payload->>'status' in('in_consult','completed')) appointment_events,
       (select count(*)::int from outbox_events where patient_id in(select id from p) and event_type='queue.entry_updated' and payload->>'status' in('in_consult','completed')) queue_events
     `);
@@ -357,8 +365,16 @@ async function verifyDailyWorkflowEvidence() {
       signed_prescriptions: 1,
       invoices: 1,
       total_minor: 100000,
-      paid_minor: 40000,
-      balance_minor: 60000,
+      paid_minor: 50000,
+      balance_minor: 0,
+      credited_minor: 100000,
+      refunded_minor: 10000,
+      financial_entries: 9,
+      financial_audits: 9,
+      financial_events: 9,
+      reviewed_observations: 3,
+      source_manifest_audits: 1,
+      imported_confirmations: 0,
       appointment_events: 2,
       queue_events: 2
     });

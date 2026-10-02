@@ -5279,3 +5279,72 @@ button.cp6-card:hover {
   :is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) :is(ul,ol) { padding-left: 1.15rem; }
   :is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) fieldset { padding: .65rem; }
 }
+
+/* Reviewed source appointments share the clinic workflow's usable form treatment. */
+.appointment-import-workspace {
+  min-width: 0;
+  max-width: 100%;
+  margin-top: 24px;
+  padding: clamp(16px, 3vw, 28px);
+  border: 1px solid var(--line, #dbe5e1);
+  border-radius: 20px;
+  background: var(--panel, #fff);
+  overflow-wrap: anywhere;
+}
+.appointment-import-workspace fieldset {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid #dbe5e1;
+  border-radius: 12px;
+}
+.appointment-import-workspace label {
+  display: grid;
+  min-width: 0;
+  gap: 6px;
+  font-size: 0.95rem;
+}
+.appointment-import-workspace label:has(input[type="checkbox"]) {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.5;
+}
+.appointment-import-workspace input:not([type="checkbox"]),
+.appointment-import-workspace select,
+.appointment-import-workspace textarea {
+  box-sizing: border-box;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border: 1px solid #b7c9c2;
+  border-radius: 8px;
+  background: #fff;
+  color: #153a32;
+  font: inherit;
+}
+.appointment-import-workspace textarea { min-height: 88px; }
+.appointment-import-workspace input[type="checkbox"] { flex: 0 0 auto; margin-top: 5px; }
+.appointment-import-workspace button {
+  box-sizing: border-box;
+  max-width: 100%;
+  min-height: 44px;
+  padding: 10px 14px;
+  border: 1px solid #b7c9c2;
+  border-radius: 8px;
+  background: #f4f9f6;
+  color: #164e3e;
+  font: inherit;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  cursor: pointer;
+}
+.appointment-import-workspace button[type="submit"] { background: #175a46; color: #fff; }
+.appointment-import-workspace button:disabled { opacity: 0.65; cursor: default; }
+.appointment-import-workspace ul { display: grid; gap: 12px; padding-left: 0; list-style: none; }
+.appointment-import-workspace li { display: grid; gap: 6px; min-width: 0; }
+.appointment-import-workspace :is(input, select, textarea, button):focus-visible { outline: 3px solid #6baf99; outline-offset: 2px; }

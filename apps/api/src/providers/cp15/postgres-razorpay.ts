@@ -1,6 +1,8 @@
+import {refreshInvoiceFinancialState} from "@clinic-os/db";
 import { createHash, randomUUID } from "node:crypto";
 import { buildSetLocalRlsStatements, type SqlQueryClient } from "@clinic-os/db";
 import {
+  providerRefundAllocation,
   razorpayEventRank,
   razorpayBusinessKey,
   type NormalizedRazorpayEvent,
@@ -444,8 +446,9 @@ class PostgresRazorpayTransaction implements RazorpayTransactionalPort {
       invoice_id: string;
       patient_id: string;
       amount_minor: string | number;
+      metadata: {unallocated_amount_minor?:number};
     }>(
-      `select id, invoice_id, patient_id, amount_minor from payment_transactions
+      `select id, invoice_id, patient_id, amount_minor, metadata from payment_transactions
         where tenant_id = $1 and clinic_id = $2 and provider = 'razorpay'
           and provider_payment_id = $3 and status in ('succeeded','refunded')
         for update`,
@@ -453,6 +456,7 @@ class PostgresRazorpayTransaction implements RazorpayTransactionalPort {
     );
     const original = capture.rows[0];
     if (!original) throw new Error("Verified Razorpay refund has no captured transaction.");
+    const allocation=providerRefundAllocation({appliedMinor:minor(original.amount_minor),unallocatedMinor:original.metadata.unallocated_amount_minor??0,nextRefundedMinor:input.decision.nextRefundedAmountMinor,refundMinor:input.decision.refundAmountMinor});
     const refundTransactionId = randomUUID();
     await this.#client.query(
       `insert into payment_transactions (
@@ -475,11 +479,13 @@ class PostgresRazorpayTransaction implements RazorpayTransactionalPort {
         JSON.stringify({
           provider_event_id: input.event.providerEventId,
           provider_payment_id: input.event.providerPaymentId,
-          provider_refund_id: input.event.providerRefundId
+          provider_refund_id: input.event.providerRefundId,
+          invoice_refund_amount_minor: allocation.invoiceRefundMinor,
+          unallocated_refund_amount_minor: allocation.unallocatedRefundMinor
         })
       ]
     );
-    if (input.decision.nextRefundedAmountMinor >= minor(original.amount_minor)) {
+    if (allocation.fullyRefunded) {
       await this.#client.query(
         `update payment_transactions set status = 'refunded'
           where tenant_id = $1 and clinic_id = $2 and id = $3`,
@@ -501,8 +507,8 @@ class PostgresRazorpayTransaction implements RazorpayTransactionalPort {
         requestId: null,
         reconciliationId: null,
         amountMinor: input.decision.refundAmountMinor,
-        appliedMinor: input.decision.refundAmountMinor,
-        unallocatedMinor: 0,
+        appliedMinor: allocation.invoiceRefundMinor,
+        unallocatedMinor: allocation.unallocatedRefundMinor,
         cumulativeRefundedMinor: input.decision.nextRefundedAmountMinor
       })
     };
@@ -783,29 +789,8 @@ async function updateInvoiceSettlement(
     readonly reconciliationRequired: boolean;
   }
 ): Promise<void> {
-  await client.query(
-    `update invoices
-        set paid_minor = paid_minor + $4,
-            refunded_minor = refunded_minor + $5,
-            balance_minor = greatest(total_minor - (paid_minor + $4) + (refunded_minor + $5), 0),
-            payment_status = case
-              when $6 then 'reconciliation_required'
-              when refunded_minor + $5 >= paid_minor + $4 and refunded_minor + $5 > 0 then 'refunded'
-              when paid_minor + $4 > total_minor then 'overpaid'
-              when paid_minor + $4 >= total_minor then 'paid'
-              when paid_minor + $4 > 0 then 'partially_paid'
-              else payment_status
-            end
-      where tenant_id = $1 and clinic_id = $2 and id = $3`,
-    [
-      account.tenantId,
-      account.clinicId,
-      invoiceId,
-      input.paidDelta,
-      input.refundedDelta,
-      input.reconciliationRequired
-    ]
-  );
+  await refreshInvoiceFinancialState(client, {tenantId:account.tenantId as UUID,clinicId:account.clinicId as UUID},invoiceId);
+  if(input.reconciliationRequired) await client.query("update invoices set payment_status='reconciliation_required',financial_version=financial_version+1 where tenant_id=$1 and clinic_id=$2 and id=$3",[account.tenantId,account.clinicId,invoiceId]);
 }
 
 function razorpayEvidenceMatches(
