@@ -1,3 +1,4 @@
+import type { MigrationAssuranceFacts } from "@clinic-os/domain";
 import type {preparePatientDocument, issuePatientDocument, listPatientDocuments, getPatientDocument} from "./patient-documents.ts";
 import type {listPatientSourceContexts,reviewPatientSourceContext} from "./patient-source-context.ts";
 import type { MediaPageInput } from "@clinic-os/domain";
@@ -1550,6 +1551,7 @@ export interface ClinicOperationsRepository {
   ): Promise<MigrationBatchDetail>;
   createImportRun(scope: RepositoryScope, input: { id: UUID; sourceSystem: string }): Promise<{ run: ImportRunRecord; created: boolean }>;
   listImportRuns(scope: RepositoryScope, limit: number, cursor?: UUID | null): Promise<ImportRunListResult>;
+  findMigrationAssurance(scope: RepositoryScope, runId: UUID, comparisonRunId: UUID | null, appointmentImportId: UUID | null): Promise<MigrationAssuranceFacts | null>;
   findImportRunById(scope: RepositoryScope, runId: UUID, forStage?: boolean): Promise<ImportRunDetail | null>;
   stageImportRunBatch(scope: RepositoryScope, input: StageImportRunBatchInput): Promise<StageImportRunBatchResult>;
   listMigrationBatches(

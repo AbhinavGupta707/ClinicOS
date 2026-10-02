@@ -1,3 +1,4 @@
+import { readMigrationAssurance } from "./migration-assurance.ts";
 import {preparePatientDocument, issuePatientDocument, listPatientDocuments, getPatientDocument} from "./patient-documents.ts";
 import {appendPatientSourceContext, listPatientSourceContexts, reviewPatientSourceContext} from "./patient-source-context.ts";
 import { validateMediaPage, type MediaPageInput } from "@clinic-os/domain";
@@ -2266,6 +2267,10 @@ export class PostgresClinicOperationsRepository
       return { runs: rows.slice(0, bounded).map(mapImportRunRow),
         nextCursor: rows.length > bounded ? rows[bounded - 1]!.id : null };
     });
+  }
+
+  async findMigrationAssurance(scope: RepositoryScope, runId: UUID, comparisonRunId: UUID | null, appointmentImportId: UUID | null) {
+    return this.#withRls(scope, (client) => readMigrationAssurance(client, scope, runId, comparisonRunId, appointmentImportId));
   }
 
   async findImportRunById(scope: RepositoryScope, runId: UUID, forStage = false): Promise<ImportRunDetail | null> {

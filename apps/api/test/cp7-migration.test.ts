@@ -10,7 +10,7 @@ import {
   createMigrationBatch,
   createImportRun,
   createPatientImportFile, getPatientImportFile, stagePatientImportChunk, sealPatientImportFile,
-  getImportRun,
+  getImportRun, getMigrationAssurance,
   listImportRuns,
   InMemoryAuditSink,
   listDeadLetterEvents,
@@ -1575,4 +1575,37 @@ test("context import is explicit, redacted, versioned, phone-optional and retain
   const rollback=await repository.rollbackMigrationBatch(scope,first.batchId);
   assert.equal(rollback?.blockedLinks.length,1);
   assert.equal((await repository.listPatientSourceContexts({...scope,clinicId:randomUUID() as typeof patientId},patientId)).records.length,0);
+});
+
+
+test("migration assurance enforces authority, scopes evidence and audits aggregate access", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const sink = new InMemoryAuditSink();
+  const context = await operationsContext("seed-owner", "assurance-read");
+  const dependencies: OperationsDependencies = {repository, auditSink: sink};
+  const id = randomUUID();
+  let reads = 0;
+  repository.findMigrationAssurance = async (scope, runId, comparison, appointment) => {
+    reads++;
+    assert.equal(scope.tenantId, context.accessContext.tenant.id);
+    assert.equal(scope.clinicId, context.clinicId);
+    assert.equal(runId, id); assert.equal(comparison, null); assert.equal(appointment, null);
+    return {runId,profile: "practo_ray_patients_v1",expected: 1,sealed: true,
+      rows:{committed:1,invalid:0,needsReview:0,ready:0,skipped:0,rolledBack:0,failed:0},
+      manifestProblems:0,counterMismatches:0,openConflicts:0,
+      patients:{committedRows:1,distinctPatients:1,createdPatients:0,missingLinks:0},
+      context:{versionsAdded:0,retainedVersions:0,missingRows:0,reviewed:0,needsClarification:0,unreviewed:0},comparison:null,appointments:null};
+  };
+  const denied = await operationsContext("seed-accountant", "assurance-denied");
+  await assert.rejects(() => getMigrationAssurance(denied, dependencies, id, {}), /missing_permission/);
+  assert.equal(reads, 0);
+  await assert.rejects(() => getMigrationAssurance(context, dependencies, id, {comparisonRunId:"not-an-id"}), /UUID/);
+  assert.equal(reads, 0);
+  const result = await getMigrationAssurance(context, dependencies, id, {});
+  assert.equal(result.body.report.state, "accounted_for");
+  assert.equal(result.body.report.patients.createdPatients, 0);
+  assert.deepEqual(sink.events.at(-1)?.metadata, {comparisonRunId:null,appointmentImportId:null,reportVersion:1});
+  assert.equal(sink.events.at(-1)?.action,"migration.assurance.viewed");
+  repository.findMigrationAssurance = async () => null;
+  await assert.rejects(() => getMigrationAssurance(context, dependencies, id, {}), /not found/);
 });

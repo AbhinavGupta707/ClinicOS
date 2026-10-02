@@ -125,6 +125,7 @@ import {
   getInvoice,
   getMigrationBatch,
   getImportRun,
+  getMigrationAssurance,
   getPilotReadiness,
   listMigrationBatches,
   listImportRuns,
@@ -1293,6 +1294,13 @@ async function routeOperationsRequest(input: {
   const patientSealMatch = pathname.match(/^\/v1\/migration-runs\/([^/]+)\/patient-file\/seal$/);
   if (patientSealMatch && input.request.method === "POST")
     return sealPatientImportFile(operationsContext, dependencies, pathUuid(patientSealMatch[1], "runId"));
+
+  const assuranceMatch = pathname.match(/^\/v1\/migration-runs\/([^/]+)\/assurance$/);
+  if (input.request.method === "GET" && assuranceMatch) {
+    return getMigrationAssurance(operationsContext, dependencies, pathUuid(assuranceMatch[1], "runId"), {
+      comparisonRunId: url.searchParams.get("comparisonRunId"), appointmentImportId: url.searchParams.get("appointmentImportId")
+    });
+  }
 
   const importRunMatch = pathname.match(/^\/v1\/migration-runs\/([^/]+)$/);
   if (input.request.method === "GET" && importRunMatch) {

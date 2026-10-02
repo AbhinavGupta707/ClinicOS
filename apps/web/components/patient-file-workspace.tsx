@@ -476,7 +476,9 @@ export function PatientFileWorkspace({
               ))}
             </dl>
             <p>
-              {totals.reconciled} committed records reconciled with existing patients. Committed
+              The last recorded commit for each group reconciled a total of {totals.reconciled}{" "}
+              rows with existing patients. This historical count can include later rollbacks.
+              Expand Migration assurance above to check current rows and patient links. Committed
               counts are not a count of newly created patients. Invalid, skipped, failed and
               rolled-back rows have not been successfully migrated.
             </p>

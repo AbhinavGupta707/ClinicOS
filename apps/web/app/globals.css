@@ -5369,3 +5369,12 @@ button.cp6-card:hover {
 .patient-history-comparison-controls, .patient-history-diff { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }
 .patient-history-diff h5 { font-size: 1rem; margin-top: 0; }
 @media(max-width: 620px) { .patient-history-comparison-controls, .patient-history-diff { grid-template-columns: minmax(0,1fr); } .patient-history-panel header { align-items: flex-start; } }
+.migration-assurance-counts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 240px), 1fr));
+  gap: 12px;
+}
+.migration-assurance-counts div { min-width: 0; }
+.migration-assurance-counts dd { margin: 4px 0 0; font-weight: 600; }
+[data-testid="migration-assurance"] { overflow-wrap: anywhere; min-width: 0; }
+[data-testid="migration-assurance"] select { width: 100%; min-width: 0; max-width: 100%; }

@@ -385,3 +385,16 @@ contracts. See `PATIENT_FILE_CONTINUITY_PLAN_2026-10-02.md` and
 `../qa/PATIENT_FILE_CONTINUITY_2026-10-02.md`. Staff rehearsal and representative
 source reconciliation remain the next acceptance milestone; no clinic data,
 provider activation or release gate is implied by these engineering results.
+
+## 2026-10-02 — Migration assurance and synthetic recovery
+
+The owner authorized an independent migration-reconciliation and recovery slice.
+Saved runs now expose aggregate row/receipt/counter/link checks, explicit
+patient-file comparisons, retained-context review coverage and separately selected
+appointment evidence. Absence from an export never implies deletion/cancellation.
+A real isolated PostgreSQL dump/restore verifies table content, schema, sequence
+state and archived documents, followed by restored runtime/RLS validation.
+See `MIGRATION_ASSURANCE_AND_RECOVERY_PLAN_2026-10-02.md` and
+`../qa/MIGRATION_ASSURANCE_RECOVERY_2026-10-02.md` for evidence and boundaries.
+The local restore is not an independent backup or clinic acceptance. Real-source
+validation and staff rehearsal remain separate; staff rehearsal stays deferred.

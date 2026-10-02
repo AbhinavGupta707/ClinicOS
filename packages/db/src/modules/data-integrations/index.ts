@@ -11,6 +11,7 @@ export const DATA_INTEGRATIONS_OPERATIONS = [
   "createImportRun",
   "listImportRuns",
   "findImportRunById",
+  "findMigrationAssurance",
   "stageImportRunBatch",
   "createMigrationBatch",
   "listMigrationBatches",

@@ -1,3 +1,4 @@
+import { buildMigrationAssuranceReport } from "@clinic-os/domain";
 import { PATIENT_CONTEXT_PROFILE, PATIENT_DEMOGRAPHICS_PROFILE } from "@clinic-os/domain";
 import type { MediaPageInput } from "@clinic-os/domain";
 import { createHash, randomUUID } from "node:crypto";
@@ -1231,6 +1232,25 @@ export async function listImportRuns(
   const cursor = filter.cursor ? uuidField(filter.cursor, "cursor") : null;
   return ok(await mapImportRunRepositoryErrors(() =>
     dependencies.repository.listImportRuns(scopeFrom(context), limit, cursor)));
+}
+
+export async function getMigrationAssurance(
+  context: OperationsRequestContext, dependencies: OperationsDependencies, runId: UUID,
+  selection: { comparisonRunId?: string | null; appointmentImportId?: string | null }
+) {
+  authorize(context, { permission: "migration.manage" });
+  if (selection.appointmentImportId) authorize(context, { permission: "patient.read" });
+  const comparisonRunId = selection.comparisonRunId ? uuidField(selection.comparisonRunId, "comparisonRunId") : null;
+  const appointmentImportId = selection.appointmentImportId ? uuidField(selection.appointmentImportId, "appointmentImportId") : null;
+  const facts = await mapImportRunRepositoryErrors(() => dependencies.repository.findMigrationAssurance(
+    scopeFrom(context), runId, comparisonRunId, appointmentImportId));
+  if (!facts) throw notFound("Import run not found.", {});
+  const report = buildMigrationAssuranceReport(facts, nowIso(dependencies));
+  await audit(context, dependencies, "migration.assurance.viewed", {
+    resourceType: "import_run", resourceId: runId,
+    metadata: { comparisonRunId, appointmentImportId, reportVersion: report.version }
+  });
+  return ok({ report });
 }
 
 export async function getImportRun(

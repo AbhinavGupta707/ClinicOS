@@ -184,7 +184,7 @@ try {
       inputFor(source, csv)
     );
     await repository.sealPatientFile(scope, id);
-    return staged.detail;
+    return { ...staged.detail, runId: id };
   };
   const replay = await stageSingle(contextFor(0));
   await repository.commitMigrationBatch(scope, replay.batch.id);
@@ -201,6 +201,16 @@ try {
   assert.equal(versions.records.length, 3);
   assert.equal(versions.records[0].version, 3);
   assert.equal(versions.records[0].review, null);
+  const replayAssurance = await repository.findMigrationAssurance(scope, replay.runId, null, null);
+  assert.equal(replayAssurance.context.versionsAdded, 0);
+  assert.equal(replayAssurance.context.retainedVersions, 1);
+  assert.equal(replayAssurance.context.unreviewed, 1);
+  assert.equal(replayAssurance.context.missingRows, 0);
+  const wholeAssurance = await repository.findMigrationAssurance(scope, runId, null, null);
+  assert.equal(wholeAssurance.context.versionsAdded, 5000);
+  assert.equal(wholeAssurance.context.retainedVersions, 5000);
+  assert.equal(wholeAssurance.context.unreviewed, 5000);
+
   await assert.rejects(
     () =>
       repository.reviewPatientSourceContext(scope, patient.id, original.id, {

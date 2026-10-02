@@ -445,3 +445,15 @@ Update these during orchestration:
 - Before external activation, obtain physical signed-device evidence, Fireworks contract/region/
   evaluation/key-rotation approval, deployed KMS/telemetry and authorized ABDM/peer evidence. Do not
   start CP17 while the cloud and real-clinic prerequisites remain blocked.
+
+## Migration Assurance and Recovery Memory
+
+- Import progress counters and last-commit summaries are not independent reconciliation.
+  Read actual rows, immutable receipts, active identity links and latest context reviews
+  in one scoped snapshot; a replay must retain clinician-review warnings.
+- PostgreSQL can reparse equivalent CHECK expressions differently on restore. Preserve
+  complete schema/security SQL and compare against an independently parsed source-schema
+  copy on an owned test cluster; do not strip SQL with broad text normalization.
+- A synthetic local database restore does not prove independent backup, private-object,
+  Keycloak or provider recovery, source export completeness or clinic acceptance. Evidence:
+  `docs/qa/MIGRATION_ASSURANCE_RECOVERY_2026-10-02.md`.
