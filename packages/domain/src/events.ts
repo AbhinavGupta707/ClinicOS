@@ -8,6 +8,7 @@ export const DOMAIN_EVENT_TYPES = [
   "lead.converted_to_appointment",
   "attribution.touch.created",
   "patient.created",
+  "patient.document.generated",
   "patient.source_context.imported",
   "patient.source_context.reviewed",
   "patient.updated",

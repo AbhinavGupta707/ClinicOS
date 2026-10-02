@@ -1,3 +1,4 @@
+import {handlePatientDocuments} from "../patient-documents.ts";
 import { permissionsForScope } from "@clinic-os/auth";
 import { allowedPatientHistoryCategories, patientHistoryItemTypes, patientHistoryCategory, type PatientHistoryCategory } from "@clinic-os/domain";
 import {PatientSourceContextConflict, ClinicSetupConflict} from "@clinic-os/db";
@@ -51,6 +52,7 @@ export type FrontOfficeOperationId = (typeof CP13_FRONT_OFFICE_OPERATION_IDS)[nu
 type FrontOfficeHandler = ClinicFeatureOperationHandler<FrontOfficeOperationId>;
 
 const handlers = {
+  preparePatientDocument:handlePatientDocuments, issuePatientDocument:handlePatientDocuments, getPatientDocument:handlePatientDocuments,
   listPatients: handleListPatients,
   createPatient: handleCreatePatient,
   getPatient: handleGetPatient,

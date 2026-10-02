@@ -128,6 +128,8 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "patient.document.viewed": {category:"phi_access",riskLevel:"medium",phiInvolved:true,requiresPatientId:true},
+  "patient.document.generated": {category:"clinical",riskLevel:"medium",phiInvolved:true,requiresPatientId:true},
   "patient.source_context.viewed": {category:"phi_access",riskLevel:"medium",phiInvolved:true,requiresPatientId:true},
   "patient.source_context.reviewed": {category:"clinical",riskLevel:"high",phiInvolved:true,requiresPatientId:true},
   "patient.source_context.imported": {category:"clinical",riskLevel:"high",phiInvolved:true,requiresPatientId:true},

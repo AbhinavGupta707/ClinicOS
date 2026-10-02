@@ -4144,9 +4144,18 @@ export function assertNativeHttpContractRegistry(): void {
 assertNativeHttpContractRegistry();
 
 function workflowDiscoveryOperations(): HttpOperationContract[] {
+ const documentKind=schema.enum(["prescription","estimate","invoice","receipt","instruction","lab_slip"]);
+ const documentDigest=schema.string({minLength:64,maxLength:64,pattern:"^[0-9a-f]{64}$"});
+ const documentHtml=schema.string({minLength:1,maxLength:4_194_304});
+ const documentPath={patientId:uuid,kind:documentKind,sourceId:uuid};
+ const documentSummary={id:uuid,revision:positiveInteger,generatedAt:dateTime,sourceDigest:documentDigest,htmlDigest:documentDigest};
+
  const sourceFields=schema.object(Object.fromEntries(["Contact Number","Secondary Mobile","Address","Locality","City","Pincode","Blood Group","Remarks","Medical History","Referred By","Groups","Patient Notes"].map(key=>[key,schema.string({maxLength:8192})])), []);
  const sourceContext=responseSchema({id:uuid,patientId:uuid,sourceSystem:shortText,externalReference:schema.string({minLength:1,maxLength:512}),sourceFormat:schema.enum(["practo_ray_patients_context_v2"]),version:positiveInteger,fields:sourceFields,contactUnavailable:schema.boolean(),importedAt:dateTime,sourceRecordDate:schema.nullable(dateTime),review:schema.nullable(responseSchema({decision:schema.enum(["reviewed","needs_clarification"]),note:schema.string({minLength:5,maxLength:2000}),reviewedByUserId:uuid,reviewedAt:dateTime}))});
  return [
+  operation({operationId:"preparePatientDocument",checkpoint:"CP3",method:"GET",path:"/v1/patients/{patientId}/document-sources/{kind}/{sourceId}",summary:"Review current saved source and immutable generated copy history",tags:["Patient documents"],phi:"read",mutation:false,pathProperties:documentPath,queryProperties:{cursor:uuid},success:{200:responseSchema({preview:schema.nullable(responseSchema({sourceDigest:documentDigest,html:documentHtml,sourceStatus:shortText})),unavailableReason:nullableText,documents:schema.array(responseSchema(documentSummary),{maxItems:20}),nextCursor:optionalUuid})}}),
+  operation({operationId:"issuePatientDocument",checkpoint:"CP3",method:"POST",path:"/v1/patients/{patientId}/document-sources/{kind}/{sourceId}/documents",summary:"Generate an immutable copy of the reviewed source",tags:["Patient documents"],phi:"write",pathProperties:documentPath,body:bodySchema({expectedSourceDigest:documentDigest},["expectedSourceDigest"]),success:{200:responseSchema({documentId:uuid,reused:schema.boolean()}),201:responseSchema({documentId:uuid,reused:schema.boolean()})}}),
+  operation({operationId:"getPatientDocument",checkpoint:"CP3",method:"GET",path:"/v1/patients/{patientId}/document-sources/{kind}/{sourceId}/documents/{documentId}",summary:"Read an exact generated copy with current-source change disclosure",tags:["Patient documents"],phi:"read",mutation:false,pathProperties:{...documentPath,documentId:uuid},success:{200:responseSchema({document:responseSchema({...documentSummary,html:documentHtml,sourceChanged:schema.boolean(),unavailableReason:nullableText})})}}),
   operation({ operationId:"listPatientSourceContexts",checkpoint:"CP3",method:"GET",path:"/v1/patients/{patientId}/source-contexts",summary:"Read unverified historical source versions",tags:["Patient history"],phi:"read",mutation:false,
     pathProperties:{patientId:uuid},queryProperties:{cursor:uuid},success:{200:responseSchema({records:schema.array(sourceContext,{maxItems:20}),nextCursor:optionalUuid})} }),
   operation({ operationId:"reviewPatientSourceContext",checkpoint:"CP3",method:"POST",path:"/v1/patients/{patientId}/source-contexts/{contextId}/reviews",summary:"Review an exact historical source version without promoting clinical facts",tags:["Patient history"],phi:"write",

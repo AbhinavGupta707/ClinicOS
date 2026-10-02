@@ -221,6 +221,10 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
 
   // New daily-workflow routes use the same guarded native pipeline as the migrated features.
   class DailyWorkflowController {
+    preparePatientDocument(request:ParsedIncomingRequest,response:ServerResponse) { return executeAndSend(pipeline,request,response); }
+    issuePatientDocument(request:ParsedIncomingRequest,response:ServerResponse) { return executeAndSend(pipeline,request,response); }
+    getPatientDocument(request:ParsedIncomingRequest,response:ServerResponse) { return executeAndSend(pipeline,request,response); }
+
     listPatientSourceContexts(request:ParsedIncomingRequest,response:ServerResponse) { return executeAndSend(pipeline,request,response); }
     reviewPatientSourceContext(request:ParsedIncomingRequest,response:ServerResponse) { return executeAndSend(pipeline,request,response); }
     getPatientMediaAsset(request:ParsedIncomingRequest,response:ServerResponse) { return executeAndSend(pipeline,request,response); }
@@ -257,6 +261,9 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
     listLabReconciliations(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
   }
   Controller()(DailyWorkflowController);
+  decorateRoute(DailyWorkflowController,"preparePatientDocument",Get("v1/patients/:patientId/document-sources/:kind/:sourceId"));
+  decorateRoute(DailyWorkflowController,"issuePatientDocument",Post("v1/patients/:patientId/document-sources/:kind/:sourceId/documents"));
+  decorateRoute(DailyWorkflowController,"getPatientDocument",Get("v1/patients/:patientId/document-sources/:kind/:sourceId/documents/:documentId"));
   decorateRoute(DailyWorkflowController,"listPatientSourceContexts",Get("v1/patients/:patientId/source-contexts"));
   decorateRoute(DailyWorkflowController,"reviewPatientSourceContext",Post("v1/patients/:patientId/source-contexts/:contextId/reviews"));
   decorateRoute(DailyWorkflowController,"getPatientMediaAsset",Get("v1/patients/:patientId/media/:mediaAssetId"));

@@ -40,6 +40,79 @@
       },
       "method": "GET",
       "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "preparePatientDocument",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/{patientId}/document-sources/{kind}/{sourceId}",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": 1048576,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "header": "idempotency-key",
+        "mode": "header",
+        "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+        "required": true
+      },
+      "method": "POST",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "issuePatientDocument",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/{patientId}/document-sources/{kind}/{sourceId}/documents",
+      "phi": "write"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "getPatientDocument",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/{patientId}/document-sources/{kind}/{sourceId}/documents/{documentId}",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
       "operationId": "listPatientSourceContexts",
       "pagination": {
         "cursor": false,
@@ -4457,7 +4530,7 @@
       "phi": "write"
     }
   ],
-  "activeOperationCount": 177,
+  "activeOperationCount": 180,
   "deferred": [
     {
       "activationGate": "Register a complete messaging request workflow with provider state, audit, outbox and parity tests, or keep it absent.",

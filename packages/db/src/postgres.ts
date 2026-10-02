@@ -1,3 +1,4 @@
+import {preparePatientDocument, issuePatientDocument, listPatientDocuments, getPatientDocument} from "./patient-documents.ts";
 import {appendPatientSourceContext, listPatientSourceContexts, reviewPatientSourceContext} from "./patient-source-context.ts";
 import { validateMediaPage, type MediaPageInput } from "@clinic-os/domain";
 import { historyPageLimit, assertHistoryCursor, type PatientHistoryPageInput } from "@clinic-os/domain";
@@ -2106,6 +2107,18 @@ export class PostgresClinicOperationsRepository
     });
   }
 
+  async preparePatientDocument(scope:RepositoryScope,...args:Parameters<typeof preparePatientDocument> extends [unknown,unknown,...infer A] ? A : never) {
+    return this.#withRls(scope,client=>preparePatientDocument(client,scope,...args));
+  }
+  async issuePatientDocument(scope:RepositoryScope,...args:Parameters<typeof issuePatientDocument> extends [unknown,unknown,...infer A] ? A : never) {
+    return this.#withRls(scope,client=>issuePatientDocument(client,scope,...args));
+  }
+  async listPatientDocuments(scope:RepositoryScope,...args:Parameters<typeof listPatientDocuments> extends [unknown,unknown,...infer A] ? A : never) {
+    return this.#withRls(scope,client=>listPatientDocuments(client,scope,...args));
+  }
+  async getPatientDocument(scope:RepositoryScope,...args:Parameters<typeof getPatientDocument> extends [unknown,unknown,...infer A] ? A : never) {
+    return this.#withRls(scope,client=>getPatientDocument(client,scope,...args));
+  }
   async listPatientSourceContexts(scope:RepositoryScope,patientId:UUID,cursor?:string) {
     return this.#withRls(scope,client=>listPatientSourceContexts(client,scope,patientId,cursor));
   }

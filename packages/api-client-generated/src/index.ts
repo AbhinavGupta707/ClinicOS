@@ -152,6 +152,12 @@ function extractResponseMetadata(response: Response): ClinicOsApiResponseMetadat
 }
 export type HealthLiveRequest = Readonly<Record<string, never>>;
 export type HealthLiveResponse = { readonly status: "ok"; readonly service: "clinic-os-api"; readonly request_id: string } | { readonly error: { readonly code: "BAD_REQUEST" | "UNAUTHENTICATED" | "PERMISSION_DENIED" | "NOT_FOUND" | "VALIDATION_ERROR" | "CONFLICT" | "PAYLOAD_TOO_LARGE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "AI_PROVIDER_UNAVAILABLE" | "DEPENDENCY_UNAVAILABLE" | "CONFIGURATION_ERROR"; readonly message: string; readonly details: PublicJsonObject; readonly request_id: string } };
+export type PreparePatientDocumentRequest = { readonly path: { readonly patientId: string; readonly kind: "prescription" | "estimate" | "invoice" | "receipt" | "instruction" | "lab_slip"; readonly sourceId: string }; readonly query?: { readonly cursor?: string } };
+export type PreparePatientDocumentResponse = { readonly preview: { readonly sourceDigest: string; readonly html: string; readonly sourceStatus: string } | null; readonly unavailableReason: string | null; readonly documents: readonly ({ readonly id: string; readonly revision: number; readonly generatedAt: string; readonly sourceDigest: string; readonly htmlDigest: string })[]; readonly nextCursor: string | null };
+export type IssuePatientDocumentRequest = { readonly path: { readonly patientId: string; readonly kind: "prescription" | "estimate" | "invoice" | "receipt" | "instruction" | "lab_slip"; readonly sourceId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly expectedSourceDigest: string } };
+export type IssuePatientDocumentResponse = { readonly documentId: string; readonly reused: boolean };
+export type GetPatientDocumentRequest = { readonly path: { readonly patientId: string; readonly kind: "prescription" | "estimate" | "invoice" | "receipt" | "instruction" | "lab_slip"; readonly sourceId: string; readonly documentId: string } };
+export type GetPatientDocumentResponse = { readonly document: { readonly id: string; readonly revision: number; readonly generatedAt: string; readonly sourceDigest: string; readonly htmlDigest: string; readonly html: string; readonly sourceChanged: boolean; readonly unavailableReason: string | null } };
 export type ListPatientSourceContextsRequest = { readonly path: { readonly patientId: string }; readonly query?: { readonly cursor?: string } };
 export type ListPatientSourceContextsResponse = { readonly records: readonly ({ readonly id: string; readonly patientId: string; readonly sourceSystem: string; readonly externalReference: string; readonly sourceFormat: "practo_ray_patients_context_v2"; readonly version: number; readonly fields: { readonly "Contact Number"?: string; readonly "Secondary Mobile"?: string; readonly Address?: string; readonly Locality?: string; readonly City?: string; readonly Pincode?: string; readonly "Blood Group"?: string; readonly Remarks?: string; readonly "Medical History"?: string; readonly "Referred By"?: string; readonly Groups?: string; readonly "Patient Notes"?: string }; readonly contactUnavailable: boolean; readonly importedAt: string; readonly sourceRecordDate: string | null; readonly review: { readonly decision: "reviewed" | "needs_clarification"; readonly note: string; readonly reviewedByUserId: string; readonly reviewedAt: string } | null })[]; readonly nextCursor: string | null };
 export type ReviewPatientSourceContextRequest = { readonly path: { readonly patientId: string; readonly contextId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly decision: "reviewed" | "needs_clarification"; readonly note: string } };
@@ -507,6 +513,9 @@ export type ReviewFhirClinicalSummaryImportResponse = { readonly effects: { read
 
 export interface ClinicOsNativeOperationMap {
   readonly healthLive: { readonly request: HealthLiveRequest; readonly response: HealthLiveResponse };
+  readonly preparePatientDocument: { readonly request: PreparePatientDocumentRequest; readonly response: PreparePatientDocumentResponse };
+  readonly issuePatientDocument: { readonly request: IssuePatientDocumentRequest; readonly response: IssuePatientDocumentResponse };
+  readonly getPatientDocument: { readonly request: GetPatientDocumentRequest; readonly response: GetPatientDocumentResponse };
   readonly listPatientSourceContexts: { readonly request: ListPatientSourceContextsRequest; readonly response: ListPatientSourceContextsResponse };
   readonly reviewPatientSourceContext: { readonly request: ReviewPatientSourceContextRequest; readonly response: ReviewPatientSourceContextResponse };
   readonly listPatientEncounters: { readonly request: ListPatientEncountersRequest; readonly response: ListPatientEncountersResponse };
@@ -755,6 +764,78 @@ export class ClinicOsApiClient {
       contentType: null,
       bodyEncoding: "json",
       successStatuses: [200,503],
+      input: input ?? {}
+    });
+  }
+
+  async preparePatientDocument(input: PreparePatientDocumentRequest): Promise<PreparePatientDocumentResponse> {
+    return this.execute<PreparePatientDocumentResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/document-sources/{kind}/{sourceId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async preparePatientDocumentWithMetadata(input: PreparePatientDocumentRequest): Promise<ClinicOsApiResponse<PreparePatientDocumentResponse>> {
+    return this.executeWithMetadata<PreparePatientDocumentResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/document-sources/{kind}/{sourceId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async issuePatientDocument(input: IssuePatientDocumentRequest): Promise<IssuePatientDocumentResponse> {
+    return this.execute<IssuePatientDocumentResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/document-sources/{kind}/{sourceId}/documents",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200,201],
+      input: input ?? {}
+    });
+  }
+
+  async issuePatientDocumentWithMetadata(input: IssuePatientDocumentRequest): Promise<ClinicOsApiResponse<IssuePatientDocumentResponse>> {
+    return this.executeWithMetadata<IssuePatientDocumentResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/document-sources/{kind}/{sourceId}/documents",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200,201],
+      input: input ?? {}
+    });
+  }
+
+  async getPatientDocument(input: GetPatientDocumentRequest): Promise<GetPatientDocumentResponse> {
+    return this.execute<GetPatientDocumentResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/document-sources/{kind}/{sourceId}/documents/{documentId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getPatientDocumentWithMetadata(input: GetPatientDocumentRequest): Promise<ClinicOsApiResponse<GetPatientDocumentResponse>> {
+    return this.executeWithMetadata<GetPatientDocumentResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/document-sources/{kind}/{sourceId}/documents/{documentId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
       input: input ?? {}
     });
   }
