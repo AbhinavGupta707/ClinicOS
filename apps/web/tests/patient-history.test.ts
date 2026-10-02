@@ -21,6 +21,19 @@ const snapshot = (version: number, findings: PublicJsonObject[]) => ({
   chartState: { findingCount: findings.length, findings }
 });
 describe("patient history source safety", () => {
+  it("opens only the exact patient media record and requires media authority", async () => {
+    const row={resourceId:other,sourceTable:"media_assets",rawItemType:"media_uploaded"};
+    expect(historySource(row,[])).toBeNull();
+    expect(historySource(row,["media.read"])).toEqual({kind:"media",id:other});
+    const getPatientMediaAsset=vi.fn().mockResolvedValue({mediaAsset:{id:other,patientId:id}});
+    const client={getPatientMediaAsset} as unknown as ClinicOsApiClient;
+    expect((await readHistorySource(client,id,{kind:"media",id:other})).value.id).toBe(other);
+    expect(getPatientMediaAsset).toHaveBeenCalledWith({path:{patientId:id,mediaAssetId:other}});
+    getPatientMediaAsset.mockResolvedValue({mediaAsset:{id:other,patientId:other}});
+    await expect(readHistorySource(client,id,{kind:"media",id:other})).rejects.toThrow("selected patient");
+    getPatientMediaAsset.mockResolvedValue({mediaAsset:{id,patientId:id}});
+    await expect(readHistorySource(client,id,{kind:"media",id:other})).rejects.toThrow("No other record");
+  });
   it("allows only recognized internal source contracts with the required permission", () => {
     const row = { resourceId: id, sourceTable: "encounters", rawItemType: "encounter_created" };
     expect(historySource(row, [])).toBeNull();

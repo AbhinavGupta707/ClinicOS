@@ -221,6 +221,7 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
 
   // New daily-workflow routes use the same guarded native pipeline as the migrated features.
   class DailyWorkflowController {
+    getPatientMediaAsset(request:ParsedIncomingRequest,response:ServerResponse) { return executeAndSend(pipeline,request,response); }
     createAppointmentImport(request:ParsedIncomingRequest,response:ServerResponse){return executeAndSend(pipeline,request,response);}
     stageAppointmentObservations(request:ParsedIncomingRequest,response:ServerResponse){return executeAndSend(pipeline,request,response);}
     sealAppointmentImport(request:ParsedIncomingRequest,response:ServerResponse){return executeAndSend(pipeline,request,response);}
@@ -254,6 +255,7 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
     listLabReconciliations(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
   }
   Controller()(DailyWorkflowController);
+  decorateRoute(DailyWorkflowController,"getPatientMediaAsset",Get("v1/patients/:patientId/media/:mediaAssetId"));
   decorateRoute(DailyWorkflowController,"createAppointmentImport",Post("v1/appointment-imports"));
   decorateRoute(DailyWorkflowController,"listAppointmentImports",Get("v1/appointment-imports"));
   decorateRoute(DailyWorkflowController,"getAppointmentImport",Get("v1/appointment-imports/:importId"));

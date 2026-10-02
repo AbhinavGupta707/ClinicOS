@@ -1925,6 +1925,30 @@
     },
     {
       "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP4",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "getPatientMediaAsset",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/{patientId}/media/{mediaAssetId}",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
       "bodyMaximumBytes": 1048576,
       "checkpoint": "CP4",
       "concurrency": {
@@ -4384,7 +4408,7 @@
       "phi": "write"
     }
   ],
-  "activeOperationCount": 174,
+  "activeOperationCount": 175,
   "deferred": [
     {
       "activationGate": "Register a complete messaging request workflow with provider state, audit, outbox and parity tests, or keep it absent.",

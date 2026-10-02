@@ -1,3 +1,4 @@
+import type { MediaPageInput } from "@clinic-os/domain";
 import { createHash, randomUUID } from "node:crypto";
 import {
   assertAuthorized,
@@ -72,6 +73,7 @@ import {
   defaultAiRetentionPolicy,
   evaluateAiAudioReadiness,
   assertMediaMimeType,
+  validateClinicalFileContext,
   assertManualPaymentEvidence,
   assertPrescriptionMedicationList,
   assertBreakGlassRequestPolicy,
@@ -5031,7 +5033,8 @@ export async function completeMediaUpload(
 export async function listPatientMediaAssets(
   context: OperationsRequestContext,
   dependencies: OperationsDependencies,
-  patientId: UUID
+  patientId: UUID,
+  input: MediaPageInput = {}
 ) {
   authorize(context, { permission: "patient.read" });
   authorize(context, { permission: "patient.phi.read" });
@@ -5040,10 +5043,10 @@ export async function listPatientMediaAssets(
   const patient = await dependencies.repository.findPatientById(scope, patientId);
   if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
 
-  const mediaAssets = (await dependencies.repository.listPatientMediaAssets(scope, patientId)).map(
-    toPublicMediaAsset
-  );
-  return ok({ mediaAssets });
+  let page;
+  try { page = await dependencies.repository.listPatientMediaAssets(scope, patientId, input); }
+  catch (error) { if (error instanceof RangeError) throw validation(error.message); throw error; }
+  return ok({ mediaAssets: page.records.map(toPublicMediaAsset), nextCursor: page.nextCursor });
 }
 
 export async function createSignedMediaAccess(
@@ -8305,6 +8308,7 @@ function parseMediaUploadRequest(body: unknown): {
 
   try {
     assertMediaMimeType(mediaType, mimeType);
+    validateClinicalFileContext(recordField(input.provenance,"provenance").clinicalFile);
   } catch (error) {
     throw validation(error instanceof Error ? error.message : "Invalid media mime type.", {
       field: "mimeType",

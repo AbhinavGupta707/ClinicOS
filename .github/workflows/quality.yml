@@ -133,7 +133,7 @@ jobs:
           PILOT_SYNTHETIC_DATA_ONLY: "true"
           DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
           MIGRATION_DATABASE_URL: postgresql://clinic_os_migrator:clinic_os_migrator@127.0.0.1:5432/clinic_os
-        run: node scripts/test-financial-appointment-repositories.mjs && node scripts/test-patient-history-repositories.mjs
+        run: node scripts/test-financial-appointment-repositories.mjs && node scripts/test-patient-history-repositories.mjs && node scripts/test-patient-media-repositories.mjs
 
       - name: Daily workflow UI against real API and PostgreSQL
         env:

@@ -41,10 +41,10 @@ const PATIENT_ID = CHECKPOINT1_SEED_IDS.patients.rheaSynthetic;
 const SECOND_PATIENT_ID = "10000000-0000-4000-8000-000000002099" as UUID;
 const SECOND_DOCTOR_ID = "10000000-0000-4000-8000-000000001099" as UUID;
 
-test("CP13 clinical/dental factory implements all 23 operations with durable evidence and safe media", async () => {
+test("CP13 clinical/dental factory implements all 24 operations with durable evidence and safe media", async () => {
   const harness = createHarness();
   const handlers = createClinicalDentalHandlerMap(harness.dependencies);
-  assert.equal(Object.keys(handlers).length, 23);
+  assert.equal(Object.keys(handlers).length, 24);
 
   const treatmentConsent = await handlers.createPatientConsent(
     request("createPatientConsent", "assistant", {
@@ -274,6 +274,14 @@ test("CP13 clinical/dental factory implements all 23 operations with durable evi
     restartedContext
   );
   assertSafeMediaResponse(listedMedia.body);
+  assert.equal((listedMedia.body as {nextCursor: string|null}).nextCursor, null);
+  const exact = await restartedHandlers.getPatientMediaAsset(request("getPatientMediaAsset","doctor",{path:{patientId:PATIENT_ID,mediaAssetId}}),restartedContext);
+  assert.equal(entityId(exact.body,"mediaAsset"),mediaAssetId);
+  assertSafeMediaResponse(exact.body);
+  await assert.rejects(restartedHandlers.getPatientMediaAsset(request("getPatientMediaAsset","doctor",{path:{patientId:SECOND_PATIENT_ID,mediaAssetId}}),restartedContext),hasStatus(404));
+  await assert.rejects(restartedHandlers.listPatientMediaAssets(request("listPatientMediaAssets","doctor",{path:{patientId:PATIENT_ID},query:{cursor:mediaAssetId,mediaType:"document"}}),restartedContext),hasStatus(400));
+  const auditUnavailable = {...restartedContext,evidence:{...restartedContext.evidence,appendAuditEvent:async()=>{throw new Error("audit unavailable");}}};
+  await assert.rejects(restartedHandlers.getPatientMediaAsset(request("getPatientMediaAsset","doctor",{path:{patientId:PATIENT_ID,mediaAssetId}}),auditUnavailable),/audit unavailable/);
   const access = await restartedHandlers.createSignedMediaAccess(
     request("createSignedMediaAccess", "doctor", {
       path: { mediaAssetId },

@@ -1,3 +1,4 @@
+import { validateMediaPage, type MediaPageInput } from "@clinic-os/domain";
 import { historyPageLimit, assertHistoryCursor, type PatientHistoryPageInput } from "@clinic-os/domain";
 import {createAppointmentImport,stageAppointmentObservations,sealAppointmentImport,listAppointmentImports,getAppointmentImport,lockAppointmentObservation,decideAppointmentObservation} from "./appointment-observations.ts";
 import {FinancialConflict,executeFinancialCommand,getFinancialAccount,getFinancialDay,refreshInvoiceFinancialState} from "./financial-operations.ts";
@@ -8084,21 +8085,29 @@ export class PostgresClinicOperationsRepository
     });
   }
 
-  async listPatientMediaAssets(
-    scope: RepositoryScope,
-    patientId: UUID
-  ): Promise<MediaAssetRecord[]> {
+  async listPatientMediaAssets(scope: RepositoryScope, patientId: UUID, input: MediaPageInput = {}) {
+    const limit = validateMediaPage(input);
     return this.#withRls(scope, async (client) => {
-      const result = await client.query<MediaAssetRow>(
-        `
-          select *
-          from media_assets
-          where tenant_id = $1 and clinic_id = $2 and patient_id = $3 and status <> 'deleted'
-          order by uploaded_at desc
-        `,
-        [scope.tenantId, scope.clinicId, patientId]
-      );
-      return result.rows.map(mapMediaAssetRow);
+      const parameters = [scope.tenantId, scope.clinicId, patientId, input.mediaType ?? null, input.cursor ?? null];
+      if (input.cursor) {
+        const anchor = await client.query(`select id from media_assets where tenant_id=$1 and clinic_id=$2 and patient_id=$3
+          and ($4::text is null or media_type=$4) and id=$5 and status <> 'deleted'`, parameters);
+        if (!anchor.rows.length) throw new RangeError("File cursor does not belong to this patient and filter. Refresh files.");
+      }
+      const result = await client.query<MediaAssetRow>(`select * from media_assets
+        where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and status <> 'deleted'
+        and ($4::text is null or media_type=$4)
+        and ($5::uuid is null or (uploaded_at,id) < (select uploaded_at,id from media_assets where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and id=$5))
+        order by uploaded_at desc,id desc limit $6`, [...parameters, limit+1]);
+      const records = result.rows.slice(0,limit).map(mapMediaAssetRow);
+      return {records, nextCursor:result.rows.length>limit?records.at(-1)!.id:null};
+    });
+  }
+
+  async getPatientMediaAsset(scope: RepositoryScope, patientId: UUID, mediaAssetId: UUID) {
+    return this.#withRls(scope, async client => {
+      const result = await client.query<MediaAssetRow>(`select * from media_assets where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and id=$4 and status <> 'deleted'`, [scope.tenantId,scope.clinicId,patientId,mediaAssetId]);
+      return result.rows[0] ? mapMediaAssetRow(result.rows[0]) : null;
     });
   }
 

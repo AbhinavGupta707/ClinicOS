@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { assertHistoryCursor, historyPageLimit } from "./patient-history.ts";
 import type { UUID } from "./ids.ts";
 
 export const MEDIA_TYPES = [
@@ -16,8 +17,7 @@ export const MEDIA_UPLOAD_RESERVATION_STATUSES = [
   "expired",
   "rejected"
 ] as const;
-export type MediaUploadReservationStatus =
-  (typeof MEDIA_UPLOAD_RESERVATION_STATUSES)[number];
+export type MediaUploadReservationStatus = (typeof MEDIA_UPLOAD_RESERVATION_STATUSES)[number];
 
 export const MEDIA_ASSET_STATUSES = [
   "uploaded",
@@ -112,17 +112,52 @@ export function isMediaType(value: unknown): value is MediaType {
 }
 
 export function isMediaScanStatus(value: unknown): value is MediaScanStatus {
-  return (
-    typeof value === "string" && (MEDIA_SCAN_STATUSES as readonly string[]).includes(value)
-  );
+  return typeof value === "string" && (MEDIA_SCAN_STATUSES as readonly string[]).includes(value);
 }
 
 export function assertMediaMimeType(mediaType: MediaType, mimeType: string): void {
   const normalized = mimeType.trim().toLowerCase();
   const allowed = mediaMimeTypes(mediaType);
 
-  if (!allowed.some((candidate) => normalized === candidate || normalized.startsWith(candidate))) {
+  if (!allowed.some((candidate) => normalized === candidate)) {
     throw new Error(`Mime type ${mimeType} is not allowed for media type ${mediaType}.`);
+  }
+}
+
+export interface MediaPageInput {
+  readonly cursor?: string;
+  readonly limit?: number;
+  readonly mediaType?: MediaType;
+}
+export function validateMediaPage(input: MediaPageInput) {
+  const limit = historyPageLimit(input.limit);
+  assertHistoryCursor(input.cursor);
+  if (input.mediaType !== undefined && !isMediaType(input.mediaType))
+    throw new RangeError("Invalid media type filter.");
+  return limit;
+}
+
+/** Human-provided historical context; never storage, scanner or signing authority. */
+export function validateClinicalFileContext(value: unknown): void {
+  if (value === undefined) return;
+  if (!value || typeof value !== "object" || Array.isArray(value))
+    throw new RangeError("Invalid clinical file context.");
+  const context = value as Record<string, unknown>;
+  if (Object.keys(context).some((key) => !["source", "recordDate"].includes(key)))
+    throw new RangeError("Unsupported clinical file context field.");
+  if (typeof context.source !== "string" || !context.source.trim() || context.source.length > 120)
+    throw new RangeError("Enter a source of at most 120 characters.");
+  if (context.recordDate !== undefined && context.recordDate !== null) {
+    const date = context.recordDate;
+    if (
+      typeof date !== "string" ||
+      !/^\d{4}-\d{2}-\d{2}$/.test(date) ||
+      !Number.isFinite(Date.parse(`${date}T00:00:00Z`)) ||
+      new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date
+    )
+      throw new RangeError(
+        "The source record date must be a valid calendar date, or left unknown."
+      );
   }
 }
 
@@ -140,7 +175,9 @@ export function mediaAssetStatusForScan(scanStatus: MediaScanStatus): MediaAsset
   }
 }
 
-export function mediaAssetCanBeViewed(asset: Pick<MediaAssetRecord, "scanStatus" | "status">): boolean {
+export function mediaAssetCanBeViewed(
+  asset: Pick<MediaAssetRecord, "scanStatus" | "status">
+): boolean {
   return (
     (asset.scanStatus === "clean" || asset.scanStatus === "not_required") &&
     asset.status !== "deleted" &&
@@ -152,8 +189,12 @@ export function mediaAssetCanBeViewed(asset: Pick<MediaAssetRecord, "scanStatus"
 export function toPublicMediaUploadReservation(
   reservation: MediaUploadReservationRecord
 ): PublicMediaUploadReservation {
-  const { objectKey: _objectKey, storageProvider: _provider, storageRegion: _region, ...publicRecord } =
-    reservation;
+  const {
+    objectKey: _objectKey,
+    storageProvider: _provider,
+    storageRegion: _region,
+    ...publicRecord
+  } = reservation;
   return publicRecord;
 }
 
@@ -208,16 +249,24 @@ function mediaMimeTypes(mediaType: MediaType): readonly string[] {
 }
 
 function extensionFromFilename(filename: string): string | null {
-  const match = filename.trim().toLowerCase().match(/\.([a-z0-9]{1,12})$/);
+  const match = filename
+    .trim()
+    .toLowerCase()
+    .match(/\.([a-z0-9]{1,12})$/);
   if (!match) return null;
   return sanitizeObjectKeySegment(match[1]);
 }
 
 function sanitizeObjectKeySegment(value: string): string {
-  return value
+  const normalized = value
     .trim()
     .toLowerCase()
-    .replace(/[^a-z0-9_-]+/g, "-")
-    .replace(/^-+|-+$/g, "")
-    .slice(0, 80) || "unknown";
+    .replace(/[^a-z0-9_-]+/g, "-");
+  // An unanchored trailing-hyphen regex retries every position in an internal
+  // hyphen run. Explicit bounds preserve the format with linear input work.
+  let start = 0;
+  let end = normalized.length;
+  while (start < end && normalized[start] === "-") start += 1;
+  while (end > start && normalized[end - 1] === "-") end -= 1;
+  return normalized.slice(start, Math.min(end, start + 80)) || "unknown";
 }

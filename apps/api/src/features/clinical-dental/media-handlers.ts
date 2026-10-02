@@ -1,6 +1,8 @@
 import { randomUUID } from "node:crypto";
 import {
   assertMediaMimeType,
+  validateClinicalFileContext,
+  type MediaPageInput,
   isDentalToothNumber,
   isMediaScanStatus,
   isMediaType,
@@ -37,7 +39,6 @@ import {
   parsedBinaryBody,
   parsedBody,
   parsedPathId,
-  parsedQueryInteger,
   requireClinicalConsent,
   validation,
   type ClinicalDentalRequest,
@@ -88,6 +89,7 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
       assertClinicalMediaBudget(input.fileSizeBytes);
       try {
         assertMediaMimeType(input.mediaType, input.mimeType);
+        validateClinicalFileContext(input.provenance?.clinicalFile);
       } catch (error) {
         throw validation(error instanceof Error ? error.message : "Invalid media MIME type.", {
           field: "mimeType",
@@ -342,20 +344,44 @@ export function createMediaHandlers(dependencies: ClinicalDentalHandlerDependenc
       context: ClinicFeatureExecutionContext
     ) => {
       const patientId = parsedPathId(request, "patientId");
-      const limit = parsedQueryInteger(request, "limit") ?? 50;
+      const query = request.parsed.query as MediaPageInput;
       await assertPatientExists(dependencies, context, patientId);
-      const mediaAssets = (
-        await context.repositories.clinicalMedia.listPatientMediaAssets(patientId)
-      )
-        .slice(0, limit)
-        .map(publicMediaAsset);
+      let page;
+      try {
+        page = await context.repositories.clinicalMedia.listPatientMediaAssets(patientId, query);
+      } catch (error) {
+        if (error instanceof RangeError) throw validation(error.message, { field: "cursor" });
+        throw error;
+      }
+      const mediaAssets = page.records.map(publicMediaAsset);
       await appendAudit(request, context, "media.viewed", {
         patientId,
         resourceType: "media_asset_collection",
         resourceId: patientId,
         metadata: { resultCount: mediaAssets.length }
       });
-      return ok({ mediaAssets });
+      return ok({ mediaAssets, nextCursor: page.nextCursor });
+    },
+
+    getPatientMediaAsset: async (
+      request: ClinicalDentalRequest<"getPatientMediaAsset">,
+      context: ClinicFeatureExecutionContext
+    ) => {
+      const patientId = parsedPathId(request, "patientId");
+      const mediaAssetId = parsedPathId(request, "mediaAssetId");
+      await assertPatientExists(dependencies, context, patientId);
+      const asset = await context.repositories.clinicalMedia.getPatientMediaAsset(
+        patientId,
+        mediaAssetId
+      );
+      if (!asset) throw notFound("Patient file not found.", { media_asset_id: mediaAssetId });
+      await appendAudit(request, context, "media.viewed", {
+        patientId,
+        resourceType: "media_asset",
+        resourceId: asset.id,
+        metadata: { view: "metadata", mediaType: asset.mediaType }
+      });
+      return ok({ mediaAsset: publicMediaAsset(asset) });
     },
 
     createSignedMediaAccess: async (

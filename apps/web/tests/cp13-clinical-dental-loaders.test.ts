@@ -1,5 +1,4 @@
 import { createHash } from "node:crypto";
-import { readFile } from "node:fs/promises";
 import { describe, expect, it, vi } from "vitest";
 import {
   classifyClinicalCapabilityFailure,
@@ -7,6 +6,7 @@ import {
   loadClinicalDentalWorkspace,
   requestClinicalMediaAccess,
   uploadClinicalMedia,
+  privateUploadSubmissionFilename,
   type ClinicalDentalGeneratedClient
 } from "../features/cp13/clinical-dental/loaders";
 
@@ -135,16 +135,15 @@ describe("CP13 clinical/dental generated-client loaders", () => {
     });
   });
 
-  it("keeps component loading and provider-unavailable copy truthful with no fixture path", async () => {
-    const source = await readFile(
-      new URL("../features/cp13/clinical-dental/ClinicalDentalWorkspace.tsx", import.meta.url),
-      "utf8"
-    );
-    expect(source).toContain("Loading clinical record");
-    expect(source).toContain("Upload availability is verified when the request starts");
-    expect(source).toContain("Clinical workspace unavailable");
-    expect(source).not.toContain("USE_CP13");
-    expect(source).not.toContain("fixtureData");
+  it("validates filenames before starting an uncertain upload and rejects unsafe access responses", async () => {
+    expect(()=>privateUploadSubmissionFilename("scan.jfif","image/jpeg")).toThrow("extension");
+    expect(privateUploadSubmissionFilename("sensitive-patient.jpg","image/jpeg")).toBe("clinical-upload.jpg");
+    for(const access of [{signedUrl:"javascript:alert(1)",expiresAt:"2032-01-01"},{signedUrl:"https://media.test/file",expiresAt:"invalid"},{signedUrl:"https://user:password@media.test/file",expiresAt:"2032-01-01"}]) {
+      const client=clientDouble();vi.mocked(client.createSignedMediaAccess).mockResolvedValue({mediaAsset:{id:MEDIA_ID},access});
+      await expect(requestClinicalMediaAccess(client,{mediaAssetId:MEDIA_ID,idempotencyKey:"read"})).rejects.toThrow();
+    }
+    const client=clientDouble();vi.mocked(client.createSignedMediaAccess).mockResolvedValue({mediaAsset:{id:PATIENT_ID},access:{signedUrl:"https://media.test/file",expiresAt:"2032-01-01"}});
+    await expect(requestClinicalMediaAccess(client,{mediaAssetId:MEDIA_ID,idempotencyKey:"read"})).rejects.toThrow("different asset");
   });
 });
 
@@ -164,7 +163,7 @@ function clientDouble(): ClinicalDentalGeneratedClient {
       history: [],
       snapshots: []
     })),
-    listPatientMediaAssets: vi.fn(async () => ({ mediaAssets: [] })),
+    listPatientMediaAssets: vi.fn(async () => ({ mediaAssets: [], nextCursor: null })),
     requestMediaUploadUrl: vi.fn(async () => ({
       upload: { id: UPLOAD_ID },
       uploadTarget: { method: "PUT", uploadUrl: `/v1/media/uploads/${UPLOAD_ID}/content` }

@@ -302,8 +302,10 @@ export type ReceiveMediaUploadContentRequest = { readonly path: { readonly uploa
 export type ReceiveMediaUploadContentResponse = { readonly upload: PublicJsonObject; readonly object: PublicJsonObject };
 export type CompleteMediaUploadRequest = { readonly path: { readonly uploadId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly patientId: string; readonly encounterId?: string | null; readonly contentLength?: number | null; readonly sha256Digest?: string | null; readonly mimeType?: string | null } };
 export type CompleteMediaUploadResponse = { readonly mediaAsset: PublicJsonObject };
-export type ListPatientMediaAssetsRequest = { readonly path: { readonly patientId: string }; readonly query?: { readonly limit?: number } };
-export type ListPatientMediaAssetsResponse = { readonly mediaAssets: readonly (PublicJsonObject)[] };
+export type ListPatientMediaAssetsRequest = { readonly path: { readonly patientId: string }; readonly query?: { readonly cursor?: string; readonly mediaType?: "intraoral_photo" | "xray" | "document" | "audio_chunk" | "generated_document"; readonly limit?: number } };
+export type ListPatientMediaAssetsResponse = { readonly mediaAssets: readonly (PublicJsonObject)[]; readonly nextCursor: string | null };
+export type GetPatientMediaAssetRequest = { readonly path: { readonly patientId: string; readonly mediaAssetId: string } };
+export type GetPatientMediaAssetResponse = { readonly mediaAsset: PublicJsonObject };
 export type CreateSignedMediaAccessRequest = { readonly path: { readonly mediaAssetId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly expiresInSeconds?: number } };
 export type CreateSignedMediaAccessResponse = { readonly mediaAsset: PublicJsonObject; readonly access: PublicJsonObject };
 export type ListPricebookProceduresRequest = { readonly query?: { readonly cursor?: string; readonly limit?: number } };
@@ -577,6 +579,7 @@ export interface ClinicOsNativeOperationMap {
   readonly receiveMediaUploadContent: { readonly request: ReceiveMediaUploadContentRequest; readonly response: ReceiveMediaUploadContentResponse };
   readonly completeMediaUpload: { readonly request: CompleteMediaUploadRequest; readonly response: CompleteMediaUploadResponse };
   readonly listPatientMediaAssets: { readonly request: ListPatientMediaAssetsRequest; readonly response: ListPatientMediaAssetsResponse };
+  readonly getPatientMediaAsset: { readonly request: GetPatientMediaAssetRequest; readonly response: GetPatientMediaAssetResponse };
   readonly createSignedMediaAccess: { readonly request: CreateSignedMediaAccessRequest; readonly response: CreateSignedMediaAccessResponse };
   readonly listPricebookProcedures: { readonly request: ListPricebookProceduresRequest; readonly response: ListPricebookProceduresResponse };
   readonly createPatientTreatmentPlan: { readonly request: CreatePatientTreatmentPlanRequest; readonly response: CreatePatientTreatmentPlanResponse };
@@ -2566,6 +2569,30 @@ export class ClinicOsApiClient {
     return this.executeWithMetadata<ListPatientMediaAssetsResponse>({
       method: "GET",
       pathTemplate: "/v1/patients/{patientId}/media",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getPatientMediaAsset(input: GetPatientMediaAssetRequest): Promise<GetPatientMediaAssetResponse> {
+    return this.execute<GetPatientMediaAssetResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/media/{mediaAssetId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getPatientMediaAssetWithMetadata(input: GetPatientMediaAssetRequest): Promise<ClinicOsApiResponse<GetPatientMediaAssetResponse>> {
+    return this.executeWithMetadata<GetPatientMediaAssetResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/media/{mediaAssetId}",
       auth: "bearer",
       contentType: null,
       bodyEncoding: "json",
