@@ -871,6 +871,7 @@ function createRuntimeComposition(
       : undefined
   };
   serverOptions.featureHandlers = createCp13ClinicFeatureHandlerMap({
+    communicationDispatchEnabled: parsed.data.providerCallbacks.enabled && !useFixtureRepository,
     paymentProvider,
     clinicalDental: {
       relationshipAuthority: createClinicalDentalRelationshipAuthority(),

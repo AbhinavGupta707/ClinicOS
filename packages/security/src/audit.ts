@@ -8,6 +8,10 @@ import type {
 } from "@clinic-os/domain";
 
 export const AUDIT_ACTION_CLASSIFICATIONS = {
+  "communication.viewed": {category:"integration",riskLevel:"low",phiInvolved:true,requiresPatientId:false},
+  "communication.changed": {category:"integration",riskLevel:"medium",phiInvolved:true,requiresPatientId:false},
+  "communication.dispatch": {category:"integration",riskLevel:"high",phiInvolved:true,requiresPatientId:false},
+
   "auth.login.succeeded": {
     category: "security",
     riskLevel: "low",

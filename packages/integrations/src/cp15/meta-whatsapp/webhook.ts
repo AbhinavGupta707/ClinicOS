@@ -293,7 +293,16 @@ function normalizeStatus(raw: unknown, businessAccountId: string, phoneNumberId:
 }
 
 function normalizeTemplate(value: Record<string, unknown>, businessAccountId: string, receivedAt: string, rawReference: MetaRawReference): MetaTemplateEvent {
-  const providerTemplateId = numericIdentifier(value.message_template_id ?? value.id, "message_template_id", 32);
+  const templateId = value.message_template_id ?? value.id;
+  // Template lifecycle payloads may encode the ID as a JSON number. Never
+  // normalize an unsafe integer: JSON parsing may already have lost its identity.
+  const providerTemplateId = numericIdentifier(
+    typeof templateId === "number" && Number.isSafeInteger(templateId) && templateId > 0
+      ? String(templateId)
+      : templateId,
+    "message_template_id",
+    32
+  );
   const templateName = templateNameValue(value.message_template_name ?? value.name);
   const languageCode = languageCodeValue(value.message_template_language ?? value.language);
   const providerEvent = boundedString(value.event ?? value.status, "template.event", 64).toUpperCase();

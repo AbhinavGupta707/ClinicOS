@@ -6,6 +6,12 @@ import {
 } from "../core/scoped-repository-port.ts";
 
 export const CLINIC_OPERATIONS_OPERATIONS = [
+  "listCommunicationAppointments",
+  "listCommunicationThreads",
+  "getCommunicationThread",
+  "communicationConfiguration",
+  "previewCommunicationAppointment",
+  "executeCommunicationCommand",
   "listLabReconciliations",
   "listClinicAccess", "saveClinicAccess", "listClinicSetup", "saveClinicSetup",
   "listInventoryCheckRuns",

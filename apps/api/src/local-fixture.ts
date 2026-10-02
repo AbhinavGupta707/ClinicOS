@@ -731,6 +731,36 @@ export class InMemoryAuditSink {
 }
 
 export class LocalFixtureClinicOperationsRepository implements ClinicOperationsRepository {
+  async listCommunicationAppointments(
+    ..._args: Parameters<ClinicOperationsRepository["listCommunicationAppointments"]>
+  ): ReturnType<ClinicOperationsRepository["listCommunicationAppointments"]> {
+    throw new Error("Communications require the durable API.");
+  }
+  async listCommunicationThreads(
+    ..._args: Parameters<ClinicOperationsRepository["listCommunicationThreads"]>
+  ): ReturnType<ClinicOperationsRepository["listCommunicationThreads"]> {
+    throw new Error("Communications require the durable API.");
+  }
+  async getCommunicationThread(
+    ..._args: Parameters<ClinicOperationsRepository["getCommunicationThread"]>
+  ): ReturnType<ClinicOperationsRepository["getCommunicationThread"]> {
+    throw new Error("Communications require the durable API.");
+  }
+  async communicationConfiguration(
+    ..._args: Parameters<ClinicOperationsRepository["communicationConfiguration"]>
+  ): ReturnType<ClinicOperationsRepository["communicationConfiguration"]> {
+    throw new Error("Communications require the durable API.");
+  }
+  async previewCommunicationAppointment(
+    ..._args: Parameters<ClinicOperationsRepository["previewCommunicationAppointment"]>
+  ): ReturnType<ClinicOperationsRepository["previewCommunicationAppointment"]> {
+    throw new Error("Communications require the durable API.");
+  }
+  async executeCommunicationCommand(
+    ..._args: Parameters<ClinicOperationsRepository["executeCommunicationCommand"]>
+  ): ReturnType<ClinicOperationsRepository["executeCommunicationCommand"]> {
+    throw new Error("Communications require the durable API.");
+  }
   async preparePatientDocument(..._args:Parameters<ClinicOperationsRepository["preparePatientDocument"]>):ReturnType<ClinicOperationsRepository["preparePatientDocument"]> { throw new PatientDocumentUnavailable("Generated document storage is unavailable in the in-memory fixture. Use the durable local API."); }
   async issuePatientDocument(..._args:Parameters<ClinicOperationsRepository["issuePatientDocument"]>):ReturnType<ClinicOperationsRepository["issuePatientDocument"]> { throw new PatientDocumentUnavailable("Generated document storage is unavailable in the in-memory fixture. Use the durable local API."); }
   async listPatientDocuments(..._args:Parameters<ClinicOperationsRepository["listPatientDocuments"]>):ReturnType<ClinicOperationsRepository["listPatientDocuments"]> { throw new PatientDocumentUnavailable("Generated document storage is unavailable in the in-memory fixture. Use the durable local API."); }

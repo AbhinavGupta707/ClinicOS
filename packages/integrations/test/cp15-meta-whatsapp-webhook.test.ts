@@ -92,6 +92,25 @@ test("CP15 Meta normalizes inbound, opt-out, service window, status, and templat
   assert.equal(evidence.eventKeyDigests.every((value) => /^[a-f0-9]{64}$/u.test(value)), true);
 });
 
+test("Meta template IDs preserve string/numeric identity and reject lossy numeric values", () => {
+  const normalize = (id: unknown) => {
+    const payload = { object: "whatsapp_business_account", entry: [{
+      id: "100000000000001", changes: [{ field: "message_template_status_update", value: {
+        event: "APPROVED", message_template_id: id, message_template_name: "clinic_appointment",
+        message_template_language: "en"
+      } }]
+    }] };
+    const bytes = Buffer.from(JSON.stringify(payload));
+    return createBoundary().verifyAndNormalize(rawInput(bytes, signMetaWebhookBytes(bytes, APP_SECRET))).events[0];
+  };
+  const stringId = normalize("300000000000001"), numericId = normalize(300000000000001);
+  assert.ok(stringId?.kind === "template_lifecycle" && numericId?.kind === "template_lifecycle");
+  assert.equal(numericId.providerTemplateId, stringId.providerTemplateId);
+  assert.equal(numericId.uniqueEventKey, stringId.uniqueEventKey);
+  for (const invalid of [Number.MAX_SAFE_INTEGER + 1, 12.5, -12, 0, true])
+    assert.throws(() => normalize(invalid), errorCode("invalid_payload"));
+});
+
 test("CP15 Meta retains unsupported signed changes for reconciliation instead of dropping them", () => {
   const payload = {
     object: "whatsapp_business_account",

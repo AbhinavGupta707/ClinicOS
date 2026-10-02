@@ -5,6 +5,7 @@ import { createCp13ApiClient } from "@/lib/cp13-api-client";
 import type { MeProfile } from "@/lib/me";
 import { FrontDeskWorkspace } from "./front-office/FrontDeskWorkspace";
 import { PatientsWorkspace } from "./front-office/PatientsWorkspace";
+import { CommunicationsWorkspace } from "./front-office/CommunicationsWorkspace";
 import { LeadsWorkspace } from "./front-office/LeadsWorkspace";
 import { ClinicSetupWorkspace } from "./clinic-setup/ClinicSetupWorkspace";
 import { ClinicalWorkflowWorkspace } from "./clinical-dental/ClinicalWorkflowWorkspace";
@@ -58,6 +59,7 @@ export function Cp13Workspace(props: {
     return <FrontDeskWorkspace {...shared} onOpenPatient={props.onOpenPatient} />;
   if (props.activeSurfaceId === "patients")
     return <PatientsWorkspace {...shared} onOpenPatientProfile={props.onOpenPatientProfile} />;
+  if (props.activeSurfaceId === "communications") return <CommunicationsWorkspace {...shared} onOpenPatientProfile={props.onOpenPatientProfile} />;
   if (props.activeSurfaceId === "lead-inbox") return <LeadsWorkspace {...shared} />;
   if (isCp13ClinicalSurface(props.activeSurfaceId))
     return <ClinicalWorkflowWorkspace {...shared} />;

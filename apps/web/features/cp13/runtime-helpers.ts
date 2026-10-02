@@ -3,6 +3,7 @@ import type { PublicJsonObject } from "@clinic-os/api-client-generated";
 const FRONT_OFFICE_SURFACES = new Set([
   "today",
   "lead-inbox",
+  "communications",
   "appointments",
   "patients",
   "settings"

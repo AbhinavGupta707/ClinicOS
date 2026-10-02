@@ -373,6 +373,7 @@ const inventoryCheckRunDetailSchema = responseSchema({
 });
 
 export const ACTIVE_NATIVE_HTTP_OPERATIONS: readonly HttpOperationContract[] = [
+  ...communicationOperations(),
   operation({
     operationId: "healthLive",
     checkpoint: "CP1",
@@ -4250,4 +4251,217 @@ function appointmentReviewOperations():HttpOperationContract[]{
  operation({operationId:'sealAppointmentImport',checkpoint:'CP7',method:'POST',path:'/v1/appointment-imports/{importId}/seal',summary:'Verify source file completeness before review',tags:['Migration'],phi:'write',pathProperties:importId,body:bodySchema({},[]),success:{200:singleEntity('import')}}),
  operation({operationId:'reviewAppointmentObservation',checkpoint:'CP7',method:'POST',path:'/v1/appointment-imports/{importId}/rows/{rowId}/review',summary:'Record a human review and atomic booking handoff',tags:['Migration'],phi:'write',pathProperties:{...importId,rowId:uuid},body:bodySchema({decision:schema.enum(['history','exclude','link','create']),reason:schema.string({minLength:1,maxLength:1000}),confirmedDetails:schema.boolean(),appointmentId:uuid,patientId:uuid,booking:bodySchema({patientId:uuid,providerUserId:uuid,appointmentTypeId:uuid,chairId:optionalUuid,startAt:dateTime,endAt:dateTime},['patientId','providerUserId','appointmentTypeId','startAt','endAt'])},['decision','reason']),success:{200:singleEntity('observation')}})
  ];
+}
+
+function communicationOperations(): HttpOperationContract[] {
+  const state = schema.enum(["open", "waiting", "handled"]),
+    seq = schema.integer({ minimum: 0, maximum: Number.MAX_SAFE_INTEGER });
+  const digest = schema.string({ minLength: 64, maxLength: 64, pattern: "^[a-f0-9]{64}$" });
+  const thread = responseSchema({
+    id: uuid,
+    accountId: uuid,
+    contact: shortText,
+    status: state,
+    assignedUserId: optionalUuid,
+    assignedName: nullableText,
+    patientId: optionalUuid,
+    patientName: nullableText,
+    leadId: optionalUuid,
+    rowVersion: positiveInteger,
+    latestSequence: seq,
+    unread: schema.boolean(),
+    createdAt: dateTime,
+    updatedAt: dateTime
+  });
+  const message = responseSchema({
+    id: uuid,
+    sequence: seq,
+    kind: schema.enum(["inbound", "manual_contact", "appointment_request"]),
+    text: schema.nullable(longText),
+    unsupportedContent: schema.boolean(),
+    occurredAt: dateTime,
+    recordedAt: dateTime,
+    recordedBy: nullableText,
+    requestId: optionalUuid,
+    dispatchStatus: nullableText,
+    deliveryStatus: nullableText,
+    failureCode: nullableText
+  });
+  const command = (kind: string, fields: Record<string, RuntimeSchema>) =>
+    bodySchema({ kind: schema.enum([kind]), ...fields }, ["kind", ...Object.keys(fields)]);
+  const version = { threadId: uuid, expectedVersion: positiveInteger };
+  const commands = [
+    command("start", { accountId: uuid, patientId: uuid }),
+    command("update", { ...version, status: state, assignedUserId: optionalUuid }),
+    command("link", {
+      ...version,
+      patientId: optionalUuid,
+      leadId: optionalUuid,
+      reason: schema.string({ minLength: 1, maxLength: 1900 })
+    }),
+    command("read", { threadId: uuid, throughSequence: seq }),
+    command("manual_contact", {
+      ...version,
+      evidence: schema.string({ minLength: 1, maxLength: 2000 })
+    }),
+    command("sync_template", { templateId: uuid }),
+    command("approve", {
+      threadId: uuid,
+      appointmentId: uuid,
+      templateId: uuid,
+      expectedDigest: digest
+    }),
+    command("cancel_request", { requestId: uuid })
+  ];
+  const common = { checkpoint: "CP3", tags: ["Communications"], phi: "read" } as const;
+  return [
+    operation({
+      ...common,
+      operationId: "listCommunicationAppointments",
+      method: "GET",
+      path: "/v1/communications/threads/{threadId}/appointments",
+      summary: "Page upcoming appointments for the explicitly selected patient",
+      mutation: false,
+      pathProperties: { threadId: uuid },
+      queryProperties: { cursor: uuid },
+      success: {
+        200: responseSchema({
+          appointments: schema.array(
+            responseSchema({
+              id: uuid,
+              startAt: dateTime,
+              status: shortText,
+              doctorName: shortText,
+              timezone: shortText
+            }),
+            { maxItems: 50 }
+          ),
+          nextCursor: optionalUuid
+        })
+      }
+    }),
+    operation({
+      ...common,
+      operationId: "listCommunicationThreads",
+      method: "GET",
+      path: "/v1/communications/threads",
+      summary: "Read scoped inbox with stable pagination",
+      mutation: false,
+      queryProperties: { status: state, cursor: uuid },
+      success: {
+        200: responseSchema({
+          threads: schema.array(thread, { maxItems: 50 }),
+          nextCursor: optionalUuid
+        })
+      }
+    }),
+    operation({
+      ...common,
+      operationId: "getCommunicationThread",
+      method: "GET",
+      path: "/v1/communications/threads/{threadId}",
+      summary: "Read conversation evidence and provider outcomes",
+      mutation: false,
+      pathProperties: { threadId: uuid },
+      queryProperties: { beforeSequence: seq },
+      success: {
+        200: responseSchema({
+          thread,
+          messages: schema.array(message, { maxItems: 50 }),
+          nextBeforeSequence: schema.nullable(seq)
+        })
+      }
+    }),
+    operation({
+      ...common,
+      operationId: "getCommunicationConfiguration",
+      method: "GET",
+      path: "/v1/communications/configuration",
+      summary: "Discover registered accounts, supported templates and eligible staff",
+      mutation: false,
+      queryProperties: { cursor: uuid },
+      success: {
+        200: responseSchema({
+          dispatchEnabled: schema.boolean(),
+          accounts: schema.array(
+            responseSchema({ id: uuid, name: shortText, activation: shortText }),
+            { maxItems: 100 }
+          ),
+          templates: schema.array(
+            responseSchema({
+              id: uuid,
+              accountId: uuid,
+              name: schema.string({ minLength: 1, maxLength: 512 }),
+              language: shortText,
+              lifecycle: shortText,
+              syncStatus: schema.enum([
+                "not_synced",
+                "queued",
+                "ready",
+                "unsupported",
+                "failed",
+                "stale"
+              ]),
+              body: nullableText,
+              verifiedAt: nullableDateTime
+            }),
+            { maxItems: 50 }
+          ),
+          staff: schema.array(responseSchema({ id: uuid, name: shortText }), { maxItems: 500 }),
+          nextTemplateCursor: optionalUuid
+        })
+      }
+    }),
+    operation({
+      ...common,
+      operationId: "previewCommunicationAppointment",
+      method: "POST",
+      path: "/v1/communications/preview",
+      summary: "Review an exact consent-bound appointment message",
+      body: bodySchema({ threadId: uuid, appointmentId: uuid, templateId: uuid }, [
+        "threadId",
+        "appointmentId",
+        "templateId"
+      ]),
+      success: {
+        200: responseSchema({
+          threadId: uuid,
+          appointmentId: uuid,
+          templateId: uuid,
+          patientId: uuid,
+          recipient: shortText,
+          text: longText,
+          parameter: text,
+          templateName: schema.string({ minLength: 1, maxLength: 512 }),
+          language: shortText,
+          digest
+        })
+      }
+    }),
+    operation({
+      ...common,
+      phi: "write",
+      operationId: "executeCommunicationCommand",
+      method: "POST",
+      path: "/v1/communications/commands",
+      summary: "Apply a versioned, idempotent communication decision",
+      body: { type: "object", additionalProperties: false, oneOf: commands },
+      success: {
+        200: responseSchema({
+          id: uuid,
+          threadId: optionalUuid,
+          kind: schema.enum([
+            "start",
+            "update",
+            "link",
+            "read",
+            "manual_contact",
+            "sync_template",
+            "approve",
+            "cancel_request"
+          ])
+        })
+      }
+    })
+  ];
 }

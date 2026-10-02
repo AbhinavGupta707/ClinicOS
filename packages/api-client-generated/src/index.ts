@@ -150,6 +150,18 @@ function extractResponseMetadata(response: Response): ClinicOsApiResponseMetadat
     retryAfterSeconds: parseRetryAfterSeconds(response.headers.get("retry-after"))
   };
 }
+export type ListCommunicationAppointmentsRequest = { readonly path: { readonly threadId: string }; readonly query?: { readonly cursor?: string } };
+export type ListCommunicationAppointmentsResponse = { readonly appointments: readonly ({ readonly id: string; readonly startAt: string; readonly status: string; readonly doctorName: string; readonly timezone: string })[]; readonly nextCursor: string | null };
+export type ListCommunicationThreadsRequest = { readonly query?: { readonly status?: "open" | "waiting" | "handled"; readonly cursor?: string } };
+export type ListCommunicationThreadsResponse = { readonly threads: readonly ({ readonly id: string; readonly accountId: string; readonly contact: string; readonly status: "open" | "waiting" | "handled"; readonly assignedUserId: string | null; readonly assignedName: string | null; readonly patientId: string | null; readonly patientName: string | null; readonly leadId: string | null; readonly rowVersion: number; readonly latestSequence: number; readonly unread: boolean; readonly createdAt: string; readonly updatedAt: string })[]; readonly nextCursor: string | null };
+export type GetCommunicationThreadRequest = { readonly path: { readonly threadId: string }; readonly query?: { readonly beforeSequence?: number } };
+export type GetCommunicationThreadResponse = { readonly thread: { readonly id: string; readonly accountId: string; readonly contact: string; readonly status: "open" | "waiting" | "handled"; readonly assignedUserId: string | null; readonly assignedName: string | null; readonly patientId: string | null; readonly patientName: string | null; readonly leadId: string | null; readonly rowVersion: number; readonly latestSequence: number; readonly unread: boolean; readonly createdAt: string; readonly updatedAt: string }; readonly messages: readonly ({ readonly id: string; readonly sequence: number; readonly kind: "inbound" | "manual_contact" | "appointment_request"; readonly text: string | null; readonly unsupportedContent: boolean; readonly occurredAt: string; readonly recordedAt: string; readonly recordedBy: string | null; readonly requestId: string | null; readonly dispatchStatus: string | null; readonly deliveryStatus: string | null; readonly failureCode: string | null })[]; readonly nextBeforeSequence: number | null };
+export type GetCommunicationConfigurationRequest = { readonly query?: { readonly cursor?: string } };
+export type GetCommunicationConfigurationResponse = { readonly dispatchEnabled: boolean; readonly accounts: readonly ({ readonly id: string; readonly name: string; readonly activation: string })[]; readonly templates: readonly ({ readonly id: string; readonly accountId: string; readonly name: string; readonly language: string; readonly lifecycle: string; readonly syncStatus: "not_synced" | "queued" | "ready" | "unsupported" | "failed" | "stale"; readonly body: string | null; readonly verifiedAt: string | null })[]; readonly staff: readonly ({ readonly id: string; readonly name: string })[]; readonly nextTemplateCursor: string | null };
+export type PreviewCommunicationAppointmentRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly threadId: string; readonly appointmentId: string; readonly templateId: string } };
+export type PreviewCommunicationAppointmentResponse = { readonly threadId: string; readonly appointmentId: string; readonly templateId: string; readonly patientId: string; readonly recipient: string; readonly text: string; readonly parameter: string; readonly templateName: string; readonly language: string; readonly digest: string };
+export type ExecuteCommunicationCommandRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly kind: "start"; readonly accountId: string; readonly patientId: string } | { readonly kind: "update"; readonly threadId: string; readonly expectedVersion: number; readonly status: "open" | "waiting" | "handled"; readonly assignedUserId: string | null } | { readonly kind: "link"; readonly threadId: string; readonly expectedVersion: number; readonly patientId: string | null; readonly leadId: string | null; readonly reason: string } | { readonly kind: "read"; readonly threadId: string; readonly throughSequence: number } | { readonly kind: "manual_contact"; readonly threadId: string; readonly expectedVersion: number; readonly evidence: string } | { readonly kind: "sync_template"; readonly templateId: string } | { readonly kind: "approve"; readonly threadId: string; readonly appointmentId: string; readonly templateId: string; readonly expectedDigest: string } | { readonly kind: "cancel_request"; readonly requestId: string } };
+export type ExecuteCommunicationCommandResponse = { readonly id: string; readonly threadId: string | null; readonly kind: "start" | "update" | "link" | "read" | "manual_contact" | "sync_template" | "approve" | "cancel_request" };
 export type HealthLiveRequest = Readonly<Record<string, never>>;
 export type HealthLiveResponse = { readonly status: "ok"; readonly service: "clinic-os-api"; readonly request_id: string } | { readonly error: { readonly code: "BAD_REQUEST" | "UNAUTHENTICATED" | "PERMISSION_DENIED" | "NOT_FOUND" | "VALIDATION_ERROR" | "CONFLICT" | "PAYLOAD_TOO_LARGE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "AI_PROVIDER_UNAVAILABLE" | "DEPENDENCY_UNAVAILABLE" | "CONFIGURATION_ERROR"; readonly message: string; readonly details: PublicJsonObject; readonly request_id: string } };
 export type PreparePatientDocumentRequest = { readonly path: { readonly patientId: string; readonly kind: "prescription" | "estimate" | "invoice" | "receipt" | "instruction" | "lab_slip"; readonly sourceId: string }; readonly query?: { readonly cursor?: string } };
@@ -514,6 +526,12 @@ export type ReviewFhirClinicalSummaryImportRequest = { readonly path: { readonly
 export type ReviewFhirClinicalSummaryImportResponse = { readonly effects: { readonly auditAppended: boolean; readonly clinicalStateApplied: boolean; readonly outboxAppended: boolean; readonly patientMerged: false }; readonly encounterId: string; readonly patientId: string; readonly reconciliationId: string; readonly reconciliationVersion: number; readonly status: "accepted_pending_apply" | "applied" | "rejected" };
 
 export interface ClinicOsNativeOperationMap {
+  readonly listCommunicationAppointments: { readonly request: ListCommunicationAppointmentsRequest; readonly response: ListCommunicationAppointmentsResponse };
+  readonly listCommunicationThreads: { readonly request: ListCommunicationThreadsRequest; readonly response: ListCommunicationThreadsResponse };
+  readonly getCommunicationThread: { readonly request: GetCommunicationThreadRequest; readonly response: GetCommunicationThreadResponse };
+  readonly getCommunicationConfiguration: { readonly request: GetCommunicationConfigurationRequest; readonly response: GetCommunicationConfigurationResponse };
+  readonly previewCommunicationAppointment: { readonly request: PreviewCommunicationAppointmentRequest; readonly response: PreviewCommunicationAppointmentResponse };
+  readonly executeCommunicationCommand: { readonly request: ExecuteCommunicationCommandRequest; readonly response: ExecuteCommunicationCommandResponse };
   readonly healthLive: { readonly request: HealthLiveRequest; readonly response: HealthLiveResponse };
   readonly preparePatientDocument: { readonly request: PreparePatientDocumentRequest; readonly response: PreparePatientDocumentResponse };
   readonly issuePatientDocument: { readonly request: IssuePatientDocumentRequest; readonly response: IssuePatientDocumentResponse };
@@ -745,6 +763,150 @@ export class ClinicOsApiClient {
       throw new ClinicOsApiError(response.status, payload as ClinicOsApiErrorBody, metadata);
     }
     return { body: payload as T, metadata };
+  }
+
+  async listCommunicationAppointments(input: ListCommunicationAppointmentsRequest): Promise<ListCommunicationAppointmentsResponse> {
+    return this.execute<ListCommunicationAppointmentsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/communications/threads/{threadId}/appointments",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listCommunicationAppointmentsWithMetadata(input: ListCommunicationAppointmentsRequest): Promise<ClinicOsApiResponse<ListCommunicationAppointmentsResponse>> {
+    return this.executeWithMetadata<ListCommunicationAppointmentsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/communications/threads/{threadId}/appointments",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listCommunicationThreads(input?: ListCommunicationThreadsRequest): Promise<ListCommunicationThreadsResponse> {
+    return this.execute<ListCommunicationThreadsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/communications/threads",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listCommunicationThreadsWithMetadata(input?: ListCommunicationThreadsRequest): Promise<ClinicOsApiResponse<ListCommunicationThreadsResponse>> {
+    return this.executeWithMetadata<ListCommunicationThreadsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/communications/threads",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getCommunicationThread(input: GetCommunicationThreadRequest): Promise<GetCommunicationThreadResponse> {
+    return this.execute<GetCommunicationThreadResponse>({
+      method: "GET",
+      pathTemplate: "/v1/communications/threads/{threadId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getCommunicationThreadWithMetadata(input: GetCommunicationThreadRequest): Promise<ClinicOsApiResponse<GetCommunicationThreadResponse>> {
+    return this.executeWithMetadata<GetCommunicationThreadResponse>({
+      method: "GET",
+      pathTemplate: "/v1/communications/threads/{threadId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getCommunicationConfiguration(input?: GetCommunicationConfigurationRequest): Promise<GetCommunicationConfigurationResponse> {
+    return this.execute<GetCommunicationConfigurationResponse>({
+      method: "GET",
+      pathTemplate: "/v1/communications/configuration",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getCommunicationConfigurationWithMetadata(input?: GetCommunicationConfigurationRequest): Promise<ClinicOsApiResponse<GetCommunicationConfigurationResponse>> {
+    return this.executeWithMetadata<GetCommunicationConfigurationResponse>({
+      method: "GET",
+      pathTemplate: "/v1/communications/configuration",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async previewCommunicationAppointment(input: PreviewCommunicationAppointmentRequest): Promise<PreviewCommunicationAppointmentResponse> {
+    return this.execute<PreviewCommunicationAppointmentResponse>({
+      method: "POST",
+      pathTemplate: "/v1/communications/preview",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async previewCommunicationAppointmentWithMetadata(input: PreviewCommunicationAppointmentRequest): Promise<ClinicOsApiResponse<PreviewCommunicationAppointmentResponse>> {
+    return this.executeWithMetadata<PreviewCommunicationAppointmentResponse>({
+      method: "POST",
+      pathTemplate: "/v1/communications/preview",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async executeCommunicationCommand(input: ExecuteCommunicationCommandRequest): Promise<ExecuteCommunicationCommandResponse> {
+    return this.execute<ExecuteCommunicationCommandResponse>({
+      method: "POST",
+      pathTemplate: "/v1/communications/commands",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async executeCommunicationCommandWithMetadata(input: ExecuteCommunicationCommandRequest): Promise<ClinicOsApiResponse<ExecuteCommunicationCommandResponse>> {
+    return this.executeWithMetadata<ExecuteCommunicationCommandResponse>({
+      method: "POST",
+      pathTemplate: "/v1/communications/commands",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
   }
 
   async healthLive(input?: HealthLiveRequest): Promise<HealthLiveResponse> {

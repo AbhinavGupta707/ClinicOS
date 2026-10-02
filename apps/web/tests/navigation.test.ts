@@ -46,7 +46,7 @@ describe("role-aware navigation", () => {
 
   it("reports active versus registered unavailable surfaces", () => {
     expect(summarizeSurfaceAccess(["assistant"])).toMatchObject({
-      activeCount: 19,
+      activeCount: 20,
       registeredCount: expect.any(Number),
       unavailableCount: expect.any(Number)
     });

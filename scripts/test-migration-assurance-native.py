@@ -29,13 +29,17 @@ PG_PORT = unused_port()
 REDIS_PORT = unused_port((PG_PORT,))
 DATABASE_TOKEN = uuid.uuid4().hex
 
+communications_only = sys.argv[1:] == ['--run-approved-synthetic-services', '--communications-only']
+communications_upgrade = sys.argv[1:] == ['--run-approved-synthetic-services', '--communications-upgrade-only']
+if communications_only or communications_upgrade:
+    EVIDENCE = ROOT / '.audit-spectra-retirement-20260920/patient-communications-20261002'
 repositories_only = sys.argv[1:] == ['--run-approved-synthetic-services', '--repositories-only']
 all_workflows = sys.argv[1:] == ['--run-approved-synthetic-services']
-if not all_workflows and not repositories_only:
+if not all_workflows and not repositories_only and not communications_only and not communications_upgrade:
     print(json.dumps({'action': 'plan only', 'postgres_port': PG_PORT,
         'redis_port': REDIS_PORT, 'data_logs_and_tmp_parent': str(EVIDENCE),
         'existing_services': 'untouched', 'downloads': False,
-        'checks': ['35 migrations and validation', 'synthetic seed/verify',
+        'checks': ['36 migrations and validation', 'synthetic seed/verify',
             'import/front-desk, daily/documents and 5000-patient replay; real restore into a separate owned cluster']}, indent=2))
     raise SystemExit(0)
 
@@ -142,12 +146,24 @@ try:
         '-validateMigrationNaming=true', '-table=flyway_schema_history',
         '-connectRetries=30', '-lockRetryCount=30', '-cleanDisabled=true',
         '-outOfOrder=false', '-validateOnMigrate=true']
+    if communications_upgrade:
+        command('migrate-before-communications', flyway + ['-target=035', 'migrate'])
+        command('grant-before-upgrade', ['node', 'scripts/db-local-lifecycle.mjs', 'grant-runtime'])
+        command('seed-before-upgrade', ['node', 'scripts/db-local-lifecycle.mjs', 'seed-local'])
+        command('communications-upgrade-seed', ['node', 'scripts/test-communications-upgrade.mjs', 'seed'])
     command('migrate', flyway + ['migrate'])
     command('validate', flyway + ['validate'])
     for action in ['grant-runtime', 'seed-local', 'verify']:
         command(action, ['node', 'scripts/db-local-lifecycle.mjs', action])
-    command('build-api', ['npm', '--workspace', '@clinic-os/api', 'run', 'build'])
-    command('api-all-tests', ['npm', '--workspace', '@clinic-os/api', 'run', 'test'])
+    if communications_upgrade:
+        command('communications-upgrade-verify', ['node', 'scripts/test-communications-upgrade.mjs', 'verify'])
+    else:
+        command('build-api', ['npm', '--workspace', '@clinic-os/api', 'run', 'build'])
+        command('api-all-tests', ['npm', '--workspace', '@clinic-os/api', 'run', 'test'])
+    if communications_only or all_workflows:
+        command('communications-repositories', ['node', 'scripts/test-communications-repositories.mjs'])
+    if communications_only or all_workflows:
+        command('communications-browser', ['node', 'scripts/test-mvp-real-stack.mjs', '--communications'])
     if repositories_only:
         command('migration-assurance-repositories', ['node', 'scripts/test-migration-assurance-repositories.mjs'])
     if all_workflows:
