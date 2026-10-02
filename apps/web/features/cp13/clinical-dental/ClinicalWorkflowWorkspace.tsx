@@ -16,6 +16,7 @@ import type {
   VersionedPublicResource
 } from "@clinic-os/api-client-generated";
 import type { MeProfile } from "../../../lib/me";
+import { PatientHistoryWorkspace } from "./PatientHistoryWorkspace";
 import { ClinicalDentalWorkspace } from "./ClinicalDentalWorkspace";
 import { PatientSelector } from "../shared/PatientSelector";
 import { WorkflowAction, useWorkflowAction } from "../shared/WorkflowAction";
@@ -693,117 +694,7 @@ function ConsentPanel(props: ClinicalContext) {
 }
 
 function PrepPanel(props: ClinicalContext) {
-  const summary = useRemote(
-    () => props.client.getPatientPrepSummary({ path: { patientId: props.patientId } }),
-    [props.client, props.patientId]
-  );
-  const timeline = useRemote(
-    () =>
-      props.client.getPatientTimeline({
-        path: { patientId: props.patientId },
-        query: { limit: 50 }
-      }),
-    [props.client, props.patientId]
-  );
-  const timeZone = props.profile.clinic.timezone || "UTC";
-  const prep = summary.data?.prepSummary;
-  const items = timeline.data?.items ?? timeline.data?.timeline ?? [];
-  return (
-    <>
-      <RemotePanel
-        title="Returning patient preparation"
-        loading={summary.loading}
-        error={summary.error}
-        onRefresh={() => void summary.refresh().catch(() => undefined)}
-      >
-        {prep ? (
-          <>
-            <p>
-              Generated {clinicDisplayTime(prep.generatedAt, timeZone)} from records available to
-              this clinic.
-            </p>
-            <p>
-              {prep.medicalHistoryChangePromptRequired
-                ? "Ask the patient about changes to medical history before treatment."
-                : "Review medical history with the patient before treatment."}
-            </p>
-            <p>Latest intake: {prep.latestIntakeResponse ? "Recorded" : "No response found"}</p>
-            {prep.latestIntakeResponse ? (
-              <dl>
-                {Object.entries(record(prep.latestIntakeResponse.responses)).map(([key, value]) => (
-                  <div key={key}>
-                    <dt>{key.replace(/([A-Z])/g, " $1").replaceAll("_", " ")}</dt>
-                    <dd>{typeof value === "object" ? JSON.stringify(value) : String(value)}</dd>
-                  </div>
-                ))}
-              </dl>
-            ) : null}
-            <p>
-              Active consent purposes:{" "}
-              {prep.activeConsentPurposes.length
-                ? prep.activeConsentPurposes.join(", ").replaceAll("_", " ")
-                : "None reported"}
-            </p>
-            <h3>Coverage</h3>
-            <dl>
-              {Object.entries(prep.dataCoverage).map(([key, value]) => (
-                <div key={key}>
-                  <dt>{key.replaceAll("_", " ")}</dt>
-                  <dd>
-                    {typeof value === "string" ||
-                    typeof value === "number" ||
-                    typeof value === "boolean"
-                      ? String(value)
-                      : "See source record"}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-            <h3>Prior clinical highlights</h3>
-            {prep.priorClinicalTimeline.length ? (
-              <ul>
-                {prep.priorClinicalTimeline.slice(0, 20).map((item, index) => (
-                  <li key={index}>
-                    {fieldText(item, "title") || fieldText(item, "type") || "Clinical event"}
-                    {fieldText(item, "occurredAt")
-                      ? ` · ${clinicDisplayTime(fieldText(item, "occurredAt"), timeZone)}`
-                      : ""}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p>No prior clinical highlights in this bounded summary.</p>
-            )}
-          </>
-        ) : null}
-      </RemotePanel>
-      <RemotePanel
-        title="Recent timeline"
-        loading={timeline.loading}
-        error={timeline.error}
-        onRefresh={() => void timeline.refresh().catch(() => undefined)}
-      >
-        <p>Up to 50 recent events. This is a bounded view, not the complete record.</p>
-        {items.length ? (
-          <ul>
-            {items.map((item, index) => (
-              <li key={index}>
-                {fieldText(item, "title") ||
-                  fieldText(item, "eventType") ||
-                  fieldText(item, "type") ||
-                  "Recorded event"}
-                {fieldText(item, "occurredAt")
-                  ? ` · ${clinicDisplayTime(fieldText(item, "occurredAt"), timeZone)}`
-                  : ""}
-              </li>
-            ))}
-          </ul>
-        ) : !timeline.loading ? (
-          <p>No timeline events returned.</p>
-        ) : null}
-      </RemotePanel>
-    </>
-  );
+  return <PatientHistoryWorkspace client={props.client} profile={props.profile} patientId={props.patientId}/>;
 }
 
 const NOTE_SECTIONS = [

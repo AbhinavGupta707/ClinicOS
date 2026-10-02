@@ -410,7 +410,7 @@ test("patient timeline exposes attribution as its own public category", async ()
   const context = featureContext({
     patientAdministration: {
       findPatientById: async () => patientRecord(),
-      findPatientTimeline: async () => [
+      listPatientTimeline: async () => ({records: [
         {
           id: "10000000-0000-4000-8000-000000000080",
           tenantId: TENANT_ID,
@@ -424,7 +424,8 @@ test("patient timeline exposes attribution as its own public category", async ()
           summary: null,
           metadata: {}
         }
-      ]
+      ],nextCursor:null}
+      )
     }
   });
   const response = await FRONT_OFFICE_FEATURE_HANDLERS.getPatientTimeline!(
@@ -552,7 +553,7 @@ function request(
         },
         memberships: [],
         clinicAssignments: [],
-        roleAssignments: []
+        roleAssignments: [{tenantId:TENANT_ID,clinicId:CLINIC_ID,userId:ACTOR_ID,roleSlug:"owner_admin"}]
       }
     },
     parsed: {
@@ -901,4 +902,23 @@ test("a stale queue cannot call or requeue a cancelled appointment", async () =>
       (error) => apiError(error, 409)
     );
   }
+});
+
+test("history passes only scoped authorized event types to durable paging and audits the read", async () => {
+  const evidence=evidenceRecorder();
+  let captured:Record<string,unknown>={};
+  const context=featureContext({patientAdministration:{findPatientById:async()=>patientRecord(),listPatientTimeline:async (_patient:unknown,input:Record<string,unknown>)=>{captured=input;return {records:[],nextCursor:null};}}},evidence);
+  const req=request('getPatientTimeline',{path:{patientId:PATIENT_ID},query:{limit:20,cursor:PATIENT_ID}});
+  const receptionist={...req,access:{...req.access,context:{...req.access.context,roleAssignments:[{tenantId:TENANT_ID,clinicId:CLINIC_ID,userId:ACTOR_ID,roleSlug:'receptionist'}]}}} as ClinicFeatureOperationRequest;
+  const response=await FRONT_OFFICE_FEATURE_HANDLERS.getPatientTimeline!(receptionist,context);
+  assertContractResponse('getPatientTimeline',response);
+  assert.equal(captured.limit,20);assert.equal(captured.cursor,PATIENT_ID);
+  assert.deepEqual(captured.itemTypes,[]); // Reception has no patient.phi.read; route middleware normally denies first.
+  assert.ok(!(captured.itemTypes as string[]).includes('clinical_note_signed'));
+  assert.equal(evidence.audit.length,1);
+  await assert.rejects(()=>FRONT_OFFICE_FEATURE_HANDLERS.getPatientTimeline!({...receptionist,parsed:{...receptionist.parsed,query:{category:'visits'}}},context),(e:unknown)=>apiError(e,403));
+});
+test("history converts invalid scoped cursors to a client error", async()=>{
+  const context=featureContext({patientAdministration:{findPatientById:async()=>patientRecord(),listPatientTimeline:async()=>{throw new RangeError('Wrong cursor');}}});
+  await assert.rejects(()=>FRONT_OFFICE_FEATURE_HANDLERS.getPatientTimeline!(request('getPatientTimeline',{path:{patientId:PATIENT_ID}}),context),(e:unknown)=>apiError(e,400));
 });

@@ -292,7 +292,7 @@ try {
   assert.equal(result.stats.flaky, 0);
   assert.equal(
     result.stats.expected,
-    dailyWorkflow ? 8 : frontDeskOnly ? 6 : 12,
+    dailyWorkflow ? 9 : frontDeskOnly ? 6 : 12,
     "Every real-stack scenario must execute."
   );
   if (dailyWorkflow) await verifyDailyWorkflowEvidence();

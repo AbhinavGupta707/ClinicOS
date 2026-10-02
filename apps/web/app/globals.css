@@ -5348,3 +5348,24 @@ button.cp6-card:hover {
 .appointment-import-workspace ul { display: grid; gap: 12px; padding-left: 0; list-style: none; }
 .appointment-import-workspace li { display: grid; gap: 6px; min-width: 0; }
 .appointment-import-workspace :is(input, select, textarea, button):focus-visible { outline: 3px solid #6baf99; outline-offset: 2px; }
+
+/* Returning-patient review uses the existing workspace palette and typography. */
+.patient-history-workspace { display: grid; gap: 1.25rem; min-width: 0; }
+.patient-history-boundary { padding: 1rem; border-left: 3px solid #668b80; background: #eef4f1; }
+.patient-history-panel { min-width: 0; overflow-wrap: anywhere; }
+.patient-history-panel header, .patient-history-panel nav { display: flex; gap: .75rem; justify-content: space-between; align-items: center; flex-wrap: wrap; }
+.patient-history-panel label { display: grid; gap: .5rem; margin-block: .75rem; min-width: 0; }
+.patient-history-panel select { width: 100%; min-width: 0; max-width: 100%; min-height: 44px; padding: .6rem; background: white; border: 1px solid #bdd0c9; border-radius: .5rem; }
+.patient-history-panel button { min-height: 44px; max-width: 100%; white-space: normal; margin-block: .35rem; }
+.patient-history-panel button:focus-visible, .patient-history-panel select:focus-visible { outline: 3px solid #397b69; outline-offset: 3px; }
+.patient-history-events { list-style: none; padding: 0; }
+.patient-history-events > li { border-left: 2px solid #c8d9d2; padding: .25rem 0 1.2rem 1rem; margin-block: 1rem; }
+.patient-history-events h3 { margin: .35rem 0; }
+.patient-history-event-category { font-size: .8rem; text-transform: uppercase; letter-spacing: .035em; color: #52675f; }
+.patient-history-fields { display: grid; gap: .75rem; }
+.patient-history-fields dt { font-weight: 600; text-transform: capitalize; }
+.patient-history-fields dd { margin: .25rem 0 0; white-space: pre-wrap; }
+.patient-history-record { border: 1px solid #d6e1dc; border-radius: .65rem; padding: 1rem; margin-block: 1rem; }
+.patient-history-comparison-controls, .patient-history-diff { display: grid; grid-template-columns: repeat(2,minmax(0,1fr)); gap: 1rem; }
+.patient-history-diff h5 { font-size: 1rem; margin-top: 0; }
+@media(max-width: 620px) { .patient-history-comparison-controls, .patient-history-diff { grid-template-columns: minmax(0,1fr); } .patient-history-panel header { align-items: flex-start; } }

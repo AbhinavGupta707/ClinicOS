@@ -1,3 +1,4 @@
+import { historyPageLimit, assertHistoryCursor, type PatientHistoryPageInput } from "@clinic-os/domain";
 import {createAppointmentImport,stageAppointmentObservations,sealAppointmentImport,listAppointmentImports,getAppointmentImport,lockAppointmentObservation,decideAppointmentObservation} from "./appointment-observations.ts";
 import {FinancialConflict,executeFinancialCommand,getFinancialAccount,getFinancialDay,refreshInvoiceFinancialState} from "./financial-operations.ts";
 import type {FinancialCommandInput} from "@clinic-os/domain";
@@ -992,6 +993,49 @@ export class PostgresClinicOperationsRepository
       );
 
       return result.rows[0] ? mapPatientRow(result.rows[0]) : null;
+    });
+  }
+
+  async listPatientTimeline(scope: RepositoryScope, patientId: UUID, input: PatientHistoryPageInput) {
+    const limit = historyPageLimit(input.limit);
+    assertHistoryCursor(input.cursor);
+    return this.#withRls(scope, async client => {
+      if (input.cursor) {
+        const anchor = await client.query(`select id from patient_timeline_items where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and id=$4 and item_type=any($5::text[])`, [scope.tenantId,scope.clinicId,patientId,input.cursor,input.itemTypes]);
+        if (!anchor.rows.length) throw new RangeError("History cursor does not belong to this patient and filter. Refresh history.");
+      }
+      const result = await client.query<PatientTimelineRow>(`
+        select * from patient_timeline_items
+        where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and item_type=any($4::text[])
+        and ($5::uuid is null or (occurred_at,id) < (select occurred_at,id from patient_timeline_items where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and id=$5))
+        order by occurred_at desc,id desc limit $6`, [scope.tenantId,scope.clinicId,patientId,input.itemTypes,input.cursor ?? null,limit+1]);
+      const records = result.rows.slice(0,limit).map(mapTimelineRow);
+      return {records,nextCursor:result.rows.length>limit?records.at(-1)!.id:null};
+    });
+  }
+
+  async listPatientDentalSnapshots(scope: RepositoryScope, patientId: UUID, filter: WorkflowPageFilter = {}) {
+    const limit = historyPageLimit(filter.limit ?? undefined);
+    assertHistoryCursor(filter.cursor ?? undefined);
+    return this.#withRls(scope, async client => {
+      if(filter.cursor) {
+        const anchor=await client.query(`select id from dental_chart_snapshots where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and id=$4`,[scope.tenantId,scope.clinicId,patientId,filter.cursor]);
+        if(!anchor.rows.length) throw new RangeError("Snapshot cursor does not belong to this patient. Refresh history.");
+      }
+      // Do not fetch chart_state for the selector; individual snapshot reads are separately audited.
+      const result=await client.query<DentalChartSnapshotRow>(`select id,tenant_id,clinic_id,patient_id,encounter_id,snapshot_version,reason,created_by_user_id,created_at from dental_chart_snapshots
+        where tenant_id=$1 and clinic_id=$2 and patient_id=$3
+        and ($4::uuid is null or snapshot_version < (select snapshot_version from dental_chart_snapshots where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and id=$4))
+        order by snapshot_version desc limit $5`,[scope.tenantId,scope.clinicId,patientId,filter.cursor??null,limit+1]);
+      const records=result.rows.slice(0,limit).map(row=>({id:row.id,tenantId:row.tenant_id,clinicId:row.clinic_id,patientId:row.patient_id,encounterId:row.encounter_id,snapshotVersion:Number(row.snapshot_version),reason:row.reason,createdByUserId:row.created_by_user_id,createdAt:toIso(row.created_at)}));
+      return {records,nextCursor:result.rows.length>limit?records.at(-1)!.id:null};
+    });
+  }
+
+  async getPatientDentalSnapshot(scope: RepositoryScope, patientId: UUID, snapshotId: UUID) {
+    return this.#withRls(scope,async client=>{
+      const result=await client.query<DentalChartSnapshotRow>(`select * from dental_chart_snapshots where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and id=$4`,[scope.tenantId,scope.clinicId,patientId,snapshotId]);
+      return result.rows[0]?mapDentalChartSnapshotRow(result.rows[0]):null;
     });
   }
 
@@ -6218,7 +6262,8 @@ export class PostgresClinicOperationsRepository
 
   async listPatientIntakeFormSubmissions(
     scope: RepositoryScope,
-    patientId: UUID
+    patientId: UUID,
+    limit?: number
   ): Promise<IntakeFormSubmissionRecord[]> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<IntakeFormSubmissionRow>(
@@ -6226,9 +6271,10 @@ export class PostgresClinicOperationsRepository
           select *
           from form_responses
           where tenant_id = $1 and clinic_id = $2 and patient_id = $3
-          order by submitted_at desc
+          order by submitted_at desc, id desc
+          limit $4
         `,
-        [scope.tenantId, scope.clinicId, patientId]
+        [scope.tenantId, scope.clinicId, patientId, limit === undefined ? null : historyPageLimit(limit)]
       );
       return result.rows.map(mapIntakeFormSubmissionRow);
     });
@@ -6333,8 +6379,17 @@ export class PostgresClinicOperationsRepository
     scope: RepositoryScope,
     patientId: UUID
   ): Promise<ConsentEnforcementState> {
-    const consents = await this.listPatientConsents(scope, patientId);
-    return buildConsentEnforcementState(patientId, consents);
+    return this.#withRls(scope, async client => {
+      // Same latest-effective-event rule as buildConsentEnforcementState over the
+      // full ordered history. Return at most one row per purpose, never truncate
+      // history before choosing the latest grant/revocation.
+      const result = await client.query<ConsentRow>(`
+        select distinct on (purpose) * from consents
+        where tenant_id=$1 and clinic_id=$2 and patient_id=$3
+        order by purpose, greatest(created_at,revoked_at) desc, created_at asc, id desc`,
+        [scope.tenantId,scope.clinicId,patientId]);
+      return buildConsentEnforcementState(patientId, result.rows.map(mapConsentRow), this.#clock.now().toISOString());
+    });
   }
 
   async findProviderEligibility(
@@ -12517,7 +12572,7 @@ export class PostgresClinicOperationsRepository
         select *
         from consents
         where tenant_id = $1 and clinic_id = $2 and patient_id = $3
-        order by created_at desc
+        order by created_at desc, id asc
           ${lockForUse ? "for share" : ""}
       `,
       [scope.tenantId, scope.clinicId, patientId]

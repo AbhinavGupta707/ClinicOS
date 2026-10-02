@@ -361,3 +361,15 @@ Before connector-specific MVP1 code begins, obtain:
   proves the complete loop and reverse-order cleanup at desktop and mobile
   widths. This closes the local guided-trial product seam; it does not prove a
   Practo API/export adapter, source freshness, recurring sync, or writeback.
+
+## 2026-10-02 — Returning-patient continuity slice
+
+The owner requested a history-led selection and implementation of the next major
+task. The resulting slice extends the canonical patient timeline with authorized
+database paging, opens exact clinical source records, and compares saved dental
+snapshots. It preserves the prior migration, clinic-day and financial work.
+See `RETURNING_PATIENT_CHART_PLAN_2026-10-02.md` and
+`../qa/RETURNING_PATIENT_CHART_ACCEPTANCE_2026-10-02.md` for scope and evidence.
+Synthetic acceptance does not close MVP1/MVP2 clinic reconciliation, real staff
+validation, provider activation or production-readiness gates. The next milestone
+is the clinic-day/return-visit rehearsal and representative source validation.

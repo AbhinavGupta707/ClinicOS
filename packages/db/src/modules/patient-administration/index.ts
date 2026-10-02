@@ -10,6 +10,7 @@ export const PATIENT_ADMINISTRATION_OPERATIONS = [
   "listPatients",
   "findPatientById",
   "findPatientTimeline",
+  "listPatientTimeline",
   "findPatientDuplicateCandidates",
   "createPatient",
   "updatePatient",

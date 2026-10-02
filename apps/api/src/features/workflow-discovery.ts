@@ -82,6 +82,15 @@ async function discover(
           )
         };
         break;
+      case "listPatientDentalSnapshots": {
+        const page=await r.dentalTreatment.listPatientDentalSnapshots(patientId!,query);
+        body={snapshots:page.records,nextCursor:page.nextCursor}; break;
+      }
+      case "getPatientDentalSnapshot": {
+        const snapshot=await r.dentalTreatment.getPatientDentalSnapshot(patientId!,path.snapshotId as UUID);
+        if(!snapshot) throw new ApiError(404,"NOT_FOUND","Snapshot not found for this patient.");
+        body={snapshot}; break;
+      }
       case "listPatientIntakeHistory": {
         const page = await r.clinicalCare.listPatientIntakeHistory(patientId!, query);
         body = { submissions: page.records, nextCursor: page.nextCursor };
@@ -248,12 +257,15 @@ async function discover(
         ? "clinic_access"
         : request.operationId === "saveClinicSetup"
           ? "clinic_configuration"
-          : "workflow_list",
+          : request.operationId === "getPatientDentalSnapshot"
+            ? "dental_chart_snapshot"
+            : "workflow_list",
     resourceId:
       (body as { record?: { id: UUID }; staff?: { id?: UUID } })?.record?.id ??
       (!Array.isArray((body as { staff?: unknown }).staff)
         ? (body as { staff?: { id: UUID } }).staff?.id
         : undefined) ??
+      (path.snapshotId as UUID | undefined) ??
       patientId ??
       encounterId ??
       request.access.clinicId,

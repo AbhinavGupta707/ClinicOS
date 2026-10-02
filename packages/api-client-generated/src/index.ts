@@ -210,8 +210,12 @@ export type GetPatientRequest = { readonly path: { readonly patientId: string } 
 export type GetPatientResponse = { readonly patient: VersionedPublicResource };
 export type UpdatePatientRequest = { readonly path: { readonly patientId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly fullName?: string; readonly phone?: string | null; readonly contactUnavailableReason?: string; readonly duplicateReview?: { readonly patientIds: readonly (string)[]; readonly reason: string }; readonly email?: string | null; readonly dateOfBirth?: string | null; readonly gender?: "female" | "male" | "other" | "unknown" } };
 export type UpdatePatientResponse = { readonly patient: VersionedPublicResource };
-export type GetPatientTimelineRequest = { readonly path: { readonly patientId: string }; readonly query?: { readonly limit?: number } };
-export type GetPatientTimelineResponse = { readonly timeline: readonly (PublicJsonObject)[]; readonly items: readonly (PublicJsonObject)[] };
+export type ListPatientDentalSnapshotsRequest = { readonly path: { readonly patientId: string }; readonly query?: { readonly cursor?: string; readonly limit?: number } };
+export type ListPatientDentalSnapshotsResponse = { readonly snapshots: readonly (PublicJsonObject)[]; readonly nextCursor: string | null };
+export type GetPatientDentalSnapshotRequest = { readonly path: { readonly patientId: string; readonly snapshotId: string } };
+export type GetPatientDentalSnapshotResponse = { readonly snapshot: PublicJsonObject };
+export type GetPatientTimelineRequest = { readonly path: { readonly patientId: string }; readonly query?: { readonly cursor?: string; readonly category?: "visits" | "prescriptions" | "dental" | "treatment" | "billing" | "intake" | "media" | "appointments" | "follow_up" | "lab" | "operations" | "identity" | "ai"; readonly limit?: number } };
+export type GetPatientTimelineResponse = { readonly timeline: readonly (PublicJsonObject)[]; readonly items: readonly (PublicJsonObject)[]; readonly nextCursor: string | null; readonly allowedCategories: readonly ("visits" | "prescriptions" | "dental" | "treatment" | "billing" | "intake" | "media" | "appointments" | "follow_up" | "lab" | "operations" | "identity" | "ai")[]; readonly generatedAt: string };
 export type ListLeadsRequest = { readonly query?: { readonly cursor?: string; readonly source?: "manual" | "whatsapp" | "phone" | "call" | "walkin" | "practo" | "google" | "website" | "instagram" | "referral" | "recall_campaign"; readonly status?: "new" | "contacted" | "matched" | "booked" | "lost" | "duplicate" | "spam"; readonly limit?: number } };
 export type ListLeadsResponse = { readonly leads: readonly (VersionedPublicResource)[]; readonly nextCursor: string | null };
 export type CreateLeadRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly primaryContact: string; readonly intent?: "appointment_request" | "pricing_query" | "followup" | "emergency" | "lab_vendor" | "unknown"; readonly source: "manual" | "whatsapp" | "phone" | "call" | "walkin" | "practo" | "google" | "website" | "instagram" | "referral" | "recall_campaign"; readonly sourceDetail?: WritableJsonObject } };
@@ -526,6 +530,8 @@ export interface ClinicOsNativeOperationMap {
   readonly createPatient: { readonly request: CreatePatientRequest; readonly response: CreatePatientResponse };
   readonly getPatient: { readonly request: GetPatientRequest; readonly response: GetPatientResponse };
   readonly updatePatient: { readonly request: UpdatePatientRequest; readonly response: UpdatePatientResponse };
+  readonly listPatientDentalSnapshots: { readonly request: ListPatientDentalSnapshotsRequest; readonly response: ListPatientDentalSnapshotsResponse };
+  readonly getPatientDentalSnapshot: { readonly request: GetPatientDentalSnapshotRequest; readonly response: GetPatientDentalSnapshotResponse };
   readonly getPatientTimeline: { readonly request: GetPatientTimelineRequest; readonly response: GetPatientTimelineResponse };
   readonly listLeads: { readonly request: ListLeadsRequest; readonly response: ListLeadsResponse };
   readonly createLead: { readonly request: CreateLeadRequest; readonly response: CreateLeadResponse };
@@ -1434,6 +1440,54 @@ export class ClinicOsApiClient {
       pathTemplate: "/v1/patients/{patientId}",
       auth: "bearer",
       contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listPatientDentalSnapshots(input: ListPatientDentalSnapshotsRequest): Promise<ListPatientDentalSnapshotsResponse> {
+    return this.execute<ListPatientDentalSnapshotsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/dental-snapshots",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listPatientDentalSnapshotsWithMetadata(input: ListPatientDentalSnapshotsRequest): Promise<ClinicOsApiResponse<ListPatientDentalSnapshotsResponse>> {
+    return this.executeWithMetadata<ListPatientDentalSnapshotsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/dental-snapshots",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getPatientDentalSnapshot(input: GetPatientDentalSnapshotRequest): Promise<GetPatientDentalSnapshotResponse> {
+    return this.execute<GetPatientDentalSnapshotResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/dental-snapshots/{snapshotId}",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getPatientDentalSnapshotWithMetadata(input: GetPatientDentalSnapshotRequest): Promise<ClinicOsApiResponse<GetPatientDentalSnapshotResponse>> {
+    return this.executeWithMetadata<GetPatientDentalSnapshotResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/dental-snapshots/{snapshotId}",
+      auth: "bearer",
+      contentType: null,
       bodyEncoding: "json",
       successStatuses: [200],
       input: input ?? {}

@@ -64,6 +64,8 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Objec
   createPatient: ["patient.write"],
   getPatient: ["patient.read", "patient.phi.read"],
   updatePatient: ["patient.write"],
+  listPatientDentalSnapshots: ["patient.read", "patient.phi.read", "dental.chart.read"],
+  getPatientDentalSnapshot: ["patient.read", "patient.phi.read", "dental.chart.read"],
   getPatientTimeline: ["patient.read", "patient.phi.read"],
   listLeads: ["message.read"],
   createLead: ["message.write"],

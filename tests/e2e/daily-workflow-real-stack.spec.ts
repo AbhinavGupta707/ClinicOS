@@ -954,4 +954,123 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
     });
     await page.context().close();
   });
+  test("doctor reviews paginated history, exact signed notes and saved dental differences", async ({
+    browser
+  }, info) => {
+    const page = await rolePage(browser, "doctor");
+    const chart = await api(
+      page,
+      `/v1/patients/${patientId}/dental-chart`,
+      "GET",
+      undefined,
+      "doctor"
+    );
+    await api(
+      page,
+      "/v1/encounters",
+      "POST",
+      { patientId, providerUserId: doctor, reason: "Synthetic returning visit" },
+      "doctor"
+    );
+    const first = chart.snapshots[0];
+    const finding = chart.findings[0];
+    await api(
+      page,
+      `/v1/dental-findings/${finding.id}`,
+      "PATCH",
+      { status: "watch", changeReason: "Synthetic returning-visit review" },
+      "doctor",
+      finding.rowVersion
+    );
+    let second: { id: string } | undefined;
+    for (let i = 0; i < 21; i++) {
+      const result = await api(
+        page,
+        `/v1/patients/${patientId}/dental-chart/snapshots`,
+        "POST",
+        { reason: `Synthetic returning chart ${i + 2}` },
+        "doctor"
+      );
+      if (i === 0) second = result.snapshot;
+    }
+    await choose(page, "patient-profile");
+    const history = page.getByRole("region", { name: "Patient history", exact: true });
+    await expect(history.getByText("Page 1", { exact: false })).toBeVisible();
+    await history.getByRole("button", { name: "Older records", exact: true }).click();
+    await expect(history.getByText("Page 2", { exact: false })).toBeVisible();
+    await history.getByRole("button", { name: "Newer records", exact: true }).click();
+    await history.getByLabel("History category").selectOption("visits");
+    await expect(history.getByRole("button", { name: /Open record:.*signed/i })).toBeVisible();
+    await history.getByRole("button", { name: /Open record:.*signed/i }).click();
+    const source = page.getByRole("region", { name: "Source record", exact: true });
+    await expect(source.getByRole("heading", { name: /Note version.*signed/ })).toBeVisible();
+    await expect(source.getByText(/Signed by/)).not.toContainText("unavailable");
+    await source.getByRole("button", { name: "Close record" }).click();
+    const comparison = page.getByRole("region", { name: "Dental snapshot comparison" });
+    await comparison.getByRole("button", { name: "Load older snapshots" }).click();
+    await expect(
+      comparison.getByLabel("Earlier snapshot").locator("option", { hasText: "Version 1 ·" })
+    ).toHaveCount(1);
+    await comparison.getByLabel("Earlier snapshot").selectOption(first.id);
+    await comparison.getByLabel("Later snapshot").selectOption(second!.id);
+    await comparison.getByRole("button", { name: "Compare saved snapshots" }).click();
+    await expect(comparison.getByText("Changed fields: status")).toBeVisible();
+    await expect(comparison.getByText("watch", { exact: true })).toBeVisible();
+    await page.screenshot({
+      path: info.outputPath("returning-patient-desktop.png"),
+      fullPage: true
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await noOverflow(page);
+    await comparison.scrollIntoViewIfNeeded();
+    await page.screenshot({
+      path: info.outputPath("returning-patient-mobile.png"),
+      fullPage: true
+    });
+    // The actual durable route fails: retain the old view with an explicit stale/error message.
+    await page.route(`**/v1/patients/${patientId}/timeline?**`, (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({
+          error: {
+            code: "DEPENDENCY_UNAVAILABLE",
+            message: "Synthetic database outage",
+            details: {},
+            request_id: "synthetic"
+          }
+        })
+      })
+    );
+    await history.getByRole("button", { name: "Refresh patient history" }).click();
+    await expect(history.getByRole("alert")).toContainText("previously loaded view");
+    await page.unroute(`**/v1/patients/${patientId}/timeline?**`);
+    const emptyName = `SyntheticHistory-empty-${tag}`;
+    const empty = await api(page, "/v1/patients", "POST", {
+      fullName: emptyName,
+      phone: "+919555333998",
+      source: "manual"
+    });
+    const foreign = await page.request.get(
+      `/v1/patients/${empty.patient.id}/dental-snapshots/${first.id}`,
+      { headers: { authorization: "Bearer local-synthetic-doctor", "x-clinic-id": clinic } }
+    );
+    expect(foreign.status()).toBe(404);
+    await page.getByLabel("Find patient", { exact: true }).fill(emptyName);
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await page.getByRole("button", { name: new RegExp(emptyName) }).click();
+    await expect(
+      page.getByText("No intake is recorded. Medical history is unknown.", { exact: true })
+    ).toBeVisible();
+    await expect(page.getByText("Synthetic prior evidence", { exact: true })).toHaveCount(0);
+    await expect(page.getByRole("region", { name: "Snapshot differences" })).toHaveCount(0);
+    await expect(history.getByRole("button", { name: /Open record:/ })).toHaveCount(0);
+    await page.context().close();
+    const reception = await rolePage(browser, "receptionist");
+    const denied = await reception.request.get(`/v1/patients/${patientId}/dental-snapshots`, {
+      headers: { authorization: "Bearer local-synthetic-receptionist", "x-clinic-id": clinic }
+    });
+    expect(denied.status()).toBe(403);
+    await reception.context().close();
+  });
 });

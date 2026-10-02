@@ -1,3 +1,4 @@
+import { historyPageLimit, assertHistoryCursor, type PatientHistoryPageInput } from "@clinic-os/domain";
 import {validateClinicSetup, ClinicSetupConflict,type ClinicSetupKind,type ClinicSetupInput,type ClinicSetupRecord,type ClinicAccessPerson,type ClinicAccessInput} from "@clinic-os/db";
 import type { WorkflowPage, WorkflowPageFilter, ClinicStaffSummary } from "@clinic-os/db";
 import { patientFileIdentityConflicts, assertPatientFileManifest, patientFileChunkSummary, type PatientFileManifest, type PatientFileDetail } from "@clinic-os/db";
@@ -1172,6 +1173,26 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       this.patients.find((patient) => matchesScope(patient, scope) && patient.id === patientId) ??
       null
     );
+  }
+
+  async listPatientTimeline(scope: RepositoryScope, patientId: UUID, input: PatientHistoryPageInput) {
+    const limit=historyPageLimit(input.limit); assertHistoryCursor(input.cursor);
+    const records=(await this.findPatientTimeline(scope,patientId)).filter(row=>input.itemTypes.includes(row.itemType)).sort((a,b)=>b.occurredAt.localeCompare(a.occurredAt)||b.id.localeCompare(a.id));
+    const anchor=input.cursor?records.findIndex(row=>row.id===input.cursor):-1;
+    if(input.cursor&&anchor<0) throw new RangeError("History cursor does not belong to this patient and filter. Refresh history.");
+    const page=records.slice(anchor+1,anchor+1+limit);
+    return {records:page,nextCursor:anchor+1+limit<records.length?page.at(-1)!.id:null};
+  }
+  async listPatientDentalSnapshots(scope: RepositoryScope, patientId: UUID, filter: WorkflowPageFilter={}) {
+    const limit=historyPageLimit(filter.limit ?? undefined); assertHistoryCursor(filter.cursor ?? undefined);
+    const rows=this.dentalChartSnapshots.filter(row=>matchesScope(row,scope)&&row.patientId===patientId).sort((a,b)=>b.snapshotVersion-a.snapshotVersion);
+    const anchor=filter.cursor?rows.findIndex(row=>row.id===filter.cursor):-1;
+    if(filter.cursor&&anchor<0) throw new RangeError("Snapshot cursor does not belong to this patient. Refresh history.");
+    const records=rows.slice(anchor+1,anchor+limit+1).map(({chartState,provenance,...row})=>row);
+    return {records,nextCursor:anchor+limit+1<rows.length?records.at(-1)!.id:null};
+  }
+  async getPatientDentalSnapshot(scope: RepositoryScope, patientId: UUID, snapshotId: UUID) {
+    return this.dentalChartSnapshots.find(row=>matchesScope(row,scope)&&row.patientId===patientId&&row.id===snapshotId)??null;
   }
 
   async findPatientTimeline(
@@ -4769,11 +4790,13 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
   async listPatientIntakeFormSubmissions(
     scope: RepositoryScope,
-    patientId: UUID
+    patientId: UUID,
+    limit?: number
   ): Promise<IntakeFormSubmissionRecord[]> {
     return this.intakeFormSubmissions
       .filter((submission) => matchesScope(submission, scope) && submission.patientId === patientId)
-      .sort((left, right) => right.submittedAt.localeCompare(left.submittedAt));
+      .sort((left, right) => right.submittedAt.localeCompare(left.submittedAt) || right.id.localeCompare(left.id))
+      .slice(0, limit === undefined ? undefined : historyPageLimit(limit));
   }
 
   async listPatientConsents(scope: RepositoryScope, patientId: UUID): Promise<ConsentRecord[]> {

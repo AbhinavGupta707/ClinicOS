@@ -1,3 +1,4 @@
+import { PATIENT_HISTORY_CATEGORIES } from "@clinic-os/domain";
 import {
   API_ERROR_SCHEMA,
   EMPTY_OBJECT_SCHEMA,
@@ -1292,6 +1293,8 @@ function cp2Operations(): HttpOperationContract[] {
       optimisticConcurrency: true,
       success: { 200: singleVersionedEntity("patient") }
     }),
+    operation({operationId:"listPatientDentalSnapshots",checkpoint:"CP4",method:"GET",path:"/v1/patients/{patientId}/dental-snapshots",summary:"Page immutable dental snapshot descriptions",tags:["Dental"],phi:"read",pathProperties:{patientId:uuid},mutation:false,paginated:true,queryProperties:{cursor:uuid},success:{200:responseSchema({snapshots:entities,nextCursor:optionalUuid})}}),
+    operation({operationId:"getPatientDentalSnapshot",checkpoint:"CP4",method:"GET",path:"/v1/patients/{patientId}/dental-snapshots/{snapshotId}",summary:"Read an immutable patient dental snapshot",tags:["Dental"],phi:"read",pathProperties:{patientId:uuid,snapshotId:uuid},mutation:false,success:{200:singleEntity("snapshot")}}),
     operation({
       operationId: "getPatientTimeline",
       checkpoint: "CP2",
@@ -1303,7 +1306,8 @@ function cp2Operations(): HttpOperationContract[] {
       pathProperties: { patientId: uuid },
       mutation: false,
       paginated: true,
-      success: { 200: responseSchema({ timeline: entities, items: entities }) }
+      queryProperties: { cursor: uuid, category: schema.enum(PATIENT_HISTORY_CATEGORIES) },
+      success: { 200: responseSchema({ timeline: entities, items: entities, nextCursor: optionalUuid, allowedCategories: schema.array(schema.enum(PATIENT_HISTORY_CATEGORIES)), generatedAt:dateTime }) }
     }),
     operation({
       operationId: "listLeads",

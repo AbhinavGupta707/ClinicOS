@@ -1,3 +1,5 @@
+import { permissionsForScope } from "@clinic-os/auth";
+import { allowedPatientHistoryCategories, patientHistoryItemTypes, patientHistoryCategory, type PatientHistoryCategory } from "@clinic-os/domain";
 import {ClinicSetupConflict} from "@clinic-os/db";
 import type { JsonValue } from "@clinic-os/api-contracts";
 import type {
@@ -246,15 +248,18 @@ async function handleGetPatientTimeline(
   const patient = await context.repositories.patientAdministration.findPatientById(patientId);
   if (!patient) throw notFound("Patient not found.", { patient_id: patientId });
   const limit = optionalNumber(requestRecord(request.parsed.query).limit) ?? 50;
-  const timeline = (await context.repositories.patientAdministration.findPatientTimeline(patientId))
-    .slice(0, limit)
-    .map(publicTimelineItem);
+  const query=requestRecord(request.parsed.query);
+  const allowedCategories=allowedPatientHistoryCategories(permissionsForScope(request.access.context,request.access.context.tenant.id,request.access.clinicId));
+  const category=optionalString(query.category) as PatientHistoryCategory | undefined;
+  if(category&&!allowedCategories.includes(category)) throw new ApiError(403,"PERMISSION_DENIED","This history category is not available to this account.");
+  const page=await context.repositories.patientAdministration.listPatientTimeline(patientId,{limit,cursor:optionalString(query.cursor),itemTypes:patientHistoryItemTypes(category?[category]:allowedCategories)}).catch(error=>{if(error instanceof RangeError) throw new ApiError(400,"VALIDATION_ERROR",error.message);throw error;});
+  const timeline=page.records.map(publicTimelineItem);
   await appendAudit(request, context, "patient.timeline.viewed", {
     patientId,
     resourceType: "patient_timeline",
     resourceId: patientId
   });
-  return ok({ timeline, items: timeline });
+  return ok({ timeline, items: timeline, nextCursor:page.nextCursor, allowedCategories, generatedAt:nowIso(context) });
 }
 
 async function handleListLeads(
@@ -721,10 +726,11 @@ async function handleGetPatientPrepSummary(
       appointment_id: appointment.id
     });
   }
-  const [timeline, intakeSubmissions, consents, consentEnforcementState] = await Promise.all([
-    context.repositories.patientAdministration.findPatientTimeline(patientId),
-    context.repositories.clinicalCare.listPatientIntakeFormSubmissions(patientId),
-    context.repositories.clinicalCare.listPatientConsents(patientId),
+  const allowedCategories=allowedPatientHistoryCategories(permissionsForScope(request.access.context,request.access.context.tenant.id,request.access.clinicId));
+  const [timelinePage, clinicalPage, intakeSubmissions, consentEnforcementState] = await Promise.all([
+    context.repositories.patientAdministration.listPatientTimeline(patientId,{limit:10,itemTypes:patientHistoryItemTypes(allowedCategories)}),
+    context.repositories.patientAdministration.listPatientTimeline(patientId,{limit:20,itemTypes:patientHistoryItemTypes(allowedCategories.filter(c=>["visits","prescriptions","dental"].includes(c)))}),
+    context.repositories.clinicalCare.listPatientIntakeFormSubmissions(patientId,1),
     context.repositories.clinicalCare.getConsentEnforcementState(patientId)
   ]);
   const latestIntakeResponse =
@@ -752,26 +758,19 @@ async function handleGetPatientPrepSummary(
     generatedAt: nowIso(context),
     latestIntakeResponse,
     consentEnforcementState,
-    activeConsentPurposes: consents
-      .filter((consent) => consent.status === "active")
-      .map((consent) => consent.purpose)
-      .sort(),
-    timelineHighlights: timeline.slice(0, 10),
-    priorClinicalTimeline: timeline.filter(
-      (item) =>
-        item.itemType.startsWith("encounter_") ||
-        item.itemType.startsWith("clinical_note_") ||
-        item.itemType.startsWith("prescription_") ||
-        item.itemType.startsWith("dental_")
-    ),
+    activeConsentPurposes: consentEnforcementState.activePurposes,
+    timelineHighlights: timelinePage.records,
+    priorClinicalTimeline: clinicalPage.records,
     medicalHistoryChangePromptRequired:
       latestIntakeResponse === null ||
       Object.keys(latestIntakeResponse.medicalHistorySnapshot).length === 0,
     dataCoverage: {
-      appointment: "available",
-      consent: "available",
-      intake: "available",
-      timeline: "available"
+      appointment: appointment ? "selected appointment" : "no appointment selected",
+      consent: "recorded ClinicOS consent evidence only",
+      intake: latestIntakeResponse ? "latest recorded intake; confirm changes with patient" : "no intake recorded; medical history unknown",
+      timeline: timelinePage.nextCursor ? "more history available" : "end of authorized recorded events",
+      clinicalHistory: clinicalPage.nextCursor ? "more clinical history available" : "end of authorized clinical events",
+      externalHistory: "Practo demographics/appointment imports do not include old clinical notes, images or bills"
     }
   };
   await appendAudit(request, context, "clinical_prep.viewed", {
@@ -1318,7 +1317,11 @@ function publicTimelineItem(item: PatientTimelineItem) {
     resourceId: item.sourceId,
     sourceTable: item.sourceTable,
     rawItemType: item.itemType,
-    metadata: item.metadata
+    category: patientHistoryCategory(item.itemType),
+    // Only the typed source association is needed for authorized detail reads.
+    // Provider/raw metadata is not a patient-record disclosure contract.
+    metadata: typeof item.metadata.encounterId === "string" && /^[0-9a-f-]{36}$/i.test(item.metadata.encounterId)
+      ? {encounterId:item.metadata.encounterId} : {}
   };
 }
 

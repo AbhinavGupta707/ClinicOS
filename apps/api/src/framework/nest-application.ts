@@ -237,6 +237,8 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
     saveClinicAccess(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
     listClinicStaff(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
     getPatientDemographics(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listPatientDentalSnapshots(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    getPatientDentalSnapshot(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
     listPatientEncounters(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
     listPatientIntakeHistory(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
     listPatientInstructions(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
@@ -268,6 +270,8 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
   decorateRoute(DailyWorkflowController,"saveClinicAccess",Post("v1/clinic-access"));
   decorateRoute(DailyWorkflowController,"listClinicStaff",Get("v1/clinic-staff"));
   decorateRoute(DailyWorkflowController,"getPatientDemographics",Get("v1/patients/:patientId/demographics"));
+  decorateRoute(DailyWorkflowController,"listPatientDentalSnapshots",Get("v1/patients/:patientId/dental-snapshots"));
+  decorateRoute(DailyWorkflowController,"getPatientDentalSnapshot",Get("v1/patients/:patientId/dental-snapshots/:snapshotId"));
   decorateRoute(DailyWorkflowController,"listPatientEncounters",Get("v1/patients/:patientId/encounters"));
   decorateRoute(DailyWorkflowController,"listPatientIntakeHistory",Get("v1/patients/:patientId/intake-history"));
   decorateRoute(DailyWorkflowController,"listPatientInstructions",Get("v1/patients/:patientId/instructions"));

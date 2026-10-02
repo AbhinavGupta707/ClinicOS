@@ -9,6 +9,8 @@ export const DENTAL_TREATMENT_OPERATIONS = [
   "listPatientTreatmentPlans",
 
   "getDentalChart",
+  "listPatientDentalSnapshots",
+  "getPatientDentalSnapshot",
   "createDentalFinding",
   "updateDentalFinding",
   "listDentalFindingHistory",

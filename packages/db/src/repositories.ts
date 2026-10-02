@@ -1,3 +1,4 @@
+import type { PatientHistoryPageInput } from "@clinic-os/domain";
 import type {createAppointmentImport,stageAppointmentObservations,sealAppointmentImport,listAppointmentImports,getAppointmentImport,lockAppointmentObservation,decideAppointmentObservation} from "./appointment-observations.ts";
 import type {FinancialCommandInput} from "@clinic-os/domain";
 import type { ClinicSetupKind, ClinicSetupRecord, ClinicSetupInput, ClinicAccessPerson, ClinicAccessInput } from "./clinic-setup.ts";
@@ -1460,6 +1461,9 @@ export interface ClinicOperationsRepository {
   sealPatientFile(scope: RepositoryScope, runId: UUID): Promise<{ file: PatientFileDetail; sealedNow: boolean }>;
   listPatients(scope: RepositoryScope, filter?: PatientSearchFilter): Promise<PatientRecord[]>;
   findPatientById(scope: RepositoryScope, patientId: UUID): Promise<PatientRecord | null>;
+  listPatientTimeline(scope: RepositoryScope, patientId: UUID, input: PatientHistoryPageInput): Promise<{ records: PatientTimelineItem[]; nextCursor: string | null }>;
+  listPatientDentalSnapshots(scope: RepositoryScope, patientId: UUID, filter?: WorkflowPageFilter): Promise<{ records: Omit<DentalChartSnapshotRecord,"chartState" | "provenance">[]; nextCursor: string | null }>;
+  getPatientDentalSnapshot(scope: RepositoryScope, patientId: UUID, snapshotId: UUID): Promise<DentalChartSnapshotRecord | null>;
   findPatientTimeline(scope: RepositoryScope, patientId: UUID): Promise<PatientTimelineItem[]>;
   findPatientDuplicateCandidates(
     scope: RepositoryScope,
@@ -1779,7 +1783,8 @@ export interface ClinicOperationsRepository {
   ): Promise<IntakeFormSubmissionRecord>;
   listPatientIntakeFormSubmissions(
     scope: RepositoryScope,
-    patientId: UUID
+    patientId: UUID,
+    limit?: number
   ): Promise<IntakeFormSubmissionRecord[]>;
 
   listPatientConsents(scope: RepositoryScope, patientId: UUID, lockForUse?: boolean): Promise<ConsentRecord[]>;
