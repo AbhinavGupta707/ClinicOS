@@ -156,9 +156,32 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
     await page.getByLabel("Full name", { exact: true }).fill(patientName);
     await page.getByLabel("Phone with country code").fill("+919555123451");
     await page.getByLabel("Date of birth", { exact: true }).fill("1991-06-15");
-    const registered = await save(page, "/v1/patients", "Create patient");
-    patientId = registered.patient.id;
-    expect(registered.patient.dateOfBirth).toBe("1991-06-15");
+    // Commit to real PostgreSQL, then lose only the first response. Recovery must
+    // reuse the request and select the actual created patient, not leave a fresh form.
+    let registered: { patient: { id: string; dateOfBirth: string } };
+    let firstKey: string | undefined;
+    await page.route("**/v1/patients", async (route) => {
+      if (route.request().method() !== "POST") return route.continue();
+      const key = route.request().headers()["idempotency-key"];
+      if (firstKey) {
+        expect(key).toBe(firstKey);
+        return route.continue();
+      }
+      firstKey = key;
+      const response = await route.fetch();
+      expect(response.ok(), await response.text()).toBeTruthy();
+      registered = await response.json();
+      await route.abort("failed");
+    });
+    await page.getByRole("button", { name: "Create patient", exact: true }).click();
+    await page.getByRole("button", { name: "Retry previous request", exact: true }).click();
+    await expect(page.getByRole("button", { name: "Save demographics", exact: true })).toBeVisible();
+    await expect(page.getByLabel("Full name", { exact: true })).toHaveValue(patientName);
+    await expect(page.getByRole("button", { name: "Create patient", exact: true })).toHaveCount(0);
+    await page.unroute("**/v1/patients");
+    expect(firstKey).toBeTruthy();
+    patientId = registered!.patient.id;
+    expect(registered!.patient.dateOfBirth).toBe("1991-06-15");
     await page.getByLabel("Email", { exact: true }).fill("synthetic@example.invalid");
     const updated = await save(page, `/v1/patients/${patientId}`, "Save demographics");
     expect(updated.patient.email).toBe("synthetic@example.invalid");
@@ -304,7 +327,28 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
       .first()
       .fill("Synthetic clinical examination for workflow testing only");
     await note.getByLabel("Ready for assigned doctor", { exact: false }).check();
-    await save(page, `/v1/encounters/${encounterId}`, "Save note draft");
+    let releaseSave!: () => void;
+    let observedSave!: () => void;
+    const holdSave = new Promise<void>((resolve) => { releaseSave = resolve; });
+    const saving = new Promise<void>((resolve) => { observedSave = resolve; });
+    const notePath = `**/v1/encounters/${encounterId}`;
+    await page.route(notePath, async (route) => {
+      if (route.request().method() === "GET") return route.continue();
+      const response = await route.fetch();
+      observedSave();
+      await holdSave;
+      await route.fulfill({ response });
+    });
+    const saveNote = save(page, `/v1/encounters/${encounterId}`, "Save note draft");
+    await saving;
+    try {
+      for (const field of await note.locator("textarea").all()) await expect(field).toBeDisabled();
+      await expect(note.getByLabel("Ready for assigned doctor to review and sign")).toBeDisabled();
+    } finally {
+      releaseSave();
+    }
+    await saveNote;
+    await page.unroute(notePath);
     await page.getByLabel("I reviewed this exact draft", { exact: false }).check();
     await save(page, `/v1/encounters/${encounterId}/sign-note`, "Sign reviewed note");
     await save(

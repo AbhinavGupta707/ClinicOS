@@ -1237,6 +1237,7 @@ function NoteEditor(
             <label key={key}>
               {label}
               <textarea
+                disabled={props.locked}
                 value={content[key] ?? ""}
                 onChange={(event) => {
                   setContent((previous) => ({ ...previous, [key]: event.target.value }));
@@ -1251,7 +1252,7 @@ function NoteEditor(
               <label>
                 <input
                   type="checkbox"
-                  disabled={fieldText(props.encounter, "status") === "scheduled"}
+                  disabled={props.locked || fieldText(props.encounter, "status") === "scheduled"}
                   checked={ready}
                   onChange={(event) => setReady(event.target.checked)}
                 />{" "}
@@ -1267,6 +1268,7 @@ function NoteEditor(
               <label>
                 Reason for correction{" "}
                 <textarea
+                  disabled={props.locked}
                   value={amendReason}
                   onChange={(event) => setAmendReason(event.target.value)}
                   required
@@ -1291,6 +1293,7 @@ function NoteEditor(
               <label>
                 <input
                   type="checkbox"
+                  disabled={props.locked}
                   checked={reviewedId === fieldText(draft, "id")}
                   onChange={(event) =>
                     setReviewedId(event.target.checked ? fieldText(draft, "id") : "")

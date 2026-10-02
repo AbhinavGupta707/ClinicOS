@@ -48,8 +48,10 @@ export function PatientsWorkspace(props: Props) {
       <WorkflowAction
         {...action}
         onRecover={() =>
-          void action.recover(async () => {
-            await patient.refresh();
+          void action.recover(async (result) => {
+            const recoveredPatientId = fieldText(record(record(result).patient), "id");
+            if (recoveredPatientId) await saved(recoveredPatientId);
+            else await patient.refresh();
           })
         }
       />

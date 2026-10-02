@@ -136,15 +136,15 @@ export function useWorkflowAction(scope: string, label?: string) {
     }
   }
 
-  async function recover(after?: () => Promise<void> | void) {
+  async function recover(after?: (result: unknown) => Promise<void> | void) {
     if (!command.hasPending() || command.isRunning() || busy) return;
     setBusy(true);
     try {
-      await command.recover();
+      const result = await command.recover();
       setPending(false);
       setMessage("The previous request completed successfully.");
       try {
-        await after?.();
+        await after?.(result);
       } catch {
         setMessage("The previous request completed. Refresh failed; reload the record.");
       }
