@@ -23,7 +23,7 @@ test("CP14 application images pin their base, build ARM64-compatible output, and
       assert.match(dockerfile, /gcr\.io\/distroless\/nodejs22-debian13:nonroot@sha256:[a-f0-9]{64}/u);
       assert.match(dockerfile, /ENTRYPOINT \["\/nodejs\/bin\/node"\]/u);
     } else {
-      assert.match(dockerfile, /libcrypto3=3\.5\.8-r0 libssl3=3\.5\.8-r0/u);
+      assert.match(dockerfile, /libcrypto3=3\.5\.9-r0 libssl3=3\.5\.9-r0/u);
       assert.match(dockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/npm/u);
       assert.match(dockerfile, /rm -rf \/usr\/local\/lib\/node_modules\/corepack \/opt\/yarn-/u);
     }

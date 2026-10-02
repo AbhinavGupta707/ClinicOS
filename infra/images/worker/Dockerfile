@@ -2,7 +2,7 @@
 
 # Temporal's native bridge is built for glibc, not Alpine/musl.
 ARG NODE_IMAGE="node:22.22.2-bookworm-slim@sha256:9f6d5975c7dca860947d3915877f85607946403fc55349f39b4bc3688448bb6e"
-ARG NODE_RUNTIME_IMAGE="gcr.io/distroless/nodejs22-debian13:nonroot@sha256:5e9868cc8ef163e86378ff90de23ca031f5bb8b2023d4f3288a5e740698919d4"
+ARG NODE_RUNTIME_IMAGE="gcr.io/distroless/nodejs22-debian13:nonroot@sha256:ec2313763dd43931543bd03830466e0c409ce73a487e8d46f10db72d3b816c1c"
 
 FROM ${NODE_IMAGE} AS build
 WORKDIR /workspace
@@ -20,6 +20,7 @@ WORKDIR /workspace
 COPY package.json package-lock.json ./
 COPY apps ./apps
 COPY packages ./packages
+COPY scripts/dependency-patches.mjs ./scripts/dependency-patches.mjs
 RUN npm ci --omit=dev --workspace @clinic-os/worker --include-workspace-root=false \
     && mkdir -p /runtime-dependencies \
     && find apps packages -type d -name node_modules -prune -exec sh -c \

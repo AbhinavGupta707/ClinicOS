@@ -1,13 +1,14 @@
 # syntax=docker/dockerfile:1.10
 
 ARG NODE_IMAGE="node:22.22.2-alpine@sha256:8ea2348b068a9544dae7317b4f3aafcdc032df1647bb7d768a05a5cad1a7683f"
-ARG LAMBDA_NODE_IMAGE="public.ecr.aws/lambda/nodejs:22-arm64@sha256:29e0788a2c1b8d4ac714e1b02ac3c49c495b27295758930a056e4ee3d8abda13"
+ARG LAMBDA_NODE_IMAGE="public.ecr.aws/lambda/nodejs:22-arm64@sha256:58a42d216451e95245daf5148481226be8297ad676823b92e3d52b8031404e20"
 
 FROM ${NODE_IMAGE} AS build
 WORKDIR /workspace
 COPY package.json package-lock.json tsconfig.json tsconfig.base.json eslint.config.mjs ./
 COPY apps ./apps
 COPY packages ./packages
+COPY scripts/dependency-patches.mjs ./scripts/dependency-patches.mjs
 RUN npm ci \
     && npm run build:shared \
     && npm run build --workspace @clinic-os/media-scanner \
@@ -18,6 +19,7 @@ WORKDIR /workspace
 COPY package.json package-lock.json ./
 COPY apps ./apps
 COPY packages ./packages
+COPY scripts/dependency-patches.mjs ./scripts/dependency-patches.mjs
 RUN npm ci --omit=dev --workspace @clinic-os/media-scanner --include-workspace-root=false
 
 FROM ${LAMBDA_NODE_IMAGE} AS runtime
