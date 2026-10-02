@@ -1,3 +1,4 @@
+import {appendPatientSourceContext, listPatientSourceContexts, reviewPatientSourceContext} from "./patient-source-context.ts";
 import { validateMediaPage, type MediaPageInput } from "@clinic-os/domain";
 import { historyPageLimit, assertHistoryCursor, type PatientHistoryPageInput } from "@clinic-os/domain";
 import {createAppointmentImport,stageAppointmentObservations,sealAppointmentImport,listAppointmentImports,getAppointmentImport,lockAppointmentObservation,decideAppointmentObservation} from "./appointment-observations.ts";
@@ -2105,6 +2106,13 @@ export class PostgresClinicOperationsRepository
     });
   }
 
+  async listPatientSourceContexts(scope:RepositoryScope,patientId:UUID,cursor?:string) {
+    return this.#withRls(scope,client=>listPatientSourceContexts(client,scope,patientId,cursor));
+  }
+  async reviewPatientSourceContext(scope:RepositoryScope,patientId:UUID,contextId:UUID,input:Parameters<typeof reviewPatientSourceContext>[4]) {
+    return this.#withRls(scope,client=>reviewPatientSourceContext(client,scope,patientId,contextId,input));
+  }
+
   async createPatientFile(scope: RepositoryScope, runId: UUID, manifest: PatientFileManifest): Promise<{ file: PatientFileDetail; created: boolean }> {
     assertPatientFileManifest(manifest);
     return this.#withRls(scope, async (client) => {
@@ -3127,8 +3135,11 @@ export class PostgresClinicOperationsRepository
             batchId,
             link
           ));
+        const hasRetainedSourceContext = link.targetRecordType === "patient" && (await client.query(
+          "select id from patient_source_contexts where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and source_system=$4 and external_reference=$5 limit 1",
+          [scope.tenantId,scope.clinicId,link.targetRecordId,link.sourceSystem,link.externalRecordId])).rows.length > 0;
         const rollbackBlocked =
-          hasLaterReconciliation ||
+          hasRetainedSourceContext || hasLaterReconciliation ||
           hasCommittedAppointmentDependency ||
           (link.linkType === "created_from_import" &&
             (link.targetRecordType === "appointment"
@@ -3146,6 +3157,7 @@ export class PostgresClinicOperationsRepository
                 : true));
         if (rollbackBlocked) {
           const rollbackBlockedReason =
+            hasRetainedSourceContext ? "Historical source context is retained clinical evidence. Generic import rollback cannot erase it; use reviewed corrections." :
             hasLaterReconciliation
               ? "A later committed migration reconciliation depends on this canonical external mapping."
               : hasCommittedAppointmentDependency
@@ -11396,6 +11408,7 @@ export class PostgresClinicOperationsRepository
         );
       }
 
+      if (targetRecordType === "patient") await appendPatientSourceContext(client,scope,existingExternalLink.targetRecordId,batch,row);
       await this.#markMigrationRowCommitted(
         client,
         scope,
@@ -11430,6 +11443,7 @@ export class PostgresClinicOperationsRepository
           row.resolutionTargetRecordId,
           "linked_existing"
         );
+        await appendPatientSourceContext(client,scope,row.resolutionTargetRecordId,batch,row);
         await this.#markMigrationRowCommitted(
           client,
           scope,
@@ -11455,6 +11469,7 @@ export class PostgresClinicOperationsRepository
         patient.id,
         "created_from_import"
       );
+      await appendPatientSourceContext(client,scope,patient.id,batch,row);
       await this.#markMigrationRowCommitted(client, scope, row.id, "patient", patient.id);
       return "committed";
     }
@@ -11753,7 +11768,7 @@ export class PostgresClinicOperationsRepository
         scope.tenantId,
         scope.clinicId,
         row.normalizedRecord.fullName,
-        row.normalizedRecord.phone,
+        row.normalizedRecord.phone || null,
         row.normalizedRecord.email,
         row.normalizedRecord.dateOfBirth,
         row.normalizedRecord.gender,
@@ -11761,7 +11776,7 @@ export class PostgresClinicOperationsRepository
       ]
     );
     const patient = mapPatientRow(result.rows[0]);
-    await client.query(
+    if(row.normalizedRecord.phone) await client.query(
       `
         insert into patient_contacts (
           tenant_id,

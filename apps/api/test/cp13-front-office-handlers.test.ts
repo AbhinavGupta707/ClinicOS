@@ -23,12 +23,12 @@ const QUEUE_ID = "10000000-0000-4000-8000-000000000007";
 const APPOINTMENT_TYPE_ID = "10000000-0000-4000-8000-000000000030";
 const CHAIR_ID = "10000000-0000-4000-8000-000000000031";
 
-test("handler factory has exact frozen coverage for all 27 front-office operations", () => {
+test("handler factory has exact frozen coverage for all 29 front-office operations", () => {
   assert.deepEqual(
     Object.keys(createFrontOfficeFeatureHandlerMap()).sort(),
     [...CP13_FRONT_OFFICE_OPERATION_IDS].sort()
   );
-  assert.equal(Object.keys(FRONT_OFFICE_FEATURE_HANDLERS).length, 27);
+  assert.equal(Object.keys(FRONT_OFFICE_FEATURE_HANDLERS).length, 29);
 });
 
 test("central policy denies wrong-role capability sets before feature dispatch", () => {

@@ -19,6 +19,11 @@ import {
   type MigrationBatch
 } from "@/lib/cp7-integration-ops";
 import { patientFileRequest } from "@/lib/patient-file-request";
+import {
+  PATIENT_CONTEXT_PROFILE,
+  PATIENT_SOURCE_FIELDS,
+  type PatientImportProfile
+} from "@clinic-os/domain/patient-source-context";
 import { PRACTO_PATIENT_EXCLUDED_HEADERS } from "@/lib/practo-patient-import";
 import { MigrationOperationsPanel } from "./migration-operations-panel";
 
@@ -36,7 +41,14 @@ export function PatientFileWorkspace({
   onBusy: (busy: boolean) => void;
   externalBusy: boolean;
 }) {
+  const [selectedProfile, setProfile] = useState<PatientImportProfile>(
+    initialFile?.profile ?? "practo_ray_patients_v1"
+  );
   const [file, setFile] = useState<FileDetail | null>(initialFile);
+  // Restored progress is authoritative, including after an unavailable read.
+  // A local selection must never change a saved file's retention disclosure.
+  const profile = file?.profile ?? selectedProfile;
+  const withContext = profile === PATIENT_CONTEXT_PROFILE;
   const [localFile, setLocalFile] = useState<File | null>(null);
   const [prepared, setPrepared] = useState<PreparedPatientFile | null>(null);
   const [accepted, setAccepted] = useState(false);
@@ -151,7 +163,8 @@ export function PatientFileWorkspace({
         (count) => {
           if (mounted.current) setNotice(`Checking locally: ${count.toLocaleString()} patients…`);
         },
-        controller.current?.signal
+        controller.current?.signal,
+        profile
       );
       if (
         file &&
@@ -188,7 +201,11 @@ export function PatientFileWorkspace({
       if (mounted.current) setFile(saved.file);
       // Never use a cached mutation response to decide which chunks remain.
       const current = await refresh();
-      for await (const chunk of patientFileChunks(localFile, controller.current?.signal)) {
+      for await (const chunk of patientFileChunks(
+        localFile,
+        controller.current?.signal,
+        prepared.manifest.profile
+      )) {
         if (pause.current || !mounted.current) break;
         if (chunk.digest !== prepared.manifest.chunks[chunk.ordinal]?.digest)
           throw new Error("The mapped file changed during upload. This run cannot be finalized.");
@@ -303,12 +320,53 @@ export function PatientFileWorkspace({
         while uploading or committing. Closing it pauses further work; reopen this saved run to
         continue.
       </p>
+      <label>
+        Patient import profile
+        <select
+          data-testid="patient-file-profile"
+          style={{ width: "100%", maxWidth: "100%", minWidth: 0 }}
+          value={profile}
+          disabled={busy || !!file}
+          onChange={(event) => {
+            setProfile(event.target.value as PatientImportProfile);
+            setLocalFile(null);
+            setPrepared(null);
+            setAccepted(false);
+            setCommitAccepted(false);
+          }}
+        >
+          <option value="practo_ray_patients_v1">Demographics only (v1)</option>
+          <option value={PATIENT_CONTEXT_PROFILE}>
+            Demographics and historical source context (v2)
+          </option>
+        </select>
+      </label>
       <p>
-        Patient demographics only: Patient Number, name, mobile, email, date of birth and gender.
-        Medical history, notes, national ID, address and other source fields are excluded.
+        Mapped demographics: Patient Number, name, primary mobile, email, date of birth and gender.
         Appointments are a separate workflow.
       </p>
-      <p>Excluded source columns: {PRACTO_PATIENT_EXCLUDED_HEADERS.join(", ")}.</p>
+      {withContext ? (
+        <>
+          <p>
+            Retained as unverified historical text: {PATIENT_SOURCE_FIELDS.join(", ")}. Missing
+            primary mobile is allowed and recorded; alternate contacts are not substituted or
+            enabled for messaging. Historical fields are not current diagnoses, allergies or signed
+            notes.
+          </p>
+          <p>
+            Excluded: National Id, Age, Anniversary Date. No date of birth is inferred from age.
+          </p>
+          <p>
+            <strong>
+              Committing retains immutable clinical source evidence. These patients and source links
+              cannot be removed by generic import rollback, even before clinical review.
+            </strong>{" "}
+            Review the selected file and identity decisions before committing.
+          </p>
+        </>
+      ) : (
+        <p>Excluded source columns: {PRACTO_PATIENT_EXCLUDED_HEADERS.join(", ")}.</p>
+      )}
       <p>
         This is a manual export import. Source freshness and completeness of the clinic export
         remain unverified. No messages are sent to patients.
@@ -450,8 +508,16 @@ export function PatientFileWorkspace({
                 .filter((chunk) => chunk.batchId)
                 .map((chunk) => (
                   <option key={chunk.ordinal} value={chunk.ordinal}>
-                    Records {chunk.ordinal * 100 + 1}–{chunk.ordinal * 100 + chunk.rowCount}:{" "}
-                    {chunk.needsReview} review, {chunk.invalid} invalid, {chunk.committed} committed
+                    Records{" "}
+                    {file.chunks
+                      .slice(0, chunk.ordinal)
+                      .reduce((sum, item) => sum + item.rowCount, 0) + 1}
+                    –
+                    {file.chunks
+                      .slice(0, chunk.ordinal + 1)
+                      .reduce((sum, item) => sum + item.rowCount, 0)}
+                    : {chunk.needsReview} review, {chunk.invalid} invalid, {chunk.committed}{" "}
+                    committed
                   </option>
                 ))}
             </select>

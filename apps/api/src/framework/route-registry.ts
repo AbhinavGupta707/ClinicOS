@@ -66,6 +66,8 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Objec
   updatePatient: ["patient.write"],
   listPatientDentalSnapshots: ["patient.read", "patient.phi.read", "dental.chart.read"],
   getPatientDentalSnapshot: ["patient.read", "patient.phi.read", "dental.chart.read"],
+  listPatientSourceContexts: ["patient.read", "patient.phi.read", "clinical.note.read"],
+  reviewPatientSourceContext: ["patient.read", "patient.phi.read", "clinical.note.read", "clinical.note.sign"],
   getPatientTimeline: ["patient.read", "patient.phi.read"],
   listLeads: ["message.read"],
   createLead: ["message.write"],
@@ -209,6 +211,7 @@ const EXPENSIVE_OPERATION_IDS = new Set([
 
 const OPERATION_REQUIRED_ROLES: Readonly<Record<string, readonly string[]>> = Object.freeze({
   saveClinicAccess: ["owner_admin"],
+  reviewPatientSourceContext: ["doctor"],
   startEncounter: ["doctor"],
   createEncounterProcedurePerformed: ["doctor"],
   signEncounterClinicalNote: ["doctor"],

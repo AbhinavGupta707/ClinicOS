@@ -126,3 +126,28 @@ describe("whole patient file preparation", () => {
     ).rejects.toThrow();
   });
 });
+
+
+describe("explicit historical context profile",()=>{
+  it("preserves bounded original text and excludes sensitive unsupported fields across 5000 patients",async()=>{
+    const file=new Blob([csv(5000,(row,index)=>{row[2]=index%3?row[2]!:"";row[11]="EXCLUDED_NATIONAL_ID";row[13]="72";row[14]="1990-01-01";row[17]="  Source history, unverified\nनमस्ते  ";})]);
+    const prepared=await preparePatientFile(file,undefined,undefined,"practo_ray_patients_context_v2");
+    expect(prepared.manifest.profile).toBe("practo_ray_patients_context_v2");
+    expect(prepared.manifest.rowCount).toBe(5000);
+    expect(prepared.excludedFieldsWithValues).toEqual(["National Id","Age","Anniversary Date"]);
+    let count=0;
+    for await(const chunk of patientFileChunks(file,undefined,"practo_ray_patients_context_v2")) {
+      expect(chunk).toMatchObject(prepared.manifest.chunks[chunk.ordinal]!);
+      expect(chunk.csv).toContain("Source history");expect(chunk.csv).not.toContain("EXCLUDED_NATIONAL_ID");count+=chunk.rowCount;
+    }
+    expect(count).toBe(5000);
+  },15000);
+  it("splits on encoded bytes without truncation and rejects unsupported oversized source text",async()=>{
+    const file=new Blob([csv(100,(row)=>{row[20]="न".repeat(8000);})]);
+    const prepared=await preparePatientFile(file,undefined,undefined,"practo_ray_patients_context_v2");
+    expect(prepared.manifest.chunks.length).toBeGreaterThan(1);
+    expect(prepared.manifest.chunks.reduce((n,c)=>n+c.rowCount,0)).toBe(100);
+    for await(const chunk of patientFileChunks(file,undefined,"practo_ray_patients_context_v2")) expect(new TextEncoder().encode(chunk.csv).length).toBeLessThanOrEqual(256000);
+    await expect(preparePatientFile(new Blob([csv(1,row=>{row[20]="X".repeat(8193);})]),undefined,undefined,"practo_ray_patients_context_v2")).rejects.toThrow("8,192");
+  });
+});

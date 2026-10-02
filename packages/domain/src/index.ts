@@ -32,3 +32,5 @@ export * from './financial-operations.ts';
 export * from './appointment-observations.ts';
 
 export * from "./patient-history.ts";
+
+export * from "./patient-source-context.ts";

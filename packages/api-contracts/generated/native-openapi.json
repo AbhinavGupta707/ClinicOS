@@ -42693,7 +42693,7 @@
                                 "type": "integer"
                               },
                               "ordinal": {
-                                "maximum": 49,
+                                "maximum": 1023,
                                 "minimum": 0,
                                 "type": "integer"
                               },
@@ -42748,12 +42748,13 @@
                             ],
                             "type": "object"
                           },
-                          "maxItems": 50,
+                          "maxItems": 1024,
                           "type": "array"
                         },
                         "profile": {
                           "enum": [
-                            "practo_ray_patients_v1"
+                            "practo_ray_patients_v1",
+                            "practo_ray_patients_context_v2"
                           ]
                         },
                         "received": {
@@ -43294,7 +43295,7 @@
                                 "type": "integer"
                               },
                               "ordinal": {
-                                "maximum": 49,
+                                "maximum": 1023,
                                 "minimum": 0,
                                 "type": "integer"
                               },
@@ -43349,12 +43350,13 @@
                             ],
                             "type": "object"
                           },
-                          "maxItems": 50,
+                          "maxItems": 1024,
                           "type": "array"
                         },
                         "profile": {
                           "enum": [
-                            "practo_ray_patients_v1"
+                            "practo_ray_patients_v1",
+                            "practo_ray_patients_context_v2"
                           ]
                         },
                         "received": {
@@ -43729,7 +43731,7 @@
                           "type": "string"
                         },
                         "ordinal": {
-                          "maximum": 49,
+                          "maximum": 1023,
                           "minimum": 0,
                           "type": "integer"
                         },
@@ -43746,13 +43748,14 @@
                       ],
                       "type": "object"
                     },
-                    "maxItems": 50,
+                    "maxItems": 1024,
                     "minItems": 1,
                     "type": "array"
                   },
                   "profile": {
                     "enum": [
-                      "practo_ray_patients_v1"
+                      "practo_ray_patients_v1",
+                      "practo_ray_patients_context_v2"
                     ]
                   },
                   "rowCount": {
@@ -43825,7 +43828,7 @@
                                 "type": "integer"
                               },
                               "ordinal": {
-                                "maximum": 49,
+                                "maximum": 1023,
                                 "minimum": 0,
                                 "type": "integer"
                               },
@@ -43880,12 +43883,13 @@
                             ],
                             "type": "object"
                           },
-                          "maxItems": 50,
+                          "maxItems": 1024,
                           "type": "array"
                         },
                         "profile": {
                           "enum": [
-                            "practo_ray_patients_v1"
+                            "practo_ray_patients_v1",
+                            "practo_ray_patients_context_v2"
                           ]
                         },
                         "received": {
@@ -44229,9 +44233,9 @@
             "name": "ordinal",
             "required": true,
             "schema": {
-              "maxLength": 2,
+              "maxLength": 4,
               "minLength": 1,
-              "pattern": "^(?:[0-9]|[1-4][0-9])$",
+              "pattern": "^(?:[0-9]|[1-9][0-9]{1,2}|10[01][0-9]|102[0-3])$",
               "type": "string"
             }
           },
@@ -44343,7 +44347,7 @@
                                 "type": "integer"
                               },
                               "ordinal": {
-                                "maximum": 49,
+                                "maximum": 1023,
                                 "minimum": 0,
                                 "type": "integer"
                               },
@@ -44398,12 +44402,13 @@
                             ],
                             "type": "object"
                           },
-                          "maxItems": 50,
+                          "maxItems": 1024,
                           "type": "array"
                         },
                         "profile": {
                           "enum": [
-                            "practo_ray_patients_v1"
+                            "practo_ray_patients_v1",
+                            "practo_ray_patients_context_v2"
                           ]
                         },
                         "received": {
@@ -44842,7 +44847,7 @@
                                 "type": "integer"
                               },
                               "ordinal": {
-                                "maximum": 49,
+                                "maximum": 1023,
                                 "minimum": 0,
                                 "type": "integer"
                               },
@@ -44897,12 +44902,13 @@
                             ],
                             "type": "object"
                           },
-                          "maxItems": 50,
+                          "maxItems": 1024,
                           "type": "array"
                         },
                         "profile": {
                           "enum": [
-                            "practo_ray_patients_v1"
+                            "practo_ray_patients_v1",
+                            "practo_ray_patients_context_v2"
                           ]
                         },
                         "received": {
@@ -56353,6 +56359,1071 @@
           "Re-authorize and audit export creation at action time.",
           "Keep raw storage keys, signed URLs, provider payloads, secrets and unrelated tenant data out of the export.",
           "Apply no-store response policy and approved restricted evidence storage for real PHI."
+        ]
+      }
+    },
+    "/v1/patients/{patientId}/source-contexts": {
+      "get": {
+        "description": "Read unverified historical source versions. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "operationId": "listPatientSourceContexts",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "patientId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "cursor",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 2,
+                  "properties": {
+                    "nextCursor": {
+                      "format": "uuid",
+                      "maxLength": 36,
+                      "minLength": 36,
+                      "type": [
+                        "string",
+                        "null"
+                      ]
+                    },
+                    "records": {
+                      "items": {
+                        "additionalProperties": false,
+                        "maxProperties": 11,
+                        "properties": {
+                          "contactUnavailable": {
+                            "type": "boolean"
+                          },
+                          "externalReference": {
+                            "maxLength": 512,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "fields": {
+                            "additionalProperties": false,
+                            "maxProperties": 12,
+                            "properties": {
+                              "Address": {
+                                "maxLength": 8192,
+                                "type": "string"
+                              },
+                              "Blood Group": {
+                                "maxLength": 8192,
+                                "type": "string"
+                              },
+                              "City": {
+                                "maxLength": 8192,
+                                "type": "string"
+                              },
+                              "Contact Number": {
+                                "maxLength": 8192,
+                                "type": "string"
+                              },
+                              "Groups": {
+                                "maxLength": 8192,
+                                "type": "string"
+                              },
+                              "Locality": {
+                                "maxLength": 8192,
+                                "type": "string"
+                              },
+                              "Medical History": {
+                                "maxLength": 8192,
+                                "type": "string"
+                              },
+                              "Patient Notes": {
+                                "maxLength": 8192,
+                                "type": "string"
+                              },
+                              "Pincode": {
+                                "maxLength": 8192,
+                                "type": "string"
+                              },
+                              "Referred By": {
+                                "maxLength": 8192,
+                                "type": "string"
+                              },
+                              "Remarks": {
+                                "maxLength": 8192,
+                                "type": "string"
+                              },
+                              "Secondary Mobile": {
+                                "maxLength": 8192,
+                                "type": "string"
+                              }
+                            },
+                            "required": [],
+                            "type": "object"
+                          },
+                          "id": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "type": "string"
+                          },
+                          "importedAt": {
+                            "format": "date-time",
+                            "maxLength": 40,
+                            "minLength": 20,
+                            "type": "string"
+                          },
+                          "patientId": {
+                            "format": "uuid",
+                            "maxLength": 36,
+                            "minLength": 36,
+                            "type": "string"
+                          },
+                          "review": {
+                            "additionalProperties": false,
+                            "maxProperties": 4,
+                            "properties": {
+                              "decision": {
+                                "enum": [
+                                  "reviewed",
+                                  "needs_clarification"
+                                ]
+                              },
+                              "note": {
+                                "maxLength": 2000,
+                                "minLength": 5,
+                                "type": "string"
+                              },
+                              "reviewedAt": {
+                                "format": "date-time",
+                                "maxLength": 40,
+                                "minLength": 20,
+                                "type": "string"
+                              },
+                              "reviewedByUserId": {
+                                "format": "uuid",
+                                "maxLength": 36,
+                                "minLength": 36,
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "decision",
+                              "note",
+                              "reviewedByUserId",
+                              "reviewedAt"
+                            ],
+                            "type": [
+                              "object",
+                              "null"
+                            ]
+                          },
+                          "sourceFormat": {
+                            "enum": [
+                              "practo_ray_patients_context_v2"
+                            ]
+                          },
+                          "sourceRecordDate": {
+                            "format": "date-time",
+                            "maxLength": 40,
+                            "minLength": 20,
+                            "type": [
+                              "string",
+                              "null"
+                            ]
+                          },
+                          "sourceSystem": {
+                            "maxLength": 256,
+                            "minLength": 1,
+                            "type": "string"
+                          },
+                          "version": {
+                            "maximum": 2147483647,
+                            "minimum": 1,
+                            "type": "integer"
+                          }
+                        },
+                        "required": [
+                          "id",
+                          "patientId",
+                          "sourceSystem",
+                          "externalReference",
+                          "sourceFormat",
+                          "version",
+                          "fields",
+                          "contactUnavailable",
+                          "importedAt",
+                          "sourceRecordDate",
+                          "review"
+                        ],
+                        "type": "object"
+                      },
+                      "maxItems": 20,
+                      "type": "array"
+                    }
+                  },
+                  "required": [
+                    "records",
+                    "nextCursor"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request is malformed or ambiguous.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Authentication is required or invalid.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The verified identity is not authorized for the scoped operation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The tenant-scoped resource does not exist.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request conflicts with current workflow or idempotency state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeds its declared body budget.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed runtime contract validation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeded an application abuse budget.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed without exposing internal details.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A required dependency or configured capability is unavailable.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Read unverified historical source versions",
+        "tags": [
+          "Patient history"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP3",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "mode": "none",
+          "replaySemantics": "This operation has no client mutation effect.",
+          "required": false
+        },
+        "x-clinicos-native-enforcement": "body-parser-only",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "read",
+        "x-clinicos-required-master-wiring": [
+          "Invoke the runtime contract before the native or NestJS handler."
+        ]
+      }
+    },
+    "/v1/patients/{patientId}/source-contexts/{contextId}/reviews": {
+      "post": {
+        "description": "Review an exact historical source version without promoting clinical facts. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "operationId": "reviewPatientSourceContext",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "patientId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "contextId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "idempotency-key",
+            "required": true,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 8,
+              "pattern": "^[A-Za-z0-9][A-Za-z0-9._:-]{7,127}$",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "additionalProperties": false,
+                "maxProperties": 2,
+                "properties": {
+                  "decision": {
+                    "enum": [
+                      "reviewed",
+                      "needs_clarification"
+                    ]
+                  },
+                  "note": {
+                    "maxLength": 2000,
+                    "minLength": 5,
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "decision",
+                  "note"
+                ],
+                "type": "object"
+              }
+            }
+          },
+          "required": true,
+          "x-maximum-bytes": 1048576
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 1,
+                  "properties": {
+                    "context": {
+                      "additionalProperties": false,
+                      "maxProperties": 11,
+                      "properties": {
+                        "contactUnavailable": {
+                          "type": "boolean"
+                        },
+                        "externalReference": {
+                          "maxLength": 512,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "fields": {
+                          "additionalProperties": false,
+                          "maxProperties": 12,
+                          "properties": {
+                            "Address": {
+                              "maxLength": 8192,
+                              "type": "string"
+                            },
+                            "Blood Group": {
+                              "maxLength": 8192,
+                              "type": "string"
+                            },
+                            "City": {
+                              "maxLength": 8192,
+                              "type": "string"
+                            },
+                            "Contact Number": {
+                              "maxLength": 8192,
+                              "type": "string"
+                            },
+                            "Groups": {
+                              "maxLength": 8192,
+                              "type": "string"
+                            },
+                            "Locality": {
+                              "maxLength": 8192,
+                              "type": "string"
+                            },
+                            "Medical History": {
+                              "maxLength": 8192,
+                              "type": "string"
+                            },
+                            "Patient Notes": {
+                              "maxLength": 8192,
+                              "type": "string"
+                            },
+                            "Pincode": {
+                              "maxLength": 8192,
+                              "type": "string"
+                            },
+                            "Referred By": {
+                              "maxLength": 8192,
+                              "type": "string"
+                            },
+                            "Remarks": {
+                              "maxLength": 8192,
+                              "type": "string"
+                            },
+                            "Secondary Mobile": {
+                              "maxLength": 8192,
+                              "type": "string"
+                            }
+                          },
+                          "required": [],
+                          "type": "object"
+                        },
+                        "id": {
+                          "format": "uuid",
+                          "maxLength": 36,
+                          "minLength": 36,
+                          "type": "string"
+                        },
+                        "importedAt": {
+                          "format": "date-time",
+                          "maxLength": 40,
+                          "minLength": 20,
+                          "type": "string"
+                        },
+                        "patientId": {
+                          "format": "uuid",
+                          "maxLength": 36,
+                          "minLength": 36,
+                          "type": "string"
+                        },
+                        "review": {
+                          "additionalProperties": false,
+                          "maxProperties": 4,
+                          "properties": {
+                            "decision": {
+                              "enum": [
+                                "reviewed",
+                                "needs_clarification"
+                              ]
+                            },
+                            "note": {
+                              "maxLength": 2000,
+                              "minLength": 5,
+                              "type": "string"
+                            },
+                            "reviewedAt": {
+                              "format": "date-time",
+                              "maxLength": 40,
+                              "minLength": 20,
+                              "type": "string"
+                            },
+                            "reviewedByUserId": {
+                              "format": "uuid",
+                              "maxLength": 36,
+                              "minLength": 36,
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "decision",
+                            "note",
+                            "reviewedByUserId",
+                            "reviewedAt"
+                          ],
+                          "type": [
+                            "object",
+                            "null"
+                          ]
+                        },
+                        "sourceFormat": {
+                          "enum": [
+                            "practo_ray_patients_context_v2"
+                          ]
+                        },
+                        "sourceRecordDate": {
+                          "format": "date-time",
+                          "maxLength": 40,
+                          "minLength": 20,
+                          "type": [
+                            "string",
+                            "null"
+                          ]
+                        },
+                        "sourceSystem": {
+                          "maxLength": 256,
+                          "minLength": 1,
+                          "type": "string"
+                        },
+                        "version": {
+                          "maximum": 2147483647,
+                          "minimum": 1,
+                          "type": "integer"
+                        }
+                      },
+                      "required": [
+                        "id",
+                        "patientId",
+                        "sourceSystem",
+                        "externalReference",
+                        "sourceFormat",
+                        "version",
+                        "fields",
+                        "contactUnavailable",
+                        "importedAt",
+                        "sourceRecordDate",
+                        "review"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "context"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "idempotency-replayed": {
+                "description": "Literal wire value false on first execution and true when the response was replayed from the persisted idempotency record.",
+                "schema": {
+                  "description": "Required wire boolean: false on first execution and true when a persisted response is replayed.",
+                  "enum": [
+                    "false",
+                    "true"
+                  ],
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request is malformed or ambiguous.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Authentication is required or invalid.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The verified identity is not authorized for the scoped operation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The tenant-scoped resource does not exist.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request conflicts with current workflow or idempotency state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeds its declared body budget.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed runtime contract validation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeded an application abuse budget.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed without exposing internal details.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A required dependency or configured capability is unavailable.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Review an exact historical source version without promoting clinical facts",
+        "tags": [
+          "Patient history"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP3",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "header": "idempotency-key",
+          "mode": "header",
+          "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+          "required": true
+        },
+        "x-clinicos-native-enforcement": "body-parser-only",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "write",
+        "x-clinicos-required-master-wiring": [
+          "Invoke the runtime contract before the native or NestJS handler.",
+          "Persist and replay idempotency records by actor, clinic, operation, key, and request digest."
         ]
       }
     },
@@ -70276,6 +71347,9 @@
     },
     {
       "name": "Operations"
+    },
+    {
+      "name": "Patient history"
     },
     {
       "name": "Patients"

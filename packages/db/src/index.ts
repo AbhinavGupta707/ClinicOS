@@ -38,3 +38,5 @@ export * from "./clinic-setup.ts";
 export * from "./financial-operations.ts";
 
 export * from "./appointment-observations.ts";
+
+export * from "./patient-source-context.ts";

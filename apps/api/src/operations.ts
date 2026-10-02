@@ -1,3 +1,4 @@
+import { PATIENT_CONTEXT_PROFILE, PATIENT_DEMOGRAPHICS_PROFILE } from "@clinic-os/domain";
 import type { MediaPageInput } from "@clinic-os/domain";
 import { createHash, randomUUID } from "node:crypto";
 import {
@@ -1127,7 +1128,8 @@ async function recordMigrationBatchCreation(
 export async function createPatientImportFile(context: OperationsRequestContext, dependencies: OperationsDependencies, runId: UUID, body: unknown) {
   authorize(context, { permission: "migration.manage" });
   const request = objectBody(body);
-  if (request.profile !== "practo_ray_patients_v1") throw validation("Unsupported patient file profile.", {});
+  if (request.profile !== PATIENT_DEMOGRAPHICS_PROFILE && request.profile !== PATIENT_CONTEXT_PROFILE) throw validation("Unsupported patient file profile.", {});
+  if (request.profile === PATIENT_CONTEXT_PROFILE) authorize(context, { permission: "patient.phi.read" });
   const manifest: PatientFileManifest = {
     profile: request.profile,
     rowCount: integerField(request.rowCount, "rowCount", { min: 1, max: 5000 }),
@@ -1135,7 +1137,7 @@ export async function createPatientImportFile(context: OperationsRequestContext,
       const chunk = objectField(value, "chunk");
       const digest = optionalSha256Digest(chunk.digest, "digest");
       if (!digest) throw validation("A chunk digest is required.", {});
-      return { ordinal: integerField(chunk.ordinal, "ordinal", { min: 0, max: 49 }),
+      return { ordinal: integerField(chunk.ordinal, "ordinal", { min: 0, max: 1023 }),
         rowCount: integerField(chunk.rowCount, "rowCount", { min: 1, max: 100 }), digest };
     })
   };
@@ -1162,21 +1164,27 @@ export async function stagePatientImportChunk(context: OperationsRequestContext,
   if (typeof request.csv !== "string" || Buffer.byteLength(request.csv, "utf8") > 256_000)
     throw validation("Patient chunk must be a canonical CSV of at most 256 KB.", {});
   const csv = request.csv;
-  const header = "external_reference,full_name,phone,email,date_of_birth,gender,source_type,source_format";
-  if (!csv.startsWith(header + "\n")) throw validation("Only minimized patient fields are accepted.", {});
   const scope = scopeFrom(context);
+  const file = await dependencies.repository.findPatientFile(scope, runId);
+  if (!file || !Number.isInteger(ordinal) || !file.chunks[ordinal]) throw validation("Unknown patient file group.", {});
+  const withContext = file.profile === PATIENT_CONTEXT_PROFILE;
+  if (withContext) authorize(context, { permission: "patient.phi.read" });
+  const header = "external_reference,full_name,phone,email,date_of_birth,gender,source_type,source_format" + (withContext ? ",source_context" : "");
+  if (!csv.startsWith(header + "\n")) throw validation("Only the selected patient profile fields are accepted.", {});
   const run = await dependencies.repository.findImportRunById(scope, runId);
   if (!run) throw notFound("Import run not found.", {});
   const input = await parseCreateMigrationBatchInput(scope, dependencies, {
     csv, importType: "patients", sourceSystem: run.run.sourceSystem,
-    sourceFileName: "practo-patients-demographics.csv"
-  });
-  if (input.rows.some((row) => Object.keys(row.rawPayload).length !== 8 ||
-    Object.keys(row.rawPayload).some((key) => !["externalReference", "fullName", "phone", "email", "dateOfBirth", "gender", "sourceType", "sourceFormat"].includes(key)) ||
-    row.rawPayload.sourceFormat !== "practo_ray_patients_v1" || row.rawPayload.sourceType !== "imported" ||
+    sourceFileName: withContext ? "practo-patients-context.csv" : "practo-patients-demographics.csv"
+  }, withContext);
+  const allowedKeys = ["externalReference", "fullName", "phone", "email", "dateOfBirth", "gender", "sourceType", "sourceFormat", ...(withContext ? ["sourceContext"] : [])];
+  if (input.rows.some((row) => Object.keys(row.rawPayload).length !== allowedKeys.length ||
+    Object.keys(row.rawPayload).some((key) => !allowedKeys.includes(key)) ||
+    row.rawPayload.sourceFormat !== file.profile || row.rawPayload.sourceType !== "imported" ||
     !row.externalRecordId || row.rawPayload.externalReference !== row.externalRecordId))
     throw validation("The chunk does not match the supported patient field policy.", {});
-  for (const row of input.rows) row.rowNumber += ordinal * MAX_MIGRATION_BATCH_ROWS;
+  const precedingRows = file.chunks.slice(0, ordinal).reduce((count, chunk) => count + chunk.rowCount, 0);
+  for (const row of input.rows) row.rowNumber += precedingRows;
   const digest = createHash("sha256").update(csv, "utf8").digest("hex");
   const staged = await mapImportRunRepositoryErrors(() => dependencies.repository.stagePatientFileChunk(scope, runId, ordinal, digest, input));
   if (staged.created) await recordMigrationBatchCreation(context, dependencies, staged.detail);
@@ -1705,6 +1713,7 @@ export async function commitMigrationBatch(
   authorize(context, { permission: "migration.manage" });
   const detail = await dependencies.repository.findMigrationBatchById(scopeFrom(context), batchId);
   if (!detail) throw notFound("Migration batch not found.", { batch_id: batchId });
+  if (detail.rows.some(row=>row.sourceFormat===PATIENT_CONTEXT_PROFILE)) authorize(context, { permission: "patient.phi.read" });
   if (!["committed", "partially_committed"].includes(detail.batch.state)) {
     const unresolvedRows = detail.rows.filter(
       (row) =>
@@ -6231,7 +6240,8 @@ function parseRecordAiReviewDecisionInput(body: unknown): RecordAiReviewDecision
 async function parseCreateMigrationBatchInput(
   scope: RepositoryScope,
   dependencies: OperationsDependencies,
-  body: unknown
+  body: unknown,
+  allowContext = false
 ): Promise<CreateMigrationBatchInput> {
   const input = objectBody(body);
   const importTypeValue = requiredString(input.importType, "importType");
@@ -6282,6 +6292,8 @@ async function parseCreateMigrationBatchInput(
     ? parsePatientMigrationCsv(csv)
     : coercePatientImportRows(rowObjects ?? []);
   assertMigrationBatchSize(rowDrafts);
+  if (!allowContext && rowDrafts.some((row) => row.rawPayload.sourceFormat === PATIENT_CONTEXT_PROFILE || row.rawPayload.sourceContext !== undefined))
+    throw validation("Historical context requires the explicitly selected patient-file profile.", {});
 
   const externalRecordIds = rowDrafts
     .map((draft) => draft.externalReference?.trim() ?? "")
@@ -7239,6 +7251,9 @@ function toPublicMigrationRow(row: MigrationRowRecord) {
   const conflicts = row.conflicts.slice(0, MAX_PUBLIC_MIGRATION_CONFLICTS_PER_ROW);
   return {
     ...row,
+    normalizedRecord: row.normalizedRecord?.recordType === "patient"
+      ? {...row.normalizedRecord, sourceDetail: Object.fromEntries(Object.entries(row.normalizedRecord.sourceDetail).filter(([key]) => key !== "historicalFields"))}
+      : row.normalizedRecord,
     rawPayloadRef: { ...row.rawPayloadRef },
     conflicts,
     returnedConflictCount: conflicts.length,

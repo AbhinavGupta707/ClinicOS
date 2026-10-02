@@ -3135,15 +3135,15 @@ function inventoryOperations(): HttpOperationContract[] {
 }
 
 function cp7Operations(): HttpOperationContract[] {
-  const patientChunkManifest = responseSchema({ ordinal: schema.integer({ minimum: 0, maximum: 49 }),
+  const patientChunkManifest = responseSchema({ ordinal: schema.integer({ minimum: 0, maximum: 1023 }),
     rowCount: schema.integer({ minimum: 1, maximum: 100 }), digest: schema.string({ pattern: "^[0-9a-f]{64}$", minLength: 64, maxLength: 64 }) });
-  const patientFile = responseSchema({ runId: uuid, profile: schema.enum(["practo_ray_patients_v1"]),
+  const patientFile = responseSchema({ runId: uuid, profile: schema.enum(["practo_ray_patients_v1", "practo_ray_patients_context_v2"]),
     rowCount: schema.integer({ minimum: 1, maximum: 5000 }), sealed: schema.boolean(), received: nonNegativeInteger,
-    chunks: schema.array(responseSchema({ ordinal: schema.integer({ minimum: 0, maximum: 49 }),
+    chunks: schema.array(responseSchema({ ordinal: schema.integer({ minimum: 0, maximum: 1023 }),
       rowCount: schema.integer({ minimum: 1, maximum: 100 }), digest: schema.string({ minLength: 64, maxLength: 64 }),
       batchId: schema.nullable(uuid), state: nullableText, ready: nonNegativeInteger, needsReview: nonNegativeInteger,
       invalid: nonNegativeInteger, skipped: nonNegativeInteger, committed: nonNegativeInteger, reconciled: nonNegativeInteger,
-      failed: nonNegativeInteger, rolledBack: nonNegativeInteger }), { maxItems: 50 }) });
+      failed: nonNegativeInteger, rolledBack: nonNegativeInteger }), { maxItems: 1024 }) });
   const importRunRecord = responseSchema({
     id: uuid,
     tenantId: uuid,
@@ -3184,8 +3184,8 @@ function cp7Operations(): HttpOperationContract[] {
     operation({ operationId: "createPatientImportFile", checkpoint: "CP7", method: "POST",
       path: "/v1/migration-runs/{runId}/patient-file", summary: "Save an immutable patient-file manifest before bounded upload",
       tags: ["Migration"], phi: "write", pathProperties: { runId: uuid },
-      body: bodySchema({ profile: schema.enum(["practo_ray_patients_v1"]), rowCount: schema.integer({ minimum: 1, maximum: 5000 }),
-        chunks: schema.array(patientChunkManifest, { minItems: 1, maxItems: 50 }) }, ["profile", "rowCount", "chunks"]),
+      body: bodySchema({ profile: schema.enum(["practo_ray_patients_v1", "practo_ray_patients_context_v2"]), rowCount: schema.integer({ minimum: 1, maximum: 5000 }),
+        chunks: schema.array(patientChunkManifest, { minItems: 1, maxItems: 1024 }) }, ["profile", "rowCount", "chunks"]),
       success: { 200: responseSchema({ file: patientFile }) } }),
     operation({ operationId: "getPatientImportFile", checkpoint: "CP7", method: "GET",
       path: "/v1/migration-runs/{runId}/patient-file", summary: "Read bounded patient-file receipts and reconciliation",
@@ -3193,7 +3193,7 @@ function cp7Operations(): HttpOperationContract[] {
       success: { 200: responseSchema({ file: patientFile }) } }),
     operation({ operationId: "stagePatientImportChunk", checkpoint: "CP7", method: "POST",
       path: "/v1/migration-runs/{runId}/patient-file/chunks/{ordinal}", summary: "Stage or recover one verified patient-file chunk",
-      tags: ["Migration"], phi: "write", pathProperties: { runId: uuid, ordinal: schema.string({ minLength: 1, maxLength: 2, pattern: "^(?:[0-9]|[1-4][0-9])$" }) },
+      tags: ["Migration"], phi: "write", pathProperties: { runId: uuid, ordinal: schema.string({ minLength: 1, maxLength: 4, pattern: "^(?:[0-9]|[1-9][0-9]{1,2}|10[01][0-9]|102[0-3])$" }) },
       body: bodySchema({ csv: schema.string({ minLength: 1, maxLength: 256000 }) }, ["csv"]),
       success: { 200: responseSchema({ file: patientFile }) } }),
     operation({ operationId: "sealPatientImportFile", checkpoint: "CP7", method: "POST",
@@ -4144,7 +4144,13 @@ export function assertNativeHttpContractRegistry(): void {
 assertNativeHttpContractRegistry();
 
 function workflowDiscoveryOperations(): HttpOperationContract[] {
+ const sourceFields=schema.object(Object.fromEntries(["Contact Number","Secondary Mobile","Address","Locality","City","Pincode","Blood Group","Remarks","Medical History","Referred By","Groups","Patient Notes"].map(key=>[key,schema.string({maxLength:8192})])), []);
+ const sourceContext=responseSchema({id:uuid,patientId:uuid,sourceSystem:shortText,externalReference:schema.string({minLength:1,maxLength:512}),sourceFormat:schema.enum(["practo_ray_patients_context_v2"]),version:positiveInteger,fields:sourceFields,contactUnavailable:schema.boolean(),importedAt:dateTime,sourceRecordDate:schema.nullable(dateTime),review:schema.nullable(responseSchema({decision:schema.enum(["reviewed","needs_clarification"]),note:schema.string({minLength:5,maxLength:2000}),reviewedByUserId:uuid,reviewedAt:dateTime}))});
  return [
+  operation({ operationId:"listPatientSourceContexts",checkpoint:"CP3",method:"GET",path:"/v1/patients/{patientId}/source-contexts",summary:"Read unverified historical source versions",tags:["Patient history"],phi:"read",mutation:false,
+    pathProperties:{patientId:uuid},queryProperties:{cursor:uuid},success:{200:responseSchema({records:schema.array(sourceContext,{maxItems:20}),nextCursor:optionalUuid})} }),
+  operation({ operationId:"reviewPatientSourceContext",checkpoint:"CP3",method:"POST",path:"/v1/patients/{patientId}/source-contexts/{contextId}/reviews",summary:"Review an exact historical source version without promoting clinical facts",tags:["Patient history"],phi:"write",
+    pathProperties:{patientId:uuid,contextId:uuid},body:bodySchema({decision:schema.enum(["reviewed","needs_clarification"]),note:schema.string({minLength:5,maxLength:2000})},["decision","note"]),success:{200:responseSchema({context:sourceContext})} }),
   operation({ operationId: "listPatientEncounters", checkpoint: "CP3", method:"GET", path:"/v1/patients/{patientId}/encounters", summary:"Discover saved encounters", tags:["Daily workflow"], phi:"read", mutation:false,
    pathProperties: {patientId:uuid},
    queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},

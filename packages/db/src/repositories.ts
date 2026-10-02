@@ -1,3 +1,4 @@
+import type {listPatientSourceContexts,reviewPatientSourceContext} from "./patient-source-context.ts";
 import type { MediaPageInput } from "@clinic-os/domain";
 import type { PatientHistoryPageInput } from "@clinic-os/domain";
 import type {createAppointmentImport,stageAppointmentObservations,sealAppointmentImport,listAppointmentImports,getAppointmentImport,lockAppointmentObservation,decideAppointmentObservation} from "./appointment-observations.ts";
@@ -1427,6 +1428,8 @@ export interface WorkflowPage<T> { readonly records: readonly T[]; readonly next
 export interface ClinicStaffSummary { readonly id: UUID; readonly displayName: string; }
 
 export interface ClinicOperationsRepository {
+  listPatientSourceContexts(scope:RepositoryScope,patientId:UUID,cursor?:string):ReturnType<typeof listPatientSourceContexts>;
+  reviewPatientSourceContext(scope:RepositoryScope,patientId:UUID,contextId:UUID,input:Parameters<typeof reviewPatientSourceContext>[4]):ReturnType<typeof reviewPatientSourceContext>;
   createAppointmentImport(scope:RepositoryScope,input:Parameters<typeof createAppointmentImport>[2]):ReturnType<typeof createAppointmentImport>;
   stageAppointmentObservations(scope:RepositoryScope,id:string,input:Parameters<typeof stageAppointmentObservations>[3]):ReturnType<typeof stageAppointmentObservations>;
   sealAppointmentImport(scope:RepositoryScope,id:string):ReturnType<typeof sealAppointmentImport>;

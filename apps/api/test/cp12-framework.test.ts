@@ -53,10 +53,10 @@ import {
   requiredRolesForOperation
 } from "../src/framework/route-registry.ts";
 
-test("app registry covers exactly 175 operations and separates doctor roles from permissions", () => {
-  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 175);
-  assert.equal(CLINIC_OS_ROUTE_POLICIES.length, 175);
-  assert.equal(new Set(CLINIC_OS_ROUTE_POLICIES.map(({ routeId }) => routeId)).size, 175);
+test("app registry covers exactly 177 operations and separates doctor roles from permissions", () => {
+  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 177);
+  assert.equal(CLINIC_OS_ROUTE_POLICIES.length, 177);
+  assert.equal(new Set(CLINIC_OS_ROUTE_POLICIES.map(({ routeId }) => routeId)).size, 177);
   assert.deepEqual(
     ACTIVE_NATIVE_HTTP_OPERATIONS.filter(
       ({ concurrency, integration }) =>
@@ -66,6 +66,8 @@ test("app registry covers exactly 175 operations and separates doctor roles from
       .sort(),
     [...Object.keys(OPTIMISTIC_CONCURRENCY_RESOURCE_TABLES), ...Object.keys(CONCURRENCY_OPERATION_ALIASES)].sort()
   );
+  assert.deepEqual(requiredRolesForOperation("reviewPatientSourceContext"), ["doctor"]);
+  assert.deepEqual(permissionsForOperation("listPatientSourceContexts"), ["patient.read", "patient.phi.read", "clinical.note.read"]);
   assert.deepEqual(permissionsForOperation("signEncounterClinicalNote"), ["clinical.note.sign"]);
   assert.deepEqual(requiredRolesForOperation("signEncounterClinicalNote"), ["doctor"]);
   assert.deepEqual(permissionsForOperation("signPrescription"), ["prescription.sign"]);

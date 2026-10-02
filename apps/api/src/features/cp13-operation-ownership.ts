@@ -7,6 +7,8 @@ export const CP13_FRONT_OFFICE_OPERATION_IDS = Object.freeze([
   "getPatient",
   "updatePatient",
   "getPatientTimeline",
+  "listPatientSourceContexts",
+  "reviewPatientSourceContext",
   "listLeads",
   "createLead",
   "matchLeadToPatient",

@@ -1,4 +1,8 @@
 import {
+  PATIENT_CONTEXT_PROFILE,
+  type PatientImportProfile
+} from "@clinic-os/domain/patient-source-context";
+import {
   PRACTO_PATIENT_HEADERS,
   PRACTO_PATIENT_FORMAT,
   preparePractoPatients
@@ -7,7 +11,7 @@ import {
 export const PATIENT_FILE_MAX_ROWS = 5_000;
 export const PATIENT_FILE_MAX_BYTES = 25 * 1024 * 1024;
 export interface PatientFileManifest {
-  profile: typeof PRACTO_PATIENT_FORMAT;
+  profile: PatientImportProfile;
   rowCount: number;
   chunks: Array<{ ordinal: number; rowCount: number; digest: string }>;
 }
@@ -40,7 +44,10 @@ const failure = (message: string): never => {
 // Two passes over the local File: preflight retains only IDs/hashes/counts, then
 // upload regenerates at most 100 minimized rows at a time. No raw-file buffer,
 // browser persistence, original filename, or excluded field values leave here.
-export async function* streamPracticeCsvRecords(file: Blob, signal?: AbortSignal): AsyncGenerator<string[]> {
+export async function* streamPracticeCsvRecords(
+  file: Blob,
+  signal?: AbortSignal
+): AsyncGenerator<string[]> {
   if (file.size > PATIENT_FILE_MAX_BYTES)
     failure("This patient import supports files up to 25 MiB. No rows were sent.");
   const reader = file.stream().getReader();
@@ -127,16 +134,20 @@ export async function* streamPracticeCsvRecords(file: Blob, signal?: AbortSignal
 
 export async function* patientFileChunks(
   file: Blob,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  profile: PatientImportProfile = PRACTO_PATIENT_FORMAT
 ): AsyncGenerator<PatientFileChunk> {
   let headers: string[] | null = null,
     rowCount = 0,
     ordinal = 0;
+  const header = canonicalHeader + (profile === PATIENT_CONTEXT_PROFILE ? ",source_context" : "");
+  const encoder = new TextEncoder();
+  let outputBytes = encoder.encode(header).length;
   let output: string[] = [];
   const ids = new Set<string>(),
     excluded = new Set<string>();
   const flush = async (): Promise<PatientFileChunk> => {
-    const csv = [canonicalHeader, ...output].join("\n");
+    const csv = [header, ...output].join("\n");
     const bytes = new TextEncoder().encode(csv);
     if (bytes.length > 256_000)
       failure("Mapped patient fields exceed the supported batch size. Nothing was truncated.");
@@ -152,6 +163,7 @@ export async function* patientFileChunks(
       excludedFieldsWithValues: [...excluded]
     };
     output = [];
+    outputBytes = encoder.encode(header).length;
     return chunk;
   };
   for await (const row of streamPracticeCsvRecords(file, signal)) {
@@ -184,11 +196,17 @@ export async function* patientFileChunks(
       );
     ids.add(id);
     const prepared = preparePractoPatients(
-      [headers.map(cell).join(","), row.map(cell).join(",")].join("\n")
+      [headers.map(cell).join(","), row.map(cell).join(",")].join("\n"),
+      profile
     );
     if (!prepared.ok) failure(`Patient record ${rowCount}: ${prepared.message}`);
     if (prepared.ok) {
-      output.push(prepared.csv.slice(prepared.csv.indexOf("\n") + 1));
+      const line = prepared.csv.slice(prepared.csv.indexOf("\n") + 1);
+      const size = encoder.encode(line).length + 1;
+      if (profile === PATIENT_CONTEXT_PROFILE && output.length && outputBytes + size > 256_000)
+        yield await flush();
+      output.push(line);
+      outputBytes += size;
       for (const name of prepared.excludedFieldsWithValues) excluded.add(name);
     }
     if (output.length === 100) yield await flush();
@@ -200,19 +218,22 @@ export async function* patientFileChunks(
 export async function preparePatientFile(
   file: Blob,
   onProgress?: (rows: number) => void,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  profile: PatientImportProfile = PRACTO_PATIENT_FORMAT
 ): Promise<PreparedPatientFile> {
   const chunks: PatientFileManifest["chunks"] = [];
   const excluded = new Set<string>();
   let rowCount = 0;
-  for await (const chunk of patientFileChunks(file, signal)) {
+  for await (const chunk of patientFileChunks(file, signal, profile)) {
+    if (chunks.length >= 1024)
+      failure("This file needs more than 1,024 bounded groups. Nothing was uploaded.");
     chunks.push({ ordinal: chunk.ordinal, rowCount: chunk.rowCount, digest: chunk.digest });
     rowCount += chunk.rowCount;
     chunk.excludedFieldsWithValues.forEach((name) => excluded.add(name));
     onProgress?.(rowCount);
   }
   return {
-    manifest: { profile: PRACTO_PATIENT_FORMAT, rowCount, chunks },
+    manifest: { profile, rowCount, chunks },
     excludedFieldsWithValues: [...excluded]
   };
 }

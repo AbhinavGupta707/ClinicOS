@@ -1,3 +1,5 @@
+import { PATIENT_CONTEXT_PROFILE, patientSourceFields, type PatientSourceContextRecord, type SourceContextReviewDecision } from "@clinic-os/domain";
+import { PatientSourceContextConflict } from "@clinic-os/db";
 import { validateMediaPage, type MediaPageInput } from "@clinic-os/domain";
 import { historyPageLimit, assertHistoryCursor, type PatientHistoryPageInput } from "@clinic-os/domain";
 import {validateClinicSetup, ClinicSetupConflict,type ClinicSetupKind,type ClinicSetupInput,type ClinicSetupRecord,type ClinicAccessPerson,type ClinicAccessInput} from "@clinic-os/db";
@@ -728,6 +730,32 @@ export class InMemoryAuditSink {
 }
 
 export class LocalFixtureClinicOperationsRepository implements ClinicOperationsRepository {
+  readonly patientSourceContexts: Array<PatientSourceContextRecord & {tenantId:UUID;clinicId:UUID}> = [];
+  async listPatientSourceContexts(scope:RepositoryScope,patientId:UUID,cursor?:string) {
+    const all=this.patientSourceContexts.filter(row=>matchesScope(row,scope)&&row.patientId===patientId).sort((a,b)=>b.importedAt.localeCompare(a.importedAt)||b.id.localeCompare(a.id));
+    const index=cursor ? all.findIndex(row=>row.id===cursor) : -1;
+    if(cursor && index<0) throw new RangeError("Source context cursor does not belong to this patient.");
+    const rows=all.slice(index+1,index+22);
+    return {records:rows.slice(0,20),nextCursor:rows.length>20?rows[19]!.id:null};
+  }
+  async reviewPatientSourceContext(scope:RepositoryScope,patientId:UUID,contextId:UUID,input:{decision:SourceContextReviewDecision;note:string}) {
+    if(!["reviewed","needs_clarification"].includes(input.decision)||input.note.trim().length<5||input.note.length>2000) throw new RangeError("Choose a review outcome and record 5–2,000 characters of review evidence.");
+    const row=this.patientSourceContexts.find(row=>matchesScope(row,scope)&&row.patientId===patientId&&row.id===contextId);
+    if(!row) return null;
+    if(this.patientSourceContexts.some(other=>matchesScope(other,scope)&&other.sourceSystem===row.sourceSystem&&other.externalReference===row.externalReference&&other.version>row.version)) throw new PatientSourceContextConflict("Newer source evidence exists. Refresh and review the latest version.");
+    row.review={...input,note:input.note.trim(),reviewedByUserId:scope.actorUserId,reviewedAt:this.#nowIso()};
+    return row;
+  }
+  #appendPatientSourceContext(scope:RepositoryScope,patientId:UUID,batch:MigrationBatchRecord,row:MigrationRowRecord) {
+    const record=row.normalizedRecord;
+    if(record?.recordType!=="patient"||record.sourceDetail.sourceFormat!==PATIENT_CONTEXT_PROFILE) return;
+    const fields=patientSourceFields(record.sourceDetail.historicalFields), contactUnavailable=record.sourceDetail.contactUnavailable===true;
+    const latest=this.patientSourceContexts.filter(item=>matchesScope(item,scope)&&item.sourceSystem===batch.sourceSystem&&item.externalReference===row.externalRecordId).sort((a,b)=>b.version-a.version)[0];
+    if(latest && latest.patientId!==patientId) throw new PatientSourceContextConflict("Source context is already attached to another patient.");
+    if(latest && JSON.stringify(latest.fields)===JSON.stringify(fields)&&latest.contactUnavailable===contactUnavailable) return;
+    this.patientSourceContexts.push({id:uuid(),tenantId:scope.tenantId,clinicId:scope.clinicId,patientId,sourceSystem:batch.sourceSystem,externalReference:row.externalRecordId!,sourceFormat:PATIENT_CONTEXT_PROFILE,version:(latest?.version??0)+1,fields,contactUnavailable,importedAt:this.#nowIso(),sourceRecordDate:null,review:null});
+  }
+
   readonly #clock: Clock;
   readonly #clinicTimeZone: string;
   readonly #reaffirmedMigrationRowIds = new Set<UUID>();
@@ -2466,6 +2494,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
           );
         });
       const rollbackBlocked =
+        this.patientSourceContexts.some(item=>matchesScope(item,scope)&&item.patientId===link.targetRecordId&&item.sourceSystem===link.sourceSystem&&item.externalReference===link.externalRecordId) ||
         hasLaterReconciliation ||
         hasCommittedAppointmentDependency ||
         (link.linkType === "created_from_import" &&
@@ -7016,6 +7045,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         existingExternalLink.updatedAt = this.#nowIso();
         this.#reaffirmedMigrationRowIds.add(row.id);
       }
+      if(targetRecordType==="patient") this.#appendPatientSourceContext(scope,existingExternalLink.targetRecordId,batch,row);
       this.#markMigrationRowCommitted(row, targetRecordType, existingExternalLink.targetRecordId);
       return "reconciled";
     }
@@ -7039,13 +7069,14 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
           patient.id,
           "linked_existing"
         );
-        this.#markMigrationRowCommitted(row, "patient", patient.id);
+        this.#appendPatientSourceContext(scope,patient.id,batch,row);
+      this.#markMigrationRowCommitted(row, "patient", patient.id);
         return "committed";
       }
 
       const patient = await this.createPatient(scope, {
         fullName: row.normalizedRecord.fullName,
-        phone: row.normalizedRecord.phone,
+        phone: row.normalizedRecord.phone || null,
         email: row.normalizedRecord.email,
         dateOfBirth: row.normalizedRecord.dateOfBirth,
         gender: row.normalizedRecord.gender,
@@ -7053,7 +7084,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         sourceDetail: {
           sourceSystem: batch.sourceSystem,
           externalReference: row.externalRecordId,
-          ...row.normalizedRecord.sourceDetail
+          ...Object.fromEntries(Object.entries(row.normalizedRecord.sourceDetail).filter(([key])=>key!=="historicalFields"))
         }
       });
       this.#createImportedRecordLink(
@@ -7064,6 +7095,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         patient.id,
         "created_from_import"
       );
+      this.#appendPatientSourceContext(scope,patient.id,batch,row);
       this.#markMigrationRowCommitted(row, "patient", patient.id);
       return "committed";
     }
