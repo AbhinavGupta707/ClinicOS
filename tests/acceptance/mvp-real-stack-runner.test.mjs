@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import test from "node:test";
+import { mkdtemp, readFile, writeFile, rm, access } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+import { createAcceptanceBuildInputGuard } from "../../scripts/mvp-build-inputs.mjs";
 
 const root = resolve(import.meta.dirname, "../..");
 const approvedSyntheticConfig = {
@@ -75,3 +79,74 @@ for (const [name, overrides, expected] of [
     assert.doesNotMatch(result.stdout, /Running web-build|Real-stack evidence/u);
   });
 }
+
+for (const failedBuild of [false, true]) {
+  test(`acceptance restores original generated inputs after ${failedBuild ? "failed" : "successful"} build`, async () => {
+    const web = await mkdtemp(join(tmpdir(), "clinicos-build-inputs-"));
+    try {
+      await writeFile(join(web, "next-env.d.ts"), "original customized declaration\n");
+      const { ready, restore } = createAcceptanceBuildInputGuard(web);
+      await ready;
+      await assert.rejects(createAcceptanceBuildInputGuard(web).ready, /already owns/);
+      try {
+        await writeFile(join(web, "next-env.d.ts"), "temporary acceptance path\n");
+        await writeFile(join(web, ".tsconfig.mvp-acceptance.json"), "temporary config");
+        if (failedBuild) throw new Error("simulated build failure");
+      } catch (error) {
+        assert.equal(error.message, "simulated build failure");
+      } finally {
+        await restore();
+      }
+      assert.equal(
+        await readFile(join(web, "next-env.d.ts"), "utf8"),
+        "original customized declaration\n"
+      );
+      await assert.rejects(() => access(join(web, ".tsconfig.mvp-acceptance.json")), {
+        code: "ENOENT"
+      });
+      await restore(); // cleanup is safe to call again
+      const next = createAcceptanceBuildInputGuard(web);
+      await next.ready;
+      await next.restore();
+    } finally {
+      await rm(web, { recursive: true });
+    }
+  });
+}
+test("acceptance restores an originally absent declaration and existing acceptance config", async () => {
+  const web = await mkdtemp(join(tmpdir(), "clinicos-build-inputs-"));
+  try {
+    await writeFile(join(web, ".tsconfig.mvp-acceptance.json"), "previous config");
+    const { ready, restore } = createAcceptanceBuildInputGuard(web);
+    await ready;
+    await writeFile(join(web, "next-env.d.ts"), "generated declaration");
+    await writeFile(join(web, ".tsconfig.mvp-acceptance.json"), "replacement");
+    await restore();
+    await assert.rejects(() => access(join(web, "next-env.d.ts")), { code: "ENOENT" });
+    assert.equal(
+      await readFile(join(web, ".tsconfig.mvp-acceptance.json"), "utf8"),
+      "previous config"
+    );
+  } finally {
+    await rm(web, { recursive: true });
+  }
+});
+
+test("early shutdown waits for preservation and concurrent cleanup releases the lock once", async () => {
+  const web = await mkdtemp(join(tmpdir(), "clinicos-build-inputs-"));
+  try {
+    await writeFile(join(web, "next-env.d.ts"), "original declaration\n");
+    const guard = createAcceptanceBuildInputGuard(web);
+    // Deliberately do not await ready: this is the graceful-signal acquisition window.
+    await Promise.all([guard.restore(), guard.restore(), guard.ready]);
+    assert.equal(await readFile(join(web, "next-env.d.ts"), "utf8"), "original declaration\n");
+    await assert.rejects(() => access(join(web, ".cache/mvp-acceptance-inputs.lock")), {
+      code: "ENOENT"
+    });
+    const next = createAcceptanceBuildInputGuard(web);
+    await next.ready;
+    await next.restore();
+  } finally {
+    await rm(web, { recursive: true });
+  }
+});

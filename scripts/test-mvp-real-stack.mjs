@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { createAcceptanceBuildInputGuard } from "./mvp-build-inputs.mjs";
 import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
@@ -102,15 +103,20 @@ const extraApps = [];
 let roleGateway;
 let complete = false;
 let stopping;
+let buildInputGuard;
 const stop = () =>
   (stopping ??= (async () => {
-    for (const child of children) {
-      if (child.exitCode !== null || child.signalCode !== null) continue;
-      await terminate(child);
+    try {
+      for (const child of children) {
+        if (child.exitCode !== null || child.signalCode !== null) continue;
+        await terminate(child);
+      }
+      if (roleGateway) await new Promise((resolve) => roleGateway.close(resolve));
+      for (const roleApp of extraApps) await roleApp.close();
+      await app?.close();
+    } finally {
+      await buildInputGuard?.restore();
     }
-    if (roleGateway) await new Promise((resolve) => roleGateway.close(resolve));
-    for (const roleApp of extraApps) await roleApp.close();
-    await app?.close();
   })());
 for (const signal of ["SIGINT", "SIGTERM"]) {
   process.once(signal, () => {
@@ -119,6 +125,9 @@ for (const signal of ["SIGINT", "SIGTERM"]) {
 }
 
 try {
+  buildInputGuard = createAcceptanceBuildInputGuard(webRoot);
+  await buildInputGuard.ready;
+  if (stopping) throw new Error("Acceptance interrupted before startup.");
   const { Client } = await import("pg");
   const provenance = new Client({
     connectionString: databaseUrl.href,
