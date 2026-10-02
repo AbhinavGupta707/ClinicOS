@@ -1,3 +1,4 @@
+import type { PatientFileType } from "./patient-files";
 import { isClinicOsSessionUnavailable } from "@/lib/cp13-api-client";
 
 export type PublicJsonValue =
@@ -28,6 +29,7 @@ export interface GetPatientDentalChartResponse {
 
 export interface ListPatientMediaAssetsResponse {
   readonly mediaAssets: readonly PublicJsonObject[];
+  readonly nextCursor: string | null;
 }
 
 export interface CreateSignedMediaAccessResponse {
@@ -53,7 +55,7 @@ export interface ClinicalDentalGeneratedClient {
   }): Promise<GetPatientDentalChartResponse>;
   listPatientMediaAssets(input: {
     readonly path: { readonly patientId: string };
-    readonly query?: { readonly limit?: number };
+    readonly query?: { readonly limit?: number; readonly cursor?: string; readonly mediaType?: PatientFileType };
   }): Promise<ListPatientMediaAssetsResponse>;
   requestMediaUploadUrl(input: {
     readonly headers: { readonly "idempotency-key": string };
@@ -252,9 +254,18 @@ export async function requestClinicalMediaAccess(
     headers: { "idempotency-key": input.idempotencyKey },
     body: { expiresInSeconds: input.expiresInSeconds }
   });
+  if (requiredPublicString(response.mediaAsset, "id") !== input.mediaAssetId) {
+    throw new Error("File access returned a different asset.");
+  }
+  const signedUrl = requiredPublicString(response.access, "signedUrl");
+  const expiresAt = requiredPublicString(response.access, "expiresAt");
+  const url = new URL(signedUrl);
+  if (url.protocol !== "https:" || url.username || url.password || !Number.isFinite(Date.parse(expiresAt))) {
+    throw new Error("File access returned an invalid link or expiry.");
+  }
   return {
-    signedUrl: requiredPublicString(response.access, "signedUrl"),
-    expiresAt: requiredPublicString(response.access, "expiresAt"),
+    signedUrl,
+    expiresAt,
     response
   };
 }
@@ -304,7 +315,7 @@ async function sha256Hex(bytes: Uint8Array): Promise<string> {
   return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
-function privateUploadSubmissionFilename(filename: string, mimeType: string): string {
+export function privateUploadSubmissionFilename(filename: string, mimeType: string): string {
   const extension = filename
     .trim()
     .toLowerCase()

@@ -1418,7 +1418,10 @@ async function routeOperationsRequest(input: {
     return listPatientMediaAssets(
       operationsContext,
       dependencies,
-      pathUuid(patientMediaMatch[1], "patientId")
+      pathUuid(patientMediaMatch[1], "patientId"),
+      { cursor: url.searchParams.get("cursor") ?? undefined,
+        limit: url.searchParams.has("limit") ? Number(url.searchParams.get("limit")) : undefined,
+        mediaType: url.searchParams.get("mediaType") as import("@clinic-os/domain").MediaType ?? undefined }
     );
   }
 

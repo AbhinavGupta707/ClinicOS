@@ -1,10 +1,20 @@
 # ClinicOS Agent Memory
 
-Last updated: 2026-07-10
+Last updated: 2026-10-02
 
 This file captures durable execution memory for future Codex sessions. Treat `clinic_os_specs_v2/` as the product source of truth and this file as operational memory about how to work in this repository.
 
-## Current Orchestration State
+## Active MVP state — 2026-10-02
+
+The owner-approved integration-first MVP in `docs/orchestration/MVP_EXECUTION_PLAN.md` supersedes the old checkpoint execution sequence below for current work. Work on Spectra on macOS; keep Desktop read-only. The pilot is Healthy Roots in Sector 50, Gurgaon.
+
+PR #7 merged into `mac-latest-20260829` at `07275ce3facd08d81f1843f7d525c3ee2371c862` after all checks passed at exact head `d92c54be`. Its tree is identical to that verified head; it includes PR #5 and all commits of the now-closed redundant draft #6. See `docs/qa/CLINIC_DAY_MERGE_REVIEW_2026-10-02.md`. Do not merge these old branches again or promote this to `main` by assumption.
+
+The subsequent historical-file slice is on `codex/patient-file-continuity`; scope and final verification live in `docs/qa/PATIENT_FILE_CONTINUITY_2026-10-02.md`. The next product milestone is staff rehearsal and representative clinic-source validation. Private media content requires verified storage/scanning; the local pending simulator must never be described as clean or live. No real patient data, provider activation, deployment, or production release approval was performed.
+
+The Forge backport is hash verified and time limited; raw audit is not zero-high. Follow `docs/security/DEPENDENCY_BACKPORTS.md` and replace the backport with a verified upstream release before its expiry. All deferred production/cloud/provider/restore/clinic gates remain open.
+
+## Historical checkpoint orchestration state — 2026-07-10
 
 - **Current release truth:** the independent post-CP10 audit is **NO-GO** for pilot, production PHI and live production providers. CP10 remains historical E1/E2 local/fixture evidence only. Read plans 23/24, the remediation register and the production evidence standard before new implementation.
 - **Current execution decision:** CP11 was completed in one master session. The user explicitly changed CP12-CP18 to a `gpt-5.6-sol` `xhigh` master plus an adaptive number of visible project-scoped worktree workers. There is no lane quota: every worker must pass the path/input/test/environment independence gate. Use `docs/orchestration/POST_CP11_WORKTREE_ORCHESTRATION_PROGRAM.md` and the active checkpoint packet.

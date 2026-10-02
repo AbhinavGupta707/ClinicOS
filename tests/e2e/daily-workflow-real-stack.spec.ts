@@ -1,5 +1,5 @@
 import { test, expect, type Page, type Browser } from "@playwright/test";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 const baseURL = process.env.CLINICOS_WEB_BASE_URL!;
 const clinic = "10000000-0000-4000-8000-000000000101",
   doctor = "10000000-0000-4000-8000-000000001002";
@@ -1208,5 +1208,207 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
     });
     expect(denied.status()).toBe(403);
     await reception.context().close();
+  });
+  test("patient files preserve historical context, recover interrupted uploads and open exact history metadata", async ({
+    browser
+  }, info) => {
+    const page = await rolePage(browser, "doctor");
+    await api(
+      page,
+      `/v1/patients/${patientId}/consents`,
+      "POST",
+      {
+        purpose: "photo_capture",
+        templateCode: "synthetic-photo",
+        provenance: { source: "automated_test" },
+        templateVersion: 1,
+        captureMethod: "clinic_staff",
+        evidence: { recorded: true }
+      },
+      "doctor"
+    );
+    await choose(page, "dental-media");
+    const files = page.getByRole("region", { name: "Patient files", exact: true });
+    const form = files.getByRole("form", { name: "Add patient file" });
+    await form.getByLabel("Source clinic or system").fill("Synthetic former clinic");
+    await form.getByLabel("Clinical file", { exact: true }).setInputFiles({
+      name: "scan.jfif",
+      mimeType: "image/jpeg",
+      buffer: Buffer.from("synthetic-image")
+    });
+    await form.getByRole("button", { name: "Upload securely" }).click();
+    await expect(form.getByRole("status")).toContainText("filename extension");
+    await expect(page.getByRole("button", { name: "Retry previous request" })).toHaveCount(0);
+    await expect(form.getByLabel("Clinical file", { exact: true })).toBeEnabled();
+    await form.getByLabel("Clinical file", { exact: true }).setInputFiles({
+      name: "synthetic-history.pdf",
+      mimeType: "application/pdf",
+      buffer: Buffer.from("%PDF-1.4\nSynthetic historical record\n%%EOF")
+    });
+    await form.getByLabel("Date on source record, if known").fill("2015-11-20");
+    let interrupted = false;
+    const keys: string[] = [];
+    await page.route("**/v1/media/uploads/*/complete", async (route) => {
+      keys.push(route.request().headers()["idempotency-key"]!);
+      if (!interrupted) {
+        interrupted = true;
+        const result = await route.fetch();
+        expect(result.ok(), await result.text()).toBeTruthy();
+        await route.abort("failed");
+      } else await route.continue();
+    });
+    await form.getByRole("button", { name: "Upload securely" }).click();
+    await expect(page.getByRole("button", { name: "Retry previous request" })).toBeVisible();
+    await page.getByRole("button", { name: "Retry previous request" }).click();
+    await expect(files.getByText("Synthetic former clinic", { exact: true })).toBeVisible();
+    expect(keys.length).toBe(2);
+    expect(keys[1]).toBe(keys[0]);
+    await page.unroute("**/v1/media/uploads/*/complete");
+    const listed = await api(page, `/v1/patients/${patientId}/media`, "GET", undefined, "doctor");
+    expect(listed.mediaAssets).toHaveLength(1);
+    const asset = listed.mediaAssets[0];
+    expect(asset.provenance.clinicalFile.recordDate).toBe("2015-11-20");
+    expect(asset.scanStatus).toBe("pending");
+    await expect(
+      files.getByText("Content unavailable until scanning clears this file.")
+    ).toBeVisible();
+    const denied = await page.request.post(`/v1/media/assets/${asset.id}/signed-url`, {
+      headers: {
+        authorization: "Bearer local-synthetic-doctor",
+        "x-clinic-id": clinic,
+        "idempotency-key": randomUUID()
+      },
+      data: { expiresInSeconds: 300 }
+    });
+    expect(denied.status()).toBe(409);
+    await files.getByLabel("File type filter").selectOption("xray");
+    await expect(files.getByText("No files match this patient and filter.")).toBeVisible();
+    await files.getByLabel("File type filter").selectOption("document");
+    await expect(files.getByText("2015-11-20", { exact: true })).toBeVisible();
+    await page.setViewportSize({ width: 375, height: 812 });
+    await noOverflow(page);
+    await page.screenshot({ path: info.outputPath("patient-files-mobile.png"), fullPage: true });
+    // A typed response fixture exercises link expiry only. It does not clear the
+    // durable pending asset or claim that a real scanner/storage is activated.
+    const listPath = `/v1/patients/${patientId}/media`;
+    const listMatcher = (url: URL) => url.pathname === listPath;
+    await page.route(listMatcher, async (route) => {
+      const response = await route.fetch();
+      const body = await response.json();
+      body.mediaAssets = body.mediaAssets.map((item: any) => ({
+        ...item,
+        status: "scan_clean",
+        scanStatus: "clean"
+      }));
+      await route.fulfill({ response, json: body });
+    });
+    const accessPath = `**/v1/media/assets/${asset.id}/signed-url`;
+    await page.route(accessPath, async (route) =>
+      route.fulfill({
+        json: {
+          mediaAsset: { ...asset, status: "scan_clean", scanStatus: "clean" },
+          access: {
+            signedUrl: "https://media.example.invalid/synthetic",
+            expiresAt: new Date(Date.now() + 1500).toISOString()
+          }
+        }
+      })
+    );
+    await files.getByRole("button", { name: "Refresh files", exact: true }).click();
+    await files.getByRole("button", { name: "Prepare file access", exact: true }).click();
+    await expect(files.getByRole("link", { name: "Open authorized file" })).toBeVisible();
+    await expect(files.getByRole("link", { name: "Open authorized file" })).toHaveCount(0);
+    await page.unroute(accessPath);
+    await page.unroute(listMatcher);
+
+    await choose(page, "patient-profile");
+    const history = page.getByRole("region", { name: "Patient history", exact: true });
+    await history.getByLabel("History category").selectOption("media");
+    await history.getByRole("button", { name: /Open record:/ }).click();
+    await expect(page.getByText("Synthetic former clinic", { exact: true })).toBeVisible();
+    await expect(page.getByText("2015-11-20", { exact: true })).toBeVisible();
+    const bytes = Buffer.from("%PDF-1.4\nSynthetic paging evidence\n%%EOF");
+    const digest = createHash("sha256").update(bytes).digest("hex");
+    for (let i = 0; i < 51; i++) {
+      const reserved = await api(
+        page,
+        "/v1/media/upload-urls",
+        "POST",
+        {
+          patientId,
+          mediaType: "document",
+          originalFilename: "synthetic.pdf",
+          mimeType: "application/pdf",
+          fileSizeBytes: bytes.length,
+          sha256Digest: digest,
+          tags: [],
+          provenance: { clinicalFile: { source: `Synthetic paging ${i}`, recordDate: null } }
+        },
+        "doctor"
+      );
+      await api(page, `/v1/media/uploads/${reserved.upload.id}/content`, "PUT", bytes, "doctor");
+      await api(
+        page,
+        `/v1/media/uploads/${reserved.upload.id}/complete`,
+        "POST",
+        {
+          patientId,
+          contentLength: bytes.length,
+          sha256Digest: digest,
+          mimeType: "application/pdf"
+        },
+        "doctor"
+      );
+    }
+    await choose(page, "dental-media");
+    await expect(files.getByRole("listitem")).toHaveCount(50);
+    await expect(files.getByText("Synthetic former clinic", { exact: true })).toHaveCount(0);
+    await files.getByRole("button", { name: "Load older files" }).click();
+    await expect(files.getByRole("listitem")).toHaveCount(52);
+    await expect(files.getByText("Synthetic former clinic", { exact: true })).toBeVisible();
+    const exact = await api(
+      page,
+      `/v1/patients/${patientId}/media/${asset.id}`,
+      "GET",
+      undefined,
+      "doctor"
+    );
+    expect(exact.mediaAsset.id).toBe(asset.id);
+    const restricted = await page.request.get(`/v1/patients/${patientId}/media/${asset.id}`, {
+      headers: { authorization: "Bearer local-synthetic-receptionist", "x-clinic-id": clinic }
+    });
+    expect(restricted.status()).toBe(403);
+    const emptyName = `SyntheticFiles-empty-${tag}`;
+    const empty = await api(page, "/v1/patients", "POST", {
+      fullName: emptyName,
+      phone: "+919555333997",
+      source: "manual"
+    });
+    const foreign = await page.request.get(`/v1/patients/${empty.patient.id}/media/${asset.id}`, {
+      headers: { authorization: "Bearer local-synthetic-doctor", "x-clinic-id": clinic }
+    });
+    expect(foreign.status()).toBe(404);
+
+    await form.getByLabel("File kind").selectOption("xray");
+    await form.getByLabel("Source clinic or system").fill("Synthetic X-ray source");
+    await form.getByLabel("Clinical file", { exact: true }).setInputFiles({
+      name: "scan.dcm",
+      mimeType: "",
+      buffer: Buffer.concat([Buffer.alloc(128), Buffer.from("DICMSynthetic only")])
+    });
+    await form.getByRole("button", { name: "Upload securely" }).click();
+    await expect(form.getByRole("status")).toContainText("File recorded");
+    await files.getByLabel("File type filter").selectOption("xray");
+    await expect(files.getByRole("listitem")).toHaveCount(1);
+    await expect(files.getByText("Synthetic X-ray source", { exact: true })).toBeVisible();
+    await expect(files.getByRole("definition").filter({ hasText: /^Unknown$/ })).toHaveCount(1);
+    await page.getByLabel("Find patient", { exact: true }).fill(emptyName);
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await page.getByRole("button", { name: new RegExp(emptyName) }).click();
+    await expect(files.getByText("No files match this patient and filter.")).toBeVisible();
+    await expect(files.getByText("Synthetic X-ray source", { exact: true })).toHaveCount(0);
+
+    await noOverflow(page);
+    await page.context().close();
   });
 });

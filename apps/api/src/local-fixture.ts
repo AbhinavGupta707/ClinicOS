@@ -1,3 +1,4 @@
+import { validateMediaPage, type MediaPageInput } from "@clinic-os/domain";
 import { historyPageLimit, assertHistoryCursor, type PatientHistoryPageInput } from "@clinic-os/domain";
 import {validateClinicSetup, ClinicSetupConflict,type ClinicSetupKind,type ClinicSetupInput,type ClinicSetupRecord,type ClinicAccessPerson,type ClinicAccessInput} from "@clinic-os/db";
 import type { WorkflowPage, WorkflowPageFilter, ClinicStaffSummary } from "@clinic-os/db";
@@ -5633,13 +5634,18 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return asset;
   }
 
-  async listPatientMediaAssets(
-    scope: RepositoryScope,
-    patientId: UUID
-  ): Promise<MediaAssetRecord[]> {
-    return this.mediaAssets
-      .filter((asset) => matchesScope(asset, scope) && asset.patientId === patientId)
-      .sort((left, right) => right.uploadedAt.localeCompare(left.uploadedAt));
+  async listPatientMediaAssets(scope: RepositoryScope, patientId: UUID, input: MediaPageInput = {}) {
+    const limit = validateMediaPage(input);
+    const rows = this.mediaAssets.filter(asset => matchesScope(asset,scope) && asset.patientId === patientId && asset.status !== "deleted" && (!input.mediaType || asset.mediaType === input.mediaType))
+      .sort((a,b) => b.uploadedAt.localeCompare(a.uploadedAt) || b.id.localeCompare(a.id));
+    const offset = input.cursor ? rows.findIndex(row => row.id === input.cursor)+1 : 0;
+    if (input.cursor && !offset) throw new RangeError("File cursor does not belong to this patient and filter. Refresh files.");
+    const records = rows.slice(offset,offset+limit);
+    return { records, nextCursor:rows.length>offset+limit?records.at(-1)!.id:null };
+  }
+
+  async getPatientMediaAsset(scope: RepositoryScope, patientId: UUID, mediaAssetId: UUID) {
+    return this.mediaAssets.find(asset => matchesScope(asset,scope) && asset.patientId === patientId && asset.id === mediaAssetId && asset.status !== "deleted") ?? null;
   }
 
   async findMediaAssetById(
@@ -5647,7 +5653,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     mediaAssetId: UUID
   ): Promise<MediaAssetRecord | null> {
     return (
-      this.mediaAssets.find((asset) => matchesScope(asset, scope) && asset.id === mediaAssetId) ??
+      this.mediaAssets.find((asset) => matchesScope(asset, scope) && asset.id === mediaAssetId && asset.status !== "deleted") ??
       null
     );
   }

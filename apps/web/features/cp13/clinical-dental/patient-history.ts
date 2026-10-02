@@ -18,7 +18,7 @@ export const HISTORY_LABELS: Readonly<Record<string, string>> = {
 };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export type HistorySource = {
-  kind: "encounter" | "note" | "prescription" | "finding" | "snapshot" | "invoice";
+  kind: "encounter" | "note" | "prescription" | "finding" | "snapshot" | "invoice" | "media";
   id: string;
   encounterId?: string;
 };
@@ -36,6 +36,7 @@ export function historySource(
     permissions.includes("clinical.note.read")
   )
     return { kind: "encounter", id };
+  if(table === "media_assets" && type === "media_uploaded" && permissions.includes("media.read")) return {kind:"media",id};
   const encounterId = fieldText(record(item.metadata), "encounterId");
   if (
     table === "clinical_note_versions" &&
@@ -90,6 +91,11 @@ export async function readHistorySource(
   patientId: string,
   source: HistorySource
 ): Promise<HistorySourceDetail> {
+  if (source.kind === "media") {
+    const response=await client.getPatientMediaAsset({path:{patientId,mediaAssetId:source.id}});
+    assertPatient(response.mediaAsset,patientId);assertSourceId(response.mediaAsset,source.id);
+    return {kind:"media",value:response.mediaAsset,related:[]};
+  }
   if (source.kind === "note" || source.kind === "encounter" || source.kind === "prescription") {
     const encounterId = source.encounterId ?? source.id;
     const visit = await client.getEncounter({ path: { encounterId } });

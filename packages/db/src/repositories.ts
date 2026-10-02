@@ -1,3 +1,4 @@
+import type { MediaPageInput } from "@clinic-os/domain";
 import type { PatientHistoryPageInput } from "@clinic-os/domain";
 import type {createAppointmentImport,stageAppointmentObservations,sealAppointmentImport,listAppointmentImports,getAppointmentImport,lockAppointmentObservation,decideAppointmentObservation} from "./appointment-observations.ts";
 import type {FinancialCommandInput} from "@clinic-os/domain";
@@ -1897,7 +1898,8 @@ export interface ClinicOperationsRepository {
     uploadId: UUID,
     input: CompleteMediaUploadInput
   ): Promise<MediaAssetRecord | null>;
-  listPatientMediaAssets(scope: RepositoryScope, patientId: UUID): Promise<MediaAssetRecord[]>;
+  listPatientMediaAssets(scope: RepositoryScope, patientId: UUID, input?: MediaPageInput): Promise<{records: MediaAssetRecord[]; nextCursor: string | null}>;
+  getPatientMediaAsset(scope: RepositoryScope, patientId: UUID, mediaAssetId: UUID): Promise<MediaAssetRecord | null>;
   findMediaAssetById(scope: RepositoryScope, mediaAssetId: UUID): Promise<MediaAssetRecord | null>;
 
   getDentalChart(scope: RepositoryScope, patientId: UUID): Promise<DentalChartView | null>;

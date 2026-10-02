@@ -33,6 +33,7 @@ export function createClinicalDentalHandlerMap(
     receiveMediaUploadContent: media.receiveMediaUploadContent,
     completeMediaUpload: media.completeMediaUpload,
     listPatientMediaAssets: media.listPatientMediaAssets,
+    getPatientMediaAsset: media.getPatientMediaAsset,
     createSignedMediaAccess: media.createSignedMediaAccess
   } satisfies ClinicalDentalHandlerMap;
 

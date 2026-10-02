@@ -111,6 +111,7 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Objec
   receiveMediaUploadContent: ["media.write"],
   completeMediaUpload: ["media.write"],
   listPatientMediaAssets: ["patient.read", "patient.phi.read", "media.read"],
+  getPatientMediaAsset: ["patient.read", "patient.phi.read", "media.read"],
   createSignedMediaAccess: ["patient.phi.read", "media.read"],
   listPricebookProcedures: ["billing.read"],
   createPatientTreatmentPlan: ["patient.read", "patient.phi.read", "dental.chart.write"],

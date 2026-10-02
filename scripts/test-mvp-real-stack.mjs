@@ -301,7 +301,7 @@ try {
   assert.equal(result.stats.flaky, 0);
   assert.equal(
     result.stats.expected,
-    dailyWorkflow ? 9 : frontDeskOnly ? 6 : 12,
+    dailyWorkflow ? 10 : frontDeskOnly ? 6 : 12,
     "Every real-stack scenario must execute."
   );
   if (dailyWorkflow) await verifyDailyWorkflowEvidence();
@@ -347,6 +347,13 @@ async function verifyDailyWorkflowEvidence() {
       e as(select * from encounters where patient_id in(select id from p))
       select
       (select count(*)::int from p) patients,
+      (select count(*)::int from media_assets where patient_id in(select id from p)) patient_files,
+      (select count(*)::int from media_assets where patient_id in(select id from p) and media_type='xray') patient_xrays,
+      (select count(*)::int from media_assets where patient_id in(select id from p) and scan_status='pending') pending_files,
+      (select count(*)::int from media_assets where patient_id in(select id from p) and provenance->'clinicalFile'->>'recordDate'='2015-11-20') dated_historical_files,
+      (select count(*)::int from patient_timeline_items where patient_id in(select id from p) and item_type='media_uploaded') file_timeline_events,
+      (select count(*)::int from audit_events where patient_id in(select id from p) and action='media.upload_completed') file_audits,
+      (select count(*)::int from outbox_events where patient_id in(select id from p) and event_type='media.upload_completed') file_outbox_events,
       (select count(*)::int from e where status='closed') closed_visits,
       (select count(*)::int from appointments where id in(select appointment_id from e) and status='completed') completed_appointments,
       (select count(*)::int from queue_entries where appointment_id in(select appointment_id from e) and status='completed') completed_queue,
@@ -368,6 +375,13 @@ async function verifyDailyWorkflowEvidence() {
     `);
     assert.deepEqual(counts, {
       patients: 1,
+      patient_files: 53,
+      patient_xrays: 1,
+      pending_files: 53,
+      dated_historical_files: 1,
+      file_timeline_events: 53,
+      file_audits: 53,
+      file_outbox_events: 53,
       closed_visits: 1,
       completed_appointments: 1,
       completed_queue: 1,

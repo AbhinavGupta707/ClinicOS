@@ -212,7 +212,7 @@ export function ClinicalWorkflowWorkspace(props: ClinicalWorkflowWorkspaceProps)
             <>
               <DentalPanel {...context} />
               {can(props.profile, "media.read") || can(props.profile, "media.write") ? (
-                <ClinicalDentalWorkspace client={props.client} patientId={context.patientId} />
+                <ClinicalDentalWorkspace client={props.client} patientId={context.patientId} locked={action.locked} mutate={action.execute} canRead={can(props.profile,"media.read")} canUpload={can(props.profile,"media.write")} />
               ) : null}
             </>
           ) : props.surfaceId === "dental-media" ? (

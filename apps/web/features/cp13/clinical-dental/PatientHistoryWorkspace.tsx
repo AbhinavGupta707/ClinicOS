@@ -1,5 +1,7 @@
 "use client";
 
+import { ClinicalFileDetails, ClinicalMediaAccessButton } from "./ClinicalDentalWorkspace";
+
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import type { ClinicOsApiClient, PublicJsonObject } from "@clinic-os/api-client-generated";
 import type { MeProfile } from "../../../lib/me";
@@ -385,6 +387,7 @@ function SourceDetail(props: Props & { item: PublicJsonObject; close: () => void
   function content(detail: HistorySourceDetail) {
     const value = detail.value;
     switch (detail.kind) {
+      case "media": return <><ClinicalFileDetails asset={value} /><ClinicalMediaAccessButton client={props.client} mediaAssetId={fieldText(value,"id")} asset={value} /></>;
       case "note":
         return note(value);
       case "encounter":

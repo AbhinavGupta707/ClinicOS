@@ -373,3 +373,15 @@ See `RETURNING_PATIENT_CHART_PLAN_2026-10-02.md` and
 Synthetic acceptance does not close MVP1/MVP2 clinic reconciliation, real staff
 validation, provider activation or production-readiness gates. The next milestone
 is the clinic-day/return-visit rehearsal and representative source validation.
+
+
+## 2026-10-02 — Reviewed merge and historical files
+
+The owner authorized review, repair and merge of the clinic-day stack. PR #7 is
+merged into the Mac development baseline, with its complete identity/import
+ancestry. The next bounded slice adds historical patient-file metadata, paged
+browsing, exact history reads and safe upload/access UI using the existing media
+contracts. See `PATIENT_FILE_CONTINUITY_PLAN_2026-10-02.md` and
+`../qa/PATIENT_FILE_CONTINUITY_2026-10-02.md`. Staff rehearsal and representative
+source reconciliation remain the next acceptance milestone; no clinic data,
+provider activation or release gate is implied by these engineering results.

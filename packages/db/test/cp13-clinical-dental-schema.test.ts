@@ -34,6 +34,7 @@ test("CP13 clinical/dental uses the frozen transaction-bound module operations",
     "findMediaUploadReservationById",
     "completeMediaUpload",
     "listPatientMediaAssets",
+    "getPatientMediaAsset",
     "findMediaAssetById"
   ]) {
     assert.ok(CLINICAL_MEDIA_OPERATIONS.includes(operation as never), operation);

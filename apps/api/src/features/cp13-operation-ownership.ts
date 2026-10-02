@@ -54,6 +54,7 @@ export const CP13_CLINICAL_DENTAL_OPERATION_IDS = Object.freeze([
   "receiveMediaUploadContent",
   "completeMediaUpload",
   "listPatientMediaAssets",
+  "getPatientMediaAsset",
   "createSignedMediaAccess"
 ] as const);
 

@@ -10,6 +10,7 @@ export const CLINICAL_MEDIA_OPERATIONS = [
   "findMediaUploadReservationById",
   "completeMediaUpload",
   "listPatientMediaAssets",
+  "getPatientMediaAsset",
   "findMediaAssetById"
 ] as const satisfies readonly (keyof ClinicOperationsRepository)[];
 

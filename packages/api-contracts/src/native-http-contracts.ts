@@ -1,4 +1,4 @@
-import { PATIENT_HISTORY_CATEGORIES } from "@clinic-os/domain";
+import { PATIENT_HISTORY_CATEGORIES, MEDIA_TYPES } from "@clinic-os/domain";
 import {
   API_ERROR_SCHEMA,
   EMPTY_OBJECT_SCHEMA,
@@ -2058,7 +2058,14 @@ function cp4Operations(): HttpOperationContract[] {
       pathProperties: { patientId: uuid },
       mutation: false,
       paginated: true,
-      success: { 200: entityList("mediaAssets") }
+      queryProperties: { cursor: uuid, mediaType: schema.enum(MEDIA_TYPES) },
+      success: { 200: responseSchema({mediaAssets: entities, nextCursor: optionalUuid}) }
+    }),
+    operation({
+      operationId: "getPatientMediaAsset", checkpoint: "CP4", method: "GET",
+      path: "/v1/patients/{patientId}/media/{mediaAssetId}", summary: "Read exact patient file metadata",
+      tags: ["Media", "Patients"], phi: "read", pathProperties: {patientId:uuid, mediaAssetId:uuid},
+      mutation: false, success: {200: singleEntity("mediaAsset")}
     }),
     operation({
       operationId: "createSignedMediaAccess",
