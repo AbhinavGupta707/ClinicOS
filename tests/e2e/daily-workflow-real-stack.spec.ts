@@ -1430,6 +1430,20 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
     await page.getByTestId("patient-file-upload").click();
     expect((await upload).postData()).not.toContain("NEVER_SEND_NATIONAL_ID");
     await expect(page.getByTestId("patient-file-summary")).toContainText("Complete file received");
+    // Inject only progress-read failure; all imports/commits still use the real API.
+    // Recovery must restore the saved profile's immutable-retention disclosure.
+    const progressRoute = "**/v1/migration-runs/*/patient-file";
+    await page.route(progressRoute, route => route.request().method() === "GET"
+      ? route.fulfill({status:403,contentType:"application/json",body:JSON.stringify({message:"Synthetic progress unavailable"})})
+      : route.continue());
+    await page.getByRole("button",{name:"Refresh file progress"}).click();
+    await expect(page.getByTestId("patient-file-notice")).toContainText("Saved progress is unavailable");
+    await page.getByTestId("patient-file-profile").selectOption("practo_ray_patients_v1");
+    await page.unroute(progressRoute);
+    await page.getByRole("button",{name:"Refresh file progress"}).click();
+    await expect(page.getByTestId("patient-file-profile")).toHaveValue("practo_ray_patients_context_v2");
+    await expect(page.getByText("Committing retains immutable clinical source evidence.",{exact:false})).toBeVisible();
+    await expect(page.getByTestId("patient-file-commit-accept")).not.toBeChecked();
     await page.getByTestId("patient-file-commit-accept").check();
     await page.getByTestId("patient-file-commit").click();
     await expect(page.getByTestId("patient-file-notice")).toContainText("Processing finished");

@@ -41,11 +41,14 @@ export function PatientFileWorkspace({
   onBusy: (busy: boolean) => void;
   externalBusy: boolean;
 }) {
-  const [profile, setProfile] = useState<PatientImportProfile>(
+  const [selectedProfile, setProfile] = useState<PatientImportProfile>(
     initialFile?.profile ?? "practo_ray_patients_v1"
   );
-  const withContext = profile === PATIENT_CONTEXT_PROFILE;
   const [file, setFile] = useState<FileDetail | null>(initialFile);
+  // Restored progress is authoritative, including after an unavailable read.
+  // A local selection must never change a saved file's retention disclosure.
+  const profile = file?.profile ?? selectedProfile;
+  const withContext = profile === PATIENT_CONTEXT_PROFILE;
   const [localFile, setLocalFile] = useState<File | null>(null);
   const [prepared, setPrepared] = useState<PreparedPatientFile | null>(null);
   const [accepted, setAccepted] = useState(false);

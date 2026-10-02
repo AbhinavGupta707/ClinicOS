@@ -33,8 +33,11 @@ must be reviewed; this is not an erase-and-reimport workflow.
 ## Verification
 
 Evidence: `.audit-spectra-retirement-20260920/migration-context-20261002/`.
-The successful native run is `native-yeyykz4k`; its `checks.json`, browser results
-and `cleanup.json` retain individual outcomes.
+The import/front-desk run is `native-yeyykz4k`; the final daily-workflow run is
+`native-0f7b2kxg`. Their `checks.json`, browser results and `cleanup.json` retain
+individual outcomes. The first run's daily browser scenarios passed, but its
+runner failed a stale expected-count assertion (10 versus 11); only the latter
+run passed the complete daily runner and its database reconciliation.
 
 - Workspace check, typecheck, lint, **1,213 tests (zero failures/skips)**, builds,
   generated contracts, route inventory and secret scan passed. The final doctor
@@ -70,6 +73,16 @@ and revisions rather than transaction-start timestamps. The reviewer rechecked
 both fixes. Earlier failing runs are retained: stale route-count assertions,
 browser bundling through a server-only barrel, and synthetic phone overlap
 between independent fixtures were corrected; they are not passing evidence.
+
+A subsequent frozen-commit UI review found that recovering saved file progress
+could retain a locally changed profile and show the wrong retention disclosure.
+The saved file's profile is now authoritative. The final daily browser run proves
+two failed progress reads, changing the local selection, successful recovery of
+the v2 profile/warning and a fresh commit acknowledgement. Only those two reads
+are fault-injected; all writes and the remaining workflow use real API/Postgres.
+All 11 daily cases and repository probes passed after updating the runner's
+expected count. The captured mobile historical-context output was visually
+inspected for readable source text and reachable controls.
 
 ## Remaining boundaries
 
