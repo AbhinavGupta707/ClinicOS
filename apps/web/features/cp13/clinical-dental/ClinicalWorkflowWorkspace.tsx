@@ -15,9 +15,16 @@ import type {
   PublicJsonObject,
   VersionedPublicResource
 } from "@clinic-os/api-client-generated";
+import {
+  readUnsavedClinicalNote,
+  rememberUnsavedClinicalNote,
+  forgetUnsavedClinicalNote,
+  unsavedEncounterForPatient
+} from "../../../lib/unsaved-clinical-notes";
 import type { MeProfile } from "../../../lib/me";
 import { PatientHistoryWorkspace } from "./PatientHistoryWorkspace";
 import { ClinicalDentalWorkspace } from "./ClinicalDentalWorkspace";
+import { useUnsavedNoteGuard } from "../shared/useUnsavedNoteGuard";
 import { PatientSelector } from "../shared/PatientSelector";
 import { WorkflowAction, useWorkflowAction } from "../shared/WorkflowAction";
 import { clinicDisplayTime, etag, fieldText, record, valueList } from "../shared/workflow-values";
@@ -44,6 +51,8 @@ type ClinicalContext = ClinicalWorkflowWorkspaceProps & {
   readonly patientName: string;
   readonly scope: string;
   readonly locked: boolean;
+  readonly setNoteDirty: (dirty: boolean) => void;
+  readonly allowNavigation: () => boolean;
   readonly mutate: <T>(
     run: (key: string) => Promise<T>,
     after?: (result: T) => Promise<void> | void
@@ -117,6 +126,7 @@ function RemotePanel(props: {
 export function ClinicalWorkflowWorkspace(props: ClinicalWorkflowWorkspaceProps) {
   const scope = `${props.profile.tenant.id}:${props.profile.clinic.id}:${props.profile.user.id}`;
   const [revision, setRevision] = useState(0);
+  const noteGuard = useUnsavedNoteGuard();
   const canReadPhi = can(props.profile, "patient.phi.read");
   const patient = useRemote(() => {
     if (!props.patientId) return Promise.reject(new Error("Select a patient."));
@@ -137,7 +147,9 @@ export function ClinicalWorkflowWorkspace(props: ClinicalWorkflowWorkspaceProps)
           patientName: selectedName,
           scope,
           locked: action.locked,
-          mutate: action.execute
+          mutate: action.execute,
+          setNoteDirty: noteGuard.setNoteDirty,
+          allowNavigation: noteGuard.allowNavigation
         }
       : null;
 
@@ -147,9 +159,12 @@ export function ClinicalWorkflowWorkspace(props: ClinicalWorkflowWorkspaceProps)
         <PatientSelector
           client={props.client}
           patientId={props.patientId}
-          onSelectPatient={props.onSelectPatient}
+          onSelectPatient={(id) => {
+            if (id === props.patientId || noteGuard.allowNavigation()) props.onSelectPatient(id);
+          }}
         />
       </fieldset>
+      {noteGuard.message ? <p role="alert">{noteGuard.message}</p> : null}
       <WorkflowAction
         message={action.message}
         pending={action.pending}
@@ -694,7 +709,13 @@ function ConsentPanel(props: ClinicalContext) {
 }
 
 function PrepPanel(props: ClinicalContext) {
-  return <PatientHistoryWorkspace client={props.client} profile={props.profile} patientId={props.patientId}/>;
+  return (
+    <PatientHistoryWorkspace
+      client={props.client}
+      profile={props.profile}
+      patientId={props.patientId}
+    />
+  );
 }
 
 const NOTE_SECTIONS = [
@@ -730,7 +751,9 @@ function EncounterPanel(props: ClinicalContext) {
   const today = useRemote(() => props.client.getMorningDashboard(), [props.client]);
   const [encounterRows, setEncounterRows] = useState<readonly VersionedPublicResource[]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
-  const [selectedId, setSelectedId] = useState("");
+  const [selectedId, setSelectedId] = useState(
+    () => unsavedEncounterForPatient(props.scope, props.patientId) ?? ""
+  );
   const [moreError, setMoreError] = useState("");
   const [providerId, setProviderId] = useState("");
   const [appointmentId, setAppointmentId] = useState("");
@@ -742,10 +765,10 @@ function EncounterPanel(props: ClinicalContext) {
     setCursor(encounters.data?.nextCursor ?? null);
   }, [encounters.data]);
   useEffect(() => {
-    setSelectedId("");
+    setSelectedId(unsavedEncounterForPatient(props.scope, props.patientId) ?? "");
     setProviderId("");
     setAppointmentId("");
-  }, [props.patientId]);
+  }, [props.scope, props.patientId]);
 
   const doctorOptions =
     doctors.data?.clinicDoctors
@@ -781,6 +804,7 @@ function EncounterPanel(props: ClinicalContext) {
 
   async function create(event: FormEvent) {
     event.preventDefault();
+    if (!props.allowNavigation()) return;
     if (!doctorOptions.some((item) => item.id === providerId)) {
       setMessage("Choose a listed clinic doctor.");
       return;
@@ -828,7 +852,9 @@ function EncounterPanel(props: ClinicalContext) {
                 <button
                   type="button"
                   aria-current={selectedId === item.id ? "true" : undefined}
-                  onClick={() => setSelectedId(item.id)}
+                  onClick={() => {
+                    if (item.id === selectedId || props.allowNavigation()) setSelectedId(item.id);
+                  }}
                 >
                   {clinicDisplayTime(
                     fieldText(item, "createdAt") || fieldText(item, "updatedAt"),
@@ -1094,11 +1120,17 @@ function NoteEditor(
       ),
     [props.noteVersions]
   );
-  const [content, setContent] = useState<NoteContent>({});
-  const [dirty, setDirty] = useState(false);
-  const [ready, setReady] = useState(false);
+  const [recovered] = useState(() =>
+    readUnsavedClinicalNote(props.scope, props.patientId, props.encounter.id)
+  );
+  const [content, setContent] = useState<NoteContent>(() => recovered?.content ?? {});
+  const [dirty, setDirty] = useState(Boolean(recovered));
+  const [baseVersion, setBaseVersion] = useState(
+    recovered?.rowVersion ?? props.encounter.rowVersion
+  );
+  const [ready, setReady] = useState(recovered?.ready ?? false);
   const [reviewedId, setReviewedId] = useState("");
-  const [amendReason, setAmendReason] = useState("");
+  const [amendReason, setAmendReason] = useState(recovered?.amendmentReason ?? "");
   const [selectedSignedId, setSelectedSignedId] = useState("");
   const [message, setMessage] = useState("");
   const status = fieldText(props.encounter, "status");
@@ -1111,19 +1143,51 @@ function NoteEditor(
   const timeZone = props.profile.clinic.timezone || "UTC";
 
   useEffect(() => {
-    if (!dirty) setContent(noteContent(draft?.content ?? signed[0]?.content));
-  }, [draft, signed, dirty]);
+    if (!dirty) {
+      setContent(noteContent(draft?.content ?? signed[0]?.content));
+      setReady(status === "ready_for_sign");
+      setBaseVersion(props.encounter.rowVersion);
+    }
+  }, [draft, signed, dirty, status, props.encounter.rowVersion]);
   useEffect(() => {
     setReviewedId("");
   }, [draft?.id, props.encounter.rowVersion]);
+  const staleDraft = dirty && baseVersion !== props.encounter.rowVersion;
   useEffect(() => {
-    const warn = (event: BeforeUnloadEvent) => {
-      if (!dirty) return;
-      event.preventDefault();
-    };
-    window.addEventListener("beforeunload", warn);
-    return () => window.removeEventListener("beforeunload", warn);
-  }, [dirty]);
+    if (dirty)
+      rememberUnsavedClinicalNote(props.scope, {
+        patientId: props.patientId,
+        encounterId: props.encounter.id,
+        rowVersion: baseVersion,
+        content,
+        ready,
+        amendmentReason: amendReason
+      });
+    else forgetUnsavedClinicalNote(props.scope, props.patientId, props.encounter.id);
+  }, [
+    dirty,
+    content,
+    ready,
+    amendReason,
+    baseVersion,
+    props.scope,
+    props.patientId,
+    props.encounter.id
+  ]);
+  const reportDirty = props.setNoteDirty;
+  useEffect(() => {
+    reportDirty(dirty);
+    return () => reportDirty(false);
+  }, [dirty, reportDirty]);
+
+  function discard() {
+    setContent(noteContent(draft?.content ?? signed[0]?.content));
+    setReady(status === "ready_for_sign");
+    setAmendReason("");
+    setReviewedId("");
+    setDirty(false);
+    setMessage("Unsaved changes discarded. The saved record is unchanged.");
+  }
 
   function currentContent() {
     const normalized = Object.fromEntries(
@@ -1138,6 +1202,7 @@ function NoteEditor(
 
   async function save(event: FormEvent) {
     event.preventDefault();
+    if (staleDraft) return;
     try {
       const body = { content: currentContent(), readyForSign: ready };
       setMessage("");
@@ -1180,7 +1245,7 @@ function NoteEditor(
 
   async function amend(event: FormEvent) {
     event.preventDefault();
-    if (!amendReason.trim()) return;
+    if (staleDraft || !amendReason.trim()) return;
     try {
       const body = { content: currentContent(), amendmentReason: amendReason.trim() };
       setMessage("");
@@ -1230,7 +1295,22 @@ function NoteEditor(
   return (
     <section aria-label="Clinical note">
       <h3>Clinical note</h3>
+      {recovered && dirty ? (
+        <p role="status">Your unsaved note was recovered in this tab. Review it before saving.</p>
+      ) : null}
+      {staleDraft ? (
+        <p role="alert">
+          The saved visit changed while this note was being edited. Your text is retained below.
+          Review the latest saved record and preserve any needed text before discarding these
+          changes and starting a fresh draft.
+        </p>
+      ) : null}
       {dirty ? <p role="status">Unsaved note changes. Save before navigating or signing.</p> : null}
+      {dirty ? (
+        <button type="button" disabled={props.locked} onClick={discard}>
+          Discard unsaved note changes
+        </button>
+      ) : null}
       {editable || amendable ? (
         <form onSubmit={(event) => void (editable ? save(event) : amend(event))}>
           {NOTE_SECTIONS.map(([key, label]) => (
@@ -1254,11 +1334,15 @@ function NoteEditor(
                   type="checkbox"
                   disabled={props.locked || fieldText(props.encounter, "status") === "scheduled"}
                   checked={ready}
-                  onChange={(event) => setReady(event.target.checked)}
+                  onChange={(event) => {
+                    setReady(event.target.checked);
+                    setDirty(true);
+                    setReviewedId("");
+                  }}
                 />{" "}
                 Ready for assigned doctor to review and sign
               </label>
-              <button type="submit" disabled={props.locked}>
+              <button type="submit" disabled={props.locked || staleDraft}>
                 Save note draft
               </button>
             </>
@@ -1270,11 +1354,14 @@ function NoteEditor(
                 <textarea
                   disabled={props.locked}
                   value={amendReason}
-                  onChange={(event) => setAmendReason(event.target.value)}
+                  onChange={(event) => {
+                    setAmendReason(event.target.value);
+                    setDirty(true);
+                  }}
                   required
                 />
               </label>
-              <button type="submit" disabled={props.locked || !amendReason.trim()}>
+              <button type="submit" disabled={props.locked || staleDraft || !amendReason.trim()}>
                 Sign correction
               </button>
             </>

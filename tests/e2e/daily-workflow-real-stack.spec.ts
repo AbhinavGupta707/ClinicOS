@@ -175,7 +175,9 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
     });
     await page.getByRole("button", { name: "Create patient", exact: true }).click();
     await page.getByRole("button", { name: "Retry previous request", exact: true }).click();
-    await expect(page.getByRole("button", { name: "Save demographics", exact: true })).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "Save demographics", exact: true })
+    ).toBeVisible();
     await expect(page.getByLabel("Full name", { exact: true })).toHaveValue(patientName);
     await expect(page.getByRole("button", { name: "Create patient", exact: true })).toHaveCount(0);
     await page.unroute("**/v1/patients");
@@ -317,6 +319,9 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
       .selectOption(encounterId);
     await save(page, `/v1/encounters/${encounterId}/procedures`, "Record completed procedure");
     await choose(page, "encounter");
+    // Establish real SPA history for Back/Forward recovery, not a page reload.
+    await page.locator('a.nav-item[href="/"]').click();
+    await page.locator('a.nav-item[href="/surface/encounter"]').click();
     await page
       .getByRole("button", { name: /drafting|in progress|in consultation/ })
       .first()
@@ -327,10 +332,97 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
       .first()
       .fill("Synthetic clinical examination for workflow testing only");
     await note.getByLabel("Ready for assigned doctor", { exact: false }).check();
+    // Ordinary navigation must not silently drop a clinical draft. All records
+    // below are committed through the real API; only the save latency is injected.
+    await api(page, "/v1/encounters", "POST", {
+      patientId,
+      providerUserId: doctor,
+      reason: "Synthetic alternate visit"
+    });
+    await page
+      .getByRole("heading", { name: "Visits", exact: true })
+      .locator("..")
+      .getByRole("button", { name: "Refresh", exact: true })
+      .click();
+    await page.getByRole("button", { name: /Synthetic alternate visit/ }).click();
+    const guardMessage = "Save or explicitly discard the unsaved clinical note";
+    await expect(page.getByRole("alert").filter({ hasText: guardMessage })).toBeVisible();
+    await expect(note.locator("textarea").first()).toHaveValue(
+      "Synthetic clinical examination for workflow testing only"
+    );
+    const alternateName = `SyntheticAlternate-${tag}`;
+    await api(page, "/v1/patients", "POST", {
+      fullName: alternateName,
+      phone: "+919001119977",
+      source: "manual"
+    });
+    await page.getByLabel("Find patient", { exact: true }).fill(alternateName);
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    await page.getByRole("button", { name: new RegExp(alternateName) }).click();
+    await expect(page.getByRole("heading", { name: patientName, exact: true })).toBeVisible();
+    await page.locator('a.nav-item[href="/"]').click();
+    await expect(note.locator("textarea").first()).toHaveValue(
+      "Synthetic clinical examination for workflow testing only"
+    );
+    await page.goBack();
+    await expect(note).toHaveCount(0);
+    await page.goForward();
+    await expect(note.locator("textarea").first()).toHaveValue(
+      "Synthetic clinical examination for workflow testing only"
+    );
+    await expect(note.getByText("Your unsaved note was recovered", { exact: false })).toBeVisible();
+    await page.route("**/v1/me", (route) =>
+      route.fulfill({
+        status: 503,
+        contentType: "application/json",
+        body: JSON.stringify({ error: { code: "SERVER_ERROR", message: "Synthetic outage" } })
+      })
+    );
+    await page.getByRole("button", { name: "Refresh session context" }).click();
+    await expect(page.getByRole("heading", { name: "Staff access unavailable" })).toBeVisible();
+    await page.unroute("**/v1/me");
+    await page.getByRole("button", { name: "Retry", exact: true }).click();
+    await expect(note.locator("textarea").first()).toHaveValue(
+      "Synthetic clinical examination for workflow testing only"
+    );
+    const concurrentVisit = await api(page, `/v1/encounters/${encounterId}`);
+    await api(
+      page,
+      `/v1/encounters/${encounterId}`,
+      "PATCH",
+      {
+        content: { chiefComplaint: "Synthetic concurrently saved note" },
+        readyForSign: false
+      },
+      "doctor",
+      concurrentVisit.encounter.rowVersion
+    );
+    await page
+      .getByRole("heading", { name: "Selected visit", exact: true })
+      .locator("..")
+      .getByRole("button", { name: "Refresh", exact: true })
+      .click();
+    await expect(note.getByRole("button", { name: "Save note draft" })).toBeDisabled();
+    await expect(note.locator("textarea").first()).toHaveValue(
+      "Synthetic clinical examination for workflow testing only"
+    );
+    // Explicit discard clears only unsaved content; save remains reachable.
+    await note.getByRole("button", { name: "Discard unsaved note changes" }).click();
+    await expect(note.locator("textarea").first()).toHaveValue("Synthetic concurrently saved note");
+    await expect(page.getByRole("alert").filter({ hasText: guardMessage })).toHaveCount(0);
+    await note
+      .locator("textarea")
+      .first()
+      .fill("Synthetic clinical examination for workflow testing only");
+    await note.getByLabel("Ready for assigned doctor", { exact: false }).check();
     let releaseSave!: () => void;
     let observedSave!: () => void;
-    const holdSave = new Promise<void>((resolve) => { releaseSave = resolve; });
-    const saving = new Promise<void>((resolve) => { observedSave = resolve; });
+    const holdSave = new Promise<void>((resolve) => {
+      releaseSave = resolve;
+    });
+    const saving = new Promise<void>((resolve) => {
+      observedSave = resolve;
+    });
     const notePath = `**/v1/encounters/${encounterId}`;
     await page.route(notePath, async (route) => {
       if (route.request().method() === "GET") return route.continue();

@@ -35,6 +35,7 @@ import {
 import { SurfaceView } from "@/components/surface-view";
 import { Cp13Workspace } from "@/features/cp13/Cp13Workspace";
 import { isCp13WorkspaceSurface } from "@/features/cp13/runtime-helpers";
+import { activateClinicalNoteScope, clearUnsavedClinicalNotes } from "@/lib/unsaved-clinical-notes";
 import { SESSION_INVALIDATED_EVENT, signOut, usesStaffSession } from "@/lib/staff-session";
 import { loadMe, type MeState } from "@/lib/me";
 import {
@@ -117,15 +118,20 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
     activeLoad.current?.abort();
     const controller = new AbortController();
     activeLoad.current = controller;
-    setMeState({ status: "loading" });
+    setMeState((previous) => isAuthenticatedState(previous) ? previous : { status: "loading" });
     void loadMe(controller.signal).then((state) => {
-      if (!controller.signal.aborted && !sessionClosed.current) setMeState(state);
+      if (!controller.signal.aborted && !sessionClosed.current) {
+        if (state.status === "authenticated") activateClinicalNoteScope(`${state.profile.tenant.id}:${state.profile.clinic.id}:${state.profile.user.id}`);
+        else if (state.status === "unauthenticated") clearUnsavedClinicalNotes();
+        setMeState(state);
+      }
     }).catch(() => undefined); // Aborted older requests must not restore a previous identity.
   }, []);
 
   useEffect(() => {
     refreshMe();
     const invalidate = () => {
+      clearUnsavedClinicalNotes();
       activeLoad.current?.abort();
       clearPatientNavigationHandoff(); setPatientHandoff(null);
       setMeState({ status: "unauthenticated", problem: { code: "AUTH_REQUIRED", message: "Sign in to continue." } });
@@ -141,6 +147,7 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
   }, [refreshMe]);
 
   const endSession = async () => {
+    clearUnsavedClinicalNotes();
     sessionClosed.current = true;
     setSigningOut(true); setSignOutError(null);
     // Remove patient content immediately, including when the provider is unavailable.
@@ -179,7 +186,7 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
       return;
     }
 
-    if (meState.status !== "loading") {
+    if (meState.status === "unauthenticated") {
       clearPatientNavigationHandoff();
       setPatientHandoff(null);
     }
@@ -239,7 +246,7 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
         aria-label="ClinicOS navigation"
       >
         <div className="nav-brand">
-          <Link className="brand-mark" href="/" onClick={() => setActiveSurfaceId("today")}>
+          <Link className="brand-mark" href="/" onClick={(event) => { if (!event.defaultPrevented && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) setActiveSurfaceId("today"); }}>
             <strong>ClinicOS</strong>
           </Link>
           <Button
@@ -268,7 +275,8 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
                     className={active ? "nav-item nav-item--active" : "nav-item"}
                     href={surface.href}
                     key={surface.id}
-                    onClick={() => {
+                    onClick={(event) => {
+                      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
                       setActiveSurfaceId(surface.id);
                       setNavOpen(false);
                     }}
