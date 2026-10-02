@@ -657,3 +657,65 @@ export async function listCommunicationAppointments(
     nextCursor: rows.length > 50 ? String(rows[49]!.id) : null
   };
 }
+
+/** Serialize provider state transitions with dispatch finalization. Signed callback
+ * batches can mix STOP and status events; this common order prevents a contact /
+ * outbound-row lock inversion while the bounded provider call is in flight. */
+export async function lockMetaWhatsAppDispatch(
+  client: SqlQueryClient,
+  scope: Pick<RepositoryScope, "tenantId" | "clinicId">
+) {
+  await client.query("select pg_advisory_xact_lock(hashtextextended($1,0))", [
+    `meta-whatsapp-dispatch:${scope.tenantId}:${scope.clinicId}`
+  ]);
+}
+
+/** Revalidate queued authors against the API's current tenant/clinic authority.
+ * Row locks keep deactivation/revocation from committing between this check and
+ * the bounded dispatch. Tenant-wide roles do not require a clinic assignment. */
+export async function hasCurrentCommunicationAuthority(
+  client: SqlQueryClient,
+  scope: RepositoryScope,
+  requiredPermissions: readonly string[]
+): Promise<boolean> {
+  const args = [scope.tenantId, scope.clinicId, scope.actorUserId];
+  if (!requiredPermissions.length) return false;
+  const clinic = await client.query(
+    "select id from clinics where tenant_id=$1 and id=$2 and status='active' for share",
+    args.slice(0, 2)
+  );
+  if (!clinic.rows.length) return false;
+  const tenant = await client.query(
+    "select id from tenants where id=$1 and status='active' for share",
+    [scope.tenantId]
+  );
+  if (!tenant.rows.length) return false;
+  const user = await client.query(
+    "select id from users where id=$1 and status='active' for share",
+    [scope.actorUserId]
+  );
+  if (!user.rows.length) return false;
+  // Membership, assignment and role changes invalidate the locked user/tenant
+  // through 0025 triggers. Read their committed state AFTER those locks without
+  // locking child rows in reverse trigger order (which would deadlock revocation).
+  const membership = await client.query(
+    "select id from memberships where tenant_id=$1 and user_id=$2 and status='active'",
+    [scope.tenantId, scope.actorUserId]
+  );
+  if (!membership.rows.length) return false;
+  const assignments = await client.query(
+    "select id from clinic_user_assignments where tenant_id=$1 and clinic_id=$2 and user_id=$3 and status='active'",
+    args
+  );
+  const grants = await client.query<{ clinic_id: string | null; permission_key: string }>(
+    `select x.clinic_id,rp.permission_key from user_role_assignments x join role_permissions rp on rp.role_id=x.role_id
+     where x.tenant_id=$1 and (x.clinic_id=$2 or x.clinic_id is null) and x.user_id=$3 and x.revoked_at is null`,
+    args
+  );
+  const eligibleGrants = assignments.rows.length
+    ? grants.rows
+    : grants.rows.filter((r) => r.clinic_id === null);
+  return requiredPermissions.every((permission) =>
+    eligibleGrants.some((r) => r.permission_key === permission)
+  );
+}

@@ -7,6 +7,8 @@ import {
   CommunicationConflict,
   CommunicationNotFound,
   lockClinicConfiguration,
+  lockMetaWhatsAppDispatch,
+  hasCurrentCommunicationAuthority,
   type ClinicModuleTransactionContext,
   type RepositoryScope
 } from "@clinic-os/db";
@@ -63,6 +65,7 @@ export function createCommunicationHandlers(input: {
         userId: e.actor.id as UUID
       }))
         await sql(c).query(statement.sql, statement.values);
+      await lockMetaWhatsAppDispatch(sql(c), scope(e));
       return fn(c);
     });
   const args = (e: OutboxEventRecord) => [e.tenantId, e.clinicId, e.aggregateId];
@@ -182,11 +185,10 @@ export function createCommunicationHandlers(input: {
   async function current(c: ClinicModuleTransactionContext, e: OutboxEventRecord, r: Row) {
     if (new Date(iso(r.expires_at)).getTime() <= now().getTime())
       throw new CommunicationConflict("approval_expired");
-    const eligible = await sql(c).query(
-      `select u.id from users u join memberships m on m.user_id=u.id and m.tenant_id=$1 and m.status='active' join clinic_user_assignments a on a.user_id=u.id and a.tenant_id=$1 and a.clinic_id=$2 and a.status='active' where u.id=$3 and u.status='active' and exists(select 1 from user_role_assignments x join role_permissions rp on rp.role_id=x.role_id where x.tenant_id=$1 and (x.clinic_id=$2 or x.clinic_id is null) and x.user_id=u.id and x.revoked_at is null and rp.permission_key='message.write')`,
-      [e.tenantId, e.clinicId, r.approved_by_user_id]
-    );
-    if (!eligible.rows.length) throw new CommunicationConflict("approver_unavailable");
+    if (!(await hasCurrentCommunicationAuthority(
+      sql(c), { ...scope(e), actorUserId: String(r.approved_by_user_id) as UUID }, ["message.write"]
+    )))
+      throw new CommunicationConflict("approver_unavailable");
     const prepared = await prepareCommunicationAppointment(
       sql(c),
       scope(e),

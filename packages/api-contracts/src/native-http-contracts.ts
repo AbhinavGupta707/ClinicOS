@@ -4047,7 +4047,7 @@ export function resolveNativeResponseSchemaPath(
 }
 
 export function normalizedRouteKey(method: HttpMethod, path: string): string {
-  return `${method} ${path.replace(/\{[^}]+\}/g, "{}")}`;
+  return `${method} ${path.replace(/\{[^{}]+\}/g, "{}")}`;
 }
 
 export function assertNativeHttpContractRegistry(): void {
@@ -4062,7 +4062,7 @@ export function assertNativeHttpContractRegistry(): void {
     if (routes.has(route)) throw new Error(`Duplicate native route contract: ${route}`);
     routes.add(route);
 
-    const pathParameters = [...candidate.path.matchAll(/\{([^}]+)\}/g)].map((match) => match[1]);
+    const pathParameters = [...candidate.path.matchAll(/\{([^{}]+)\}/g)].map((match) => match[1]);
     const declaredPathParameters = Object.keys(candidate.request.path.properties ?? {});
     if (
       pathParameters.length !== declaredPathParameters.length ||

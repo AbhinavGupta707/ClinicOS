@@ -19,16 +19,7 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-8[0-9a-f]{3}-[0-9a-f
 const TEST_EMAIL_PATTERN = /^[^@\s]+@example\.test$/;
 const TEST_PHONE_PATTERN = /^\+91994000\d{4}$/;
 const DICOM_UID_PATTERN = /^2\.25\.\d{30,}$/;
-const STORAGE_PATH_PATTERNS = [
-  /s3:\/\//i,
-  /gs:\/\//i,
-  /az:\/\//i,
-  /file:\/\//i,
-  /storage\.googleapis\.com/i,
-  /amazonaws\.com/i,
-  /blob\.core\.windows\.net/i,
-  /raw[-_]?bucket/i
-];
+const STORAGE_PATH_PATTERNS = [/s3:\/\//i, /gs:\/\//i, /az:\/\//i, /file:\/\//i, /raw[-_]?bucket/i];
 const REQUIRED_EVENTS = [
   "dental_finding.created",
   "dental_finding.updated",
@@ -161,6 +152,14 @@ function assertLocalSyntheticOnly(scenario) {
     );
   }
 
+  // Forbidden-content detection anywhere in the fixture, not a URL allowlist.
+  for (const host of ["storage.googleapis.com", "amazonaws.com", "blob.core.windows.net"]) {
+    assert.equal(
+      serialized.toLowerCase().includes(host),
+      false,
+      "fixture contains a storage provider host"
+    );
+  }
   for (const pattern of STORAGE_PATH_PATTERNS) {
     assert.equal(
       pattern.test(serialized),

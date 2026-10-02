@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { fetchFixture, fixtureRequestUrl } from "./fixture-http.mjs";
 import { performance } from "node:perf_hooks";
 import { pathToFileURL } from "node:url";
 import { loadCp9Scenario, validateCp9Scenario } from "./validate-cp9-fixtures.mjs";
@@ -174,10 +175,10 @@ async function runLoadSmoke(scenario, plan, options) {
 }
 
 async function executeEndpoint(scenario, endpoint, options) {
-  const url = new URL(endpoint.path, options.baseUrl);
+  fixtureRequestUrl(options.baseUrl, endpoint.path);
   const started = performance.now();
   try {
-    const response = await fetch(url, {
+    const response = await fetchFixture(options.baseUrl, endpoint.path, {
       headers: headersForEndpoint(scenario, endpoint, options),
       method: endpoint.method
     });

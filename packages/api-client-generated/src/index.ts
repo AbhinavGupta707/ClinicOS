@@ -90,7 +90,7 @@ interface ExecuteInput {
 }
 
 function interpolatePath(template: string, values: Readonly<Record<string, unknown>>): string {
-  return template.replace(/\{([^}]+)\}/g, (_match, key: string) => {
+  return template.replace(/\{([^{}]+)\}/g, (_match, key: string) => {
     const value = values[key];
     if (typeof value !== "string" || value.length === 0) {
       throw new TypeError("Missing generated-client path parameter: " + key);

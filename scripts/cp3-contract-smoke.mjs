@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { fetchFixture } from "./fixture-http.mjs";
 import { pathToFileURL } from "node:url";
 import { loadCp3Scenario, validateCp3Scenario } from "./validate-cp3-fixtures.mjs";
 
@@ -249,8 +250,7 @@ function resolveLiveRequest(request) {
 }
 
 async function executeRequest(baseUrl, scenario, request, options) {
-  const url = new URL(request.path, baseUrl);
-  const response = await fetch(url, {
+  const response = await fetchFixture(baseUrl, request.path, {
     method: request.method,
     headers: headersForRequest(scenario, request, options),
     body: request.body === undefined ? undefined : JSON.stringify(request.body)

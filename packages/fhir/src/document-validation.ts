@@ -890,9 +890,7 @@ function validateResourceSemantics(
           );
         if (
           !resource.reason?.some((reason) => coding(reason, HL7_PURPOSE_OF_USE_SYSTEM, "TREAT")) ||
-          !resource.policy?.includes(
-            "https://fhir.clinicos.in/Policy/purpose-specific-interoperability-consent-v1"
-          )
+          !resource.policy?.some((policy) => policy === CLINIC_OS_INTEROPERABILITY_CONSENT_POLICY)
         )
           semantic(
             issues,
