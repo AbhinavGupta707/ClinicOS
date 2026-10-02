@@ -9,8 +9,12 @@ import xml.etree.ElementTree as ET
 NETTY = "4.1.137.Final"
 BC = "1.85"
 FREEMARKER = "2.3.35"
+JACKSON = "2.21.7"
+JACKSON_ANNOTATIONS = "2.21"
 NS = {"m": "http://maven.apache.org/POM/4.0.0"}
 BOMS = {
+    "com/fasterxml/jackson/jackson-bom/2.21.7/jackson-bom-2.21.7.pom":
+        "ecf645e79390beae614e8f83e42bd3e91a166831c37a3e783f37e67e41939495",
     "io/netty/netty-bom/4.1.137.Final/netty-bom-4.1.137.Final.pom":
         "50db8f9559f674a5d9c66f27f3154145928b570c45b4ca119338d33cf0f4ed04",
     "org/bouncycastle/bc-jdk18on-bom/1.85/bc-jdk18on-bom-1.85.pom":
@@ -35,6 +39,10 @@ def check_effective(path):
         group = dep.findtext("m:groupId", namespaces=NS)
         artifact = dep.findtext("m:artifactId", namespaces=NS)
         version = dep.findtext("m:version", namespaces=NS)
+        if group.startswith("com.fasterxml.jackson"):
+            expected = JACKSON_ANNOTATIONS if artifact == "jackson-annotations" else JACKSON
+            require(version == expected, f"Unaligned Jackson artifact: {artifact}:{version}")
+            checked[artifact] = version
         if group == "io.netty" and not artifact.startswith("netty-tcnative"):
             require(version == NETTY, f"Unaligned Netty artifact: {artifact}:{version}")
             checked[artifact] = version
@@ -44,7 +52,7 @@ def check_effective(path):
         if group == "org.freemarker" and artifact == "freemarker":
             require(version == FREEMARKER, f"Unexpected FreeMarker version: {version}")
             checked[artifact] = version
-    for artifact in ("netty-handler", "netty-codec-http2", "bcprov-jdk18on", "bcpkix-jdk18on", "bcutil-jdk18on", "freemarker"):
+    for artifact in ("netty-handler", "netty-codec-http2", "bcprov-jdk18on", "bcpkix-jdk18on", "bcutil-jdk18on", "freemarker", "jackson-core", "jackson-databind", "jackson-annotations"):
         require(artifact in checked, f"Missing managed artifact: {artifact}")
     return checked
 
@@ -55,6 +63,16 @@ def check_freemarker_runtime(jars):
             "Expected exactly one patched FreeMarker runtime JAR")
 
 
+def check_jackson_runtime(jars):
+    matches = [jar for jar in jars if jar.name.startswith("com.fasterxml.jackson")]
+    for artifact in ("jackson-core", "jackson-databind", "jackson-annotations"):
+        selected = [jar for jar in matches if f".{artifact}-" in jar.name]
+        require(len(selected) == 1, f"Expected exactly one Jackson runtime {artifact}")
+    for jar in matches:
+        expected = JACKSON_ANNOTATIONS if ".jackson-annotations-" in jar.name else JACKSON
+        require(jar.name.endswith(f"-{expected}.jar"), f"Unaligned runtime Jackson artifact: {jar.name}")
+
+
 def main():
     mode, source_arg, output_arg = sys.argv[1:]
     source, output = pathlib.Path(source_arg), pathlib.Path(output_arg)
@@ -63,13 +81,14 @@ def main():
         actual = sha(pathlib.Path.home() / ".m2/repository" / relative)
         require(actual == expected, f"Unexpected upstream BOM checksum: {relative}")
     if mode == "effective":
-        print(f"Verified {len(managed)} aligned managed artifacts and both BOM checksums")
+        print(f"Verified {len(managed)} aligned managed artifacts and all BOM checksums")
         return
     require(mode == "distribution", "Unknown verification mode")
     distribution = output / "keycloak"
     jars = sorted((distribution / "lib").rglob("*.jar"))
     require(bool(jars), "Missing built distribution libraries")
     check_freemarker_runtime(jars)
+    check_jackson_runtime(jars)
     libraries = []
     for jar in jars:
         name = jar.name

@@ -18,8 +18,11 @@ class DependencyGateTests(unittest.TestCase):
         self.assertNotIn("-DskipTests ", reactor)
         self.assertNotIn("-Dmaven.test.skip", reactor)
 
-    def check(self, netty="4.1.137.Final", bc="1.85", freemarker="2.3.35", omit=None):
-        entries = [("io.netty", "netty-handler", netty),
+    def check(self, netty="4.1.137.Final", bc="1.85", freemarker="2.3.35", jackson="2.21.7", omit=None):
+        entries = [("com.fasterxml.jackson.core", "jackson-core", jackson),
+                   ("com.fasterxml.jackson.core", "jackson-databind", jackson),
+                   ("com.fasterxml.jackson.core", "jackson-annotations", "2.21"),
+                   ("io.netty", "netty-handler", netty),
                    ("io.netty", "netty-codec-http2", netty),
                    ("io.netty", "netty-tcnative-classes", "2.0.78.Final"),
                    ("org.freemarker", "freemarker", freemarker),
@@ -33,7 +36,22 @@ class DependencyGateTests(unittest.TestCase):
             return gate.check_effective(path)
 
     def test_aligned_families_allow_separate_tcnative_release_line(self):
-        self.assertEqual(len(self.check()), 6)
+        self.assertEqual(len(self.check()), 9)
+
+    def test_stale_jackson_rejected(self):
+        with self.assertRaisesRegex(SystemExit, "Unaligned Jackson"):
+            self.check(jackson="2.21.5")
+
+    def test_runtime_jackson_alignment_and_presence(self):
+        jars = [pathlib.Path(f"com.fasterxml.jackson.core.{name}-{version}.jar")
+                for name, version in [("jackson-core", "2.21.7"),
+                                      ("jackson-databind", "2.21.7"),
+                                      ("jackson-annotations", "2.21")]]
+        gate.check_jackson_runtime(jars)
+        for invalid in [jars[:2], jars + [jars[0]],
+                        jars + [pathlib.Path("com.fasterxml.jackson.dataformat.jackson-dataformat-yaml-2.21.5.jar")]]:
+            with self.assertRaises(SystemExit):
+                gate.check_jackson_runtime(invalid)
 
     def test_stale_netty_rejected(self):
         with self.assertRaisesRegex(SystemExit, "Unaligned Netty"):

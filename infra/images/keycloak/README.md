@@ -7,7 +7,7 @@ Netty and Bouncy Castle libraries when this repair was prepared on 2026-09-22.
 The Dockerfile pins the upstream source commit/archive checksum, Maven builder
 and Java runtime. `security-boms.patch` imports the complete Netty 4.1.137.Final
 and Bouncy Castle 1.85 BOMs before other imported BOMs in the source POM. Maven's
-effective dependency management, both downloaded BOM checksums and the rebuilt
+effective dependency management, all downloaded BOM checksums and the rebuilt
 library inventory are checked by `verify-source-build.py`. No compiled JAR is
 overlaid onto an existing distribution, and no vulnerability is suppressed.
 
@@ -64,3 +64,13 @@ Both interactive clients include `basic` for signed `sub`/`auth_time` claims; th
 runtime smoke verifies the actual tokens. Existing deployed realms are not
 modified by this source change or by an import that skips an existing realm;
 any later deployment must review and apply the corresponding realm update.
+
+The `26.7.4-clinicos.3` rebuild aligns the full Jackson family using the official
+[Jackson 2.21.7 BOM](https://repo.maven.apache.org/maven2/com/fasterxml/jackson/jackson-bom/2.21.7/jackson-bom-2.21.7.pom).
+It addresses the five high-severity Jackson findings recorded in the 2026-10-02
+CI scan (CVE-2026-89407, CVE-2026-89425, CVE-2026-68497, CVE-2026-91776 and
+CVE-2026-91777). The separate annotations release line remains 2.21, as required
+by that BOM. Effective-POM and final-distribution checks reject stale/missing
+core, databind and annotations, and stale companion libraries. The BOM checksum
+is pinned; selected upstream tests, synthetic OIDC and a fresh image scan remain
+mandatory rather than treating the version change alone as proof.
