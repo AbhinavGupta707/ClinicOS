@@ -42,6 +42,7 @@ export const STAFF_API_PREFIXES = [
   "/v1/clinic-doctors",
   "/v1/clinic-setup",
   "/v1/clinic-staff",
+  "/v1/communications",
   "/v1/corrective-actions",
   "/v1/dashboard",
   "/v1/dead-letter-events",

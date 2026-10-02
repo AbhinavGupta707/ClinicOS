@@ -12,12 +12,16 @@ import { setTimeout as delay } from "node:timers/promises";
 // This runner owns only its API/web processes. Database provisioning is a separate,
 // explicit action: use a disposable, migrated and seeded local Postgres plus Redis.
 assert.ok(
-  process.argv.slice(2).every((arg) => ["--front-desk", "--daily-workflow"].includes(arg)),
+  process.argv
+    .slice(2)
+    .every((arg) => ["--front-desk", "--daily-workflow", "--communications"].includes(arg)),
   "Unknown acceptance suite."
 );
+const communications = process.argv.includes("--communications");
 const dailyWorkflow = process.argv.includes("--daily-workflow");
 assert.ok(
-  !(dailyWorkflow && process.argv.includes("--front-desk")),
+  [communications, dailyWorkflow, process.argv.includes("--front-desk")].filter(Boolean).length <=
+    1,
   "Choose one acceptance suite."
 );
 const frontDeskOnly = process.argv.includes("--front-desk");
@@ -152,14 +156,32 @@ try {
   await app.listen(0, "127.0.0.1");
   const apiPort = app.getHttpServer().address().port;
   let apiBase = `http://127.0.0.1:${apiPort}`;
-  if (dailyWorkflow) {
+  if (dailyWorkflow || communications) {
     // Test-only routing chooses among fixed synthetic identities. Each upstream
     // remains the actual Nest API with PostgreSQL authority and permissions.
     const roles = new Map([["owner", apiPort]]);
-    for (const role of ["doctor", "assistant", "receptionist", "accountant"]) {
+    for (const role of [
+      "doctor",
+      "assistant",
+      "receptionist",
+      "accountant",
+      ...(communications ? ["messaging"] : [])
+    ]) {
       const runtime = await createRuntimeApiNestApplication({
         ...apiEnv,
-        CLINIC_OS_API_DEV_SUBJECT: `seed-${role}`
+        CLINIC_OS_API_DEV_SUBJECT: `seed-${role === "messaging" ? "receptionist" : role}`,
+        // Real API approval/queue path only. This runner never starts a worker
+        // or calls provider callbacks; all references below are synthetic.
+        ...(role === "messaging"
+          ? {
+              CLINIC_OS_OFFICIAL_PROVIDER_CALLBACKS_ENABLED: "true",
+              CLINIC_OS_PROVIDER_ENDPOINT_HMAC_SECRET:
+                "synthetic-endpoint-hmac-secret-00000000000000000001",
+              CLINIC_OS_PROVIDER_RAW_WEBHOOK_BUCKET: "clinic-os-synthetic-acceptance",
+              CLINIC_OS_PROVIDER_RAW_WEBHOOK_KMS_KEY_ID:
+                "arn:aws:kms:ap-south-1:123456789012:key/10000000-0000-4000-8000-000000000999"
+            }
+          : {})
       });
       extraApps.push(runtime.app);
       await runtime.app.listen(0, "127.0.0.1");
@@ -170,7 +192,7 @@ try {
       const role =
         token === undefined
           ? "owner"
-          : /^Bearer local-synthetic-(owner|doctor|assistant|receptionist|accountant)$/.exec(
+          : /^Bearer local-synthetic-(owner|doctor|assistant|receptionist|accountant|messaging)$/.exec(
               token
             )?.[1];
       const port = roles.get(role);
@@ -269,11 +291,13 @@ try {
     `module.exports = ${JSON.stringify(
       {
         testDir: join(root, "tests/e2e"),
-        testMatch: dailyWorkflow
-          ? "daily-workflow-real-stack.spec.ts"
-          : frontDeskOnly
-            ? "front-desk-real-stack.spec.ts"
-            : ["mvp-manual-import-real-stack.spec.ts", "front-desk-real-stack.spec.ts"],
+        testMatch: communications
+          ? "communications-real-stack.spec.ts"
+          : dailyWorkflow
+            ? "daily-workflow-real-stack.spec.ts"
+            : frontDeskOnly
+              ? "front-desk-real-stack.spec.ts"
+              : ["mvp-manual-import-real-stack.spec.ts", "front-desk-real-stack.spec.ts"],
         timeout: dailyWorkflow ? 180000 : 60000,
         workers: 1,
         retries: 0,
@@ -301,11 +325,11 @@ try {
   assert.equal(result.stats.flaky, 0);
   assert.equal(
     result.stats.expected,
-    dailyWorkflow ? 12 : frontDeskOnly ? 6 : 12,
+    communications ? 4 : dailyWorkflow ? 12 : frontDeskOnly ? 6 : 12,
     "Every real-stack scenario must execute."
   );
   if (dailyWorkflow) await verifyDailyWorkflowEvidence();
-  else await verifyFrontDeskEvidence();
+  else if (!communications) await verifyFrontDeskEvidence();
   complete = true;
 } finally {
   await stop();

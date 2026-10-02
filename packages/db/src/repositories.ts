@@ -1,3 +1,11 @@
+import type {
+  listCommunicationAppointments,
+  listCommunicationThreads,
+  getCommunicationThread,
+  communicationConfiguration,
+  previewCommunicationAppointment,
+  executeCommunicationCommand
+} from "./communications.ts";
 import type { MigrationAssuranceFacts } from "@clinic-os/domain";
 import type {preparePatientDocument, issuePatientDocument, listPatientDocuments, getPatientDocument} from "./patient-documents.ts";
 import type {listPatientSourceContexts,reviewPatientSourceContext} from "./patient-source-context.ts";
@@ -1430,6 +1438,46 @@ export interface WorkflowPage<T> { readonly records: readonly T[]; readonly next
 export interface ClinicStaffSummary { readonly id: UUID; readonly displayName: string; }
 
 export interface ClinicOperationsRepository {
+  listCommunicationAppointments(
+    scope: RepositoryScope,
+    ...args: Parameters<typeof listCommunicationAppointments> extends [unknown, unknown, ...infer A]
+      ? A
+      : never
+  ): ReturnType<typeof listCommunicationAppointments>;
+  listCommunicationThreads(
+    scope: RepositoryScope,
+    ...args: Parameters<typeof listCommunicationThreads> extends [unknown, unknown, ...infer A]
+      ? A
+      : never
+  ): ReturnType<typeof listCommunicationThreads>;
+  getCommunicationThread(
+    scope: RepositoryScope,
+    ...args: Parameters<typeof getCommunicationThread> extends [unknown, unknown, ...infer A]
+      ? A
+      : never
+  ): ReturnType<typeof getCommunicationThread>;
+  communicationConfiguration(
+    scope: RepositoryScope,
+    ...args: Parameters<typeof communicationConfiguration> extends [unknown, unknown, ...infer A]
+      ? A
+      : never
+  ): ReturnType<typeof communicationConfiguration>;
+  previewCommunicationAppointment(
+    scope: RepositoryScope,
+    ...args: Parameters<typeof previewCommunicationAppointment> extends [
+      unknown,
+      unknown,
+      ...infer A
+    ]
+      ? A
+      : never
+  ): ReturnType<typeof previewCommunicationAppointment>;
+  executeCommunicationCommand(
+    scope: RepositoryScope,
+    ...args: Parameters<typeof executeCommunicationCommand> extends [unknown, unknown, ...infer A]
+      ? A
+      : never
+  ): ReturnType<typeof executeCommunicationCommand>;
   preparePatientDocument(scope:RepositoryScope,...args:Parameters<typeof preparePatientDocument> extends [unknown,unknown,...infer A] ? A : never):ReturnType<typeof preparePatientDocument>;
   issuePatientDocument(scope:RepositoryScope,...args:Parameters<typeof issuePatientDocument> extends [unknown,unknown,...infer A] ? A : never):ReturnType<typeof issuePatientDocument>;
   listPatientDocuments(scope:RepositoryScope,...args:Parameters<typeof listPatientDocuments> extends [unknown,unknown,...infer A] ? A : never):ReturnType<typeof listPatientDocuments>;

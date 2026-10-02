@@ -1,3 +1,4 @@
+export * from "./communications.ts";
 export * from "./appointment.ts";
 export * from "./ai.ts";
 export * from "./audit.ts";

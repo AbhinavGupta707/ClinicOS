@@ -398,3 +398,22 @@ See `MIGRATION_ASSURANCE_AND_RECOVERY_PLAN_2026-10-02.md` and
 `../qa/MIGRATION_ASSURANCE_RECOVERY_2026-10-02.md` for evidence and boundaries.
 The local restore is not an independent backup or clinic acceptance. Real-source
 validation and staff rehearsal remain separate; staff rehearsal stays deferred.
+
+## 2026-10-02 — Patient communications and reviewed appointment messages
+
+The owner chose necessary communications engineering while private export
+validation and staff rehearsal remain deferred. The first bounded delivery adds a
+scoped inbox from verified provider receipts, explicit shared-contact identity
+review, staff work assignment/manual evidence and exact appointment-template
+review/approval through the durable outbox. Dispatch rechecks current consent,
+contact opt-out, appointment, staff authority, registration and template content;
+uncertain delivery never triggers a blind resend or an appointment status change.
+
+Local acceptance passed 1,231 workspace tests, 28 real API/PostgreSQL browser cases,
+the 5,000-patient replay, schema 035-to-036 historical-message backfill and a
+144-table/10-document synthetic restore. Final-head CI is required before merge.
+See `PATIENT_COMMUNICATIONS_NEXT_SLICE_2026-10-02.md` and
+`../qa/PATIENT_COMMUNICATIONS_ACCEPTANCE_2026-10-02.md` for the supported template
+shape, tests and activation limits. No real patient data or live provider was
+used. This does not activate WhatsApp or certify the separate older care-instruction
+sender; that path needs its own safety pass before live enablement.

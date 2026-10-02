@@ -123,6 +123,15 @@ jobs:
           REDIS_URL: redis://127.0.0.1:6379
         run: npm run mvp:test:real-stack
 
+      - name: Patient communications persistence and real browser acceptance
+        env:
+          CLINICOS_MVP_IMPORT_E2E_ENABLED: "true"
+          CLINICOS_MVP_TEST_DATABASE_DISPOSABLE: "true"
+          PILOT_SYNTHETIC_DATA_ONLY: "true"
+          DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
+          REDIS_URL: redis://127.0.0.1:6379
+        run: node scripts/test-communications-repositories.mjs && npm run mvp:test:real-stack -- --communications
+
       - name: Patient-file concurrency isolation and independent reconciliation
         env:
           CLINICOS_MVP_TEST_DATABASE_DISPOSABLE: "true"

@@ -1,3 +1,4 @@
+import { createCommunicationHandlers } from "./cp15/communication-handlers.js";
 import { readStaffIdentityConfiguration, staffDatabaseUrl, RedisWebSessionStore, RedisTokenRevocationStore,
   AuditDeliveryHealth, SecurityAuditDispatcher, PostgresSecurityAuditSink,
   type AuditSqlPool } from "@clinic-os/auth";
@@ -81,12 +82,21 @@ export async function runWorker(
   const providerSecrets = env.officialProviderCallbacksEnabled
     ? createAwsProviderSecretResolver({ region: env.awsRegion })
     : undefined;
-  const activityPool = env.temporalAddress
+  const activityPool = env.temporalAddress || env.officialProviderCallbacksEnabled
     ? new Pool({ connectionString: env.activityDatabaseUrl })
     : undefined;
   const reconciliationPool = env.officialProviderCallbacksEnabled
     ? new Pool({ connectionString: env.databaseUrl })
     : undefined;
+  if (activityPool && providerSecrets && env.providerEndpointHmacSecret)
+    handlers.push(
+      ...createCommunicationHandlers({
+        pool: activityPool,
+        secrets: providerSecrets,
+        endpointHmacSecret: Buffer.from(env.providerEndpointHmacSecret, "utf8"),
+        now: () => clock.now()
+      })
+    );
   let temporalWorker: Awaited<ReturnType<typeof createClinicTemporalWorker>> | undefined;
 
   if (temporalClient && activityPool && env.temporalAddress) {

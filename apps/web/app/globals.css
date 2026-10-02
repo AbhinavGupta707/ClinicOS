@@ -5378,3 +5378,9 @@ button.cp6-card:hover {
 .migration-assurance-counts dd { margin: 4px 0 0; font-weight: 600; }
 [data-testid="migration-assurance"] { overflow-wrap: anywhere; min-width: 0; }
 [data-testid="migration-assurance"] select { width: 100%; min-width: 0; max-width: 100%; }
+
+.communication-messages { display:grid;gap:1rem; padding-inline-start:1.5rem; }
+.communication-messages li {overflow-wrap:anywhere;white-space:pre-wrap;}
+
+.communication-messages {max-height:32rem;overflow:auto;}
+@media (max-width:640px) {.communication-messages {max-height:22rem;}}

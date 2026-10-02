@@ -50,6 +50,24 @@ const ALL_CLINIC_ROLES: ClinicRole[] = [
 export const SURFACES: SurfaceRegistration[] = [
   {
     availability: "active",
+    checkpoint: 3,
+    description: "Verified conversations, manual contact evidence and reviewed appointment messages.",
+    href: "/surface/communications",
+    icon: Inbox,
+    id: "communications",
+    label: "Patient messages",
+    requiredApis: [
+      "GET /v1/communications/threads",
+      "GET /v1/communications/threads/{threadId}",
+      "GET /v1/communications/threads/{threadId}/appointments",
+      "GET /v1/communications/configuration",
+      "POST /v1/communications/preview",
+      "POST /v1/communications/commands"
+    ],
+    roles: ["owner", "doctor", "assistant", "receptionist"]
+  },
+  {
+    availability: "active",
     checkpoint: 2,
     description:
       "Assistant day-start dashboard with leads, appointments, confirmations, and queue.",

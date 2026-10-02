@@ -328,6 +328,7 @@ async function applyNormalizedEvent(
 ): Promise<"applied" | "duplicate" | "ignored_stale" | "reconciliation_scheduled"> {
   const event = input.event;
   if (event.kind === "inbound_message") {
+    await client.query("select pg_advisory_xact_lock(hashtextextended($1,0))",[`communication-contact:${input.tenantId}:${input.clinicId}:${input.externalAccountId}:+${event.senderWaId}`]);
     const endpointHmac = createHmac("sha256", input.endpointHmacSecret)
       .update(event.senderWaId, "utf8")
       .digest("hex");

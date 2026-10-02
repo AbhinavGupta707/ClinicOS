@@ -72,7 +72,7 @@ const NAVIGATION_GROUPS: ReadonlyArray<{
   { label: "Today", surfaceIds: ["today"] },
   { label: "Patients", surfaceIds: ["patients", "patient-profile", "intake", "consent"] },
   { label: "Schedule", surfaceIds: ["appointments", "returning-prep", "encounter"] },
-  { label: "Inbox", surfaceIds: ["lead-inbox", "tasks"] },
+  { label: "Inbox", surfaceIds: ["communications", "lead-inbox", "tasks"] },
   {
     label: "Operations",
     surfaceIds: [

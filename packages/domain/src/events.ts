@@ -3,6 +3,8 @@ import type { AuditActor } from "./audit.ts";
 import type { UUID } from "./ids.ts";
 
 export const DOMAIN_EVENT_TYPES = [
+  "communication.template_sync_requested",
+  "communication.appointment_send_requested",
   "lead.created",
   "lead.matched_to_patient",
   "lead.converted_to_appointment",

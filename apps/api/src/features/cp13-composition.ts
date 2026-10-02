@@ -1,3 +1,4 @@
+import { createCommunicationHandlers } from "./communications.ts";
 import {createAppointmentReviewHandlers} from "./appointment-review.ts";
 import { createWorkflowDiscoveryHandlers } from "./workflow-discovery.ts";
 import type { PaymentProvider } from "@clinic-os/integrations";
@@ -13,6 +14,7 @@ import { createFrontOfficeFeatureHandlerMap } from "./front-office/index.ts";
 import { createTreatmentBillingHandlerMap } from "./treatment-billing/index.ts";
 
 export interface Cp13ClinicFeatureCompositionDependencies {
+  readonly communicationDispatchEnabled?: boolean;
   readonly paymentProvider: PaymentProvider;
   readonly clinicalDental: ClinicalDentalHandlerDependencies;
 }
@@ -21,6 +23,7 @@ export function createCp13ClinicFeatureHandlerMap(
   dependencies: Cp13ClinicFeatureCompositionDependencies
 ): ClinicFeatureHandlerMap<Cp13ClinicFeatureOperationId> {
   const maps = [
+    createCommunicationHandlers(dependencies.communicationDispatchEnabled),
     createWorkflowDiscoveryHandlers(),
     createAppointmentReviewHandlers(),
     createFrontOfficeFeatureHandlerMap(),

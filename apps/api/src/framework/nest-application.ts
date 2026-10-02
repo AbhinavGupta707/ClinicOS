@@ -221,6 +221,24 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
 
   // New daily-workflow routes use the same guarded native pipeline as the migrated features.
   class DailyWorkflowController {
+    listCommunicationAppointments(request: ParsedIncomingRequest, response: ServerResponse) {
+      return executeAndSend(pipeline, request, response);
+    }
+    listCommunicationThreads(request: ParsedIncomingRequest, response: ServerResponse) {
+      return executeAndSend(pipeline, request, response);
+    }
+    getCommunicationThread(request: ParsedIncomingRequest, response: ServerResponse) {
+      return executeAndSend(pipeline, request, response);
+    }
+    getCommunicationConfiguration(request: ParsedIncomingRequest, response: ServerResponse) {
+      return executeAndSend(pipeline, request, response);
+    }
+    previewCommunicationAppointment(request: ParsedIncomingRequest, response: ServerResponse) {
+      return executeAndSend(pipeline, request, response);
+    }
+    executeCommunicationCommand(request: ParsedIncomingRequest, response: ServerResponse) {
+      return executeAndSend(pipeline, request, response);
+    }
     preparePatientDocument(request:ParsedIncomingRequest,response:ServerResponse) { return executeAndSend(pipeline,request,response); }
     issuePatientDocument(request:ParsedIncomingRequest,response:ServerResponse) { return executeAndSend(pipeline,request,response); }
     getPatientDocument(request:ParsedIncomingRequest,response:ServerResponse) { return executeAndSend(pipeline,request,response); }
@@ -261,6 +279,12 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
     listLabReconciliations(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
   }
   Controller()(DailyWorkflowController);
+  decorateRoute(DailyWorkflowController,"listCommunicationAppointments",Get("v1/communications/threads/:threadId/appointments"));
+  decorateRoute(DailyWorkflowController,"listCommunicationThreads",Get("v1/communications/threads"));
+  decorateRoute(DailyWorkflowController,"getCommunicationThread",Get("v1/communications/threads/:threadId"));
+  decorateRoute(DailyWorkflowController,"getCommunicationConfiguration",Get("v1/communications/configuration"));
+  decorateRoute(DailyWorkflowController,"previewCommunicationAppointment",Post("v1/communications/preview"));
+  decorateRoute(DailyWorkflowController,"executeCommunicationCommand",Post("v1/communications/commands"));
   decorateRoute(DailyWorkflowController,"preparePatientDocument",Get("v1/patients/:patientId/document-sources/:kind/:sourceId"));
   decorateRoute(DailyWorkflowController,"issuePatientDocument",Post("v1/patients/:patientId/document-sources/:kind/:sourceId/documents"));
   decorateRoute(DailyWorkflowController,"getPatientDocument",Get("v1/patients/:patientId/document-sources/:kind/:sourceId/documents/:documentId"));

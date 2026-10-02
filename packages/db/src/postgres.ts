@@ -1,3 +1,11 @@
+import {
+  listCommunicationAppointments,
+  listCommunicationThreads,
+  getCommunicationThread,
+  communicationConfiguration,
+  previewCommunicationAppointment,
+  executeCommunicationCommand
+} from "./communications.ts";
 import { readMigrationAssurance } from "./migration-assurance.ts";
 import {preparePatientDocument, issuePatientDocument, listPatientDocuments, getPatientDocument} from "./patient-documents.ts";
 import {appendPatientSourceContext, listPatientSourceContexts, reviewPatientSourceContext} from "./patient-source-context.ts";
@@ -812,6 +820,58 @@ export class PostgresClinicOperationsRepository
       }
       return { records, nextCursor: page.nextCursor };
     });
+  }
+  async listCommunicationAppointments(
+    scope: RepositoryScope,
+    ...args: Parameters<typeof listCommunicationAppointments> extends [unknown, unknown, ...infer A]
+      ? A
+      : never
+  ) {
+    return this.#withRls(scope, (c) => listCommunicationAppointments(c, scope, ...args));
+  }
+  async listCommunicationThreads(
+    scope: RepositoryScope,
+    ...args: Parameters<typeof listCommunicationThreads> extends [unknown, unknown, ...infer A]
+      ? A
+      : never
+  ) {
+    return this.#withRls(scope, (c) => listCommunicationThreads(c, scope, ...args));
+  }
+  async getCommunicationThread(
+    scope: RepositoryScope,
+    ...args: Parameters<typeof getCommunicationThread> extends [unknown, unknown, ...infer A]
+      ? A
+      : never
+  ) {
+    return this.#withRls(scope, (c) => getCommunicationThread(c, scope, ...args));
+  }
+  async communicationConfiguration(
+    scope: RepositoryScope,
+    ...args: Parameters<typeof communicationConfiguration> extends [unknown, unknown, ...infer A]
+      ? A
+      : never
+  ) {
+    return this.#withRls(scope, (c) => communicationConfiguration(c, scope, ...args));
+  }
+  async previewCommunicationAppointment(
+    scope: RepositoryScope,
+    ...args: Parameters<typeof previewCommunicationAppointment> extends [
+      unknown,
+      unknown,
+      ...infer A
+    ]
+      ? A
+      : never
+  ) {
+    return this.#withRls(scope, (c) => previewCommunicationAppointment(c, scope, ...args));
+  }
+  async executeCommunicationCommand(
+    scope: RepositoryScope,
+    ...args: Parameters<typeof executeCommunicationCommand> extends [unknown, unknown, ...infer A]
+      ? A
+      : never
+  ) {
+    return this.#withRls(scope, (c) => executeCommunicationCommand(c, scope, ...args));
   }
   async createAppointmentImport(scope:RepositoryScope,input:Parameters<typeof createAppointmentImport>[2]) {return this.#withRls(scope,c=>createAppointmentImport(c,scope,input));}
   async stageAppointmentObservations(scope:RepositoryScope,id:string,input:Parameters<typeof stageAppointmentObservations>[3]) {return this.#withRls(scope,c=>stageAppointmentObservations(c,scope,id,input));}
