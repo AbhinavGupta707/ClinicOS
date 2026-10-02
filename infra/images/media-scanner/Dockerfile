@@ -24,11 +24,16 @@ RUN npm ci --omit=dev --workspace @clinic-os/media-scanner --include-workspace-r
 
 FROM ${LAMBDA_NODE_IMAGE} AS runtime
 ARG SOURCE_REVISION="unknown"
+# Reviewed AL2023 snapshot contains the curl, PCRE2 and RPM security fixes.
+ARG AL2023_RELEASE="2023.12.20260930"
 LABEL org.opencontainers.image.source="https://github.com/AbhinavGupta707/ClinicOS" \
       org.opencontainers.image.revision="${SOURCE_REVISION}" \
       org.opencontainers.image.title="ClinicOS GuardDuty Evidence Signer"
 ENV NODE_ENV="production" \
     NODE_OPTIONS="--enable-source-maps"
+RUN dnf upgrade --refresh --releasever="${AL2023_RELEASE}" -y \
+    && dnf clean all \
+    && rm -rf /var/cache/dnf
 COPY --from=production-dependencies --chown=10001:10001 /workspace/node_modules ${LAMBDA_TASK_ROOT}/node_modules
 COPY --from=production-dependencies --chown=10001:10001 /workspace/packages/integrations/node_modules ${LAMBDA_TASK_ROOT}/packages/integrations/node_modules
 COPY --from=build --chown=10001:10001 /workspace/apps/media-scanner/dist ${LAMBDA_TASK_ROOT}/apps/media-scanner/dist
@@ -37,7 +42,10 @@ COPY --from=build --chown=10001:10001 /workspace/apps/media-scanner/package.json
 COPY --from=build --chown=10001:10001 /workspace/packages/integrations/package.json ${LAMBDA_TASK_ROOT}/packages/integrations/package.json
 # The Lambda service supplies the Runtime API. Package managers and the local-only Runtime
 # Interface Emulator are not needed in production and would expand the executable attack surface.
-RUN rm -rf /var/lang/lib/node_modules/npm /var/lang/lib/node_modules/corepack /usr/local/bin/aws-lambda-rie \
+# The RIC does not import this prebundled SDK. The handler carries its own locked
+# AWS clients in /var/task; retain no vulnerable alternate SDK resolution path.
+RUN rm -rf /var/runtime/node_modules/@aws-sdk \
+    /var/lang/lib/node_modules/npm /var/lang/lib/node_modules/corepack /usr/local/bin/aws-lambda-rie \
     && rm -f /var/lang/bin/npm /var/lang/bin/npx /var/lang/bin/corepack
 USER 10001:10001
 CMD ["apps/media-scanner/dist/handler.handler"]

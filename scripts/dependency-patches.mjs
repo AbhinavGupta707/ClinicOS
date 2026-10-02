@@ -129,7 +129,7 @@ if (process.argv[1] && pathToFileURL(process.argv[1]).href === import.meta.url) 
               id: "CVE-2026-85393",
               paths: ["package-lock.json"],
               purls: ["pkg:npm/node-forge@1.4.0"],
-              expired_at: "2026-11-01",
+              expired_at: forgePatch.expires,
               statement:
                 "Fixed in installed code by byte-verified upstream PR #1152 backport; see docs/security/DEPENDENCY_BACKPORTS.md. Upstream version remains honestly 1.4.0."
             }

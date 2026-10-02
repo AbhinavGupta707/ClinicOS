@@ -20,7 +20,10 @@ test("CP14 application images pin their base, build ARM64-compatible output, and
     );
     assert.match(dockerfile, /USER 10001:10001/u);
     if (service.name === "worker") {
-      assert.match(dockerfile, /gcr\.io\/distroless\/nodejs22-debian13:nonroot@sha256:[a-f0-9]{64}/u);
+      assert.match(
+        dockerfile,
+        /gcr\.io\/distroless\/nodejs22-debian13:nonroot@sha256:[a-f0-9]{64}/u
+      );
       assert.match(dockerfile, /ENTRYPOINT \["\/nodejs\/bin\/node"\]/u);
     } else {
       assert.match(dockerfile, /libcrypto3=3\.5\.9-r0 libssl3=3\.5\.9-r0/u);
@@ -51,4 +54,17 @@ test("staff identity web image packages its raw request boundary with generated 
   assert.match(dockerfile, /\/workspace\/apps\/web\/\.next/u);
   const workflow = await readFile(".github/workflows/security.yml", "utf8");
   assert.match(workflow, /bash infra\/images\/web\/test-runtime\.sh/u);
+});
+
+test("platform runtime probes verify the same reviewed RDS bundle pinned by their builds", async () => {
+  const pins = [];
+  for (const name of ["keycloak", "temporal"]) {
+    const dockerfile = await readFile(`infra/images/${name}/Dockerfile`, "utf8");
+    const probe = await readFile(`infra/images/${name}/test-runtime.sh`, "utf8");
+    const pin = dockerfile.match(/ARG AWS_RDS_CA_BUNDLE_SHA256=([a-f0-9]{64})/u)?.[1];
+    assert.ok(pin);
+    assert.ok(probe.includes(`echo "${pin}  `), `${name} runtime trust verification drifted`);
+    pins.push(pin);
+  }
+  assert.equal(pins[0], pins[1]);
 });
