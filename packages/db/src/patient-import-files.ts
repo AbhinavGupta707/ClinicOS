@@ -1,11 +1,11 @@
 import type { MigrationBatchRecord, UUID } from "@clinic-os/domain";
-import { normalizePhone } from "@clinic-os/domain";
+import { PATIENT_CONTEXT_PROFILE, type PatientImportProfile, normalizePhone } from "@clinic-os/domain";
 import type { SqlQueryClient } from "./postgres.ts";
 import type { RepositoryScope } from "./repositories.ts";
 import { ImportRunRepositoryError } from "./repositories.ts";
 
 export interface PatientFileManifest {
-  profile: "practo_ray_patients_v1";
+  profile: PatientImportProfile;
   rowCount: number;
   chunks: Array<{ ordinal: number; rowCount: number; digest: string }>;
 }
@@ -92,16 +92,19 @@ export function patientFileIdentityConflicts(rows: PatientFileIdentityRow[]) {
 
 export function assertPatientFileManifest(input: PatientFileManifest): void {
   if (
-    input.profile !== "practo_ray_patients_v1" ||
+    (input.profile !== "practo_ray_patients_v1" && input.profile !== PATIENT_CONTEXT_PROFILE) ||
     !Number.isInteger(input.rowCount) ||
     input.rowCount < 1 ||
     input.rowCount > 5000 ||
     !Array.isArray(input.chunks) ||
-    input.chunks.length !== Math.ceil(input.rowCount / 100) ||
+    !input.chunks.length || input.chunks.length > 1024 ||
+    input.chunks.reduce((sum, chunk) => sum + chunk.rowCount, 0) !== input.rowCount ||
+    (input.profile !== PATIENT_CONTEXT_PROFILE && input.chunks.length !== Math.ceil(input.rowCount / 100)) ||
     input.chunks.some(
       (chunk, ordinal) =>
         chunk.ordinal !== ordinal ||
-        chunk.rowCount !== Math.min(100, input.rowCount - ordinal * 100) ||
+        !Number.isInteger(chunk.rowCount) || chunk.rowCount < 1 || chunk.rowCount > 100 ||
+        (input.profile !== PATIENT_CONTEXT_PROFILE && chunk.rowCount !== Math.min(100, input.rowCount - ordinal * 100)) ||
         !/^[0-9a-f]{64}$/u.test(chunk.digest)
     )
   ) {

@@ -1,3 +1,4 @@
+import { PATIENT_CONTEXT_PROFILE, type PatientImportProfile } from "@clinic-os/domain/patient-source-context";
 import { staffFetch } from "./staff-session";
 import { PRACTO_PATIENT_FORMAT } from "./practo-patient-import";
 export type Cp7IntegrationOpsSource = "api" | "cp7_fixture";
@@ -126,7 +127,7 @@ export interface MigrationCommitState {
 }
 
 export interface MigrationBatch {
-  sourceFormat?: typeof PRACTO_PATIENT_FORMAT;
+  sourceFormat?: PatientImportProfile;
   conflictsTruncated?: boolean;
   commit: MigrationCommitState;
   conflicts: MigrationConflict[];
@@ -347,7 +348,7 @@ export function getInitialImportRunStep(batches: readonly MigrationBatch[]): Mig
 }
 
 export function isPractoPatientTrial(batches: readonly MigrationBatch[]): boolean {
-  return batches.some((batch) => batch.importType === "patients" && batch.sourceFormat === PRACTO_PATIENT_FORMAT);
+  return batches.some((batch) => batch.importType === "patients" && (batch.sourceFormat === PRACTO_PATIENT_FORMAT || batch.sourceFormat === PATIENT_CONTEXT_PROFILE));
 }
 
 export function getMigrationTrialStepStates(
@@ -1310,7 +1311,7 @@ export function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | nu
   const uploadedAt = readString(batch, ["createdAt", "uploadedAt"]) ?? new Date().toISOString();
 
   return {
-    ...(readArray(value, ["rows"]).some((row) =>
+    ...(readArray(value, ["rows"]).some(row => isRecord(row) && row.sourceFormat === PATIENT_CONTEXT_PROFILE) ? {sourceFormat:PATIENT_CONTEXT_PROFILE} : readArray(value, ["rows"]).some((row) =>
       isRecord(row) && row.sourceFormat === PRACTO_PATIENT_FORMAT
     ) ? { sourceFormat: PRACTO_PATIENT_FORMAT } : {}),
     commit: {

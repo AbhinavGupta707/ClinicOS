@@ -1523,3 +1523,56 @@ test("patient-file seal requires review for same-file shared identities without 
   for (const chunk of sealed.chunks) await commitMigrationBatch(context, dependencies, chunk.batchId!, {});
   assert.equal((await getPatientImportFile(context, dependencies, runId)).body.file.chunks.reduce((sum, chunk) => sum + chunk.committed, 0), 101);
 });
+
+
+test("context import is explicit, redacted, versioned, phone-optional and retained on rollback",async()=>{
+  const repository=new LocalFixtureClinicOperationsRepository();
+  const dependencies:OperationsDependencies={repository,auditSink:new InMemoryAuditSink()};
+  const context=await operationsContext("seed-owner","context-import");
+  const scope={tenantId:context.accessContext.tenant.id,clinicId:context.clinicId,actorUserId:context.accessContext.user.id};
+  const sourceSystem=`context_${randomUUID()}`;
+  const header="external_reference,full_name,phone,email,date_of_birth,gender,source_type,source_format,source_context";
+  const makeCsv=(note:string,phone="")=>header+"\n"+["context-1","Synthetic Context Person",phone,"","","unknown","imported","practo_ray_patients_context_v2",JSON.stringify({"Medical History":note})].map(v=>'"'+v.replaceAll('"','""')+'"').join(",");
+  const firstText="  Historical source only\nनमस्ते  ";
+  await assert.rejects(()=>createMigrationBatch(context,dependencies,{importType:"patients",sourceSystem,csv:makeCsv(firstText)}),/explicitly selected/);
+  const stage=async(note:string,phone="")=>{
+    const runId=randomUUID(),csv=makeCsv(note,phone);
+    await createImportRun(context,dependencies,{id:runId,sourceSystem});
+    await createPatientImportFile(context,dependencies,runId,{profile:"practo_ray_patients_context_v2",rowCount:1,chunks:[{ordinal:0,rowCount:1,digest:createHash("sha256").update(csv).digest("hex")}]});
+    const staged=await stagePatientImportChunk(context,dependencies,runId,0,{csv});
+    await sealPatientImportFile(context,dependencies,runId);
+    const batchId=staged.body.file!.chunks[0].batchId!;
+    return {batchId,detail:(await repository.findMigrationBatchById(scope,batchId))!};
+  };
+  const invalid=await stage("invalid phone","not-a-phone");
+  assert.equal(invalid.detail.rows[0].status,"invalid");
+  const first=await stage(firstText);
+  const committed=await commitMigrationBatch(context,dependencies,first.batchId,{});
+  assert.equal(JSON.stringify(committed).includes(firstText),false);
+  assert.equal(JSON.stringify(committed).includes("historicalFields"),false);
+  const patientId=repository.patientSourceContexts[0].patientId as typeof scope.clinicId;
+  assert.equal((await repository.findPatientById(scope,patientId))?.phone,null);
+  assert.equal(JSON.stringify(await repository.findPatientById(scope,patientId)).includes("historicalFields"),false);
+  const original=(await repository.listPatientSourceContexts(scope,patientId)).records[0];
+  assert.equal(original.fields["Medical History"],firstText);
+  await repository.reviewPatientSourceContext(scope,patientId,original.id as typeof patientId,{decision:"reviewed",note:"Reviewed against synthetic source"});
+  const replay=await stage(firstText);
+  assert.equal(replay.detail.rows[0].status,"ready_to_commit");
+  await commitMigrationBatch(context,dependencies,replay.batchId,{});
+  assert.equal(repository.patientSourceContexts.length,1);
+  const changed=await stage("Changed source evidence");
+  assert.equal(changed.detail.rows[0].status,"needs_review");
+  await resolveMigrationBatchRow(context,dependencies,changed.batchId,changed.detail.rows[0].id,{action:"link_existing",targetRecordId:patientId});
+  await commitMigrationBatch(context,dependencies,changed.batchId,{});
+  assert.equal(repository.patientSourceContexts.length,2);
+  assert.equal(repository.patientSourceContexts[1].review,null);
+  await assert.rejects(()=>repository.reviewPatientSourceContext(scope,patientId,original.id as typeof patientId,{decision:"reviewed",note:"This old version must not be reviewed again"}),/Newer source/);
+  const reverted=await stage(firstText);
+  await resolveMigrationBatchRow(context,dependencies,reverted.batchId,reverted.detail.rows[0].id,{action:"link_existing",targetRecordId:patientId});
+  await commitMigrationBatch(context,dependencies,reverted.batchId,{});
+  assert.equal(repository.patientSourceContexts.length,3);
+  assert.equal(repository.patientSourceContexts[2].review,null);
+  const rollback=await repository.rollbackMigrationBatch(scope,first.batchId);
+  assert.equal(rollback?.blockedLinks.length,1);
+  assert.equal((await repository.listPatientSourceContexts({...scope,clinicId:randomUUID() as typeof patientId},patientId)).records.length,0);
+});

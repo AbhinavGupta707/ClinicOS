@@ -1,5 +1,7 @@
 "use client";
 
+import type { useWorkflowAction } from "../shared/WorkflowAction";
+import { PATIENT_SOURCE_FIELDS } from "@clinic-os/domain/patient-source-context";
 import { ClinicalFileDetails, ClinicalMediaAccessButton } from "./ClinicalDentalWorkspace";
 
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
@@ -18,6 +20,8 @@ interface Props {
   client: ClinicOsApiClient;
   profile: MeProfile;
   patientId: string;
+  locked: boolean;
+  mutate: ReturnType<typeof useWorkflowAction>["execute"];
 }
 function label(value: string) {
   return value.replaceAll("_", " ").replace(/([a-z])([A-Z])/g, "$1 $2");
@@ -104,10 +108,15 @@ export function PatientHistoryWorkspace(props: Props) {
   return (
     <div className="patient-history-workspace" key={scope}>
       <p className="patient-history-boundary">
-        ClinicOS records available to this account. Old clinical notes, images and bills are not
-        included in the Practo demographics or appointment import. Confirm missing history with the
-        patient and the clinic’s source record.
+        ClinicOS records available to this account. Historical source context is available only when
+        explicitly imported with the context profile. It does not include the source system’s
+        complete clinical records, images or bills. Confirm missing history with the patient and
+        clinic source record.
       </p>
+      {props.profile.permissions.includes("patient.phi.read") &&
+      props.profile.permissions.includes("clinical.note.read") ? (
+        <SourceContexts {...props} scope={scope} />
+      ) : null}
       <Preparation {...props} scope={scope} />
       <Timeline {...props} scope={scope} />
       {props.profile.permissions.includes("dental.chart.read") ? (
@@ -387,7 +396,17 @@ function SourceDetail(props: Props & { item: PublicJsonObject; close: () => void
   function content(detail: HistorySourceDetail) {
     const value = detail.value;
     switch (detail.kind) {
-      case "media": return <><ClinicalFileDetails asset={value} /><ClinicalMediaAccessButton client={props.client} mediaAssetId={fieldText(value,"id")} asset={value} /></>;
+      case "media":
+        return (
+          <>
+            <ClinicalFileDetails asset={value} />
+            <ClinicalMediaAccessButton
+              client={props.client}
+              mediaAssetId={fieldText(value, "id")}
+              asset={value}
+            />
+          </>
+        );
       case "note":
         return note(value);
       case "encounter":
@@ -682,5 +701,153 @@ function SnapshotComparison(props: Props & { scope: string }) {
         </div>
       ) : null}
     </ReadPanel>
+  );
+}
+
+function SourceContexts(props: Props & { scope: string }) {
+  const [cursor, setCursor] = useState<string | undefined>();
+  const result = useResource(`${props.scope}:${cursor ?? "first"}`, () =>
+    props.client.listPatientSourceContexts({
+      path: { patientId: props.patientId },
+      query: cursor ? { cursor } : {}
+    })
+  );
+  return (
+    <ReadPanel title="Historical source context" {...result} hasData={!!result.data}>
+      <p>
+        Source evidence, not current verified clinical facts. Source record dates are unknown.
+        Import time is not the date the clinic recorded the information. A review does not create
+        diagnoses, allergies, consent or signed notes.
+      </p>
+      {result.data && !result.loading && !result.error ? (
+        <>
+          {result.data.records.length === 0 ? (
+            <p>
+              No historical context has been imported for this patient. This does not mean there is
+              no medical history.
+            </p>
+          ) : null}
+          {result.data.records.map((item) => (
+            <SourceContextCard key={item.id} {...props} item={item} refresh={result.refresh} />
+          ))}
+          <div className="surface-actions">
+            <button
+              type="button"
+              disabled={!cursor || props.locked}
+              onClick={() => setCursor(undefined)}
+            >
+              Latest source versions
+            </button>
+            <button
+              type="button"
+              disabled={!result.data.nextCursor || props.locked}
+              onClick={() => setCursor(result.data?.nextCursor ?? undefined)}
+            >
+              Older source versions
+            </button>
+          </div>
+        </>
+      ) : null}
+    </ReadPanel>
+  );
+}
+function SourceContextCard(
+  props: Props & { item: PublicJsonObject; refresh: () => Promise<void> }
+) {
+  const [note, setNote] = useState("");
+  const [decision, setDecision] = useState<"reviewed" | "needs_clarification">("reviewed");
+  const review = record(props.item.review),
+    fields = record(props.item.fields);
+  const contextId = fieldText(props.item, "id"),
+    patientId = props.patientId;
+  return (
+    <article
+      className="workspace-card"
+      data-testid="source-context-card"
+      style={{ overflowWrap: "anywhere" }}
+    >
+      <h3>
+        {fieldText(props.item, "sourceSystem")} · version {String(props.item.version)}
+      </h3>
+      <p>
+        Source patient reference: {fieldText(props.item, "externalReference")} · Imported{" "}
+        {clinicDisplayTime(
+          fieldText(props.item, "importedAt"),
+          props.profile.clinic.timezone || "UTC"
+        )}
+      </p>
+      <p>
+        {props.item.contactUnavailable
+          ? "No primary mobile was supplied in this source version."
+          : "Primary mobile was supplied; permission to contact is not implied."}
+      </p>
+      <p>Review: {fieldText(review, "decision").replaceAll("_", " ") || "Not reviewed"}</p>
+      {review.note ? (
+        <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>
+          {fieldText(review, "note")} ·{" "}
+          {clinicDisplayTime(
+            fieldText(review, "reviewedAt"),
+            props.profile.clinic.timezone || "UTC"
+          )}
+        </p>
+      ) : null}
+      {PATIENT_SOURCE_FIELDS.filter((key) => typeof fields[key] === "string").map((key) => (
+        <div key={key}>
+          <h4>{key}</h4>
+          <p style={{ whiteSpace: "pre-wrap", overflowWrap: "anywhere" }}>{String(fields[key])}</p>
+        </div>
+      ))}
+      {!Object.keys(fields).length ? (
+        <p>No additional historical text was supplied in this version.</p>
+      ) : null}
+      {props.profile.roles.includes("doctor") &&
+      props.profile.permissions.includes("clinical.note.sign") ? (
+        <form
+          onSubmit={(event) => {
+            event.preventDefault();
+            void props.mutate(
+              (key) =>
+                props.client.reviewPatientSourceContext({
+                  path: { patientId, contextId },
+                  headers: { "idempotency-key": key },
+                  body: { decision, note }
+                }),
+              async () => {
+                setNote("");
+                await props.refresh();
+              }
+            );
+          }}
+        >
+          <label>
+            Review outcome
+            <select
+              value={decision}
+              disabled={props.locked}
+              onChange={(event) => setDecision(event.target.value as typeof decision)}
+            >
+              <option value="reviewed">Reviewed with source / patient</option>
+              <option value="needs_clarification">Needs clarification</option>
+            </select>
+          </label>
+          <label>
+            Review evidence
+            <textarea
+              value={note}
+              minLength={5}
+              maxLength={2000}
+              required
+              disabled={props.locked}
+              onChange={(event) => setNote(event.target.value)}
+            />
+          </label>
+          <button disabled={props.locked || note.trim().length < 5} type="submit">
+            Save review of version {String(props.item.version)}
+          </button>
+        </form>
+      ) : (
+        <p>A clinician with signing authority can record a review.</p>
+      )}
+    </article>
   );
 }

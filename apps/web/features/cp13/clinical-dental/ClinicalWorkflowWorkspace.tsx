@@ -711,6 +711,8 @@ function ConsentPanel(props: ClinicalContext) {
 function PrepPanel(props: ClinicalContext) {
   return (
     <PatientHistoryWorkspace
+      locked={props.locked}
+      mutate={props.mutate}
       client={props.client}
       profile={props.profile}
       patientId={props.patientId}

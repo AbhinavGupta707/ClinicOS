@@ -1,3 +1,9 @@
+import {
+  PATIENT_CONTEXT_PROFILE,
+  PATIENT_SOURCE_FIELDS,
+  patientSourceFields,
+  type PatientImportProfile
+} from "@clinic-os/domain/patient-source-context";
 // This boundary runs on the operator's device, before canonical staging. Never
 // send the original Ray export: it contains clinical text and national IDs.
 export const PRACTO_PATIENT_HEADERS = [
@@ -114,7 +120,10 @@ function csvCell(value: string): string {
   return '"' + value.replaceAll('"', '""') + '"';
 }
 
-export function preparePractoPatients(input: string): PractoPatientPreparation {
+export function preparePractoPatients(
+  input: string,
+  profile: PatientImportProfile = PRACTO_PATIENT_FORMAT
+): PractoPatientPreparation {
   try {
     const [headers, ...rows] = records(input);
     if (
@@ -132,6 +141,8 @@ export function preparePractoPatients(input: string): PractoPatientPreparation {
       if (value === undefined) reject("Unexpected column count in the Practo file.");
       return value;
     };
+    const withContext = profile === PATIENT_CONTEXT_PROFILE;
+    const retained = withContext ? [...MAPPED_HEADERS, ...PATIENT_SOURCE_FIELDS] : MAPPED_HEADERS;
     const excluded = new Set<string>();
     const output = rows.map((row, index) => {
       const rowNumber = index + 2;
@@ -160,8 +171,20 @@ export function preparePractoPatients(input: string): PractoPatientPreparation {
         reject(
           `CSV record ${rowNumber}: Gender needs a verified mapping. Supported values are female, male, other, unknown, or blank.`
         );
-      for (const header of PRACTO_PATIENT_EXCLUDED_HEADERS)
-        if (get(row, header).trim()) excluded.add(header);
+      for (const header of PRACTO_PATIENT_HEADERS)
+        if (!retained.includes(header) && get(row, header).trim()) excluded.add(header);
+      let context: string | undefined;
+      if (withContext) {
+        try {
+          context = JSON.stringify(
+            patientSourceFields(
+              Object.fromEntries(PATIENT_SOURCE_FIELDS.map((key) => [key, get(row, key)]))
+            )
+          );
+        } catch (error) {
+          reject(error instanceof Error ? error.message : "Invalid historical context.");
+        }
+      }
       return [
         id,
         get(row, "Patient Name"),
@@ -170,14 +193,15 @@ export function preparePractoPatients(input: string): PractoPatientPreparation {
         dob,
         gender,
         "imported",
-        PRACTO_PATIENT_FORMAT
+        profile,
+        ...(context === undefined ? [] : [context])
       ]
         .map(csvCell)
         .join(",");
     });
     return {
       ok: true,
-      csv: [CANONICAL_HEADERS, ...output].join("\n"),
+      csv: [CANONICAL_HEADERS + (withContext ? ",source_context" : ""), ...output].join("\n"),
       rowCount: rows.length,
       excludedFieldsWithValues: PRACTO_PATIENT_EXCLUDED_HEADERS.filter((header) =>
         excluded.has(header)

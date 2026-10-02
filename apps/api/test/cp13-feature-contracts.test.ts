@@ -32,7 +32,7 @@ test("CP13 clinic-day ownership covers CP2-CP6 exactly once", () => {
 });
 
 test("CP13 ownership keeps shared compatibility files out of worker path design", () => {
-  assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.frontOffice.length, 27);
+  assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.frontOffice.length, 29);
   assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.clinicalDental.length, 24);
   assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.treatmentBilling.length, 14);
   assert.equal(CP13_CLINIC_DAY_OPERATION_OWNERS.continuityOperations.length, 34);

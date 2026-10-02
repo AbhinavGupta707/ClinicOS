@@ -152,6 +152,10 @@ function extractResponseMetadata(response: Response): ClinicOsApiResponseMetadat
 }
 export type HealthLiveRequest = Readonly<Record<string, never>>;
 export type HealthLiveResponse = { readonly status: "ok"; readonly service: "clinic-os-api"; readonly request_id: string } | { readonly error: { readonly code: "BAD_REQUEST" | "UNAUTHENTICATED" | "PERMISSION_DENIED" | "NOT_FOUND" | "VALIDATION_ERROR" | "CONFLICT" | "PAYLOAD_TOO_LARGE" | "RATE_LIMITED" | "INTERNAL_ERROR" | "AI_PROVIDER_UNAVAILABLE" | "DEPENDENCY_UNAVAILABLE" | "CONFIGURATION_ERROR"; readonly message: string; readonly details: PublicJsonObject; readonly request_id: string } };
+export type ListPatientSourceContextsRequest = { readonly path: { readonly patientId: string }; readonly query?: { readonly cursor?: string } };
+export type ListPatientSourceContextsResponse = { readonly records: readonly ({ readonly id: string; readonly patientId: string; readonly sourceSystem: string; readonly externalReference: string; readonly sourceFormat: "practo_ray_patients_context_v2"; readonly version: number; readonly fields: { readonly "Contact Number"?: string; readonly "Secondary Mobile"?: string; readonly Address?: string; readonly Locality?: string; readonly City?: string; readonly Pincode?: string; readonly "Blood Group"?: string; readonly Remarks?: string; readonly "Medical History"?: string; readonly "Referred By"?: string; readonly Groups?: string; readonly "Patient Notes"?: string }; readonly contactUnavailable: boolean; readonly importedAt: string; readonly sourceRecordDate: string | null; readonly review: { readonly decision: "reviewed" | "needs_clarification"; readonly note: string; readonly reviewedByUserId: string; readonly reviewedAt: string } | null })[]; readonly nextCursor: string | null };
+export type ReviewPatientSourceContextRequest = { readonly path: { readonly patientId: string; readonly contextId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly decision: "reviewed" | "needs_clarification"; readonly note: string } };
+export type ReviewPatientSourceContextResponse = { readonly context: { readonly id: string; readonly patientId: string; readonly sourceSystem: string; readonly externalReference: string; readonly sourceFormat: "practo_ray_patients_context_v2"; readonly version: number; readonly fields: { readonly "Contact Number"?: string; readonly "Secondary Mobile"?: string; readonly Address?: string; readonly Locality?: string; readonly City?: string; readonly Pincode?: string; readonly "Blood Group"?: string; readonly Remarks?: string; readonly "Medical History"?: string; readonly "Referred By"?: string; readonly Groups?: string; readonly "Patient Notes"?: string }; readonly contactUnavailable: boolean; readonly importedAt: string; readonly sourceRecordDate: string | null; readonly review: { readonly decision: "reviewed" | "needs_clarification"; readonly note: string; readonly reviewedByUserId: string; readonly reviewedAt: string } | null } };
 export type ListPatientEncountersRequest = { readonly path: { readonly patientId: string }; readonly query?: { readonly cursor?: string; readonly limit?: number } };
 export type ListPatientEncountersResponse = { readonly encounters: readonly (VersionedPublicResource)[]; readonly nextCursor: string | null };
 export type ListEncounterPrescriptionsRequest = { readonly path: { readonly encounterId: string }; readonly query?: { readonly cursor?: string; readonly limit?: number } };
@@ -416,20 +420,20 @@ export type CreateCorrectiveActionRequest = { readonly headers: { readonly "idem
 export type CreateCorrectiveActionResponse = { readonly correctiveAction: VersionedPublicResource };
 export type UpdateCorrectiveActionRequest = { readonly path: { readonly correctiveActionId: string }; readonly headers: { readonly "idempotency-key": string; readonly "if-match": string }; readonly body: { readonly status: "open" | "in_progress" | "completed" | "cancelled"; readonly completionEvidence: WritableJsonObject; readonly verificationEvidence?: WritableJsonObject } };
 export type UpdateCorrectiveActionResponse = { readonly correctiveAction: VersionedPublicResource };
-export type CreatePatientImportFileRequest = { readonly path: { readonly runId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly profile: "practo_ray_patients_v1"; readonly rowCount: number; readonly chunks: readonly ({ readonly ordinal: number; readonly rowCount: number; readonly digest: string })[] } };
-export type CreatePatientImportFileResponse = { readonly file: { readonly runId: string; readonly profile: "practo_ray_patients_v1"; readonly rowCount: number; readonly sealed: boolean; readonly received: number; readonly chunks: readonly ({ readonly ordinal: number; readonly rowCount: number; readonly digest: string; readonly batchId: string | null; readonly state: string | null; readonly ready: number; readonly needsReview: number; readonly invalid: number; readonly skipped: number; readonly committed: number; readonly reconciled: number; readonly failed: number; readonly rolledBack: number })[] } };
+export type CreatePatientImportFileRequest = { readonly path: { readonly runId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly profile: "practo_ray_patients_v1" | "practo_ray_patients_context_v2"; readonly rowCount: number; readonly chunks: readonly ({ readonly ordinal: number; readonly rowCount: number; readonly digest: string })[] } };
+export type CreatePatientImportFileResponse = { readonly file: { readonly runId: string; readonly profile: "practo_ray_patients_v1" | "practo_ray_patients_context_v2"; readonly rowCount: number; readonly sealed: boolean; readonly received: number; readonly chunks: readonly ({ readonly ordinal: number; readonly rowCount: number; readonly digest: string; readonly batchId: string | null; readonly state: string | null; readonly ready: number; readonly needsReview: number; readonly invalid: number; readonly skipped: number; readonly committed: number; readonly reconciled: number; readonly failed: number; readonly rolledBack: number })[] } };
 export type GetPatientImportFileRequest = { readonly path: { readonly runId: string } };
-export type GetPatientImportFileResponse = { readonly file: { readonly runId: string; readonly profile: "practo_ray_patients_v1"; readonly rowCount: number; readonly sealed: boolean; readonly received: number; readonly chunks: readonly ({ readonly ordinal: number; readonly rowCount: number; readonly digest: string; readonly batchId: string | null; readonly state: string | null; readonly ready: number; readonly needsReview: number; readonly invalid: number; readonly skipped: number; readonly committed: number; readonly reconciled: number; readonly failed: number; readonly rolledBack: number })[] } };
+export type GetPatientImportFileResponse = { readonly file: { readonly runId: string; readonly profile: "practo_ray_patients_v1" | "practo_ray_patients_context_v2"; readonly rowCount: number; readonly sealed: boolean; readonly received: number; readonly chunks: readonly ({ readonly ordinal: number; readonly rowCount: number; readonly digest: string; readonly batchId: string | null; readonly state: string | null; readonly ready: number; readonly needsReview: number; readonly invalid: number; readonly skipped: number; readonly committed: number; readonly reconciled: number; readonly failed: number; readonly rolledBack: number })[] } };
 export type StagePatientImportChunkRequest = { readonly path: { readonly runId: string; readonly ordinal: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly csv: string } };
-export type StagePatientImportChunkResponse = { readonly file: { readonly runId: string; readonly profile: "practo_ray_patients_v1"; readonly rowCount: number; readonly sealed: boolean; readonly received: number; readonly chunks: readonly ({ readonly ordinal: number; readonly rowCount: number; readonly digest: string; readonly batchId: string | null; readonly state: string | null; readonly ready: number; readonly needsReview: number; readonly invalid: number; readonly skipped: number; readonly committed: number; readonly reconciled: number; readonly failed: number; readonly rolledBack: number })[] } };
+export type StagePatientImportChunkResponse = { readonly file: { readonly runId: string; readonly profile: "practo_ray_patients_v1" | "practo_ray_patients_context_v2"; readonly rowCount: number; readonly sealed: boolean; readonly received: number; readonly chunks: readonly ({ readonly ordinal: number; readonly rowCount: number; readonly digest: string; readonly batchId: string | null; readonly state: string | null; readonly ready: number; readonly needsReview: number; readonly invalid: number; readonly skipped: number; readonly committed: number; readonly reconciled: number; readonly failed: number; readonly rolledBack: number })[] } };
 export type SealPatientImportFileRequest = { readonly path: { readonly runId: string }; readonly headers: { readonly "idempotency-key": string }; readonly body: Readonly<Record<string, never>> };
-export type SealPatientImportFileResponse = { readonly file: { readonly runId: string; readonly profile: "practo_ray_patients_v1"; readonly rowCount: number; readonly sealed: boolean; readonly received: number; readonly chunks: readonly ({ readonly ordinal: number; readonly rowCount: number; readonly digest: string; readonly batchId: string | null; readonly state: string | null; readonly ready: number; readonly needsReview: number; readonly invalid: number; readonly skipped: number; readonly committed: number; readonly reconciled: number; readonly failed: number; readonly rolledBack: number })[] } };
+export type SealPatientImportFileResponse = { readonly file: { readonly runId: string; readonly profile: "practo_ray_patients_v1" | "practo_ray_patients_context_v2"; readonly rowCount: number; readonly sealed: boolean; readonly received: number; readonly chunks: readonly ({ readonly ordinal: number; readonly rowCount: number; readonly digest: string; readonly batchId: string | null; readonly state: string | null; readonly ready: number; readonly needsReview: number; readonly invalid: number; readonly skipped: number; readonly committed: number; readonly reconciled: number; readonly failed: number; readonly rolledBack: number })[] } };
 export type ListImportRunsRequest = { readonly query?: { readonly limit?: number; readonly cursor?: string } };
 export type ListImportRunsResponse = { readonly runs: readonly ({ readonly id: string; readonly tenantId: string; readonly clinicId: string; readonly sourceSystem: string; readonly createdByUserId: string; readonly createdAt: string })[]; readonly nextCursor: string | null };
 export type CreateImportRunRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly id: string; readonly sourceSystem: string } };
 export type CreateImportRunResponse = { readonly run: { readonly id: string; readonly tenantId: string; readonly clinicId: string; readonly sourceSystem: string; readonly createdByUserId: string; readonly createdAt: string } };
 export type GetImportRunRequest = { readonly path: { readonly runId: string } };
-export type GetImportRunResponse = { readonly run: { readonly id: string; readonly tenantId: string; readonly clinicId: string; readonly sourceSystem: string; readonly createdByUserId: string; readonly createdAt: string }; readonly batches: readonly (PublicJsonObject)[]; readonly status: "awaiting_patients" | "awaiting_practitioners" | "awaiting_appointments" | "review_required" | "partial" | "complete" | "rolled_back"; readonly reconciliation: { readonly received: number; readonly valid: number; readonly invalid: number; readonly needsReview: number; readonly ready: number; readonly committed: number; readonly skipped: number; readonly rolledBack: number; readonly failed: number; readonly reconciled: number; readonly missingSourceAssessment: "unknown" }; readonly patientFile?: { readonly runId: string; readonly profile: "practo_ray_patients_v1"; readonly rowCount: number; readonly sealed: boolean; readonly received: number; readonly chunks: readonly ({ readonly ordinal: number; readonly rowCount: number; readonly digest: string; readonly batchId: string | null; readonly state: string | null; readonly ready: number; readonly needsReview: number; readonly invalid: number; readonly skipped: number; readonly committed: number; readonly reconciled: number; readonly failed: number; readonly rolledBack: number })[] } | null };
+export type GetImportRunResponse = { readonly run: { readonly id: string; readonly tenantId: string; readonly clinicId: string; readonly sourceSystem: string; readonly createdByUserId: string; readonly createdAt: string }; readonly batches: readonly (PublicJsonObject)[]; readonly status: "awaiting_patients" | "awaiting_practitioners" | "awaiting_appointments" | "review_required" | "partial" | "complete" | "rolled_back"; readonly reconciliation: { readonly received: number; readonly valid: number; readonly invalid: number; readonly needsReview: number; readonly ready: number; readonly committed: number; readonly skipped: number; readonly rolledBack: number; readonly failed: number; readonly reconciled: number; readonly missingSourceAssessment: "unknown" }; readonly patientFile?: { readonly runId: string; readonly profile: "practo_ray_patients_v1" | "practo_ray_patients_context_v2"; readonly rowCount: number; readonly sealed: boolean; readonly received: number; readonly chunks: readonly ({ readonly ordinal: number; readonly rowCount: number; readonly digest: string; readonly batchId: string | null; readonly state: string | null; readonly ready: number; readonly needsReview: number; readonly invalid: number; readonly skipped: number; readonly committed: number; readonly reconciled: number; readonly failed: number; readonly rolledBack: number })[] } | null };
 export type ListProviderHealthRequest = Readonly<Record<string, never>>;
 export type ListProviderHealthResponse = { readonly providers: readonly (PublicJsonObject)[] };
 export type ListDeadLetterEventsRequest = { readonly query?: { readonly status?: "unreviewed" | "replay_requested" | "replayed" | "ignored" | "blocked" | "open" | "retry_scheduled" | "resolved" | "discarded"; readonly limit?: number } };
@@ -503,6 +507,8 @@ export type ReviewFhirClinicalSummaryImportResponse = { readonly effects: { read
 
 export interface ClinicOsNativeOperationMap {
   readonly healthLive: { readonly request: HealthLiveRequest; readonly response: HealthLiveResponse };
+  readonly listPatientSourceContexts: { readonly request: ListPatientSourceContextsRequest; readonly response: ListPatientSourceContextsResponse };
+  readonly reviewPatientSourceContext: { readonly request: ReviewPatientSourceContextRequest; readonly response: ReviewPatientSourceContextResponse };
   readonly listPatientEncounters: { readonly request: ListPatientEncountersRequest; readonly response: ListPatientEncountersResponse };
   readonly listEncounterPrescriptions: { readonly request: ListEncounterPrescriptionsRequest; readonly response: ListEncounterPrescriptionsResponse };
   readonly listPatientTreatmentPlans: { readonly request: ListPatientTreatmentPlansRequest; readonly response: ListPatientTreatmentPlansResponse };
@@ -749,6 +755,54 @@ export class ClinicOsApiClient {
       contentType: null,
       bodyEncoding: "json",
       successStatuses: [200,503],
+      input: input ?? {}
+    });
+  }
+
+  async listPatientSourceContexts(input: ListPatientSourceContextsRequest): Promise<ListPatientSourceContextsResponse> {
+    return this.execute<ListPatientSourceContextsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/source-contexts",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async listPatientSourceContextsWithMetadata(input: ListPatientSourceContextsRequest): Promise<ClinicOsApiResponse<ListPatientSourceContextsResponse>> {
+    return this.executeWithMetadata<ListPatientSourceContextsResponse>({
+      method: "GET",
+      pathTemplate: "/v1/patients/{patientId}/source-contexts",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async reviewPatientSourceContext(input: ReviewPatientSourceContextRequest): Promise<ReviewPatientSourceContextResponse> {
+    return this.execute<ReviewPatientSourceContextResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/source-contexts/{contextId}/reviews",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async reviewPatientSourceContextWithMetadata(input: ReviewPatientSourceContextRequest): Promise<ClinicOsApiResponse<ReviewPatientSourceContextResponse>> {
+    return this.executeWithMetadata<ReviewPatientSourceContextResponse>({
+      method: "POST",
+      pathTemplate: "/v1/patients/{patientId}/source-contexts/{contextId}/reviews",
+      auth: "bearer",
+      contentType: "application/json",
+      bodyEncoding: "json",
+      successStatuses: [200],
       input: input ?? {}
     });
   }

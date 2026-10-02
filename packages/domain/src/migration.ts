@@ -1,3 +1,4 @@
+import { PATIENT_CONTEXT_PROFILE, parsePatientSourceFields, type PatientImportProfile } from "./patient-source-context.ts";
 import type {
   PatientDuplicateCandidate,
   PatientGender,
@@ -221,7 +222,7 @@ export interface MigrationConflictRecord {
 
 export interface MigrationRowRecord {
   /** Allowlisted format label for operator scope; never raw source data. */
-  sourceFormat?: "practo_ray_patients_v1";
+  sourceFormat?: PatientImportProfile;
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
@@ -255,8 +256,8 @@ export function migrationSourceFormat(
   importType: MigrationImportType,
   rawPayload: Record<string, unknown> | undefined
 ): MigrationRowRecord["sourceFormat"] {
-  return importType === "patients" && rawPayload?.sourceFormat === "practo_ray_patients_v1"
-    ? "practo_ray_patients_v1"
+  return importType === "patients" && (rawPayload?.sourceFormat === "practo_ray_patients_v1" || rawPayload?.sourceFormat === PATIENT_CONTEXT_PROFILE)
+    ? rawPayload.sourceFormat
     : undefined;
 }
 
@@ -521,7 +522,13 @@ export function validatePatientImportRow(
     });
   }
 
-  if (!draft.phone.trim()) {
+  const withContext = draft.rawPayload.sourceFormat === PATIENT_CONTEXT_PROFILE;
+  let historicalFields;
+  if (withContext) {
+    try { historicalFields = parsePatientSourceFields(draft.rawPayload.sourceContext); }
+    catch (error) { validationErrors.push({field:"sourceContext",code:"invalid_source_context",message:error instanceof Error ? error.message : "Invalid historical context."}); }
+  }
+  if (!draft.phone.trim() && !withContext) {
     validationErrors.push({
       field: "phone",
       code: "required",
@@ -529,12 +536,15 @@ export function validatePatientImportRow(
     });
   }
 
+  const canonicalContextPhone = contextImportPhone(draft.phone);
+  // Keep the existing duplicate-candidate comparison key for v1 compatibility.
+  // The v2 stored contact itself comes from the syntax-checked parser, never this key.
   const normalizedPhone = normalizePhone(draft.phone);
-  if (draft.phone.trim() && normalizedPhone.replace(/\D/g, "").length < 10) {
+  if (draft.phone.trim() && (withContext ? canonicalContextPhone === null : normalizedPhone.replace(/\D/g, "").length < 10)) {
     validationErrors.push({
       field: "phone",
       code: "invalid_phone",
-      message: "Patient phone must include at least 10 digits."
+      message: withContext ? "Use one leading + with an international number, or a 10-digit Indian mobile number. Missing phone may be left blank." : "Patient phone must include at least 10 digits."
     });
   }
 
@@ -572,7 +582,7 @@ export function validatePatientImportRow(
       recordType: "patient",
       externalReference: draft.externalReference,
       fullName: draft.fullName.trim(),
-      phone: draft.phone.trim(),
+      phone: withContext ? canonicalContextPhone! : draft.phone.trim(),
       normalizedPhone,
       email: normalizedNullableText(draft.email),
       dateOfBirth: normalizedNullableText(draft.dateOfBirth),
@@ -580,7 +590,8 @@ export function validatePatientImportRow(
       source: "imported",
       sourceDetail: {
         originalSource: draft.source,
-        ...draft.sourceDetail
+        ...draft.sourceDetail,
+        ...(withContext ? {sourceFormat:PATIENT_CONTEXT_PROFILE, historicalFields, contactUnavailable:!draft.phone.trim()} : {})
       }
     },
     validationErrors: []
@@ -1103,4 +1114,13 @@ function normalizeIsoInstant(value: string): string | null {
 
   const parsed = new Date(trimmed);
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
+function contextImportPhone(input:string):string|null {
+  const text=input.trim();
+  if(!text) return "";
+  if(!/^\+?[0-9() .-]+$/.test(text)) return null;
+  const digits=text.replace(/[^0-9]/g,"");
+  const canonical=text.startsWith("+") ? `+${digits}` : /^[6-9][0-9]{9}$/.test(digits) ? `+91${digits}` : /^91[6-9][0-9]{9}$/.test(digits) ? `+${digits}` : null;
+  return canonical && /^\+[1-9][0-9]{7,14}$/.test(canonical) ? canonical : null;
 }

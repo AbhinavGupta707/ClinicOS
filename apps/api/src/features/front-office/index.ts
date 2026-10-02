@@ -1,6 +1,6 @@
 import { permissionsForScope } from "@clinic-os/auth";
 import { allowedPatientHistoryCategories, patientHistoryItemTypes, patientHistoryCategory, type PatientHistoryCategory } from "@clinic-os/domain";
-import {ClinicSetupConflict} from "@clinic-os/db";
+import {PatientSourceContextConflict, ClinicSetupConflict} from "@clinic-os/db";
 import type { JsonValue } from "@clinic-os/api-contracts";
 import type {
   CreateAppointmentInput,
@@ -56,6 +56,8 @@ const handlers = {
   getPatient: handleGetPatient,
   updatePatient: handleUpdatePatient,
   getPatientTimeline: handleGetPatientTimeline,
+  listPatientSourceContexts: handleSourceContexts,
+  reviewPatientSourceContext: handleSourceContexts,
   listLeads: handleListLeads,
   createLead: handleCreateLead,
   matchLeadToPatient: handleMatchLeadToPatient,
@@ -1546,3 +1548,29 @@ function validatePatientDemographics(body:Record<string,unknown>, phone:string|n
 }
 
 function validation(message:string) { return new ApiError(400,"VALIDATION_ERROR",message); }
+
+async function handleSourceContexts(request:ClinicFeatureOperationRequest, context:ClinicFeatureExecutionContext) {
+  const path = requestRecord(request.parsed.path);
+  const patientId = stringValue(path.patientId) as UUID;
+  const patient = await context.repositories.patientAdministration.findPatientById(patientId);
+  if (!patient) throw new ApiError(404,"NOT_FOUND","Patient not found.");
+  try {
+    if (request.operationId === "listPatientSourceContexts") {
+      const result = await context.repositories.clinicalCare.listPatientSourceContexts(patientId, optionalString(requestRecord(request.parsed.query).cursor));
+      await appendAudit(request,context,"patient.source_context.viewed",{patientId,resourceType:"patient",resourceId:patientId,metadata:{count:result.records.length}});
+      return ok(result);
+    }
+    const body = bodyRecord(request);
+    const contextId = stringValue(path.contextId) as UUID;
+    const result = await context.repositories.clinicalCare.reviewPatientSourceContext(patientId,contextId,{decision:stringValue(body.decision) as "reviewed"|"needs_clarification",note:stringValue(body.note)});
+    if (!result) throw new ApiError(404,"NOT_FOUND","Historical source context not found.");
+    const metadata={version:result.version,decision:result.review!.decision};
+    await appendAudit(request,context,"patient.source_context.reviewed",{patientId,resourceType:"patient_source_context",resourceId:contextId,metadata});
+    await appendOutbox(request,context,{eventType:"patient.source_context.reviewed",aggregateType:"patient_source_context",aggregateId:contextId,patientId,payload:metadata});
+    return ok({context:result});
+  } catch (error) {
+    if (error instanceof PatientSourceContextConflict) throw new ApiError(409,"CONFLICT",error.message);
+    if (error instanceof RangeError) throw new ApiError(400,"VALIDATION_ERROR",error.message);
+    throw error;
+  }
+}
