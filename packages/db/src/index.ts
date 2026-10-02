@@ -30,3 +30,11 @@ export {
   type ScopedApiRequestGuardsPort,
   type ScopedOptimisticConcurrencyPort
 } from "./api-request-guards.ts";
+
+export * from "./patient-import-files.ts";
+
+export * from "./clinic-setup.ts";
+
+export * from "./financial-operations.ts";
+
+export * from "./appointment-observations.ts";

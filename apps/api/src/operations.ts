@@ -65,6 +65,7 @@ import type {
   UpdateTaskInput,
   UpdateTreatmentPlanInput
 } from "@clinic-os/db";
+import { ImportRunRepositoryError, assertPatientFileManifest, type PatientFileManifest } from "@clinic-os/db";
 import {
   assertAppointmentTransition,
   assertEncounterTransition,
@@ -497,10 +498,10 @@ export async function createPatient(
 
   const duplicateRecords = await dependencies.repository.findPatientDuplicateCandidates(scope, {
     fullName: input.fullName,
-    phone: input.phone
+    phone: input.phone ?? ""
   });
   const duplicateSuggestions = buildPatientDuplicateSuggestions(
-    { fullName: input.fullName, phone: input.phone },
+    { fullName: input.fullName, phone: input.phone ?? "" },
     duplicateRecords
   );
   const patient = await dependencies.repository.createPatient(scope, input);
@@ -1054,9 +1055,48 @@ export async function createMigrationBatch(
 ) {
   authorize(context, { permission: "migration.manage" });
   const scope = scopeFrom(context);
+  const request = objectBody(body);
+  const importRunId = optionalUuid(request.importRunId, "importRunId");
+  if (importRunId) {
+    const importType = requiredString(request.importType, "importType");
+    if (!["patients", "practitioners", "appointments"].includes(importType)) {
+      throw validation("Import run step is not supported.", {});
+    }
+    const sourceSystem = requiredString(request.sourceSystem, "sourceSystem");
+    const csv = requiredString(request.csv, "csv");
+    if (request.rows !== undefined) throw validation("Import run steps require canonical CSV.", {});
+    const sourceFileName = optionalNullableString(request.sourceFileName, "sourceFileName") ?? null;
+    const importStepDigest = sha256Json({ importType, sourceSystem, sourceFileName, csv });
+    const run = await dependencies.repository.findImportRunById(scope, importRunId, true);
+    if (!run) throw notFound("Import run not found.", { import_run_id: importRunId });
+    if (run.run.sourceSystem !== sourceSystem) {
+      throw conflict("Import source does not match this run.");
+    }
+    const existing = run.batches.find((detail) => detail.batch.importType === importType);
+    if (existing) {
+      if (existing.batch.importStepDigest !== importStepDigest) {
+        throw conflict("This import step has different content.");
+      }
+      return ok(toMigrationBatchResponse(existing));
+    }
+    const prepared = await parseCreateMigrationBatchInput(scope, dependencies, body);
+    const staged = await mapImportRunRepositoryErrors(() => dependencies.repository.stageImportRunBatch(scope, {
+      ...prepared, importRunId, importStepDigest
+    }));
+    if (staged.created) await recordMigrationBatchCreation(context, dependencies, staged.detail);
+    return staged.created ? created(toMigrationBatchResponse(staged.detail)) : ok(toMigrationBatchResponse(staged.detail));
+  }
   const input = await parseCreateMigrationBatchInput(scope, dependencies, body);
   const detail = await dependencies.repository.createMigrationBatch(scope, input);
+  await recordMigrationBatchCreation(context, dependencies, detail);
+  return created(toMigrationBatchResponse(detail));
+}
 
+async function recordMigrationBatchCreation(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  detail: MigrationBatchDetail
+): Promise<void> {
   await audit(context, dependencies, "migration.batch.created", {
     resourceType: "migration_batch",
     resourceId: detail.batch.id,
@@ -1080,8 +1120,146 @@ export async function createMigrationBatch(
       conflictRowCount: detail.batch.conflictRowCount
     }
   });
+}
 
-  return created(toMigrationBatchResponse(detail));
+export async function createPatientImportFile(context: OperationsRequestContext, dependencies: OperationsDependencies, runId: UUID, body: unknown) {
+  authorize(context, { permission: "migration.manage" });
+  const request = objectBody(body);
+  if (request.profile !== "practo_ray_patients_v1") throw validation("Unsupported patient file profile.", {});
+  const manifest: PatientFileManifest = {
+    profile: request.profile,
+    rowCount: integerField(request.rowCount, "rowCount", { min: 1, max: 5000 }),
+    chunks: arrayField(request.chunks, "chunks").map((value) => {
+      const chunk = objectField(value, "chunk");
+      const digest = optionalSha256Digest(chunk.digest, "digest");
+      if (!digest) throw validation("A chunk digest is required.", {});
+      return { ordinal: integerField(chunk.ordinal, "ordinal", { min: 0, max: 49 }),
+        rowCount: integerField(chunk.rowCount, "rowCount", { min: 1, max: 100 }), digest };
+    })
+  };
+  const prepared = await mapImportRunRepositoryErrors(async () => {
+    assertPatientFileManifest(manifest);
+    return dependencies.repository.createPatientFile(scopeFrom(context), runId, manifest);
+  });
+  const file = prepared.file;
+  if (prepared.created) await audit(context, dependencies, "migration.file.prepared", { resourceType: "import_run", resourceId: runId,
+    metadata: { rowCount: file.rowCount, chunkCount: file.chunks.length, profile: file.profile } });
+  return ok({ file });
+}
+
+export async function getPatientImportFile(context: OperationsRequestContext, dependencies: OperationsDependencies, runId: UUID) {
+  authorize(context, { permission: "migration.manage" });
+  const file = await dependencies.repository.findPatientFile(scopeFrom(context), runId);
+  if (!file) throw notFound("Patient file not found.", {});
+  return ok({ file });
+}
+
+export async function stagePatientImportChunk(context: OperationsRequestContext, dependencies: OperationsDependencies, runId: UUID, ordinal: number, body: unknown) {
+  authorize(context, { permission: "migration.manage" });
+  const request = objectBody(body);
+  if (typeof request.csv !== "string" || Buffer.byteLength(request.csv, "utf8") > 256_000)
+    throw validation("Patient chunk must be a canonical CSV of at most 256 KB.", {});
+  const csv = request.csv;
+  const header = "external_reference,full_name,phone,email,date_of_birth,gender,source_type,source_format";
+  if (!csv.startsWith(header + "\n")) throw validation("Only minimized patient fields are accepted.", {});
+  const scope = scopeFrom(context);
+  const run = await dependencies.repository.findImportRunById(scope, runId);
+  if (!run) throw notFound("Import run not found.", {});
+  const input = await parseCreateMigrationBatchInput(scope, dependencies, {
+    csv, importType: "patients", sourceSystem: run.run.sourceSystem,
+    sourceFileName: "practo-patients-demographics.csv"
+  });
+  if (input.rows.some((row) => Object.keys(row.rawPayload).length !== 8 ||
+    Object.keys(row.rawPayload).some((key) => !["externalReference", "fullName", "phone", "email", "dateOfBirth", "gender", "sourceType", "sourceFormat"].includes(key)) ||
+    row.rawPayload.sourceFormat !== "practo_ray_patients_v1" || row.rawPayload.sourceType !== "imported" ||
+    !row.externalRecordId || row.rawPayload.externalReference !== row.externalRecordId))
+    throw validation("The chunk does not match the supported patient field policy.", {});
+  for (const row of input.rows) row.rowNumber += ordinal * MAX_MIGRATION_BATCH_ROWS;
+  const digest = createHash("sha256").update(csv, "utf8").digest("hex");
+  const staged = await mapImportRunRepositoryErrors(() => dependencies.repository.stagePatientFileChunk(scope, runId, ordinal, digest, input));
+  if (staged.created) await recordMigrationBatchCreation(context, dependencies, staged.detail);
+  return ok({ file: await dependencies.repository.findPatientFile(scope, runId) });
+}
+
+export async function sealPatientImportFile(context: OperationsRequestContext, dependencies: OperationsDependencies, runId: UUID) {
+  authorize(context, { permission: "migration.manage" });
+  const sealed = await mapImportRunRepositoryErrors(() => dependencies.repository.sealPatientFile(scopeFrom(context), runId));
+  const file = sealed.file;
+  if (sealed.sealedNow) await audit(context, dependencies, "migration.file.sealed", { resourceType: "import_run", resourceId: runId,
+    metadata: { rowCount: file.rowCount, chunkCount: file.chunks.length } });
+  return ok({ file });
+}
+
+export async function createImportRun(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  body: unknown
+) {
+  authorize(context, { permission: "migration.manage" });
+  const input = objectBody(body);
+  const id = uuidField(input.id, "id");
+  const sourceSystem = requiredString(input.sourceSystem, "sourceSystem");
+  const result = await mapImportRunRepositoryErrors(() =>
+    dependencies.repository.createImportRun(scopeFrom(context), { id, sourceSystem })
+  );
+  if (result.created) {
+    await audit(context, dependencies, "migration.run.created", {
+      resourceType: "import_run", resourceId: result.run.id,
+      metadata: { sourceSystem }
+    });
+  }
+  return result.created ? created({ run: result.run }) : ok({ run: result.run });
+}
+
+export async function listImportRuns(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  filter: { limit?: string | null; cursor?: string | null }
+) {
+  authorize(context, { permission: "migration.manage" });
+  const limit = parseOptionalLimit(filter.limit, 25, 100);
+  const cursor = filter.cursor ? uuidField(filter.cursor, "cursor") : null;
+  return ok(await mapImportRunRepositoryErrors(() =>
+    dependencies.repository.listImportRuns(scopeFrom(context), limit, cursor)));
+}
+
+export async function getImportRun(
+  context: OperationsRequestContext,
+  dependencies: OperationsDependencies,
+  runId: UUID
+) {
+  authorize(context, { permission: "migration.manage" });
+  const detail = await dependencies.repository.findImportRunById(scopeFrom(context), runId);
+  if (!detail) throw notFound("Import run not found.", { import_run_id: runId });
+  const file = await dependencies.repository.findPatientFile(scopeFrom(context), runId);
+  if (file) {
+    const reconciliation = { received: file.received, valid: 0, invalid: 0, needsReview: 0, ready: 0,
+      committed: 0, skipped: 0, rolledBack: 0, failed: 0, reconciled: 0, missingSourceAssessment: "unknown" as const };
+    for (const chunk of file.chunks) for (const key of ["invalid", "needsReview", "ready", "committed", "skipped", "rolledBack", "failed", "reconciled"] as const)
+      reconciliation[key] += chunk[key];
+    reconciliation.valid = file.received - reconciliation.invalid;
+    const status = !file.sealed ? "awaiting_patients" : reconciliation.needsReview ? "review_required"
+      : reconciliation.committed === file.rowCount ? "complete" : reconciliation.rolledBack === file.rowCount ? "rolled_back" : "partial";
+    return ok({ run: detail.run, batches: [], status, reconciliation, patientFile: file });
+  }
+  return ok({
+    run: detail.run,
+    batches: detail.batches.map(toMigrationBatchResponse),
+    status: detail.status,
+    reconciliation: detail.reconciliation,
+    patientFile: null
+  });
+}
+
+async function mapImportRunRepositoryErrors<T>(operation: () => Promise<T>): Promise<T> {
+  try { return await operation(); }
+  catch (error) {
+    if (error instanceof ImportRunRepositoryError) {
+      if (error.reason === "not_found") throw notFound(error.message, {});
+      throw conflict(error.message);
+    }
+    throw error;
+  }
 }
 
 export async function getMigrationBatch(
@@ -1544,11 +1722,9 @@ export async function commitMigrationBatch(
   }
 
   const commitInput = parseMigrationActionInput(body, context);
-  const result = await dependencies.repository.commitMigrationBatch(
-    scopeFrom(context),
-    batchId,
-    commitInput
-  );
+  const result = await mapImportRunRepositoryErrors(() => dependencies.repository.commitMigrationBatch(
+    scopeFrom(context), batchId, commitInput
+  ));
   if (!result) throw notFound("Migration batch not found.", { batch_id: batchId });
 
   await audit(context, dependencies, "migration.batch.committed", {

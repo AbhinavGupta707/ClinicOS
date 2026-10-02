@@ -244,6 +244,7 @@ export class Cp14BffRuntime {
   readonly #authorityResolver: Cp14AuthorityResolver;
   readonly #tokens: Cp14OidcTokenClient;
   readonly #api: Cp14ApiTransport;
+  readonly #admitIdentity: (input: { claims: unknown; now: Date }) => Promise<{ active: boolean; authorityRevision: string }>;
 
   constructor(input: {
     configuration: Cp14BffConfiguration;
@@ -254,6 +255,7 @@ export class Cp14BffRuntime {
     authorityResolver: Cp14AuthorityResolver;
     tokens: Cp14OidcTokenClient;
     api: Cp14ApiTransport;
+    admitIdentity: (input: { claims: unknown; now: Date }) => Promise<{ active: boolean; authorityRevision: string }>;
   }) {
     this.#configuration = normalizeBffConfiguration(input.configuration);
     this.#security = input.security;
@@ -263,6 +265,7 @@ export class Cp14BffRuntime {
     this.#authorityResolver = input.authorityResolver;
     this.#tokens = input.tokens;
     this.#api = input.api;
+    this.#admitIdentity = input.admitIdentity;
   }
 
   async beginLogin(request: Cp14BffRequest, now: Date): Promise<Cp14BffResponse> {
@@ -279,11 +282,15 @@ export class Cp14BffRuntime {
       productionLike: this.#configuration.productionLike,
       now
     });
+    const authorization = new URL(begun.authorizationUrl);
+    // A restored membership requires a fresh authentication, not a silent SSO replay.
+    authorization.searchParams.set("prompt", "login");
+    authorization.searchParams.set("max_age", "0");
     return {
       status: 302,
       headers: {
         ...this.#security.sensitiveHeaders(),
-        location: begun.authorizationUrl,
+        location: authorization.toString(),
         "set-cookie": serializeStateCookie(
           this.#configuration.stateCookieName,
           begun.state,
@@ -330,10 +337,7 @@ export class Cp14BffRuntime {
         "OIDC ID-token nonce or subject does not match the login transaction."
       );
     }
-    const authority = await this.#authorityResolver.resolve({
-      subject: principal.subject,
-      issuer: principal.issuer
-    });
+    const authority = await this.#admitIdentity({ claims: exchanged.claims, now });
     if (!authority.active) {
       throw new Cp14BffError("UNAUTHENTICATED", "ClinicOS membership is inactive.");
     }

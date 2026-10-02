@@ -6,6 +6,9 @@ import {
 } from "../core/scoped-repository-port.ts";
 
 export const SCHEDULING_OPERATIONS = [
+  "listClinicStaff",
+  "findQueueEntryByAppointmentId",
+
   "listAppointmentTypes",
   "listChairs",
   "listClinicDoctors",
@@ -15,6 +18,7 @@ export const SCHEDULING_OPERATIONS = [
   "findAppointmentConflicts",
   "createAppointment",
   "updateAppointmentStatus",
+  "rescheduleAppointment",
   "createQueueEntry",
   "listQueueEntries",
   "updateQueueEntry"

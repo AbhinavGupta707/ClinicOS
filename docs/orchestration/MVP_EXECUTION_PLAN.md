@@ -195,6 +195,76 @@ Before connector-specific MVP1 code begins, obtain:
 
 ## Decision log
 
+- 2026-09-26: owner authorized financial operations and one additional high-value
+  slice. Advances/allocation/returns, full-line credits, manual refunds and payment
+  corrections, expenses, account history and clinic-day movements now use scoped
+  immutable evidence and atomic audit/outbox. The second slice is minimized,
+  reviewed Practo appointment evidence: history/exclude/link or explicitly create
+  a verified upcoming booking, without guessing duration or claiming recurring
+  sync. Fresh migrations 0030/0031, repository integrity probes, 1,184 workspace
+  tests and 20 distinct real API/PostgreSQL browser cases passed. See
+  [the implementation plan](FINANCE_AND_APPOINTMENT_REVIEW_PLAN_2026-09-26.md) and
+  [acceptance evidence](../qa/FINANCE_AND_APPOINTMENT_ACCEPTANCE_2026-09-26.md).
+  Work remains local and uncommitted. Staff rehearsal, real source semantics and
+  identity/provider acceptance remain open; this does not establish Practo parity
+  or a production release.
+
+- 2026-09-26: owner authorized the remaining daily frontend gaps before a
+  walkthrough. The active CP13 screens now connect named patient/edit/duplicate
+  review, clinic setup and existing-staff access, week planning, intake/consent,
+  consultation/signatures/dental, treatment/invoice/manual payment/print, and
+  tasks/recalls/SOP/lab/inventory/incident workflows to the existing native API
+  and scoped database. Local acceptance passed 809 focused package tests and
+  17 real API/PostgreSQL browser scenarios, including the 5,000-patient import
+  and replay followed by daily work on the same synthetic database. Independent
+  financial, appointment/queue and patient-file reconciliation passed. See
+  [the daily-workflow acceptance report](../qa/DAILY_WORKFLOW_UI_ACCEPTANCE_2026-09-26.md).
+  Real clinic identity/source/provider acceptance, complete Practo parity and
+  production release gates remain open. This is uncommitted local evidence;
+  no additional real-data, provider, deployment or merge authorization is implied.
+
+- 2026-09-26: owner authorized the next front-desk slice using the existing
+  backend. Today/Appointments now provide named patient search/registration,
+  booking, versioned reschedule, confirmation/cancellation/no-show, manual check-in
+  and call/return-to-waiting controls. Cancellation and queue state are atomic;
+  secondary outbox facts no longer collide on one request key. The real-stack
+  runner includes front-desk and prior import scenarios plus independent database
+  reconciliation. See [the front-desk acceptance report](../qa/FRONT_DESK_WORKFLOW_ACCEPTANCE_2026-09-26.md)
+  for final run evidence and limitations. This is the configured-clinic booking
+  through arrival slice; admin setup, broad patient editing/duplicate resolution,
+  source appointment mapping, consultation/checkout and live clinic acceptance
+  remain open. No new real-data or production authorization is implied.
+
+- 2026-09-26: owner approved a 5,000-patient testing target. The supervised whole
+  patient-file workflow now uses immutable manifests, <=100-row receipts, complete
+  upload guards, cross-group identity review, pause/reload recovery and explicit
+  bounded commits on the existing migration model. Final synthetic acceptance
+  imported 5,000 patients and reconciled a second 5,000-row snapshot without adding
+  patients; all six real-stack browser scenarios and independent PostgreSQL
+  reconciliation passed. See
+  [the acceptance report](../qa/PATIENT_FILE_5000_ACCEPTANCE_2026-09-26.md).
+  This closes the bounded file-capacity test, not Practo appointment/history
+  migration, unattended sync, clinic cutover, or MVP1/MVP2/production exit.
+
+- 2026-09-26: owner deferred automated attendance detection and requested the next
+  testable basic workflow plus a read-only Ray comparison. The bounded Practo
+  patient-demographics trial now prepares only six supported fields before
+  canonical staging (100 rows maximum), preserves its scope on reload, and does
+  not present the remaining practitioner/appointment steps as supported Ray
+  migration. Whole-file completeness, source semantics, daily mutation UI and
+  replacement of existing enabled reminders remain open. See
+  `docs/qa/PRACTO_BASELINE_AND_PATIENT_TRIAL_2026-09-26.md` for final evidence and
+  the clinic cutover gap matrix. This does not close MVP1/MVP2 or authorize real data.
+
+- 2026-09-26: owner reconfirmed the pilot as Healthy Roots in Sector 50, Gurgaon
+  (supersedes historical Girgaon references). An authorized official export was
+  received as patients.csv and appointments.csv in a ZIP. Owner supplied headers
+  and date/status examples without patient identities. Check-in/out are attendance
+  events; the export lacks stable appointment ID, planned duration/end and visit
+  type. A synthetic-tested offline aggregate profiler supports private discovery.
+  See `PRACTO_EXPORT_MAPPING_2026-09-26.md`; this is not a completed adapter or
+  real-clinic import, and no recurring-sync identity fallback is approved.
+
 - 2026-09-22: PR #1 merged into `mac-latest-20260829` at `dbea5365`;
   the merged tree matches the fully checked final PR source. The owner authorized
   continued development, deferred email integration, and clarified that Muse
@@ -291,3 +361,15 @@ Before connector-specific MVP1 code begins, obtain:
   proves the complete loop and reverse-order cleanup at desktop and mobile
   widths. This closes the local guided-trial product seam; it does not prove a
   Practo API/export adapter, source freshness, recurring sync, or writeback.
+
+## 2026-10-02 — Returning-patient continuity slice
+
+The owner requested a history-led selection and implementation of the next major
+task. The resulting slice extends the canonical patient timeline with authorized
+database paging, opens exact clinical source records, and compares saved dental
+snapshots. It preserves the prior migration, clinic-day and financial work.
+See `RETURNING_PATIENT_CHART_PLAN_2026-10-02.md` and
+`../qa/RETURNING_PATIENT_CHART_ACCEPTANCE_2026-10-02.md` for scope and evidence.
+Synthetic acceptance does not close MVP1/MVP2 clinic reconciliation, real staff
+validation, provider activation or production-readiness gates. The next milestone
+is the clinic-day/return-visit rehearsal and representative source validation.

@@ -46,8 +46,15 @@ if [[ "${version}" != *"26.7.4"* ]]; then
   exit 1
 fi
 
+# Check the optimized deliverable, not only the source-build distribution.
+docker run --rm --entrypoint /bin/sh "${image_ref}" -ec '
+  actual="$(find /opt/keycloak/lib -type f -iname "*freemarker*.jar")"
+  test "${actual}" = /opt/keycloak/lib/lib/main/org.freemarker.freemarker-2.3.35.jar
+  printf "%s\n" "${actual}"
+' >"${evidence_directory}/keycloak-freemarker-inventory.txt"
+
 docker run --rm --entrypoint /bin/sh "${image_ref}" -c \
-  'echo "e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3  /opt/clinicos/trust/aws-rds-global-bundle.pem" | sha256sum -c -' >/dev/null
+  'echo "fe45bbebf92ad3e27a583bbb2ddd1553c521ed4d49af5514dc0a40372ea5395c  /opt/clinicos/trust/aws-rds-global-bundle.pem" | sha256sum -c -' >/dev/null
 
 set +e
 bootstrap_output="$(docker run --rm "${image_ref}" /opt/clinicos/bin/bootstrap-keycloak 2>&1)"

@@ -1,6 +1,7 @@
 import { ClinicOsApiClient } from "@clinic-os/api-client-generated";
 
 import { isDevFixtureAllowed } from "./dev-fixture";
+import { staffFetch, usesStaffSession, usesSyntheticBearerTransport } from "./staff-session";
 
 const TOKEN_PROVIDER_KEY = "__clinicOsAccessTokenProvider" as const;
 const LOCAL_DEV_ACCESS_TOKEN = "local-synthetic-fixture";
@@ -31,6 +32,7 @@ export class ClinicOsSessionUnavailableError extends Error {
 export function registerClinicOsAccessTokenProvider(
   provider: ClinicOsAccessTokenProvider
 ): () => void {
+  if (!usesSyntheticBearerTransport()) throw new ClinicOsSessionUnavailableError("Browser token providers are restricted to synthetic tests.");
   window[TOKEN_PROVIDER_KEY] = provider;
   return () => {
     if (window[TOKEN_PROVIDER_KEY] === provider) delete window[TOKEN_PROVIDER_KEY];
@@ -41,7 +43,8 @@ export function createCp13ApiClient(clinicId: string): ClinicOsApiClient {
   return new ClinicOsApiClient({
     baseUrl: getApiBaseUrl(),
     clinicId,
-    getAccessToken: getVerifiedAccessToken,
+    authentication: usesStaffSession() ? "same_origin_bff" : "bearer",
+    getAccessToken: usesStaffSession() ? undefined : getVerifiedAccessToken,
     fetchImpl: credentialedFetch,
     getRequestId: () => crypto.randomUUID()
   });
@@ -74,5 +77,5 @@ function getApiBaseUrl(): string {
 }
 
 function credentialedFetch(input: RequestInfo | URL, init?: RequestInit): Promise<Response> {
-  return fetch(input, { ...init, credentials: "include" });
+  return staffFetch(input, { ...init, credentials: "include" });
 }

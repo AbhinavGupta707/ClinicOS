@@ -1,8 +1,15 @@
 import type { PublicJsonObject } from "@clinic-os/api-client-generated";
 
-const FRONT_OFFICE_SURFACES = new Set(["today", "lead-inbox", "appointments", "patients", "intake"]);
+const FRONT_OFFICE_SURFACES = new Set([
+  "today",
+  "lead-inbox",
+  "appointments",
+  "patients",
+  "settings"
+]);
 const CLINICAL_SURFACES = new Set([
   "patient-profile",
+  "intake",
   "consent",
   "returning-prep",
   "encounter",
@@ -65,8 +72,7 @@ export function clinicLocalDate(now: Date, timeZone: string): string {
     month: "2-digit",
     day: "2-digit"
   }).formatToParts(now);
-  const field = (type: "year" | "month" | "day") =>
-    parts.find((part) => part.type === type)?.value;
+  const field = (type: "year" | "month" | "day") => parts.find((part) => part.type === type)?.value;
   const year = field("year");
   const month = field("month");
   const day = field("day");

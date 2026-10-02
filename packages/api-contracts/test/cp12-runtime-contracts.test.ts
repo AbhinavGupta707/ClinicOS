@@ -31,6 +31,28 @@ const bearerHeaders = {
   "content-type": "application/json"
 };
 
+test("operator import run response requires explicit honest status and reconciliation", () => {
+  const run = {
+    id: patientId, tenantId: patientId, clinicId: patientId,
+    sourceSystem: "manual_trial", createdByUserId: patientId,
+    createdAt: "2026-09-20T09:00:00.000Z"
+  };
+  const reconciliation = {
+    received: 1, valid: 0, invalid: 1, needsReview: 0, ready: 0,
+    committed: 0, skipped: 0, rolledBack: 0, failed: 0, reconciled: 0,
+    missingSourceAssessment: "unknown"
+  };
+  assert.equal(parseNativeOperationResponse("getImportRun", 200, {
+    run, batches: [], status: "partial", reconciliation
+  }).success, true);
+  assert.equal(parseNativeOperationResponse("getImportRun", 200, {
+    run, batches: [], status: "synchronized", reconciliation
+  }).success, false);
+  assert.equal(parseNativeOperationResponse("getImportRun", 200, {
+    run, batches: [], status: "partial", reconciliation: { ...reconciliation, received: -1 }
+  }).success, false);
+});
+
 test("patient preparation permits no appointment in runtime and generated contracts", () => {
   const summary = {
     patient: { id: patientId, fullName: "Synthetic Patient", phone: null, dateOfBirth: null, gender: "unknown" },
@@ -78,7 +100,7 @@ function collectVersionedResponsePaths(definition: RuntimeSchema, path = ""): st
 }
 
 test("active native registry covers identity/health and every implemented checkpoint", () => {
-  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 136);
+  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 174);
   const checkpoints = new Set(
     ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.checkpoint)
   );
@@ -104,7 +126,7 @@ test("active native registry covers identity/health and every implemented checkp
   assert.equal(new Set(routeKeys).size, routeKeys.length);
   assert.equal(
     new Set(ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.operationId)).size,
-    136
+    174
   );
 });
 
@@ -189,8 +211,8 @@ test("versioned public resources require a UUID and positive safe rowVersion wit
   }
 });
 
-test("all 12 conditional-update families expose versions on canonical records, not projections", () => {
-  assert.equal(VERSIONED_RESOURCE_RESPONSE_CONTRACTS.length, 12);
+test("all conditional-update operations expose versions on canonical records, not projections", () => {
+  assert.equal(VERSIONED_RESOURCE_RESPONSE_CONTRACTS.length, 16);
   const conditionalOperationIds = ACTIVE_NATIVE_HTTP_OPERATIONS.filter(
     (operation) =>
       operation.concurrency.mode === "if-match" &&
@@ -243,7 +265,7 @@ test("all 12 conditional-update families expose versions on canonical records, n
         : []
     )
   ).sort();
-  assert.deepEqual(discoveredSources, mappedSources);
+  assert.deepEqual(discoveredSources, [...new Set(mappedSources)]);
 
   const duplicatePatientProjection = resolveNativeResponseSchemaPath(
     "createPatient",
@@ -792,4 +814,29 @@ test("generation is deterministic and documents deferred workflows without inven
     4
   );
   assert.equal(getNativeHttpOperation("healthLive").auth, "none");
+});
+
+test("appointment PATCH accepts one reviewed change and rejects mixed/incomplete reschedules", () => {
+  const schedule = { providerUserId: patientId, appointmentTypeId: encounterId,
+    startAt: "2026-09-26T09:00:00+05:30", durationMinutes: 30, chairId: null };
+  const request = (body: unknown) => parseNativeOperationRequest("updateAppointment", {
+    path: { appointmentId: patientId }, headers: { ...bearerHeaders, "idempotency-key": "synthetic-reschedule-contract", "if-match": '"rv-1"' }, body
+  });
+  assert.equal(request({ schedule, changeReason: "Requested by patient" }).success, true);
+  assert.equal(request({ status: "cancelled", changeReason: "Unavailable" }).success, true);
+  for (const body of [
+    {}, { schedule }, { status: "cancelled", schedule },
+    { status: "cancelled", schedule, changeReason: "Mixed command" },
+    { schedule: { ...schedule, durationMinutes: 0 }, changeReason: "Invalid duration" },
+    { schedule: { ...schedule, patientId }, changeReason: "Patient identity cannot change" }
+  ]) assert.equal(request(body).success, false, JSON.stringify(body));
+});
+
+
+test('query integers follow their registered schema, including appointment review pages',()=>{
+ for(const offset of ['0','50','5000']) {
+  const parsed=parseNativeOperationRequest('getAppointmentImport',{headers:{authorization:bearerHeaders.authorization},path:{importId:patientId},query:new URLSearchParams({offset})});
+  assert.equal(parsed.success,true);
+ }
+ for(const offset of ['5001','-1','1.5','false','', ' 50 ']) assert.equal(parseNativeOperationRequest('getAppointmentImport',{headers:{authorization:bearerHeaders.authorization},path:{importId:patientId},query:new URLSearchParams({offset})}).success,false);
 });

@@ -413,6 +413,7 @@ try {
     /REPOSITORY_MVP_SLICE_ROLLBACK/u
   );
   assert.equal(await concurrentMigrationReplayProbe(repository, tenantA, pool), true);
+  assert.equal(await operatorImportRunProbe(repository, tenantA, tenantBScope, pool), true);
   for (const linkExistingPatient of [false, true]) {
     assert.equal(
       await sourceIndependentMigrationProbe(repository, tenantA, pool, linkExistingPatient),
@@ -448,6 +449,7 @@ try {
         outboxIdempotency: "pass",
         crossTenantForeignKey: "pass",
         migrationReplayReconciliation: "pass",
+        operatorImportRunRecovery: "pass",
         concurrentMigrationReplay: "pass",
         sourceIndependentMigration: "pass",
         concurrentBatchCommitRollback: "pass",
@@ -520,6 +522,202 @@ function phoneForToken(token) {
 
 function sha256(value) {
   return createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+async function operatorImportRunProbe(repository, scope, foreignScope, connectionPool) {
+  const id = randomUUID();
+  const sourceSystem = `repository_operator_run_${id}`;
+  const created = await repository.createImportRun(scope, { id, sourceSystem });
+  assert.equal(created.created, true);
+  assert.equal((await repository.createImportRun(scope, { id, sourceSystem })).created, false);
+  await assert.rejects(
+    repository.createImportRun(scope, { id, sourceSystem: "other_source" }),
+    /already in use/u
+  );
+  assert.equal(await repository.findImportRunById(foreignScope, id), null);
+  const patientExternalId = `operator-patient-${id}`;
+  const patientRecord = {
+    recordType: "patient",
+    externalReference: patientExternalId,
+    fullName: `Operator Import ${id}`,
+    phone: phoneForToken(id),
+    normalizedPhone: phoneForToken(id).replace(/\D/gu, ""),
+    email: null,
+    dateOfBirth: null,
+    gender: "unknown",
+    source: "imported",
+    sourceDetail: { originalSource: "manual" }
+  };
+  const input = {
+    importRunId: id,
+    importStepDigest: sha256({ id, sourceSystem, step: "patients" }),
+    importType: "patients",
+    sourceSystem,
+    sourceFileName: "patients.csv",
+    sourceChecksum: "f".repeat(64),
+    state: "ready_to_commit",
+    rows: [migrationReadyRow("patients", patientExternalId, patientRecord)]
+  };
+  await assert.rejects(
+    repository.stageImportRunBatch(scope, {
+      ...input,
+      importType: "appointments",
+      rows: []
+    }),
+    /previous import step/u
+  );
+  const staged = await Promise.all([
+    repository.stageImportRunBatch(scope, input),
+    repository.stageImportRunBatch(scope, { ...input, sourceChecksum: "a".repeat(64) })
+  ]);
+  assert.equal(staged.filter((result) => result.created).length, 1);
+  assert.equal(staged[0].detail.batch.id, staged[1].detail.batch.id);
+  await assert.rejects(
+    repository.stageImportRunBatch(scope, {
+      ...input,
+      importStepDigest: sha256({ id, changed: true })
+    }),
+    /different content/u
+  );
+  await assert.rejects(
+    repository.stageImportRunBatch(scope, {
+      ...input,
+      sourceSystem: "other_source"
+    }),
+    /does not match/u
+  );
+  const detail = await repository.findImportRunById(scope, id);
+  assert.equal(detail?.status, "review_required");
+  assert.equal(detail?.reconciliation.received, 1);
+  assert.equal(detail?.reconciliation.ready, 1);
+  assert.equal(detail?.reconciliation.missingSourceAssessment, "unknown");
+  const page = await repository.listImportRuns(scope, 1);
+  assert.equal(page.runs[0]?.id, id);
+
+  const apiStyleRunId = randomUUID();
+  await repository.createImportRun(scope, { id: apiStyleRunId, sourceSystem });
+  const apiStyleInput = {
+    ...input,
+    importRunId: apiStyleRunId,
+    importStepDigest: sha256({ apiStyleRunId, sourceSystem, step: "patients" })
+  };
+  const unitOfWork = new PostgresClinicUnitOfWork(connectionPool, { clock: fixedClock });
+  const apiStyleResults = await Promise.all(
+    [1, 2].map(() =>
+      unitOfWork.run(async ({ repository: inTransaction }) => {
+        const precheck = await inTransaction.findImportRunById(scope, apiStyleRunId, true);
+        assert.ok(precheck);
+        return inTransaction.stageImportRunBatch(scope, apiStyleInput);
+      })
+    )
+  );
+  assert.equal(apiStyleResults.filter((result) => result.created).length, 1);
+  assert.equal(apiStyleResults[0].detail.batch.id, apiStyleResults[1].detail.batch.id);
+
+  // A prerequisite rollback owns its batch lock before the dependent stage starts.
+  // The stage must wait, then reject the newly rolled-back prerequisite.
+  await repository.commitMigrationBatch(scope, staged[0].detail.batch.id, {
+    idempotencyKey: `operator-lock-commit-${id}`
+  });
+  let releaseRollback;
+  let rollbackLocked;
+  const release = new Promise((resolve) => {
+    releaseRollback = resolve;
+  });
+  const locked = new Promise((resolve) => {
+    rollbackLocked = resolve;
+  });
+  const rollbackWork = unitOfWork.run(async ({ repository: transaction }) => {
+    await transaction.rollbackMigrationBatch(scope, staged[0].detail.batch.id, {
+      idempotencyKey: `operator-lock-rollback-${id}`
+    });
+    rollbackLocked();
+    await release;
+  });
+  await Promise.race([
+    locked,
+    rollbackWork.then(() => {
+      throw new Error("Rollback did not hold its lock.");
+    })
+  ]);
+  let stageSettled = false;
+  const stageWork = repository
+    .stageImportRunBatch(scope, {
+      ...input,
+      importType: "practitioners",
+      rows: [],
+      importStepDigest: sha256({ id, step: "practitioners" })
+    })
+    .then(
+      (value) => {
+        stageSettled = true;
+        return { value };
+      },
+      (error) => {
+        stageSettled = true;
+        return { error };
+      }
+    );
+  try {
+    let waiting = false;
+    for (let attempt = 0; attempt < 100; attempt += 1) {
+      const locks = await connectionPool.query(
+        "select exists (select 1 from pg_locks where locktype = 'transactionid' and not granted) as waiting"
+      );
+      if (locks.rows[0]?.waiting) {
+        waiting = true;
+        break;
+      }
+      if (stageSettled) break;
+      await delay(10);
+    }
+    assert.equal(waiting, true, "Dependent stage must wait for the prerequisite rollback.");
+    assert.equal(stageSettled, false);
+  } finally {
+    releaseRollback();
+    await rollbackWork;
+  }
+  const stageResult = await stageWork;
+  assert.match(stageResult.error?.message ?? "", /previous import step/u);
+
+  const microsecondIds = [randomUUID(), randomUUID()];
+  const client = await connectionPool.connect();
+  try {
+    await client.query("begin");
+    await client.query("select set_config('app.tenant_id', $1, true)", [scope.tenantId]);
+    await client.query("select set_config('app.clinic_id', $1, true)", [scope.clinicId]);
+    await client.query("select set_config('app.user_id', $1, true)", [scope.actorUserId]);
+    for (const [index, runId] of microsecondIds.entries()) {
+      await client.query(
+        `insert into import_runs (id, tenant_id, clinic_id, source_system, created_by_user_id, created_at)
+         values ($1, $2, $3, $4, $5, $6::timestamptz)`,
+        [
+          runId,
+          scope.tenantId,
+          scope.clinicId,
+          sourceSystem,
+          scope.actorUserId,
+          `2099-01-01T00:00:00.00000${index + 1}Z`
+        ]
+      );
+    }
+    await client.query("commit");
+  } catch (error) {
+    await client.query("rollback");
+    throw error;
+  } finally {
+    client.release();
+  }
+  const firstMicrosecondPage = await repository.listImportRuns(scope, 1);
+  assert.equal(firstMicrosecondPage.runs[0]?.id, microsecondIds[1]);
+  assert.ok(firstMicrosecondPage.nextCursor);
+  const secondMicrosecondPage = await repository.listImportRuns(
+    scope,
+    1,
+    firstMicrosecondPage.nextCursor
+  );
+  assert.equal(secondMicrosecondPage.runs[0]?.id, microsecondIds[0]);
+  return true;
 }
 
 async function concurrentMigrationReplayProbe(repository, scope, connectionPool) {

@@ -1,3 +1,8 @@
+import type { PatientHistoryPageInput } from "@clinic-os/domain";
+import type {createAppointmentImport,stageAppointmentObservations,sealAppointmentImport,listAppointmentImports,getAppointmentImport,lockAppointmentObservation,decideAppointmentObservation} from "./appointment-observations.ts";
+import type {FinancialCommandInput} from "@clinic-os/domain";
+import type { ClinicSetupKind, ClinicSetupRecord, ClinicSetupInput, ClinicAccessPerson, ClinicAccessInput } from "./clinic-setup.ts";
+import type { PatientFileManifest, PatientFileDetail } from "./patient-import-files.ts";
 import type {
   AppointmentConflict,
   AppointmentRecord,
@@ -84,6 +89,8 @@ import type {
   MediaType,
   MigrationBatchDetail,
   MigrationBatchRecord,
+  ImportRunDetail,
+  ImportRunRecord,
   MigrationBatchState,
   MigrationCommitResult,
   MigrationConflictRecord,
@@ -169,6 +176,8 @@ export type {
 export interface IdentityAccessSnapshot {
   /** Changes on any persisted user/tenant authority mutation, including revoke/regrant. */
   authorityRevision: string;
+  /** Tokens must originate from an interactive authentication after this cutoff. */
+  authenticationValidAfter: string;
   tenant: Tenant;
   user: ClinicUser;
   memberships: TenantMembership[];
@@ -264,7 +273,7 @@ export interface ActiveBreakGlassAccessFilter {
 
 export interface CreatePatientInput {
   fullName: string;
-  phone: string;
+  phone: string | null;
   email?: string | null;
   dateOfBirth?: string | null;
   gender?: PatientRecord["gender"] | null;
@@ -310,6 +319,30 @@ export interface CreateMigrationBatchInput {
   sourceChecksum?: string | null;
   state: MigrationBatchRecord["state"];
   rows: CreateMigrationRowInput[];
+}
+
+export class ImportRunRepositoryError extends Error {
+  readonly reason: "not_found" | "source_mismatch" | "step_conflict" | "prerequisite";
+  constructor(reason: ImportRunRepositoryError["reason"], message: string) {
+    super(message);
+    this.reason = reason;
+    this.name = "ImportRunRepositoryError";
+  }
+}
+
+export interface StageImportRunBatchInput extends CreateMigrationBatchInput {
+  importRunId: UUID;
+  importStepDigest: string;
+}
+
+export interface StageImportRunBatchResult {
+  detail: MigrationBatchDetail;
+  created: boolean;
+}
+
+export interface ImportRunListResult {
+  runs: ImportRunRecord[];
+  nextCursor: UUID | null;
 }
 
 const STABLE_IDENTITY_MIGRATION_TYPES = new Set<MigrationImportType>([
@@ -380,7 +413,7 @@ export interface CreateLeadInput {
   sourceDetail: Record<string, unknown>;
 }
 
-export interface LeadSearchFilter {
+export interface LeadSearchFilter extends WorkflowPageFilter {
   source?: LeadSource | null;
   status?: LeadStatus | null;
   limit?: number | null;
@@ -398,6 +431,15 @@ export interface CreateAppointmentInput {
   source: LeadSource;
   reason?: string | null;
   notes?: string | null;
+}
+
+export interface RescheduleAppointmentInput {
+  providerUserId: UUID;
+  appointmentTypeId: UUID;
+  chairId: UUID | null;
+  startAt: string;
+  endAt: string;
+  changeReason: string;
 }
 
 export interface AppointmentSearchFilter {
@@ -435,7 +477,7 @@ export interface CreateTaskInput {
   idempotencyKey?: string | null;
 }
 
-export interface TaskSearchFilter {
+export interface TaskSearchFilter extends WorkflowPageFilter {
   status?: TaskStatus | null;
   dueDate?: string | null;
   dueBefore?: string | null;
@@ -467,7 +509,7 @@ export interface CreateRecallRuleInput {
   defaultTaskPriority?: TaskPriority;
 }
 
-export interface RecallSearchFilter {
+export interface RecallSearchFilter extends WorkflowPageFilter {
   status?: RecallStatus | null;
   dueBefore?: string | null;
   patientId?: UUID | null;
@@ -542,7 +584,7 @@ export interface CreateSopScheduleInput {
   defaultTaskPriority?: TaskPriority;
 }
 
-export interface SopRunSearchFilter {
+export interface SopRunSearchFilter extends WorkflowPageFilter {
   date?: string | null;
   status?: SopRunStatus | null;
   dueBefore?: string | null;
@@ -582,7 +624,7 @@ export interface CreateLabVendorInput {
   paymentTermsDays?: number | null;
 }
 
-export interface LabCaseSearchFilter {
+export interface LabCaseSearchFilter extends WorkflowPageFilter {
   status?: LabCaseStatus | null;
   dueBefore?: string | null;
   vendorId?: UUID | null;
@@ -696,12 +738,12 @@ export interface UpdateInventoryCheckRunInput {
   }>;
 }
 
-export interface InventoryExceptionFilter {
+export interface InventoryExceptionFilter extends WorkflowPageFilter {
   itemId?: UUID | null;
   checkRunId?: UUID | null;
 }
 
-export interface IncidentSearchFilter {
+export interface IncidentSearchFilter extends WorkflowPageFilter {
   status?: IncidentRecord["status"] | null;
   severity?: IncidentSeverity | null;
   category?: IncidentCategory | null;
@@ -1379,9 +1421,49 @@ export interface DashboardDataSet {
   returningPatientIds: Set<UUID>;
 }
 
+export interface WorkflowPageFilter { readonly cursor?: UUID | null; readonly limit?: number | null; }
+export interface WorkflowPage<T> { readonly records: readonly T[]; readonly nextCursor: UUID | null; }
+export interface ClinicStaffSummary { readonly id: UUID; readonly displayName: string; }
+
 export interface ClinicOperationsRepository {
+  createAppointmentImport(scope:RepositoryScope,input:Parameters<typeof createAppointmentImport>[2]):ReturnType<typeof createAppointmentImport>;
+  stageAppointmentObservations(scope:RepositoryScope,id:string,input:Parameters<typeof stageAppointmentObservations>[3]):ReturnType<typeof stageAppointmentObservations>;
+  sealAppointmentImport(scope:RepositoryScope,id:string):ReturnType<typeof sealAppointmentImport>;
+  listAppointmentImports(scope:RepositoryScope,cursor?:string):ReturnType<typeof listAppointmentImports>;
+  getAppointmentImport(scope:RepositoryScope,id:string,offset?:number):ReturnType<typeof getAppointmentImport>;
+  lockAppointmentObservation(scope:RepositoryScope,id:string,rowId:string):ReturnType<typeof lockAppointmentObservation>;
+  decideAppointmentObservation(scope:RepositoryScope,id:string,rowId:string,input:Parameters<typeof decideAppointmentObservation>[4]):ReturnType<typeof decideAppointmentObservation>;
+  executeFinancialCommand(scope:RepositoryScope,input:FinancialCommandInput):Promise<Record<string,unknown>>;
+  getFinancialAccount(scope:RepositoryScope,patientId:UUID,cursor?:string,advanceCursor?:string):Promise<Record<string,unknown>>;
+  getFinancialDay(scope:RepositoryScope,date:string,entryCursor?:string,dueCursor?:string):Promise<Record<string,unknown>>;
+  listPatientEncounters(scope: RepositoryScope, patientId: UUID, filter?: WorkflowPageFilter): Promise<WorkflowPage<EncounterRecord>>;
+  listEncounterPrescriptions(scope: RepositoryScope, encounterId: UUID, filter?: WorkflowPageFilter): Promise<WorkflowPage<PrescriptionRecord>>;
+  listPatientTreatmentPlans(scope: RepositoryScope, patientId: UUID, filter?: WorkflowPageFilter): Promise<WorkflowPage<TreatmentPlanDetail>>;
+  listPatientInvoices(scope: RepositoryScope, patientId: UUID, filter?: WorkflowPageFilter): Promise<WorkflowPage<InvoiceDetail>>;
+  listUninvoicedPatientProcedures(scope: RepositoryScope, patientId: UUID, filter?: WorkflowPageFilter): Promise<WorkflowPage<ProcedurePerformedRecord>>;
+  listSopTemplates(scope: RepositoryScope, filter?: WorkflowPageFilter): Promise<WorkflowPage<SopTemplateDetail>>;
+  listSopSchedules(scope: RepositoryScope, filter?: WorkflowPageFilter): Promise<WorkflowPage<SopScheduleRecord>>;
+  listInventoryCheckRuns(scope: RepositoryScope, filter?: WorkflowPageFilter): Promise<WorkflowPage<InventoryCheckRunDetail>>;
+  findQueueEntryByAppointmentId(scope: RepositoryScope, appointmentId: UUID): Promise<QueueEntryRecord | null>;
+  listClinicAccess(scope:RepositoryScope,filter?:WorkflowPageFilter):Promise<WorkflowPage<ClinicAccessPerson>>;
+  saveClinicAccess(scope:RepositoryScope,input:ClinicAccessInput):Promise<ClinicAccessPerson>;
+  listClinicSetup(scope:RepositoryScope,kind:ClinicSetupKind,filter?:WorkflowPageFilter):Promise<WorkflowPage<ClinicSetupRecord>>;
+  saveClinicSetup(scope:RepositoryScope,kind:ClinicSetupKind,input:ClinicSetupInput):Promise<ClinicSetupRecord>;
+  listPatientIntakeHistory(scope:RepositoryScope,patientId:UUID,filter?:WorkflowPageFilter):Promise<WorkflowPage<IntakeFormSubmissionRecord>>;
+  listLabReconciliations(scope:RepositoryScope,filter?:WorkflowPageFilter):Promise<WorkflowPage<LabReconciliationDetail>>;
+  listPatientInstructions(scope:RepositoryScope,patientId:UUID,filter?:WorkflowPageFilter):Promise<WorkflowPage<PatientInstructionRecord>>;
+  searchBillingPatients(scope: RepositoryScope, query: string): Promise<Array<{id:UUID;fullName:string}>>;
+  listClinicStaff(scope: RepositoryScope): Promise<ClinicStaffSummary[]>;
+
+  createPatientFile(scope: RepositoryScope, runId: UUID, manifest: PatientFileManifest): Promise<{ file: PatientFileDetail; created: boolean }>;
+  findPatientFile(scope: RepositoryScope, runId: UUID): Promise<PatientFileDetail | null>;
+  stagePatientFileChunk(scope: RepositoryScope, runId: UUID, ordinal: number, digest: string, input: CreateMigrationBatchInput): Promise<{ detail: MigrationBatchDetail; created: boolean }>;
+  sealPatientFile(scope: RepositoryScope, runId: UUID): Promise<{ file: PatientFileDetail; sealedNow: boolean }>;
   listPatients(scope: RepositoryScope, filter?: PatientSearchFilter): Promise<PatientRecord[]>;
   findPatientById(scope: RepositoryScope, patientId: UUID): Promise<PatientRecord | null>;
+  listPatientTimeline(scope: RepositoryScope, patientId: UUID, input: PatientHistoryPageInput): Promise<{ records: PatientTimelineItem[]; nextCursor: string | null }>;
+  listPatientDentalSnapshots(scope: RepositoryScope, patientId: UUID, filter?: WorkflowPageFilter): Promise<{ records: Omit<DentalChartSnapshotRecord,"chartState" | "provenance">[]; nextCursor: string | null }>;
+  getPatientDentalSnapshot(scope: RepositoryScope, patientId: UUID, snapshotId: UUID): Promise<DentalChartSnapshotRecord | null>;
   findPatientTimeline(scope: RepositoryScope, patientId: UUID): Promise<PatientTimelineItem[]>;
   findPatientDuplicateCandidates(
     scope: RepositoryScope,
@@ -1456,6 +1538,10 @@ export interface ClinicOperationsRepository {
     scope: RepositoryScope,
     input: CreateMigrationBatchInput
   ): Promise<MigrationBatchDetail>;
+  createImportRun(scope: RepositoryScope, input: { id: UUID; sourceSystem: string }): Promise<{ run: ImportRunRecord; created: boolean }>;
+  listImportRuns(scope: RepositoryScope, limit: number, cursor?: UUID | null): Promise<ImportRunListResult>;
+  findImportRunById(scope: RepositoryScope, runId: UUID, forStage?: boolean): Promise<ImportRunDetail | null>;
+  stageImportRunBatch(scope: RepositoryScope, input: StageImportRunBatchInput): Promise<StageImportRunBatchResult>;
   listMigrationBatches(
     scope: RepositoryScope,
     filter?: MigrationBatchSearchFilter
@@ -1536,6 +1622,11 @@ export interface ClinicOperationsRepository {
     scope: RepositoryScope,
     input: CreateAppointmentInput
   ): Promise<AppointmentRecord>;
+  rescheduleAppointment(
+    scope: RepositoryScope,
+    appointmentId: UUID,
+    input: RescheduleAppointmentInput
+  ): Promise<AppointmentRecord | null>;
   updateAppointmentStatus(
     scope: RepositoryScope,
     appointmentId: UUID,
@@ -1592,7 +1683,7 @@ export interface ClinicOperationsRepository {
     input: UpdateSopRunInput
   ): Promise<SopRunDetail | null>;
 
-  listLabVendors(scope: RepositoryScope): Promise<LabVendorRecord[]>;
+  listLabVendors(scope: RepositoryScope, filter?: WorkflowPageFilter): Promise<LabVendorRecord[]>;
   findLabVendorById(scope: RepositoryScope, vendorId: UUID): Promise<LabVendorRecord | null>;
   createLabVendor(scope: RepositoryScope, input: CreateLabVendorInput): Promise<LabVendorRecord>;
   listLabCases(scope: RepositoryScope, filter?: LabCaseSearchFilter): Promise<LabCaseDetail[]>;
@@ -1608,12 +1699,12 @@ export interface ClinicOperationsRepository {
     input: CreateLabReconciliationInput
   ): Promise<LabReconciliationDetail | null>;
 
-  listInventoryCategories(scope: RepositoryScope): Promise<InventoryCategoryRecord[]>;
+  listInventoryCategories(scope: RepositoryScope, filter?: WorkflowPageFilter): Promise<InventoryCategoryRecord[]>;
   createInventoryCategory(
     scope: RepositoryScope,
     input: CreateInventoryCategoryInput
   ): Promise<InventoryCategoryRecord>;
-  listInventoryItems(scope: RepositoryScope): Promise<InventoryItemRecord[]>;
+  listInventoryItems(scope: RepositoryScope, filter?: WorkflowPageFilter): Promise<InventoryItemRecord[]>;
   findInventoryItemById(scope: RepositoryScope, itemId: UUID): Promise<InventoryItemRecord | null>;
   createInventoryItem(
     scope: RepositoryScope,
@@ -1624,7 +1715,7 @@ export interface ClinicOperationsRepository {
     input: CreateStockLedgerEntryInput
   ): Promise<StockLedgerEntryRecord | null>;
   listInventoryCheckTemplates(
-    scope: RepositoryScope
+    scope: RepositoryScope, filter?: WorkflowPageFilter
   ): Promise<Array<InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }>>;
   createInventoryCheckTemplate(
     scope: RepositoryScope,
@@ -1649,7 +1740,7 @@ export interface ClinicOperationsRepository {
     scope: RepositoryScope,
     input: CreateIncidentInput
   ): Promise<IncidentRecord | null>;
-  listCorrectiveActions(scope: RepositoryScope): Promise<CorrectiveActionRecord[]>;
+  listCorrectiveActions(scope: RepositoryScope, filter?: WorkflowPageFilter): Promise<CorrectiveActionRecord[]>;
   createCorrectiveAction(
     scope: RepositoryScope,
     input: CreateCorrectiveActionInput
@@ -1671,7 +1762,7 @@ export interface ClinicOperationsRepository {
     range: DateRangeFilter
   ): Promise<OwnerDashboardProjectionData>;
 
-  listPricebookProcedures(scope: RepositoryScope): Promise<PricebookProcedureRecord[]>;
+  listPricebookProcedures(scope: RepositoryScope, filter?: WorkflowPageFilter): Promise<PricebookProcedureRecord[]>;
   findPricebookProcedureById(
     scope: RepositoryScope,
     procedureId: UUID
@@ -1692,10 +1783,11 @@ export interface ClinicOperationsRepository {
   ): Promise<IntakeFormSubmissionRecord>;
   listPatientIntakeFormSubmissions(
     scope: RepositoryScope,
-    patientId: UUID
+    patientId: UUID,
+    limit?: number
   ): Promise<IntakeFormSubmissionRecord[]>;
 
-  listPatientConsents(scope: RepositoryScope, patientId: UUID): Promise<ConsentRecord[]>;
+  listPatientConsents(scope: RepositoryScope, patientId: UUID, lockForUse?: boolean): Promise<ConsentRecord[]>;
   createConsent(scope: RepositoryScope, input: CreateConsentInput): Promise<ConsentRecord>;
   revokeConsent(
     scope: RepositoryScope,
@@ -1708,7 +1800,7 @@ export interface ClinicOperationsRepository {
   ): Promise<ConsentEnforcementState>;
 
   createEncounter(scope: RepositoryScope, input: CreateEncounterInput): Promise<EncounterRecord>;
-  findEncounterById(scope: RepositoryScope, encounterId: UUID): Promise<EncounterRecord | null>;
+  findEncounterById(scope: RepositoryScope, encounterId: UUID, forUpdate?: boolean): Promise<EncounterRecord | null>;
   transitionEncounter(
     scope: RepositoryScope,
     encounterId: UUID,

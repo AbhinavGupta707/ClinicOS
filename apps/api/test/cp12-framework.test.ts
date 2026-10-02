@@ -1,3 +1,4 @@
+import {CONCURRENCY_OPERATION_ALIASES} from "../src/framework/pipeline.ts";
 import assert from "node:assert/strict";
 import { request as httpRequest } from "node:http";
 import test from "node:test";
@@ -52,10 +53,10 @@ import {
   requiredRolesForOperation
 } from "../src/framework/route-registry.ts";
 
-test("app registry covers exactly 136 operations and separates doctor roles from permissions", () => {
-  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 136);
-  assert.equal(CLINIC_OS_ROUTE_POLICIES.length, 136);
-  assert.equal(new Set(CLINIC_OS_ROUTE_POLICIES.map(({ routeId }) => routeId)).size, 136);
+test("app registry covers exactly 174 operations and separates doctor roles from permissions", () => {
+  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 174);
+  assert.equal(CLINIC_OS_ROUTE_POLICIES.length, 174);
+  assert.equal(new Set(CLINIC_OS_ROUTE_POLICIES.map(({ routeId }) => routeId)).size, 174);
   assert.deepEqual(
     ACTIVE_NATIVE_HTTP_OPERATIONS.filter(
       ({ concurrency, integration }) =>
@@ -63,7 +64,7 @@ test("app registry covers exactly 136 operations and separates doctor roles from
     )
       .map(({ operationId }) => operationId)
       .sort(),
-    Object.keys(OPTIMISTIC_CONCURRENCY_RESOURCE_TABLES).sort()
+    [...Object.keys(OPTIMISTIC_CONCURRENCY_RESOURCE_TABLES), ...Object.keys(CONCURRENCY_OPERATION_ALIASES)].sort()
   );
   assert.deepEqual(permissionsForOperation("signEncounterClinicalNote"), ["clinical.note.sign"]);
   assert.deepEqual(requiredRolesForOperation("signEncounterClinicalNote"), ["doctor"]);

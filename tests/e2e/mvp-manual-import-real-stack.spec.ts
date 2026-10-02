@@ -15,12 +15,15 @@ test.describe("MVP manual import real-stack acceptance", () => {
   // This test-only token hook does not establish production OIDC/session wiring.
   test.beforeEach(async ({ page }) => {
     await page.addInitScript(() => {
-      (window as Window & { __clinicOsAccessTokenProvider?: () => string })
-        .__clinicOsAccessTokenProvider = () => "local-synthetic-acceptance";
+      (
+        window as Window & { __clinicOsAccessTokenProvider?: () => string }
+      ).__clinicOsAccessTokenProvider = () => "local-synthetic-acceptance";
     });
   });
 
-  test("stages, commits, and safely rolls back a synthetic patient import", async ({ page }, testInfo) => {
+  test("stages, commits, and safely rolls back a synthetic patient import", async ({
+    page
+  }, testInfo) => {
     const consoleErrors: string[] = [];
     const pageErrors: string[] = [];
     page.on("console", (message) => {
@@ -44,10 +47,11 @@ test.describe("MVP manual import real-stack acceptance", () => {
     await expect(page.getByTestId("cp7-integration-ops-workspace")).toBeVisible();
     await expect(page.getByTestId("cp7-fixture-alert")).toHaveCount(0);
     await expect(page.getByLabel("Workflow API mode")).toContainText("Live boundary");
-    await expect(page.getByText("Scheduled sync").locator("..")).toContainText("Not configured");
-    await expect(page.getByText("Source freshness").locator("..")).toContainText("Unknown");
-
-    await page.getByTestId("migration-source-system").fill(sourceSystem);
+    await startRun(page, sourceSystem);
+    await expect(page.getByText("Scheduled sync", { exact: true }).locator("..")).toContainText("Not configured");
+    await expect(page.getByText("Source freshness", { exact: true }).locator("..")).toContainText(
+      "Unknown"
+    );
     await page.getByTestId("migration-input-tab-paste").click();
     await page.getByTestId("migration-csv").fill(csv);
     await page.getByTestId("migration-stage-batch").click();
@@ -186,7 +190,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
 
     try {
       await page.goto("/surface/migration-review?scenario=mvp-guided-import-real-stack");
-      await page.getByTestId("migration-source-system").fill(sourceSystem);
+      await startRun(page, sourceSystem);
 
       await stageAndCommitBatch(page, "patients", patientCsv, batchIds);
       await expect(page.locator('.migration-trial-step[data-state="complete"]')).toContainText(
@@ -203,7 +207,7 @@ test.describe("MVP manual import real-stack acceptance", () => {
         label: "Dr Kabir Doctor"
       });
       await page.getByTestId("cp7-resolve-migration-conflict").click();
-      await expect(page.getByTestId("cp7-action-message")).toContainText("resolution was recorded");
+      await expect(page.getByTestId("cp7-action-message")).toContainText("Review decision saved");
       await commitSelectedBatch(page, () => batchIds.push(practitionerBatchId));
 
       await page.getByTestId("migration-trial-step-appointments").click();
@@ -260,29 +264,32 @@ test.describe("MVP manual import real-stack acceptance", () => {
     page
   }) => {
     await page.goto("/surface/patients?scenario=mvp-patient-navigation-handoff");
-    await page.getByLabel("Search by name or phone").fill("Rhea Synthetic");
+    await page.getByLabel("Find patient",{exact:true}).fill("Rhea Synthetic");
     await page.getByRole("button", { name: "Search", exact: true }).click();
 
     const patientResult = page
-      .locator(".cp13-patient-search > ul button")
+      .getByRole("region",{name:"Choose patient"}).getByRole("button")
       .filter({ hasText: "Rhea Synthetic" });
     await expect(patientResult).toBeVisible();
     await patientResult.click();
-    await expect(page.getByTestId("cp13-front-office-patient")).toContainText("Rhea Synthetic");
+    await expect(page.getByLabel("Full name",{exact:true})).toHaveValue("Rhea Synthetic");
 
-    await page.getByRole("button", { name: "Open full profile" }).click();
+    await page.getByRole("button", { name: "Open clinical profile" }).click();
     await expect(page).toHaveURL(/\/surface\/patient-profile$/u);
-    await expect(page.getByTestId("cp13-clinical-runtime")).toBeVisible();
+    await expect(page.getByRole("heading",{name:"Rhea Synthetic",exact:true})).toBeVisible();
     expect(new URL(page.url()).search).toBe("");
   });
 
-  test("keeps manual import controls usable on a narrow clinic device", async ({ page }, testInfo) => {
+  test("keeps manual import controls usable on a narrow clinic device", async ({
+    page
+  }, testInfo) => {
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/surface/migration-review?scenario=mvp-manual-import-real-stack-mobile");
 
+    await startRun(page, `mobile_manual_${Date.now()}`);
     await expect(page.getByTestId("cp7-migration-operations")).toBeVisible();
     await expect(page.getByTestId("migration-stage-batch")).toBeVisible();
-    await expect(page.getByText("Scheduled sync").locator("..")).toContainText("Not configured");
+    await expect(page.getByText("Scheduled sync", { exact: true }).locator("..")).toContainText("Not configured");
 
     const horizontalOverflow = await page.evaluate(
       () => document.documentElement.scrollWidth - document.documentElement.clientWidth
@@ -294,6 +301,282 @@ test.describe("MVP manual import real-stack acceptance", () => {
       path: testInfo.outputPath("manual-import-mobile.png")
     });
   });
+
+  test("prepares a Practo patient file privately, commits and resumes its limited scope", async ({
+    page
+  }, testInfo) => {
+    const token = `${Date.now()}`;
+    const patientName = `Synthetic Ray Patient ${token}`;
+    // Independent wire fixture: do not build headers using the implementation.
+    const headers =
+      "Patient Number,Patient Name,Mobile Number,Contact Number,Email Address,Secondary Mobile,Gender,Address,Locality,City,Pincode,National Id,Date of Birth,Age,Anniversary Date,Blood Group,Remarks,Medical History,Referred By,Groups,Patient Notes";
+    const values = [
+      `000${token}`,
+      patientName,
+      "+91 9000000317",
+      "",
+      `ray.${token}@example.test`,
+      "",
+      "Female",
+      "EXCLUDED_ADDRESS",
+      "",
+      "",
+      "",
+      "EXCLUDED_NATIONAL_ID",
+      "1992-02-29",
+      "",
+      "",
+      "",
+      "",
+      "EXCLUDED_HISTORY",
+      "",
+      "",
+      'EXCLUDED_NOTE\nwith "quotes"'
+    ];
+    const csv =
+      headers + "\r\n" + values.map((value) => '"' + value.replaceAll('"', '""') + '"').join(",");
+    const stageRequests: string[] = [];
+    page.on("request", (request) => {
+      if (
+        request.method() === "POST" &&
+        new URL(request.url()).pathname === "/v1/migration-batches"
+      )
+        stageRequests.push(request.postData() ?? "");
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await page.goto("/surface/migration-review");
+    await startRun(page, `practo_patients_trial_${token}`);
+    await page.getByTestId("migration-patient-format").selectOption("practo");
+    await expect(page.getByTestId("migration-trial-step-appointments")).toHaveCount(0);
+    const upload = async (contents: string) =>
+      page.getByTestId("migration-file-input").setInputFiles({
+        name: "patients.csv",
+        mimeType: "text/csv",
+        buffer: Buffer.from(contents)
+      });
+    await upload(
+      headers +
+        "\n" +
+        Array.from({ length: 101 }, () =>
+          values.map((value) => '"' + value.replaceAll('"', '""') + '"').join(",")
+        ).join("\n")
+    );
+    await expect(
+      page.getByRole("alert").filter({ hasText: "nothing was truncated or sent" })
+    ).toBeVisible();
+    await expect(page.getByTestId("migration-stage-batch")).toBeDisabled();
+    await upload(csv);
+    await expect(page.getByTestId("practo-import-preview")).toContainText(
+      "1 patient row prepared locally"
+    );
+    await expect(page.getByTestId("migration-stage-batch")).toBeDisabled();
+    expect(stageRequests).toEqual([]);
+    const acknowledge = page.getByLabel(/I understand this imports only the six patient fields/u);
+    await acknowledge.check();
+    // Replacing the file invalidates the acknowledgement, even for an identical file.
+    await upload(csv);
+    await expect(acknowledge).not.toBeChecked();
+    await acknowledge.check();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth - document.documentElement.clientWidth
+      )
+    ).toBeLessThanOrEqual(1);
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("practo-patient-preview-mobile.png")
+    });
+    const responsePromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/v1/migration-batches"
+    );
+    await page.getByTestId("migration-stage-batch").click();
+    const response = await responsePromise;
+    expect(response.ok()).toBe(true);
+    const staged = await response.json();
+    expect(stageRequests).toHaveLength(1);
+    expect(stageRequests[0]).not.toMatch(/EXCLUDED|Medical History|Patient Notes|National Id/u);
+    expect(JSON.stringify(staged)).not.toMatch(/EXCLUDED/u);
+    expect(staged.rows[0].sourceFormat).toBe("practo_ray_patients_v1");
+    expect(staged.rows[0]).not.toHaveProperty("rawPayload");
+    const batchId = staged.batch.id;
+    await resolvePatientDuplicateIfNeeded(page);
+    await commitSelectedBatch(page);
+    await page.reload();
+    await expect(page.getByTestId("migration-run-summary")).toContainText("Practo patient trial");
+    await expect(page.getByTestId("cp7-migration-status")).toContainText("Committed");
+    await expect(page.getByTestId("migration-patient-format")).toHaveValue("practo");
+    await expect(page.getByTestId("migration-trial-step-appointments")).toHaveCount(0);
+    await expect(page.getByTestId("migration-import-type")).toBeDisabled();
+    await upload(csv);
+    await acknowledge.check();
+    const replayPromise = page.waitForResponse(
+      (response) =>
+        response.request().method() === "POST" &&
+        new URL(response.url()).pathname === "/v1/migration-batches"
+    );
+    await page.getByTestId("migration-stage-batch").click();
+    const replay = await replayPromise;
+    expect(replay.ok()).toBe(true);
+    expect((await replay.json()).batch.id).toBe(batchId);
+    await expect(page.getByTestId("cp7-action-message")).toContainText("Saved file recovered");
+    await expect(page.getByTestId("practo-import-preview")).not.toContainText(
+      "Nothing has been uploaded yet"
+    );
+    await page.setViewportSize({ width: 1440, height: 1000 });
+    await page.screenshot({
+      fullPage: true,
+      path: testInfo.outputPath("practo-patient-resumed-desktop.png")
+    });
+    // Search alone creates no clinical dependency; profile access intentionally does.
+    const search = await page.request.get(`/v1/patients?query=${encodeURIComponent(patientName)}`);
+    expect(search.ok()).toBe(true);
+    expect((await search.json()).patients).toEqual([
+      expect.objectContaining({ fullName: patientName })
+    ]);
+    const rollback = await page.request.post(`/v1/migration-batches/${batchId}/rollback`, {
+      data: {},
+      headers: { "Idempotency-Key": `practo-cleanup-${batchId}` }
+    });
+    expect(rollback.ok()).toBe(true);
+    expect((await rollback.json()).blockedLinks).toEqual([]);
+  });
+
+  test("imports 5,000 patients as a recoverable whole file and replays without duplicates", async ({ page }, testInfo) => {
+    test.setTimeout(600_000);
+    const token = Date.now().toString(36);
+    const source = `large_patient_file_${token}`;
+    const header = "Patient Number,Patient Name,Mobile Number,Contact Number,Email Address,Secondary Mobile,Gender,Address,Locality,City,Pincode,National Id,Date of Birth,Age,Anniversary Date,Blood Group,Remarks,Medical History,Referred By,Groups,Patient Notes";
+    const lines = Array.from({ length: 5001 }, (_, index) => [
+      `${token}-000${index}`, `Synthetic Scale ${token} Patient ${index}`, `+917${String(index).padStart(9, "0")}`,
+      "", "", "", "unknown", "EXCLUDED_ADDRESS", "", "", "", "EXCLUDED_NATIONAL_ID", "", "", "", "", "", "EXCLUDED_HISTORY", "", "", "EXCLUDED_NOTE"
+    ].map((value) => '"' + value.replaceAll('"', '""') + '"').join(","));
+    const buffer = Buffer.from([header, ...lines.slice(0, 5000)].join("\r\n"));
+    const chunks: Array<{ ordinal: number; csv: string }> = [];
+    const consoleErrors: string[] = [];
+    page.on("pageerror", (error) => consoleErrors.push(error.message));
+    page.on("request", (request) => {
+      const match = new URL(request.url()).pathname.match(/patient-file\/chunks\/(\d+)$/u);
+      if (request.method() === "POST" && match) {
+        expect(request.postData()).not.toMatch(/EXCLUDED_|Patient Notes|Medical History|National Id/);
+        chunks.push({ ordinal: Number(match[1]), csv: request.postDataJSON().csv });
+      }
+    });
+    await page.goto("/surface/migration-review");
+    await startRun(page, source);
+    const runId = await page.getByTestId("migration-run-selector").inputValue();
+    await page.getByTestId("migration-workflow").selectOption("patient-file");
+    await page.getByTestId("patient-file-input").setInputFiles({ name: "patients.csv", mimeType: "text/csv", buffer: Buffer.from([header, ...lines].join("\n")) });
+    await expect(page.getByTestId("patient-file-notice")).toContainText("up to 5,000");
+    expect(chunks).toHaveLength(0);
+    await page.getByTestId("patient-file-input").setInputFiles({ name: "patients.csv", mimeType: "text/csv", buffer });
+    await expect(page.getByTestId("patient-file-preview")).toContainText("5,000 patients");
+    await page.getByTestId("patient-file-accept").check();
+    const firstReceipt = page.waitForResponse((response) => /patient-file\/chunks\/0$/u.test(new URL(response.url()).pathname), { timeout: 15000 });
+    await page.getByTestId("patient-file-upload").click();
+    expect((await firstReceipt).ok()).toBe(true);
+    await page.getByRole("button", { name: "Pause after current group" }).click();
+    await expect(page.getByTestId("patient-file-notice")).toContainText("Upload paused");
+    const partial = await (await page.request.get(`/v1/migration-runs/${runId}/patient-file`)).json();
+    expect(partial.file.received).toBeGreaterThan(0);
+    expect(partial.file.received).toBeLessThan(5000);
+    const incompleteCommit = await page.request.post(`/v1/migration-batches/${partial.file.chunks[0].batchId}/commit`, {
+      data: {}, headers: { "Idempotency-Key": `incomplete-${runId}` }
+    });
+    expect(incompleteCommit.status()).toBe(409);
+    await page.reload();
+    await expect(page.getByTestId("patient-file-summary")).toContainText("Upload incomplete");
+    await page.getByTestId("patient-file-input").setInputFiles({ name: "patients.csv", mimeType: "text/csv", buffer });
+    await expect(page.getByTestId("patient-file-preview")).toContainText("5,000 patients");
+    await page.getByTestId("patient-file-accept").check();
+    await page.getByTestId("patient-file-upload").click();
+    await expect(page.getByTestId("patient-file-summary")).toContainText("Complete file received", { timeout: 120_000 });
+    const staged = await (await page.request.get(`/v1/migration-runs/${runId}/patient-file`)).json();
+    expect(staged.file.received).toBe(5000);
+    expect(staged.file.chunks).toHaveLength(50);
+    expect(staged.file.chunks.reduce((sum: number, chunk: { ready: number }) => sum + chunk.ready, 0)).toBe(5000);
+    expect(staged.file.chunks[0].batchId).toBe(partial.file.chunks[0].batchId);
+    await page.getByTestId("patient-file-commit-accept").check();
+    const commitResponse = page.waitForResponse((response) => /migration-batches\/[^/]+\/commit$/u.test(new URL(response.url()).pathname) );
+    await page.getByTestId("patient-file-commit").click();
+    const firstCommit = await commitResponse;
+    expect(firstCommit.ok(), await firstCommit.text()).toBe(true);
+    const searchDuringCommitMs = await Promise.all(Array.from({ length: 3 }, async () => {
+      const started = performance.now();
+      const response = await page.request.get("/v1/patients?query=Rhea%20Synthetic");
+      expect(response.ok()).toBe(true);
+      expect((await response.json()).patients.length).toBeGreaterThan(0);
+      return Math.round(performance.now() - started);
+    }));
+    await page.getByRole("button", { name: "Pause after current group" }).click();
+    await expect(page.getByTestId("patient-file-notice")).toContainText("Commit paused");
+    await page.reload();
+    await expect(page.getByTestId("patient-file-summary")).toContainText("Complete file received");
+    await page.getByTestId("patient-file-commit-accept").check();
+    await page.getByTestId("patient-file-commit").click();
+    await expect(page.getByTestId("patient-file-notice")).toContainText("Processing finished", { timeout: 240_000 });
+    const final = await (await page.request.get(`/v1/migration-runs/${runId}/patient-file`)).json();
+    expect(final.file.chunks.reduce((sum: number, chunk: { committed: number }) => sum + chunk.committed, 0)).toBe(5000);
+    expect(final.file.chunks.every((chunk: { ready: number; failed: number }) => chunk.ready === 0 && chunk.failed === 0)).toBe(true);
+    await page.getByTestId("patient-file-group").selectOption("49");
+    await expect(page.getByTestId("migration-selected-batch")).toContainText(`Synthetic Scale ${token} Patient 4999`);
+    await page.screenshot({ path: testInfo.outputPath("patient-file-5000-desktop.png"), fullPage: false });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(page.getByRole("button", { name: "Close navigation", exact: true })).not.toBeInViewport();
+    const mobileGroup = page.getByTestId("patient-file-group");
+    await mobileGroup.scrollIntoViewIfNeeded();
+    const mobileGroupBox = await mobileGroup.boundingBox();
+    expect(mobileGroupBox!.x).toBeGreaterThanOrEqual(0);
+    expect(mobileGroupBox!.x + mobileGroupBox!.width).toBeLessThanOrEqual(391);
+    await expect(page.getByTestId("patient-file-commit")).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({ path: testInfo.outputPath("patient-file-5000-mobile.png"), fullPage: false });
+
+    // A second complete snapshot uses the same source namespace and canonical
+    // chunks. The real commit engine must reconcile all 5,000 external identities.
+    const replayId = crypto.randomUUID();
+    const create = await page.request.post("/v1/migration-runs", { data: { id: replayId, sourceSystem: source }, headers: { "Idempotency-Key": replayId } });
+    expect(create.ok()).toBe(true);
+    const manifest = { profile: staged.file.profile, rowCount: 5000,
+      chunks: staged.file.chunks.map(({ ordinal, rowCount, digest }: { ordinal: number; rowCount: number; digest: string }) => ({ ordinal, rowCount, digest })) };
+    const begin = await page.request.post(`/v1/migration-runs/${replayId}/patient-file`, { data: manifest, headers: { "Idempotency-Key": `${replayId}:file` } });
+    expect(begin.ok()).toBe(true);
+    for (let ordinal = 0; ordinal < 50; ordinal++) {
+      const csv = chunks.find((chunk) => chunk.ordinal === ordinal)?.csv;
+      expect(csv).toBeTruthy();
+      const stage = await page.request.post(`/v1/migration-runs/${replayId}/patient-file/chunks/${ordinal}`, { data: { csv }, headers: { "Idempotency-Key": `${replayId}:chunk:${ordinal}` } });
+      expect(stage.ok(), await stage.text()).toBe(true);
+    }
+    const seal = await page.request.post(`/v1/migration-runs/${replayId}/patient-file/seal`, { data: {}, headers: { "Idempotency-Key": `${replayId}:seal` } });
+    expect(seal.ok()).toBe(true);
+    const replay = (await seal.json()).file;
+    let reconciled = 0;
+    for (const chunk of replay.chunks) {
+      let committed = await page.request.post(`/v1/migration-batches/${chunk.batchId}/commit`, { data: {}, headers: { "Idempotency-Key": `replay-${chunk.batchId}` } });
+      for (let attempt = 0; committed.status() === 429 && attempt < 3; attempt++) {
+        const seconds = Number(committed.headers()["retry-after"]);
+        expect(seconds).toBeGreaterThan(0);
+        expect(seconds).toBeLessThanOrEqual(60);
+        await new Promise((resolve) => setTimeout(resolve, seconds * 1000 + 50));
+        committed = await page.request.post(`/v1/migration-batches/${chunk.batchId}/commit`, { data: {}, headers: { "Idempotency-Key": `replay-${chunk.batchId}` } });
+      }
+      expect(committed.ok(), await committed.text()).toBe(true);
+      reconciled += (await committed.json()).commit.summary.reconciledRows;
+    }
+    expect(reconciled).toBe(5000);
+    await page.goto("/surface/patients");
+    await page.getByLabel("Find patient",{exact:true}).fill(`Synthetic Scale ${token} Patient 4999`);
+    await page.getByRole("button", { name: "Search", exact: true }).click();
+    const result = page.getByRole("region",{name:"Choose patient"}).getByRole("button").filter({ hasText: `Synthetic Scale ${token} Patient 4999` });
+    await expect(result).toBeVisible();
+    await result.click();
+    await expect(page.getByLabel("Full name",{exact:true})).toHaveValue(`Synthetic Scale ${token} Patient 4999`);
+    expect(consoleErrors).toEqual([]);
+    await testInfo.attach("scale-acceptance.json", { body: JSON.stringify({ runId, replayId, patients: 5000,
+      chunks: 50, reconciled, searchDuringCommitMs, uploadResume: true, commitResume: true, source }), contentType: "application/json" });
+  });
+
 });
 
 async function stageAndCommitBatch(
@@ -333,7 +616,7 @@ async function resolvePatientDuplicateIfNeeded(page: Page) {
     });
     await expect(createSeparatePatient).toBeVisible();
     await createSeparatePatient.click();
-    await expect(page.getByTestId("cp7-action-message")).toContainText("resolution was recorded");
+    await expect(page.getByTestId("cp7-action-message")).toContainText("Review decision saved");
   }
 }
 
@@ -349,4 +632,10 @@ async function commitSelectedBatch(page: Page, onCommitAccepted?: () => void) {
   expect(commitResponse.ok()).toBe(true);
   onCommitAccepted?.();
   await expect(page.getByTestId("cp7-migration-status")).toContainText("Committed");
+}
+
+async function startRun(page: Page, sourceSystem: string) {
+  await page.getByTestId("migration-new-source-system").fill(sourceSystem);
+  await page.getByTestId("migration-create-run").click();
+  await expect(page.getByTestId("migration-source-system")).toHaveValue(sourceSystem);
 }

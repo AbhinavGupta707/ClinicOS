@@ -6,7 +6,7 @@ FROM ${GO_BUILD_IMAGE} AS temporal-build
 ARG TARGETARCH
 ARG TEMPORAL_SOURCE_REVISION=8c78934b67fbac43d2ea7f8ada448c539780584d
 ARG TEMPORAL_SOURCE_SHA256=4313a5d989fa02511d297cb22afbd5938ecf38ff3bf8e86633ba690ced75e23a
-ARG AWS_RDS_CA_BUNDLE_SHA256=e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3
+ARG AWS_RDS_CA_BUNDLE_SHA256=fe45bbebf92ad3e27a583bbb2ddd1553c521ed4d49af5514dc0a40372ea5395c
 
 RUN apk add --no-cache ca-certificates
 
@@ -38,8 +38,8 @@ USER 0:0
 RUN apk add --no-cache \
   curl \
   jq \
-  libcrypto3=3.5.8-r0 \
-  libssl3=3.5.8-r0 \
+  libcrypto3=3.5.9-r0 \
+  libssl3=3.5.9-r0 \
   postgresql17-client=17.11-r0
 
 COPY --from=temporal-build /out/temporal-server /usr/local/bin/temporal-server

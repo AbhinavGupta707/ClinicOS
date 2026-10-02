@@ -1,5 +1,6 @@
+import {handleFinancialOperation} from "./financial-handlers.ts";
 import { createHash } from "node:crypto";
-import { permissionsForScope } from "@clinic-os/auth";
+import { permissionsForScope, roleSlugsForScope } from "@clinic-os/auth";
 import {
   buildPaymentRequestIntentDigest,
   type CanonicalPaymentProviderRequest,
@@ -23,6 +24,7 @@ import type {
 import type { PaymentProvider } from "@clinic-os/integrations";
 import { createAuditEvent, type KnownAuditAction } from "@clinic-os/security";
 import {
+  buildConsentEnforcementState,
   assertCp13ManualPaymentEvidence,
   assertInstructionRemainsRequestEvidence,
   assertInvoiceCreationReferencesCompletedEvidence
@@ -53,6 +55,7 @@ export function createTreatmentBillingHandlerMap(
   dependencies: TreatmentBillingHandlerFactoryInput
 ): TreatmentBillingClinicHandlerMap {
   const handlers = {
+    executeFinancialCommand: handleFinancialOperation, getFinancialAccount: handleFinancialOperation, getFinancialDay: handleFinancialOperation,
     listPricebookProcedures: handleListPricebookProcedures,
     createPatientTreatmentPlan: handleCreatePatientTreatmentPlan,
     updateTreatmentPlan: handleUpdateTreatmentPlan,
@@ -75,14 +78,16 @@ async function handleListPricebookProcedures(
   context: ClinicFeatureExecutionContext
 ) {
   assertPermissions(request, ["billing.read"]);
-  const procedures = await context.repositories.billing.listPricebookProcedures();
+  const query=request.parsed.query as {cursor?:UUID;limit?:number};
+  const limit=query.limit??100;
+  const procedures = await context.repositories.billing.listPricebookProcedures({cursor:query.cursor,limit}).catch(error=>{if(error instanceof RangeError) throw new ApiError(400,"VALIDATION_ERROR",error.message);throw error;});
   await appendAudit(request, context, {
     action: "pricebook.procedure_catalog.viewed",
     resourceType: "pricebook_procedure",
     resourceId: request.access.clinicId,
     metadata: { procedureCount: procedures.length }
   });
-  return ok({ procedures: procedures.map(publicPricebookProcedure) });
+  return ok({ procedures: procedures.map(publicPricebookProcedure),nextCursor: procedures.length===limit?procedures.at(-1)?.id??null:null });
 }
 
 async function handleCreatePatientTreatmentPlan(
@@ -188,6 +193,15 @@ async function handleCreateEncounterProcedurePerformed(
   assertPermissions(request, ["patient.read", "patient.phi.read", "clinical.note.write"]);
   const encounterId = pathUuid(request, "encounterId");
   const input = parseCreateProcedure(requestBody(request));
+  const encounter = await context.repositories.clinicalCare.findEncounterById(encounterId, true);
+  if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+  if (!roleSlugsForScope(request.access.context, request.access.context.tenant.id, request.access.clinicId).includes("doctor") || encounter.providerUserId !== request.access.context.user.id) {
+    throw new ApiError(403, "PERMISSION_DENIED", "Only the assigned doctor can record performed treatment.");
+  }
+  if (["scheduled", "closed", "cancelled"].includes(encounter.status)) throw conflict("Start the consultation before recording treatment, and finish treatment before closing it.");
+  const consent = buildConsentEnforcementState(encounter.patientId, await context.repositories.clinicalCare.listPatientConsents(encounter.patientId, true), context.clock.now().toISOString());
+  if (!consent.treatmentAllowed) throw conflict("Active treatment consent is required before recording performed treatment.");
+
   const result = await domainMutation(
     () => context.repositories.dentalTreatment.createProcedurePerformed(encounterId, input),
     "Completed procedure evidence requires an accepted, incomplete treatment plan item."
@@ -835,6 +849,7 @@ function isExpectedWorkflowInvariant(message: string): boolean {
     /invoice balance/iu,
     /payment request amount/iu,
     /receipt generation/iu,
+    /adjusted payment cannot receive/iu,
     /settled.*payment evidence/iu,
     /pricebook procedure/iu
   ].some((pattern) => pattern.test(message));

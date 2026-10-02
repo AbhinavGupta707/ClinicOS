@@ -1,3 +1,12 @@
+import { historyPageLimit, assertHistoryCursor, type PatientHistoryPageInput } from "@clinic-os/domain";
+import {createAppointmentImport,stageAppointmentObservations,sealAppointmentImport,listAppointmentImports,getAppointmentImport,lockAppointmentObservation,decideAppointmentObservation} from "./appointment-observations.ts";
+import {FinancialConflict,executeFinancialCommand,getFinancialAccount,getFinancialDay,refreshInvoiceFinancialState} from "./financial-operations.ts";
+import type {FinancialCommandInput} from "@clinic-os/domain";
+import {providerScheduleCoversAppointment} from "@clinic-os/domain";
+import { sqlCalendarDate } from "./sql-calendar-date.ts";
+import {lockClinicConfiguration,assertActiveClinicDoctor, assertActiveClinicAssignee,ClinicSetupConflict,listClinicAccess,saveClinicAccess,listClinicSetup,saveClinicSetup,type ClinicAccessInput,type ClinicSetupKind,type ClinicSetupInput} from "./clinic-setup.ts";
+import type { WorkflowPage, WorkflowPageFilter, ClinicStaffSummary } from "./repositories.ts";
+import { lockPatientFileForBatch, patientFileIdentityConflicts, type PatientFileIdentityRow, assertPatientFileManifest, readPatientFile, assertPatientFileCommitAllowed, type PatientFileManifest, type PatientFileDetail, type PatientFileSqlRow } from "./patient-import-files.ts";
 import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import type {
   AppointmentConflict,
@@ -68,6 +77,8 @@ import type {
   IntegrationDeadLetterRecord,
   MigrationBatchDetail,
   MigrationBatchRecord,
+  ImportRunDetail,
+  ImportRunRecord,
   MigrationCommitRecord,
   MigrationCommitResult,
   MigrationConflictRecord,
@@ -115,6 +126,7 @@ import type {
   TreatmentPlanRecord,
   UUID
 } from "@clinic-os/domain";
+import { migrationSourceFormat } from "@clinic-os/domain";
 import {
   addDaysIso,
   assertInvoiceReceiptable,
@@ -155,7 +167,8 @@ import {
   toDentalFindingSnapshotFinding,
   systemClock,
   CLINIC_ROLE_SLUGS,
-  permissionsForRoles
+  permissionsForRoles,
+  summarizeImportRun
 } from "@clinic-os/domain";
 import { buildSetLocalIdentityRlsStatements, buildSetLocalRlsStatements } from "./rls.ts";
 import {
@@ -165,6 +178,7 @@ import {
 import { createRepositoryPortTransactionLease } from "./modules/core/scoped-repository-port.ts";
 import {
   assertStableMigrationExternalReferences,
+  ImportRunRepositoryError,
   DueGenerationConfigurationError,
   DueGenerationInputError
 } from "./repositories.ts";
@@ -253,6 +267,7 @@ import type {
   CreateReceiptInput,
   CreateDentalChartSnapshotInput,
   CreateAppointmentInput,
+  RescheduleAppointmentInput,
   CreateAttributionTouchInput,
   CreateConsentInput,
   CreateCorrectiveActionInput,
@@ -270,6 +285,9 @@ import type {
   CreateLeadInput,
   CreateMediaUploadReservationInput,
   CreateMigrationBatchInput,
+  StageImportRunBatchInput,
+  StageImportRunBatchResult,
+  ImportRunListResult,
   CreatePatientInput,
   CreatePatientInstructionInput,
   CreatePrescriptionInput,
@@ -415,6 +433,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
           tenants.status as tenant_status,
           tenants.authority_generation as tenant_authority_generation,
           users.authority_generation as user_authority_generation,
+          greatest(users.authentication_valid_after, tenants.authentication_valid_after) as authentication_valid_after,
           users.id as user_id,
           users.display_name as user_display_name,
           users.email as user_email,
@@ -526,6 +545,7 @@ export class PostgresIdentityRepository implements IdentityRepository {
       }
 
       return {
+        authenticationValidAfter: new Date(first.authentication_valid_after).toISOString(),
         authorityRevision: createHash("sha256")
           .update(
             JSON.stringify([
@@ -665,6 +685,22 @@ export function buildPaymentRequestIntentDigest(
   );
 }
 
+
+const OPERATIONAL_PAGE_KEYS = {
+  pricebook_procedures: "category, display_name",
+  leads: "-extract(epoch from last_activity_at)",
+  tasks: "case priority when 'urgent' then 1 when 'high' then 2 when 'normal' then 3 else 4 end, coalesce(extract(epoch from due_at), 1e20), -extract(epoch from updated_at)",
+  recalls: "extract(epoch from due_at), -extract(epoch from updated_at)",
+  sop_runs: "extract(epoch from due_at)",
+  lab_cases: "extract(epoch from due_at)",
+  lab_vendors: "display_name",
+  inventory_categories: "display_name",
+  inventory_items: "display_name",
+  inventory_check_templates: "display_name",
+  incidents: "-extract(epoch from occurred_at)",
+  corrective_actions: "extract(epoch from due_at)"
+} as const;
+
 export class PostgresClinicUnitOfWork {
   readonly #client: SqlConnectionFactory;
   readonly #clock: Clock;
@@ -727,6 +763,182 @@ export class PostgresClinicOperationsRepository
     this.#dueGenerationCursorSecret = options.dueGenerationCursorSecret;
   }
 
+  async #withSignerNames<T extends {signedByUserId: UUID | null}>(client:SqlQueryClient,scope:RepositoryScope,records:T[]):Promise<Array<T & {signedByDisplayName:string|null}>> {
+    const ids=[...new Set(records.flatMap(row=>row.signedByUserId?[row.signedByUserId]:[]))];
+    if(!ids.length) return records.map(row=>({...row,signedByDisplayName:null}));
+    // Historical signing staff need not still be active or assigned to this clinic.
+    // IDs originate exclusively from records already scoped to the authorized clinic.
+    const result=await client.query<{id:UUID;display_name:string}>(`select distinct u.id,u.display_name from users u join memberships m on m.user_id=u.id and m.tenant_id=$1 where u.id=any($2::uuid[])`,[scope.tenantId,ids]);
+    const names=new Map(result.rows.map(row=>[row.id,row.display_name]));
+    return records.map(row=>({...row,signedByDisplayName:row.signedByUserId?names.get(row.signedByUserId)??null:null}));
+  }
+
+  async listPatientEncounters(scope: RepositoryScope, patientId: UUID, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<EncounterRecord>> {
+    return this.#withRls(scope, async (client) => {
+      const page = await this.#workflowRows<EncounterRow>(client, scope, "encounters", patientId, " and patient_id = $3", filter);
+      return { records: page.rows.map(mapEncounterRow), nextCursor: page.nextCursor };
+    });
+  }
+  async listEncounterPrescriptions(scope: RepositoryScope, encounterId: UUID, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<PrescriptionRecord>> {
+    return this.#withRls(scope, async (client) => {
+      const page = await this.#workflowRows<PrescriptionRow>(client, scope, "prescriptions", encounterId, " and encounter_id = $3", filter);
+      return { records: await this.#withSignerNames(client,scope,page.rows.map(mapPrescriptionRow)), nextCursor: page.nextCursor };
+    });
+  }
+  async listUninvoicedPatientProcedures(scope: RepositoryScope, patientId: UUID, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<ProcedurePerformedRecord>> {
+    return this.#withRls(scope, async (client) => {
+      const page = await this.#workflowRows<ProcedurePerformedRow>(client, scope, "procedure_performed_records", patientId, " and patient_id = $3 and status = 'completed' and invoice_id is null", filter);
+      return { records: page.rows.map(mapProcedurePerformedRow), nextCursor: page.nextCursor };
+    });
+  }
+  async listSopSchedules(scope: RepositoryScope, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<SopScheduleRecord>> {
+    return this.#withRls(scope, async (client) => {
+      const page = await this.#workflowRows<SopScheduleRow>(client, scope, "sop_schedules", null, "", filter);
+      return { records: page.rows.map(mapSopScheduleRow), nextCursor: page.nextCursor };
+    });
+  }
+  async listPatientTreatmentPlans(scope: RepositoryScope, patientId: UUID, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<TreatmentPlanDetail>> {
+    return this.#withRls(scope, async (client) => {
+      const page = await this.#workflowRows<{ id: UUID }>(client, scope, "treatment_plans", patientId, " and patient_id = $3", filter);
+      const records: TreatmentPlanDetail[] = [];
+      for (const row of page.rows) {
+        const detail = await this.#findTreatmentPlanDetailInTransaction(client, scope, row.id);
+        if (!detail) throw new Error("Scoped workflow record disappeared during read.");
+        records.push(detail);
+      }
+      return { records, nextCursor: page.nextCursor };
+    });
+  }
+  async createAppointmentImport(scope:RepositoryScope,input:Parameters<typeof createAppointmentImport>[2]) {return this.#withRls(scope,c=>createAppointmentImport(c,scope,input));}
+  async stageAppointmentObservations(scope:RepositoryScope,id:string,input:Parameters<typeof stageAppointmentObservations>[3]) {return this.#withRls(scope,c=>stageAppointmentObservations(c,scope,id,input));}
+  async sealAppointmentImport(scope:RepositoryScope,id:string) {return this.#withRls(scope,c=>sealAppointmentImport(c,scope,id,this.#clock.now()));}
+  async listAppointmentImports(scope:RepositoryScope,cursor?:string) {return this.#withRls(scope,c=>listAppointmentImports(c,scope,cursor));}
+  async getAppointmentImport(scope:RepositoryScope,id:string,offset?:number) {return this.#withRls(scope,c=>getAppointmentImport(c,scope,id,offset));}
+  async lockAppointmentObservation(scope:RepositoryScope,id:string,rowId:string) {return this.#withRls(scope,c=>lockAppointmentObservation(c,scope,id,rowId));}
+  async decideAppointmentObservation(scope:RepositoryScope,id:string,rowId:string,input:Parameters<typeof decideAppointmentObservation>[4]) {return this.#withRls(scope,c=>decideAppointmentObservation(c,scope,id,rowId,input,this.#clock.now()));}
+  async executeFinancialCommand(scope:RepositoryScope,input:FinancialCommandInput) {return this.#withRls(scope,c=>executeFinancialCommand(c,scope,input,this.#clock.now()));}
+  async getFinancialAccount(scope:RepositoryScope,patientId:UUID,cursor?:string,advanceCursor?:string) {return this.#withRls(scope,c=>getFinancialAccount(c,scope,patientId,cursor,advanceCursor));}
+  async getFinancialDay(scope:RepositoryScope,date:string,entryCursor?:string,dueCursor?:string) {return this.#withRls(scope,c=>getFinancialDay(c,scope,date,entryCursor,dueCursor));}
+  async listPatientInvoices(scope: RepositoryScope, patientId: UUID, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<InvoiceDetail>> {
+    return this.#withRls(scope, async (client) => {
+      const page = await this.#workflowRows<{ id: UUID }>(client, scope, "invoices", patientId, " and patient_id = $3", filter);
+      const records: InvoiceDetail[] = [];
+      for (const row of page.rows) {
+        const detail = await this.#findInvoiceDetailInTransaction(client, scope, row.id);
+        if (!detail) throw new Error("Scoped workflow record disappeared during read.");
+        records.push(detail);
+      }
+      return { records, nextCursor: page.nextCursor };
+    });
+  }
+  async listInventoryCheckRuns(scope: RepositoryScope, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<InventoryCheckRunDetail>> {
+    return this.#withRls(scope, async (client) => {
+      const page = await this.#workflowRows<{ id: UUID }>(client, scope, "inventory_check_runs", null, "", filter);
+      const records: InventoryCheckRunDetail[] = [];
+      for (const row of page.rows) {
+        const detail = await this.#findInventoryCheckRunDetailInTransaction(client, scope, row.id);
+        if (!detail) throw new Error("Scoped workflow record disappeared during read.");
+        records.push(detail);
+      }
+      return { records, nextCursor: page.nextCursor };
+    });
+  }
+  async listSopTemplates(scope: RepositoryScope, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<SopTemplateDetail>> {
+    return this.#withRls(scope, async (client) => {
+      const page = await this.#workflowRows<SopTemplateRow>(client, scope, "sop_templates", null, "", filter);
+      const records: SopTemplateDetail[] = [];
+      for (const row of page.rows) {
+        const items = await client.query<SopTemplateItemRow>(`select * from sop_template_items where tenant_id=$1 and clinic_id=$2 and template_id=$3 order by item_index`, [scope.tenantId,scope.clinicId,row.id]);
+        records.push({template: mapSopTemplateRow(row),items: items.rows.map(mapSopTemplateItemRow)});
+      }
+      return {records,nextCursor:page.nextCursor};
+    });
+  }
+  async findQueueEntryByAppointmentId(scope: RepositoryScope, appointmentId: UUID): Promise<QueueEntryRecord|null> {
+    return this.#withRls(scope, async client=>{const result=await client.query<QueueEntryRow>(`select * from queue_entries where tenant_id=$1 and clinic_id=$2 and appointment_id=$3`,[scope.tenantId,scope.clinicId,appointmentId]);return result.rows[0]?mapQueueEntryRow(result.rows[0]):null;});
+  }
+  async listClinicAccess(scope:RepositoryScope,filter:WorkflowPageFilter={}) {return this.#withRls(scope,client=>listClinicAccess(client,scope,filter));}
+  async saveClinicAccess(scope:RepositoryScope,input:ClinicAccessInput) {return this.#withRls(scope,client=>saveClinicAccess(client,scope,input));}
+  async listClinicSetup(scope:RepositoryScope,kind:ClinicSetupKind,filter:WorkflowPageFilter={}) { return this.#withRls(scope,client=>listClinicSetup(client,scope,kind,filter)); }
+  async saveClinicSetup(scope:RepositoryScope,kind:ClinicSetupKind,input:ClinicSetupInput) { return this.#withRls(scope,client=>saveClinicSetup(client,scope,kind,input)); }
+  async listPatientIntakeHistory(scope:RepositoryScope,patientId:UUID,filter:WorkflowPageFilter={}) {
+    return this.#withRls(scope,async client=>{
+      const page=await this.#workflowRows<IntakeFormSubmissionRow>(client,scope,"form_responses",patientId," and patient_id = $3",filter);
+      return {records:page.rows.map(mapIntakeFormSubmissionRow),nextCursor:page.nextCursor};
+    });
+  }
+  async listLabReconciliations(scope:RepositoryScope,filter:WorkflowPageFilter={}) {
+    return this.#withRls(scope,async client=>{
+      const page=await this.#workflowRows<LabReconciliationRow>(client,scope,"lab_reconciliations",null,"",filter);
+      const records:LabReconciliationDetail[]=[];
+      for(const row of page.rows) {
+        const entries=await client.query<LabReconciliationEntryRow>(`select * from lab_reconciliation_entries where tenant_id=$1 and clinic_id=$2 and reconciliation_id=$3 order by id`,[scope.tenantId,scope.clinicId,row.id]);
+        records.push({reconciliation:mapLabReconciliationRow(row),entries:entries.rows.map(mapLabReconciliationEntryRow)});
+      }
+      return {records,nextCursor:page.nextCursor};
+    });
+  }
+  async listPatientInstructions(scope:RepositoryScope,patientId:UUID,filter:WorkflowPageFilter={}) {
+    return this.#withRls(scope,async client=>{
+      const page=await this.#workflowRows<PatientInstructionRow>(client,scope,"patient_instruction_requests",patientId," and patient_id = $3",filter);
+      return {records:page.rows.map(mapPatientInstructionRow),nextCursor:page.nextCursor};
+    });
+  }
+  async searchBillingPatients(scope: RepositoryScope, query: string): Promise<Array<{id:UUID;fullName:string}>> {
+    if(query.trim().length<2) throw new RangeError("Enter at least two characters to search billing patients.");
+    return this.#withRls(scope,async client=>{
+      const result=await client.query<{id:UUID;full_name:string}>(`select p.id,p.full_name from patients p where p.tenant_id=$1 and p.clinic_id=$2 and position(lower($3) in lower(p.full_name))>0 and (exists(select 1 from invoices i where i.tenant_id=p.tenant_id and i.clinic_id=p.clinic_id and i.patient_id=p.id) or exists(select 1 from procedure_performed_records r where r.tenant_id=p.tenant_id and r.clinic_id=p.clinic_id and r.patient_id=p.id and r.status='completed')) order by p.full_name,p.id limit 50`,[scope.tenantId,scope.clinicId,query.trim()]);
+      return result.rows.map(r=>({id:r.id,fullName:r.full_name}));
+    });
+  }
+  async listClinicStaff(scope: RepositoryScope): Promise<ClinicStaffSummary[]> {
+    return this.#withRls(scope, async (client) => {
+      const result = await client.query<ClinicStaffSummary>(`select u.id,u.display_name as "displayName"
+        from users u join memberships m on m.user_id=u.id and m.tenant_id=$1 and m.status='active'
+        join clinic_user_assignments a on a.user_id=u.id and a.tenant_id=m.tenant_id and a.clinic_id=$2 and a.status='active'
+        where u.status='active' order by u.display_name,u.id limit 501`,[scope.tenantId,scope.clinicId]);
+      if(result.rows.length>500) throw new Error("Clinic staff directory exceeds its supported bound.");
+      return result.rows;
+    });
+  }
+  async #workflowRows<T>(client: SqlQueryClient, scope: RepositoryScope,
+    table: "encounters" | "prescriptions" | "treatment_plans" | "invoices" | "procedure_performed_records" | "sop_templates" | "sop_schedules" | "inventory_check_runs" | "patient_instruction_requests" | "form_responses" | "lab_reconciliations",
+    parent: UUID | null, predicate: string, filter: WorkflowPageFilter
+  ): Promise<{rows:T[];nextCursor:UUID|null}> {
+    const limit=filter.limit ?? 25;
+    if(!Number.isInteger(limit)||limit<1||limit>100) throw new RangeError("Page size must be between 1 and 100.");
+    // Callers supply only closed SQL literals. Cursor lookup repeats the parent/clinic scope.
+    const values: unknown[]=[scope.tenantId,scope.clinicId,parent,filter.cursor ?? null,limit+1];
+    if(filter.cursor) {
+      const cursor=await client.query(`select id from ${table} where tenant_id=$1 and clinic_id=$2 and ($3::uuid is null or true) ${predicate} and id=$4`,values.slice(0,4));
+      if(!cursor.rows.length) throw new RangeError("The page cursor is no longer available in this selection. Refresh the list.");
+    }
+    const result=await client.query<T & {id:UUID}>(`select * from ${table}
+      where tenant_id=$1 and clinic_id=$2 and ($3::uuid is null or true) ${predicate}
+      and ($4::uuid is null or (created_at,id)<(select created_at,id from ${table} where tenant_id=$1 and clinic_id=$2 ${predicate} and id=$4))
+      order by created_at desc,id desc limit $5`,values);
+    return {rows:result.rows.slice(0,limit),nextCursor:result.rows.length>limit ? result.rows[limit-1]!.id : null};
+  }
+
+
+  async #operationalPage(client: SqlQueryClient, table: keyof typeof OPERATIONAL_PAGE_KEYS,
+    where: string[], values: unknown[], filter: WorkflowPageFilter) {
+    const keys = OPERATIONAL_PAGE_KEYS[table];
+    const tuple = `${keys}, id`;
+    if (filter.cursor) {
+      values.push(filter.cursor);
+      const cursorParameter = `$${values.length}`;
+      const scopePredicate = where.join(" and ");
+      const found = await client.query(`select id from ${table} where ${scopePredicate} and id=${cursorParameter}`, values);
+      if (!found.rows.length) throw new RangeError("The page cursor is outside this selection. Refresh the list.");
+      where.push(`(${tuple}) > (select ${tuple} from ${table} where ${scopePredicate} and id=${cursorParameter})`);
+    }
+    const limit = filter.limit ?? 100;
+    if (!Number.isInteger(limit) || limit < 1 || limit > 250) throw new RangeError("Invalid page size.");
+    values.push(limit);
+    return `order by ${tuple} limit $${values.length}`;
+  }
+
   async listPatients(
     scope: RepositoryScope,
     filter: PatientSearchFilter = {}
@@ -784,6 +996,49 @@ export class PostgresClinicOperationsRepository
     });
   }
 
+  async listPatientTimeline(scope: RepositoryScope, patientId: UUID, input: PatientHistoryPageInput) {
+    const limit = historyPageLimit(input.limit);
+    assertHistoryCursor(input.cursor);
+    return this.#withRls(scope, async client => {
+      if (input.cursor) {
+        const anchor = await client.query(`select id from patient_timeline_items where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and id=$4 and item_type=any($5::text[])`, [scope.tenantId,scope.clinicId,patientId,input.cursor,input.itemTypes]);
+        if (!anchor.rows.length) throw new RangeError("History cursor does not belong to this patient and filter. Refresh history.");
+      }
+      const result = await client.query<PatientTimelineRow>(`
+        select * from patient_timeline_items
+        where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and item_type=any($4::text[])
+        and ($5::uuid is null or (occurred_at,id) < (select occurred_at,id from patient_timeline_items where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and id=$5))
+        order by occurred_at desc,id desc limit $6`, [scope.tenantId,scope.clinicId,patientId,input.itemTypes,input.cursor ?? null,limit+1]);
+      const records = result.rows.slice(0,limit).map(mapTimelineRow);
+      return {records,nextCursor:result.rows.length>limit?records.at(-1)!.id:null};
+    });
+  }
+
+  async listPatientDentalSnapshots(scope: RepositoryScope, patientId: UUID, filter: WorkflowPageFilter = {}) {
+    const limit = historyPageLimit(filter.limit ?? undefined);
+    assertHistoryCursor(filter.cursor ?? undefined);
+    return this.#withRls(scope, async client => {
+      if(filter.cursor) {
+        const anchor=await client.query(`select id from dental_chart_snapshots where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and id=$4`,[scope.tenantId,scope.clinicId,patientId,filter.cursor]);
+        if(!anchor.rows.length) throw new RangeError("Snapshot cursor does not belong to this patient. Refresh history.");
+      }
+      // Do not fetch chart_state for the selector; individual snapshot reads are separately audited.
+      const result=await client.query<DentalChartSnapshotRow>(`select id,tenant_id,clinic_id,patient_id,encounter_id,snapshot_version,reason,created_by_user_id,created_at from dental_chart_snapshots
+        where tenant_id=$1 and clinic_id=$2 and patient_id=$3
+        and ($4::uuid is null or snapshot_version < (select snapshot_version from dental_chart_snapshots where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and id=$4))
+        order by snapshot_version desc limit $5`,[scope.tenantId,scope.clinicId,patientId,filter.cursor??null,limit+1]);
+      const records=result.rows.slice(0,limit).map(row=>({id:row.id,tenantId:row.tenant_id,clinicId:row.clinic_id,patientId:row.patient_id,encounterId:row.encounter_id,snapshotVersion:Number(row.snapshot_version),reason:row.reason,createdByUserId:row.created_by_user_id,createdAt:toIso(row.created_at)}));
+      return {records,nextCursor:result.rows.length>limit?records.at(-1)!.id:null};
+    });
+  }
+
+  async getPatientDentalSnapshot(scope: RepositoryScope, patientId: UUID, snapshotId: UUID) {
+    return this.#withRls(scope,async client=>{
+      const result=await client.query<DentalChartSnapshotRow>(`select * from dental_chart_snapshots where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and id=$4`,[scope.tenantId,scope.clinicId,patientId,snapshotId]);
+      return result.rows[0]?mapDentalChartSnapshotRow(result.rows[0]):null;
+    });
+  }
+
   async findPatientTimeline(
     scope: RepositoryScope,
     patientId: UUID
@@ -808,6 +1063,11 @@ export class PostgresClinicOperationsRepository
     input: { fullName: string; phone: string }
   ): Promise<PatientRecord[]> {
     return this.#withRls(scope, async (client) => {
+      // The native mutation unit of work keeps this lock through registration.
+      // Two desks must not both pass duplicate review before either inserts.
+      // Use a clinic-scoped key because duplicate matching also compares names.
+      await client.query("select pg_advisory_xact_lock(hashtextextended($1, 0))",
+        [`patient-registration:${scope.tenantId}:${scope.clinicId}`]);
       const normalizedPhone = normalizePhone(input.phone);
       const firstNameToken = input.fullName.trim().toLowerCase().split(/\s+/)[0] ?? "";
       const result = await client.query<PatientRow>(
@@ -819,8 +1079,8 @@ export class PostgresClinicOperationsRepository
           where patients.tenant_id = $1
             and patients.clinic_id = $2
             and (
-              regexp_replace(coalesce(patients.phone, ''), '\\D', '', 'g') = regexp_replace($3, '\\D', '', 'g')
-              or patient_contacts.normalized_value = $3
+              ($3 <> '' and (regexp_replace(coalesce(patients.phone, ''), '\\D', '', 'g') = regexp_replace($3, '\\D', '', 'g')
+              or patient_contacts.normalized_value = $3))
               or lower(patients.full_name) like $4
             )
           order by patients.updated_at desc
@@ -866,7 +1126,7 @@ export class PostgresClinicOperationsRepository
       );
       const patient = mapPatientRow(result.rows[0]);
 
-      await client.query(
+      if (input.phone) await client.query(
         `
           insert into patient_contacts (
             tenant_id,
@@ -933,14 +1193,18 @@ export class PostgresClinicOperationsRepository
           scope.clinicId,
           patientId,
           input.fullName ?? existing.fullName,
-          input.phone ?? existing.phone,
-          input.email ?? existing.email,
-          input.dateOfBirth ?? existing.dateOfBirth,
+          input.phone === undefined ? existing.phone : input.phone,
+          input.email === undefined ? existing.email : input.email,
+          input.dateOfBirth === undefined ? existing.dateOfBirth : input.dateOfBirth,
           input.gender ?? existing.gender,
           scope.actorUserId
         ]
       );
 
+      if (input.phone !== undefined && input.phone !== existing.phone) {
+        await client.query(`update patient_contacts set is_primary=false where tenant_id=$1 and clinic_id=$2 and patient_id=$3 and contact_type='phone' and is_primary=true`,[scope.tenantId,scope.clinicId,patientId]);
+        if(input.phone) await client.query(`insert into patient_contacts(tenant_id,clinic_id,patient_id,contact_type,value,normalized_value,is_primary,source,created_by_user_id) values($1,$2,$3,'phone',$4,$5,true,$6,$7)`,[scope.tenantId,scope.clinicId,patientId,input.phone,normalizePhone(input.phone),existing.source,scope.actorUserId]);
+      }
       return result.rows[0] ? mapPatientRow(result.rows[0]) : null;
     });
   }
@@ -1840,12 +2104,245 @@ export class PostgresClinicOperationsRepository
     });
   }
 
+  async createPatientFile(scope: RepositoryScope, runId: UUID, manifest: PatientFileManifest): Promise<{ file: PatientFileDetail; created: boolean }> {
+    assertPatientFileManifest(manifest);
+    return this.#withRls(scope, async (client) => {
+      const run = (await client.query<ImportRunRow>(
+        "select * from import_runs where tenant_id = $1 and clinic_id = $2 and id = $3 for update",
+        [scope.tenantId, scope.clinicId, runId])).rows[0];
+      if (!run) throw new ImportRunRepositoryError("not_found", "Import run not found.");
+      const legacy = await client.query("select id from migration_batches where tenant_id = $1 and clinic_id = $2 and import_run_id = $3 limit 1",
+        [scope.tenantId, scope.clinicId, runId]);
+      if (legacy.rows.length) throw new ImportRunRepositoryError("step_conflict", "This run already contains a different import format. Start a new run.");
+      const existing = await readPatientFile(client, scope, runId);
+      if (existing) {
+        if (existing.profile !== manifest.profile || existing.rowCount !== manifest.rowCount ||
+          JSON.stringify(existing.chunks.map(({ ordinal, rowCount, digest }) => ({ ordinal, rowCount, digest }))) !==
+          JSON.stringify(manifest.chunks))
+          throw new ImportRunRepositoryError("step_conflict", "This run contains a different file. Reselect the same file or start a new run.");
+        return { file: existing, created: false };
+      }
+      await client.query(`insert into patient_import_files (tenant_id, clinic_id, run_id, profile, row_count, manifest)
+        values ($1, $2, $3, $4, $5, $6::jsonb)`,
+        [scope.tenantId, scope.clinicId, runId, manifest.profile, manifest.rowCount, JSON.stringify(manifest.chunks)]);
+      return { file: (await readPatientFile(client, scope, runId))!, created: true };
+    });
+  }
+
+  async findPatientFile(scope: RepositoryScope, runId: UUID): Promise<PatientFileDetail | null> {
+    return this.#withRls(scope, (client) => readPatientFile(client, scope, runId));
+  }
+
+  async stagePatientFileChunk(scope: RepositoryScope, runId: UUID, ordinal: number, digest: string,
+    input: CreateMigrationBatchInput): Promise<{ detail: MigrationBatchDetail; created: boolean }> {
+    return this.#withRls(scope, async (client) => {
+      const file = (await client.query<PatientFileSqlRow>(
+        "select * from patient_import_files where tenant_id = $1 and clinic_id = $2 and run_id = $3 for update",
+        [scope.tenantId, scope.clinicId, runId])).rows[0];
+      if (!file) throw new ImportRunRepositoryError("not_found", "Patient file not found.");
+      const expected = file.manifest[ordinal];
+      if (!expected || expected.digest !== digest || expected.rowCount !== input.rows.length || input.importType !== "patients")
+        throw new ImportRunRepositoryError("step_conflict", "Chunk does not match the saved file manifest.");
+      const run = (await client.query<ImportRunRow>("select * from import_runs where tenant_id = $1 and clinic_id = $2 and id = $3",
+        [scope.tenantId, scope.clinicId, runId])).rows[0];
+      if (!run || run.source_system !== input.sourceSystem) throw new ImportRunRepositoryError("source_mismatch", "Import source does not match this run.");
+      const existing = (await client.query<{ batch_id: UUID }>(
+        "select batch_id from patient_import_chunks where tenant_id = $1 and clinic_id = $2 and run_id = $3 and ordinal = $4",
+        [scope.tenantId, scope.clinicId, runId, ordinal])).rows[0];
+      if (existing) return { detail: (await this.#findMigrationBatchDetailInTransaction(client, scope, existing.batch_id))!, created: false };
+      if (file.sealed_at) throw new ImportRunRepositoryError("step_conflict", "This file is sealed.");
+      const ids = input.rows.map((row) => row.externalRecordId);
+      if (ids.some((id) => !id) || new Set(ids).size !== ids.length)
+        throw new ImportRunRepositoryError("step_conflict", "Every patient needs a distinct source ID. No rows in this chunk were saved.");
+      const duplicates = await client.query(`select r.id from migration_rows r join patient_import_chunks c
+        on (r.tenant_id, r.clinic_id, r.batch_id) = (c.tenant_id, c.clinic_id, c.batch_id)
+        where c.tenant_id = $1 and c.clinic_id = $2 and c.run_id = $3 and r.external_record_id = any($4::text[]) limit 1`,
+        [scope.tenantId, scope.clinicId, runId, ids]);
+      if (duplicates.rows.length) throw new ImportRunRepositoryError("step_conflict", "A patient source ID occurs in another part of this file. Correct the file and start a new run.");
+      const detail = await this.#createMigrationBatchInTransaction(client, scope, input);
+      await client.query(`insert into patient_import_chunks (tenant_id, clinic_id, run_id, ordinal, batch_id, digest, row_count)
+        values ($1, $2, $3, $4, $5, $6, $7)`,
+        [scope.tenantId, scope.clinicId, runId, ordinal, detail.batch.id, digest, input.rows.length]);
+      return { detail, created: true };
+    });
+  }
+
+  async sealPatientFile(scope: RepositoryScope, runId: UUID): Promise<{ file: PatientFileDetail; sealedNow: boolean }> {
+    return this.#withRls(scope, async (client) => {
+      await client.query("select run_id from patient_import_files where tenant_id = $1 and clinic_id = $2 and run_id = $3 for update",
+        [scope.tenantId, scope.clinicId, runId]);
+      const file = await readPatientFile(client, scope, runId);
+      if (!file) throw new ImportRunRepositoryError("not_found", "Patient file not found.");
+      if (file.received !== file.rowCount || file.chunks.some((chunk) => !chunk.batchId))
+        throw new ImportRunRepositoryError("prerequisite", "The complete file has not been received. Resume its upload before review or commit.");
+      if (!file.sealed) {
+        const candidates = (await client.query<PatientFileIdentityRow>(`
+          select r.id, r.batch_id as "batchId", r.row_number as "rowNumber",
+            r.normalized_record->>'fullName' as "fullName", r.normalized_record->>'phone' as phone
+          from migration_rows r join patient_import_chunks c
+            on (c.tenant_id, c.clinic_id, c.batch_id) = (r.tenant_id, r.clinic_id, r.batch_id)
+          where c.tenant_id = $1 and c.clinic_id = $2 and c.run_id = $3
+            and r.normalized_record->>'recordType' = 'patient'
+          order by c.ordinal, r.row_number`, [scope.tenantId, scope.clinicId, runId])).rows;
+        const affected = new Set<UUID>();
+        for (const issue of patientFileIdentityConflicts(candidates)) {
+          await client.query(`insert into migration_conflicts
+            (tenant_id, clinic_id, batch_id, row_id, conflict_type, severity, target_record_type, summary, evidence)
+            values ($1, $2, $3, $4, 'duplicate_patient', 'blocking', 'patient', $5, $6::jsonb)`,
+            [scope.tenantId, scope.clinicId, issue.batchId, issue.id, issue.summary, JSON.stringify(issue.evidence)]);
+          await client.query(`update migration_rows set status = 'needs_review', match_status = 'duplicate_candidate'
+            where tenant_id = $1 and clinic_id = $2 and id = $3`, [scope.tenantId, scope.clinicId, issue.id]);
+          affected.add(issue.batchId);
+        }
+        for (const batchId of affected) await this.#refreshMigrationBatchCountsInTransaction(client, scope, batchId);
+      }
+      await client.query("update patient_import_files set sealed_at = coalesce(sealed_at, now()) where tenant_id = $1 and clinic_id = $2 and run_id = $3",
+        [scope.tenantId, scope.clinicId, runId]);
+      return { file: (await readPatientFile(client, scope, runId))!, sealedNow: !file.sealed };
+    });
+  }
+
+  async createImportRun(
+    scope: RepositoryScope,
+    input: { id: UUID; sourceSystem: string }
+  ): Promise<{ run: ImportRunRecord; created: boolean }> {
+    return this.#withRls(scope, async (client) => {
+      const inserted = await client.query<ImportRunRow>(
+        `insert into import_runs (id, tenant_id, clinic_id, source_system, created_by_user_id)
+         values ($1, $2, $3, $4, $5)
+         on conflict do nothing returning *`,
+        [input.id, scope.tenantId, scope.clinicId, input.sourceSystem, scope.actorUserId]
+      );
+      if (inserted.rows[0]) return { run: mapImportRunRow(inserted.rows[0]), created: true };
+      const existing = await client.query<ImportRunRow>(
+        `select * from import_runs where tenant_id = $1 and clinic_id = $2 and id = $3`,
+        [scope.tenantId, scope.clinicId, input.id]
+      );
+      if (!existing.rows[0] || existing.rows[0].source_system !== input.sourceSystem) {
+        throw new ImportRunRepositoryError("source_mismatch", "Import run identity is already in use.");
+      }
+      return { run: mapImportRunRow(existing.rows[0]), created: false };
+    });
+  }
+
+  async listImportRuns(scope: RepositoryScope, limit: number, cursor: UUID | null = null): Promise<ImportRunListResult> {
+    return this.#withRls(scope, async (client) => {
+      const bounded = Math.max(1, Math.min(limit, 100));
+      const cursorRows = cursor ? (await client.query<ImportRunRow>(
+        `select * from import_runs where tenant_id = $1 and clinic_id = $2 and id = $3`,
+        [scope.tenantId, scope.clinicId, cursor]
+      )).rows : [];
+      if (cursor && !cursorRows[0]) throw new ImportRunRepositoryError("not_found", "Import run cursor not found.");
+      const rows = (await client.query<ImportRunRow>(
+        `select * from import_runs where tenant_id = $1 and clinic_id = $2
+         and ($3::uuid is null or (created_at, id) < (
+           (select cursor_run.created_at from import_runs cursor_run
+            where cursor_run.tenant_id = $1 and cursor_run.clinic_id = $2 and cursor_run.id = $3), $3::uuid))
+         order by created_at desc, id desc limit $4`,
+        [scope.tenantId, scope.clinicId, cursor, bounded + 1]
+      )).rows;
+      return { runs: rows.slice(0, bounded).map(mapImportRunRow),
+        nextCursor: rows.length > bounded ? rows[bounded - 1]!.id : null };
+    });
+  }
+
+  async findImportRunById(scope: RepositoryScope, runId: UUID, forStage = false): Promise<ImportRunDetail | null> {
+    return this.#withRls(scope, async (client) => {
+      const rows = (await client.query<ImportRunRow>(
+        `select * from import_runs where tenant_id = $1 and clinic_id = $2 and id = $3
+         ${forStage ? "for update" : "for share"}`,
+        [scope.tenantId, scope.clinicId, runId]
+      )).rows;
+      if (!rows[0]) return null;
+      const batches = (await client.query<{ id: UUID }>(
+        `select id from migration_batches where tenant_id = $1 and clinic_id = $2 and import_run_id = $3
+         order by case import_type when 'patients' then 0 when 'practitioners' then 1 else 2 end for share`,
+        [scope.tenantId, scope.clinicId, runId]
+      )).rows;
+      const details: MigrationBatchDetail[] = [];
+      const unchangedByBatchId: Record<string, number> = {};
+      for (const batch of batches) {
+        const detail = await this.#findMigrationBatchDetailInTransaction(client, scope, batch.id);
+        if (!detail) continue;
+        details.push(detail);
+        const commits = (await client.query<{ summary: Record<string, unknown> }>(
+          `select summary from migration_commits where tenant_id = $1 and clinic_id = $2
+           and batch_id = $3 and action = 'commit' order by started_at desc limit 1`,
+          [scope.tenantId, scope.clinicId, batch.id]
+        )).rows;
+        const count = commits[0]?.summary?.reconciledRows;
+        if (typeof count === "number") unchangedByBatchId[batch.id] = count;
+      }
+      return summarizeImportRun(mapImportRunRow(rows[0]), details, unchangedByBatchId);
+    });
+  }
+
+  async stageImportRunBatch(
+    scope: RepositoryScope,
+    input: StageImportRunBatchInput
+  ): Promise<StageImportRunBatchResult> {
+    return this.#withRls(scope, async (client) => {
+      const runRows = (await client.query<ImportRunRow>(
+        `select * from import_runs where tenant_id = $1 and clinic_id = $2 and id = $3 for update`,
+        [scope.tenantId, scope.clinicId, input.importRunId]
+      )).rows;
+      if (!runRows[0]) throw new ImportRunRepositoryError("not_found", "Import run not found.");
+      if (await readPatientFile(client, scope, input.importRunId))
+        throw new ImportRunRepositoryError("step_conflict", "Use the patient-file upload contract for this run.");
+      if (runRows[0].source_system !== input.sourceSystem) {
+        throw new ImportRunRepositoryError("source_mismatch", "Import source does not match this run.");
+      }
+      const existing = (await client.query<MigrationBatchRow>(
+        `select * from migration_batches where tenant_id = $1 and clinic_id = $2
+         and import_run_id = $3 and import_type = $4`,
+        [scope.tenantId, scope.clinicId, input.importRunId, input.importType]
+      )).rows[0];
+      if (existing) {
+        if (existing.import_step_digest !== input.importStepDigest) {
+          throw new ImportRunRepositoryError("step_conflict", "This import step has different content.");
+        }
+        const detail = await this.#findMigrationBatchDetailInTransaction(client, scope, existing.id);
+        if (!detail) throw new Error("Import step disappeared while reading it.");
+        return { detail, created: false };
+      }
+      const order = ["patients", "practitioners", "appointments"] as const;
+      const stepIndex = order.indexOf(input.importType as (typeof order)[number]);
+      if (stepIndex < 0) throw new ImportRunRepositoryError("step_conflict", "Unsupported run step.");
+      if (stepIndex > 0) {
+        const prior = (await client.query<MigrationBatchRow>(
+          `select * from migration_batches where tenant_id = $1 and clinic_id = $2
+           and import_run_id = $3 and import_type = $4 for share`,
+          [scope.tenantId, scope.clinicId, input.importRunId, order[stepIndex - 1]]
+        )).rows[0];
+        if (!prior || !["committed", "partially_committed"].includes(prior.state) ||
+            Number(prior.committed_row_count) === 0 || Number(prior.ready_row_count) > 0 ||
+            Number(prior.conflict_row_count) > 0) {
+          throw new ImportRunRepositoryError("prerequisite", "Commit accepted rows in the previous import step first.");
+        }
+      }
+      const detail = await this.#createMigrationBatchInTransaction(client, scope, input);
+      return { detail, created: true };
+    });
+  }
+
   async createMigrationBatch(
     scope: RepositoryScope,
     input: CreateMigrationBatchInput
   ): Promise<MigrationBatchDetail> {
+    if ("importRunId" in input || "importStepDigest" in input) {
+      throw new ImportRunRepositoryError("step_conflict", "Use the import run staging contract.");
+    }
     assertStableMigrationExternalReferences(input);
-    return this.#withRls(scope, async (client) => {
+    return this.#withRls(scope, (client) => this.#createMigrationBatchInTransaction(client, scope, input));
+  }
+
+  async #createMigrationBatchInTransaction(
+    client: SqlQueryClient,
+    scope: RepositoryScope,
+    input: CreateMigrationBatchInput | StageImportRunBatchInput
+  ): Promise<MigrationBatchDetail> {
+    assertStableMigrationExternalReferences(input);
+    {
       const batchResult = await client.query<MigrationBatchRow>(
         `
           insert into migration_batches (
@@ -1855,10 +2352,12 @@ export class PostgresClinicOperationsRepository
             source_system,
             source_file_name,
             source_checksum,
+            import_run_id,
+            import_step_digest,
             state,
             uploaded_by_user_id
           )
-          values ($1, $2, $3, $4, $5, $6, $7, $8)
+          values ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
           returning *
         `,
         [
@@ -1868,6 +2367,8 @@ export class PostgresClinicOperationsRepository
           input.sourceSystem,
           input.sourceFileName ?? null,
           input.sourceChecksum ?? null,
+          "importRunId" in input ? input.importRunId : null,
+          "importStepDigest" in input ? input.importStepDigest : null,
           input.state,
           scope.actorUserId
         ]
@@ -1950,7 +2451,7 @@ export class PostgresClinicOperationsRepository
       const detail = await this.#findMigrationBatchDetailInTransaction(client, scope, batch.id);
       if (!detail) throw new Error("Migration batch was not found after creation.");
       return detail;
-    });
+    }
   }
 
   async listMigrationBatches(
@@ -2070,6 +2571,8 @@ export class PostgresClinicOperationsRepository
     input: ResolveMigrationRowInput
   ): Promise<MigrationRowRecord | null> {
     return this.#withRls(scope, async (client) => {
+      const file = await lockPatientFileForBatch(client, scope, batchId);
+      if (file && !file.sealed) return null;
       const batch = await this.#lockMigrationBatchRowInTransaction(client, scope, batchId);
       if (
         !batch ||
@@ -2240,6 +2743,8 @@ export class PostgresClinicOperationsRepository
     input: CommitMigrationBatchInput = {}
   ): Promise<MigrationCommitResult | null> {
     return this.#withRls(scope, async (client) => {
+      await lockClinicConfiguration(client,scope);
+      await assertPatientFileCommitAllowed(client, scope, batchId);
       const batch = await this.#lockMigrationBatchRowInTransaction(client, scope, batchId);
       if (!batch) return null;
       const existing = await this.#findMigrationCommitInTransaction(
@@ -2860,14 +3365,13 @@ export class PostgresClinicOperationsRepository
         where.push(`status = $${values.length}`);
       }
 
-      values.push(Math.min(filter.limit ?? 50, 100));
+      const pageOrder = await this.#operationalPage(client, "leads", where, values, filter);
       const result = await client.query<LeadRow>(
         `
           select *
           from leads
           where ${where.join(" and ")}
-          order by last_activity_at desc
-          limit $${values.length}
+          ${pageOrder}
         `,
         values
       );
@@ -3180,11 +3684,23 @@ export class PostgresClinicOperationsRepository
     });
   }
 
+  async #assertCurrentBookingConfiguration(client:SqlQueryClient,scope:RepositoryScope,input:Pick<CreateAppointmentInput,"providerUserId"|"appointmentTypeId"|"chairId"|"startAt"|"endAt">) {
+    await lockClinicConfiguration(client,scope);
+    await assertActiveClinicDoctor(client,scope,input.providerUserId);
+    const type=await client.query(`select id from appointment_types where tenant_id=$1 and clinic_id=$2 and id=$3 and active`,[scope.tenantId,scope.clinicId,input.appointmentTypeId]);
+    if(!type.rows.length) throw new ClinicSetupConflict("The visit type is no longer active. Refresh before booking.");
+    if(input.chairId) {const chair=await client.query(`select id from chairs_or_rooms where tenant_id=$1 and clinic_id=$2 and id=$3 and active`,[scope.tenantId,scope.clinicId,input.chairId]);if(!chair.rows.length) throw new ClinicSetupConflict("The chair is no longer active. Refresh before booking.");}
+    const schedules=await client.query<ProviderScheduleRow>(`select * from provider_schedules where tenant_id=$1 and clinic_id=$2 and provider_user_id=$3 and active`,[scope.tenantId,scope.clinicId,input.providerUserId]);
+    const calendar=await this.#clinicCalendar(client,scope);
+    if(!schedules.rows.some(r=>providerScheduleCoversAppointment(mapProviderScheduleRow(r),{startAt:input.startAt,endAt:input.endAt,clinicTimeZone:calendar.timezone}))) throw new ClinicSetupConflict("The doctor's working hours changed. Refresh and choose an available time.");
+  }
+
   async createAppointment(
     scope: RepositoryScope,
     input: CreateAppointmentInput
   ): Promise<AppointmentRecord> {
     return this.#withRls(scope, async (client) => {
+      await this.#assertCurrentBookingConfiguration(client,scope,input);
       const result = await client.query<AppointmentRow>(
         `
           insert into appointments (
@@ -3267,6 +3783,38 @@ export class PostgresClinicOperationsRepository
     });
   }
 
+  async rescheduleAppointment(
+    scope: RepositoryScope,
+    appointmentId: UUID,
+    input: RescheduleAppointmentInput
+  ): Promise<AppointmentRecord | null> {
+    return this.#withRls(scope, async (client) => {
+      await this.#assertCurrentBookingConfiguration(client,scope,input);
+      // The API mutation coordinator locks/advances the reviewed row version in
+      // this same transaction. The predicate also protects direct repository callers.
+      const before = await client.query<AppointmentRow>(`select * from appointments
+        where tenant_id = $1 and clinic_id = $2 and id = $3 for update`,
+        [scope.tenantId, scope.clinicId, appointmentId]);
+      if (!before.rows[0]) return null;
+      const result = await client.query<AppointmentRow>(`
+        update appointments set provider_user_id = $4, appointment_type_id = $5,
+          chair_id = $6, start_at = $7, end_at = $8, status = 'booked', updated_by_user_id = $9
+        where tenant_id = $1 and clinic_id = $2 and id = $3
+          and status in ('requested', 'booked', 'confirmed')
+          and not exists (select 1 from queue_entries q where q.tenant_id = $1
+            and q.clinic_id = $2 and q.appointment_id = $3)
+        returning *`, [scope.tenantId, scope.clinicId, appointmentId,
+        input.providerUserId, input.appointmentTypeId, input.chairId,
+        input.startAt, input.endAt, scope.actorUserId]);
+      if (!result.rows[0]) return null;
+      await client.query(`insert into appointment_status_history
+        (tenant_id, clinic_id, appointment_id, from_status, to_status, changed_by_user_id, reason)
+        values ($1, $2, $3, $4, 'booked', $5, $6)`, [scope.tenantId, scope.clinicId,
+        appointmentId, before.rows[0].status, scope.actorUserId, input.changeReason]);
+      return mapAppointmentRow(result.rows[0]);
+    });
+  }
+
   async updateAppointmentStatus(
     scope: RepositoryScope,
     appointmentId: UUID,
@@ -3287,6 +3835,17 @@ export class PostgresClinicOperationsRepository
         [scope.tenantId, scope.clinicId, appointmentId, status, scope.actorUserId]
       );
       const appointment = mapAppointmentRow(result.rows[0]);
+
+      if (status === "cancelled") {
+        // Cancellation owns the appointment lock before the queue lock. Queue
+        // mutations never acquire the appointment lock, so a concurrent call
+        // either precedes cancellation or fails its now-stale queue version.
+        await client.query(`update queue_entries set status = 'cancelled',
+          row_version = row_version + 1, updated_by_user_id = $4
+          where tenant_id = $1 and clinic_id = $2 and appointment_id = $3
+            and status in ('waiting', 'called', 'in_consult')`,
+          [scope.tenantId, scope.clinicId, appointmentId, scope.actorUserId]);
+      }
 
       await client.query(
         `
@@ -3736,17 +4295,13 @@ export class PostgresClinicOperationsRepository
         where.push(`due_at <= $${values.length}`);
       }
 
-      values.push(Math.min(filter.limit ?? 100, 250));
+      const pageOrder = await this.#operationalPage(client, "tasks", where, values, filter);
       const result = await client.query<TaskRow>(
         `
           select *
           from tasks
           where ${where.join(" and ")}
-          order by
-            case priority when 'urgent' then 1 when 'high' then 2 when 'normal' then 3 else 4 end,
-            due_at nulls last,
-            updated_at desc
-          limit $${values.length}
+          ${pageOrder}
         `,
         values
       );
@@ -3770,6 +4325,7 @@ export class PostgresClinicOperationsRepository
 
   async createTask(scope: RepositoryScope, input: CreateTaskInput): Promise<TaskRecord> {
     return this.#withRls(scope, async (client) => {
+      await assertActiveClinicAssignee(client,scope,input.assignedToUserId);
       const result = await client.query<TaskRow>(
         `
           insert into tasks (
@@ -3842,6 +4398,7 @@ export class PostgresClinicOperationsRepository
     input: UpdateTaskInput
   ): Promise<TaskRecord | null> {
     return this.#withRls(scope, async (client) => {
+      await assertActiveClinicAssignee(client,scope,input.assignedToUserId);
       const existingResult = await client.query<TaskRow>(
         `
           select *
@@ -3982,18 +4539,19 @@ export class PostgresClinicOperationsRepository
         values.push(filter.dueBefore);
         where.push(`due_at <= $${values.length}`);
       }
-      values.push(Math.min(filter.limit ?? 100, 250));
-      const result = await client.query<RecallRow>(
+      const pageOrder = await this.#operationalPage(client, "recalls", where, values, filter);
+      const result = await client.query<RecallRow & {rule_title:string;patient_name:string}>(
         `
-          select *
+          select recalls.*,
+            (select r.title from recall_rules r where r.tenant_id=recalls.tenant_id and r.clinic_id=recalls.clinic_id and r.id=recalls.recall_rule_id) as rule_title,
+            (select p.full_name from patients p where p.tenant_id=recalls.tenant_id and p.clinic_id=recalls.clinic_id and p.id=recalls.patient_id) as patient_name
           from recalls
           where ${where.join(" and ")}
-          order by due_at asc, updated_at desc
-          limit $${values.length}
+          ${pageOrder}
         `,
         values
       );
-      return result.rows.map(mapRecallRow);
+      return result.rows.map(row=>({...mapRecallRow(row),ruleTitle:row.rule_title,patientName:row.patient_name}));
     });
   }
 
@@ -4557,6 +5115,7 @@ export class PostgresClinicOperationsRepository
     input: CreateSopScheduleInput
   ): Promise<SopScheduleRecord | null> {
     return this.#withRls(scope, async (client) => {
+      await assertActiveClinicAssignee(client,scope,input.assignedToUserId);
       const template = await client.query(
         `
           select id
@@ -4795,15 +5354,14 @@ export class PostgresClinicOperationsRepository
         values.push(filter.dueBefore);
         where.push(`due_at <= $${values.length}`);
       }
-      values.push(Math.min(filter.limit ?? 100, 250));
+      const pageOrder = await this.#operationalPage(client, "sop_runs", where, values, filter);
       const rows = (
         await client.query<SopRunRow>(
           `
             select *
             from sop_runs
             where ${where.join(" and ")}
-            order by due_at asc
-            limit $${values.length}
+            ${pageOrder}
           `,
           values
         )
@@ -4836,7 +5394,7 @@ export class PostgresClinicOperationsRepository
             set
               status = $4,
               evidence = $5::jsonb,
-              completed_by_user_id = case when $4 = 'done' then $6 else null end,
+              completed_by_user_id = case when $4 = 'done' then $6::uuid else null end,
               completed_at = case when $4 = 'done' then now() else null end
             where tenant_id = $1 and clinic_id = $2 and id = $3
           `,
@@ -4859,14 +5417,14 @@ export class PostgresClinicOperationsRepository
           set
             status = $4,
             started_by_user_id = case
-              when $4 = 'in_progress' and started_by_user_id is null then $5
+              when $4 = 'in_progress' and started_by_user_id is null then $5::uuid
               else started_by_user_id
             end,
             started_at = case
               when $4 = 'in_progress' and started_at is null then now()
               else started_at
             end,
-            completed_by_user_id = case when $4 = 'completed' then $5 else null end,
+            completed_by_user_id = case when $4 = 'completed' then $5::uuid else null end,
             completed_at = case when $4 = 'completed' then now() else null end,
             completion_evidence = $6::jsonb
           where tenant_id = $1 and clinic_id = $2 and id = $3
@@ -5554,17 +6112,11 @@ export class PostgresClinicOperationsRepository
     });
   }
 
-  async listPricebookProcedures(scope: RepositoryScope): Promise<PricebookProcedureRecord[]> {
-    return this.#withRls(scope, async (client) => {
-      const result = await client.query<PricebookProcedureRow>(
-        `
-          select *
-          from pricebook_procedures
-          where tenant_id = $1 and clinic_id = $2 and status = 'active'
-          order by category, display_name
-        `,
-        [scope.tenantId, scope.clinicId]
-      );
+  async listPricebookProcedures(scope: RepositoryScope, filter?: WorkflowPageFilter): Promise<PricebookProcedureRecord[]> {
+    return this.#withRls(scope,async client=>{
+      const values:unknown[]=[scope.tenantId,scope.clinicId],where=["tenant_id=$1","clinic_id=$2","status='active'"];
+      const pageOrder=filter?await this.#operationalPage(client,"pricebook_procedures",where,values,filter):"order by category,display_name,id";
+      const result=await client.query<PricebookProcedureRow>(`select * from pricebook_procedures where ${where.join(" and ")} ${pageOrder}`,values);
       return result.rows.map(mapPricebookProcedureRow);
     });
   }
@@ -5710,7 +6262,8 @@ export class PostgresClinicOperationsRepository
 
   async listPatientIntakeFormSubmissions(
     scope: RepositoryScope,
-    patientId: UUID
+    patientId: UUID,
+    limit?: number
   ): Promise<IntakeFormSubmissionRecord[]> {
     return this.#withRls(scope, async (client) => {
       const result = await client.query<IntakeFormSubmissionRow>(
@@ -5718,17 +6271,18 @@ export class PostgresClinicOperationsRepository
           select *
           from form_responses
           where tenant_id = $1 and clinic_id = $2 and patient_id = $3
-          order by submitted_at desc
+          order by submitted_at desc, id desc
+          limit $4
         `,
-        [scope.tenantId, scope.clinicId, patientId]
+        [scope.tenantId, scope.clinicId, patientId, limit === undefined ? null : historyPageLimit(limit)]
       );
       return result.rows.map(mapIntakeFormSubmissionRow);
     });
   }
 
-  async listPatientConsents(scope: RepositoryScope, patientId: UUID): Promise<ConsentRecord[]> {
+  async listPatientConsents(scope: RepositoryScope, patientId: UUID, lockForUse = false): Promise<ConsentRecord[]> {
     return this.#withRls(scope, async (client) =>
-      this.#listPatientConsentsInTransaction(client, scope, patientId)
+      this.#listPatientConsentsInTransaction(client, scope, patientId, lockForUse)
     );
   }
 
@@ -5825,8 +6379,17 @@ export class PostgresClinicOperationsRepository
     scope: RepositoryScope,
     patientId: UUID
   ): Promise<ConsentEnforcementState> {
-    const consents = await this.listPatientConsents(scope, patientId);
-    return buildConsentEnforcementState(patientId, consents);
+    return this.#withRls(scope, async client => {
+      // Same latest-effective-event rule as buildConsentEnforcementState over the
+      // full ordered history. Return at most one row per purpose, never truncate
+      // history before choosing the latest grant/revocation.
+      const result = await client.query<ConsentRow>(`
+        select distinct on (purpose) * from consents
+        where tenant_id=$1 and clinic_id=$2 and patient_id=$3
+        order by purpose, greatest(created_at,revoked_at) desc, created_at asc, id desc`,
+        [scope.tenantId,scope.clinicId,patientId]);
+      return buildConsentEnforcementState(patientId, result.rows.map(mapConsentRow), this.#clock.now().toISOString());
+    });
   }
 
   async findProviderEligibility(
@@ -6087,6 +6650,15 @@ export class PostgresClinicOperationsRepository
     input: CreateEncounterInput
   ): Promise<EncounterRecord> {
     return this.#withRls(scope, async (client) => {
+      await lockClinicConfiguration(client,scope);
+      await assertActiveClinicDoctor(client,scope,input.providerUserId);
+      if (input.appointmentId) {
+        const appointment = await client.query<AppointmentRow>(`select * from appointments where tenant_id=$1 and clinic_id=$2 and id=$3 for update`,[scope.tenantId,scope.clinicId,input.appointmentId]);
+        const a=appointment.rows[0];
+        if(!a || a.patient_id!==input.patientId || a.provider_user_id!==input.providerUserId || !["requested","booked","confirmed","checked_in"].includes(a.status)) throw new RangeError("Appointment is no longer eligible for this patient and doctor.");
+        const existing=await client.query(`select id from encounters where tenant_id=$1 and clinic_id=$2 and appointment_id=$3`,[scope.tenantId,scope.clinicId,input.appointmentId]);
+        if(existing.rows.length) throw new RangeError("A consultation already exists for this appointment. Open the saved visit.");
+      }
       const result = await client.query<EncounterRow>(
         `
           insert into encounters (
@@ -6136,10 +6708,11 @@ export class PostgresClinicOperationsRepository
 
   async findEncounterById(
     scope: RepositoryScope,
-    encounterId: UUID
+    encounterId: UUID,
+    forUpdate = false
   ): Promise<EncounterRecord | null> {
     return this.#withRls(scope, async (client) =>
-      this.#findEncounterByIdInTransaction(client, scope, encounterId)
+      this.#findEncounterByIdInTransaction(client, scope, encounterId, forUpdate)
     );
   }
 
@@ -6150,9 +6723,26 @@ export class PostgresClinicOperationsRepository
     reason?: string | null
   ): Promise<EncounterRecord | null> {
     return this.#withRls(scope, async (client) => {
-      const existing = await this.#findEncounterByIdInTransaction(client, scope, encounterId);
+      const existing = await this.#findEncounterByIdInTransaction(client, scope, encounterId, true);
       if (!existing) return null;
 
+      const allowed = (status==="drafting" && existing.status==="scheduled") || (status==="closed" && ["signed","amended"].includes(existing.status));
+      if(["drafting","closed"].includes(status) && !allowed) return null;
+      if(existing.appointmentId && ["drafting","closed"].includes(status)) {
+        // Existing-visit commands serialize on encounter first (the native mutation pipeline),
+        // then appointment then queue. Front-desk commands never lock an encounter.
+        const ar=await client.query<AppointmentRow>(`select * from appointments where tenant_id=$1 and clinic_id=$2 and id=$3 for update`,[scope.tenantId,scope.clinicId,existing.appointmentId]);
+        const a=ar.rows[0];
+        const qr=await client.query<QueueEntryRow>(`select * from queue_entries where tenant_id=$1 and clinic_id=$2 and appointment_id=$3 for update`,[scope.tenantId,scope.clinicId,existing.appointmentId]);
+        const q=qr.rows[0];
+        if(!a||!q||a.patient_id!==existing.patientId||a.provider_user_id!==existing.providerUserId||q.patient_id!==existing.patientId||q.provider_user_id!==existing.providerUserId) return null;
+        if(status==="drafting" && (a.status!=="checked_in"||!["waiting","called"].includes(q.status))) return null;
+        if(status==="closed" && (a.status!=="in_consult"||q.status!=="in_consult")) return null;
+        const next=status==="drafting"?"in_consult":"completed";
+        await client.query(`update appointments set status=$4,row_version=row_version+1,updated_by_user_id=$5 where tenant_id=$1 and clinic_id=$2 and id=$3`,[scope.tenantId,scope.clinicId,a.id,next,scope.actorUserId]);
+        await client.query(`insert into appointment_status_history(tenant_id,clinic_id,appointment_id,from_status,to_status,changed_by_user_id,reason) values($1,$2,$3,$4,$5,$6,$7)`,[scope.tenantId,scope.clinicId,a.id,a.status,next,scope.actorUserId,reason??null]);
+        await client.query(`update queue_entries set status=$4,row_version=row_version+1,completed_at=case when $4='completed' then coalesce(completed_at,now()) else completed_at end,updated_by_user_id=$5 where tenant_id=$1 and clinic_id=$2 and id=$3`,[scope.tenantId,scope.clinicId,q.id,next,scope.actorUserId]);
+      }
       const result = await client.query<EncounterRow>(
         `
           update encounters
@@ -6264,7 +6854,7 @@ export class PostgresClinicOperationsRepository
         });
       }
 
-      const status = input.readyForSign ? "ready_for_sign" : "drafting";
+      const status = encounter.status === "scheduled" ? "scheduled" : input.readyForSign ? "ready_for_sign" : "drafting";
       await client.query(
         `
           update encounters
@@ -6292,7 +6882,7 @@ export class PostgresClinicOperationsRepository
         `,
         [scope.tenantId, scope.clinicId, encounterId]
       );
-      return result.rows.map(mapClinicalNoteVersionRow);
+      return this.#withSignerNames(client,scope,result.rows.map(mapClinicalNoteVersionRow));
     });
   }
 
@@ -6408,7 +6998,7 @@ export class PostgresClinicOperationsRepository
       const encounterResult = await client.query<EncounterRow>(
         `
           update encounters
-          set status = 'amended', updated_by_user_id = $4
+          set status = case when status='closed' then 'closed' else 'amended' end, updated_by_user_id = $4
           where tenant_id = $1 and clinic_id = $2 and id = $3
           returning *
         `,
@@ -6504,7 +7094,7 @@ export class PostgresClinicOperationsRepository
   ): Promise<PrescriptionRecord | null> {
     return this.#withRls(scope, async (client) => {
       const existing = await this.#findPrescriptionByIdInTransaction(client, scope, prescriptionId);
-      if (!existing) return null;
+      if (!existing || existing.status !== "draft") return null;
 
       assertPrescriptionCanBeSigned(existing);
 
@@ -6512,11 +7102,12 @@ export class PostgresClinicOperationsRepository
         `
           update prescriptions
           set status = 'signed', signed_by_user_id = $4, signed_at = now()
-          where tenant_id = $1 and clinic_id = $2 and id = $3
+          where tenant_id = $1 and clinic_id = $2 and id = $3 and status = 'draft'
           returning *
         `,
         [scope.tenantId, scope.clinicId, prescriptionId, scope.actorUserId]
       );
+      if (!result.rows[0]) return null;
       const prescription = mapPrescriptionRow(result.rows[0]);
 
       await this.#appendTimeline(client, scope, {
@@ -9202,8 +9793,10 @@ export class PostgresClinicOperationsRepository
       );
       assertInvoiceReceiptable({ invoice: detail.invoice, payments: candidatePayments });
       const payments = candidatePayments.filter(
-        (payment) => isSettledPaymentTransaction(payment) && !payment.receiptId
+        (payment) => isSettledPaymentTransaction(payment) && payment.method !== "advance_allocation" && !payment.receiptId
       );
+      const adjusted = await client.query<{ present: boolean }>(`select exists(select 1 from financial_entries where tenant_id=$1 and clinic_id=$2 and payment_transaction_id=any($3::uuid[]) and kind in ('payment_refund','payment_reversal')) as present`,[scope.tenantId,scope.clinicId,payments.map(p=>p.id)]);
+      if(adjusted.rows[0].present) throw new FinancialConflict("An adjusted payment cannot receive a new original receipt. Use its original payment and adjustment evidence.");
       const allocations = payments.map((payment) => ({
         paymentTransactionId: payment.id,
         amountMinor: payment.amountMinor
@@ -9268,17 +9861,12 @@ export class PostgresClinicOperationsRepository
     });
   }
 
-  async listLabVendors(scope: RepositoryScope): Promise<LabVendorRecord[]> {
+  async listLabVendors(scope: RepositoryScope, filter?: WorkflowPageFilter): Promise<LabVendorRecord[]> {
     return this.#withRls(scope, async (client) => {
-      const result = await client.query<LabVendorRow>(
-        `
-          select *
-          from lab_vendors
-          where tenant_id = $1 and clinic_id = $2 and status = 'active'
-          order by display_name
-        `,
-        [scope.tenantId, scope.clinicId]
-      );
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "clinic_id = $2 and status = 'active'"];
+      const pageOrder = filter ? await this.#operationalPage(client, "lab_vendors", where, values, filter) : `order by ${OPERATIONAL_PAGE_KEYS.lab_vendors}, id`;
+      const result = await client.query<LabVendorRow>(`select * from lab_vendors where ${where.join(" and ")} ${pageOrder}`, values);
       return result.rows.map(mapLabVendorRow);
     });
   }
@@ -9331,27 +9919,11 @@ export class PostgresClinicOperationsRepository
     filter: LabCaseSearchFilter = {}
   ): Promise<LabCaseDetail[]> {
     return this.#withRls(scope, async (client) => {
-      const result = await client.query<LabCaseRow>(
-        `
-          select *
-          from lab_cases
-          where tenant_id = $1
-            and clinic_id = $2
-            and ($3::text is null or status = $3)
-            and ($4::timestamptz is null or due_at <= $4)
-            and ($5::uuid is null or vendor_id = $5)
-            and ($6::uuid is null or patient_id = $6)
-          order by due_at asc
-        `,
-        [
-          scope.tenantId,
-          scope.clinicId,
-          filter.status ?? null,
-          filter.dueBefore ?? null,
-          filter.vendorId ?? null,
-          filter.patientId ?? null
-        ]
-      );
+      const values: unknown[] = [scope.tenantId, scope.clinicId, filter.status ?? null, filter.dueBefore ?? null, filter.vendorId ?? null, filter.patientId ?? null];
+      const where = ["tenant_id = $1", "clinic_id = $2", "($3::text is null or status = $3)", "($4::timestamptz is null or due_at <= $4)", "($5::uuid is null or vendor_id = $5)", "($6::uuid is null or patient_id = $6)"];
+      const pageOrder = await this.#operationalPage(client, "lab_cases", where, values, filter);
+      const result = await client.query<LabCaseRow>(`select * from lab_cases where ${where.join(" and ")} ${pageOrder}`, values);
+
       const details: LabCaseDetail[] = [];
       for (const row of result.rows) {
         const detail = await this.#findLabCaseDetailInTransaction(client, scope, row.id);
@@ -9570,6 +10142,8 @@ export class PostgresClinicOperationsRepository
         varianceAmountMinor: number;
         notes: string | null;
       }> = [];
+      // Reconciliation reads a consistent locked set of cases, in deterministic order.
+      await client.query(`select id from lab_cases where tenant_id=$1 and clinic_id=$2 and id=any($3::uuid[]) order by id for update`,[scope.tenantId,scope.clinicId,input.entries.map(entry=>entry.labCaseId)]);
       for (const entry of input.entries) {
         const detail = await this.#findLabCaseDetailInTransaction(client, scope, entry.labCaseId);
         if (!detail || detail.labCase.vendorId !== input.vendorId) return null;
@@ -9599,6 +10173,10 @@ export class PostgresClinicOperationsRepository
       );
       const invoiceAmountMinor = input.invoiceAmountMinor ?? null;
       const varianceAmountMinor = (invoiceAmountMinor ?? expectedAmountMinor) - expectedAmountMinor;
+      const entryTotal = preparedEntries.reduce((sum,entry)=>sum+(entry.invoiceAmountMinor??0),0);
+      if(invoiceAmountMinor!==null && preparedEntries.every(entry=>entry.invoiceAmountMinor!==null && entry.status!=="excluded") && invoiceAmountMinor!==entryTotal) throw new RangeError("Invoice total must equal the included case amounts.");
+      const fullyMatched = invoiceAmountMinor!==null && varianceAmountMinor===0 && preparedEntries.every(entry=>entry.labCase.expectedCostMinor!==null && entry.invoiceAmountMinor!==null && entry.varianceAmountMinor===0 && entry.status==="matched");
+      if(["matched","approved"].includes(input.status??"") && !fullyMatched) throw new RangeError("Resolve all missing amounts and variances before marking the invoice matched or approved.");
       const reconciliationResult = await client.query<LabReconciliationRow>(
         `
           insert into lab_reconciliations (
@@ -9624,7 +10202,7 @@ export class PostgresClinicOperationsRepository
           input.vendorId,
           input.periodStart,
           input.periodEnd,
-          input.status ?? (varianceAmountMinor === 0 ? "matched" : "variance_review"),
+          input.status ?? (fullyMatched ? "matched" : "variance_review"),
           input.invoiceReference ?? null,
           invoiceAmountMinor,
           expectedAmountMinor,
@@ -9672,17 +10250,12 @@ export class PostgresClinicOperationsRepository
     });
   }
 
-  async listInventoryCategories(scope: RepositoryScope): Promise<InventoryCategoryRecord[]> {
+  async listInventoryCategories(scope: RepositoryScope, filter?: WorkflowPageFilter): Promise<InventoryCategoryRecord[]> {
     return this.#withRls(scope, async (client) => {
-      const result = await client.query<InventoryCategoryRow>(
-        `
-          select *
-          from inventory_categories
-          where tenant_id = $1 and clinic_id = $2
-          order by display_name
-        `,
-        [scope.tenantId, scope.clinicId]
-      );
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "clinic_id = $2"];
+      const pageOrder = filter ? await this.#operationalPage(client, "inventory_categories", where, values, filter) : `order by ${OPERATIONAL_PAGE_KEYS.inventory_categories}, id`;
+      const result = await client.query<InventoryCategoryRow>(`select * from inventory_categories where ${where.join(" and ")} ${pageOrder}`, values);
       return result.rows.map(mapInventoryCategoryRow);
     });
   }
@@ -9720,17 +10293,12 @@ export class PostgresClinicOperationsRepository
     });
   }
 
-  async listInventoryItems(scope: RepositoryScope): Promise<InventoryItemRecord[]> {
+  async listInventoryItems(scope: RepositoryScope, filter?: WorkflowPageFilter): Promise<InventoryItemRecord[]> {
     return this.#withRls(scope, async (client) => {
-      const result = await client.query<InventoryItemRow>(
-        `
-          select *
-          from inventory_items
-          where tenant_id = $1 and clinic_id = $2
-          order by display_name
-        `,
-        [scope.tenantId, scope.clinicId]
-      );
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "clinic_id = $2"];
+      const pageOrder = filter ? await this.#operationalPage(client, "inventory_items", where, values, filter) : `order by ${OPERATIONAL_PAGE_KEYS.inventory_items}, id`;
+      const result = await client.query<InventoryItemRow>(`select * from inventory_items where ${where.join(" and ")} ${pageOrder}`, values);
       return result.rows.map(mapInventoryItemRow);
     });
   }
@@ -9827,20 +10395,13 @@ export class PostgresClinicOperationsRepository
   }
 
   async listInventoryCheckTemplates(
-    scope: RepositoryScope
+    scope: RepositoryScope, filter?: WorkflowPageFilter
   ): Promise<Array<InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }>> {
     return this.#withRls(scope, async (client) => {
-      const templates = (
-        await client.query<InventoryCheckTemplateRow>(
-          `
-            select *
-            from inventory_check_templates
-            where tenant_id = $1 and clinic_id = $2 and active = true
-            order by display_name
-          `,
-          [scope.tenantId, scope.clinicId]
-        )
-      ).rows.map(mapInventoryCheckTemplateRow);
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "clinic_id = $2", "active = true"];
+      const pageOrder = filter ? await this.#operationalPage(client, "inventory_check_templates", where, values, filter) : "order by display_name, id";
+      const templates = (await client.query<InventoryCheckTemplateRow>(`select * from inventory_check_templates where ${where.join(" and ")} ${pageOrder}`, values)).rows.map(mapInventoryCheckTemplateRow);
       const result: Array<
         InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }
       > = [];
@@ -10124,54 +10685,44 @@ export class PostgresClinicOperationsRepository
     });
   }
 
-  async listInventoryExceptions(
-    scope: RepositoryScope,
-    filter: InventoryExceptionFilter = {}
-  ): Promise<InventoryExceptionRecord[]> {
-    return this.#withRls(scope, async (client) => {
-      const lineRows = await client.query<InventoryCheckRunLineRow>(
-        `
-          select *
-          from inventory_check_run_lines
-          where tenant_id = $1
-            and clinic_id = $2
-            and exception_type is not null
-            and ($3::uuid is null or item_id = $3)
-            and ($4::uuid is null or check_run_id = $4)
-          order by counted_at desc nulls last
-        `,
-        [scope.tenantId, scope.clinicId, filter.itemId ?? null, filter.checkRunId ?? null]
-      );
-      const exceptions: InventoryExceptionRecord[] = [];
-      for (const row of lineRows.rows) {
-        const line = mapInventoryCheckRunLineRow(row);
-        const item = await this.#findInventoryItemByIdInTransaction(client, scope, line.itemId);
-        if (!item || !line.exceptionType) continue;
-        const suggestion = await this.#findProcurementSuggestionForLine(client, scope, line.id);
-        exceptions.push(toInventoryException(item, line, suggestion));
+  async listInventoryExceptions(scope: RepositoryScope, filter: InventoryExceptionFilter = {}): Promise<InventoryExceptionRecord[]> {
+    return this.#withRls(scope, async client => {
+      const values: unknown[]=[scope.tenantId,scope.clinicId,filter.itemId??null,filter.checkRunId??null,filter.cursor??null];
+      const candidates = `with entries as (
+        select 'line' as kind,id,item_id,coalesce(-extract(epoch from counted_at),1e20) as sort_key
+        from inventory_check_run_lines where tenant_id=$1 and clinic_id=$2 and exception_type is not null
+        and ($3::uuid is null or item_id=$3) and ($4::uuid is null or check_run_id=$4)
+        union all
+        select 'stock',i.id,i.id,0 from inventory_items i where i.tenant_id=$1 and i.clinic_id=$2
+        and i.status='active' and i.track_quantity=true and i.current_quantity<i.minimum_quantity
+        and ($3::uuid is null or i.id=$3) and $4::uuid is null
+        and not exists(select 1 from inventory_check_run_lines l where l.tenant_id=i.tenant_id and l.clinic_id=i.clinic_id and l.item_id=i.id and l.exception_type is not null)
+      )`;
+      if(filter.cursor) {
+        const cursor=await client.query(`${candidates} select id from entries where id=$5`,values);
+        if(!cursor.rows.length) throw new RangeError("The page cursor is outside this selection. Refresh the list.");
       }
-
-      const lowStockItems = await client.query<InventoryItemRow>(
-        `
-          select *
-          from inventory_items
-          where tenant_id = $1
-            and clinic_id = $2
-            and status = 'active'
-            and track_quantity = true
-            and current_quantity < minimum_quantity
-            and ($3::uuid is null or id = $3)
-          order by display_name
-        `,
-        [scope.tenantId, scope.clinicId, filter.itemId ?? null]
-      );
-      for (const row of lowStockItems.rows) {
-        const item = mapInventoryItemRow(row);
-        if (exceptions.some((exception) => exception.item.id === item.id)) continue;
-        const suggestion = await this.#findOpenProcurementSuggestionForItem(client, scope, item.id);
-        exceptions.push(toInventoryException(item, null, suggestion));
+      const limit=filter.limit??100;
+      if(!Number.isInteger(limit)||limit<1||limit>250) throw new RangeError("Invalid page size.");
+      values.push(limit);
+      const page=await client.query<{kind:string;id:UUID;item_id:UUID}>(`${candidates} select * from entries
+        where ($5::uuid is null or (kind,sort_key,id)>(select kind,sort_key,id from entries where id=$5))
+        order by kind,sort_key,id limit $6`,values);
+      const result:InventoryExceptionRecord[]=[];
+      for(const row of page.rows) {
+        const item=await this.#findInventoryItemByIdInTransaction(client,scope,row.item_id);
+        if(!item) continue;
+        if(row.kind==='line') {
+          const lines=await client.query<InventoryCheckRunLineRow>('select * from inventory_check_run_lines where tenant_id=$1 and clinic_id=$2 and id=$3',[scope.tenantId,scope.clinicId,row.id]);
+          if(!lines.rows[0]) continue;
+          const line=mapInventoryCheckRunLineRow(lines.rows[0]);
+          const suggestion=await this.#findProcurementSuggestionForLine(client,scope,row.id);
+          result.push(toInventoryException(item,line,suggestion));
+        } else {
+          result.push(toInventoryException(item,null,await this.#findOpenProcurementSuggestionForItem(client,scope,item.id)));
+        }
       }
-      return exceptions;
+      return result;
     });
   }
 
@@ -10180,25 +10731,11 @@ export class PostgresClinicOperationsRepository
     filter: IncidentSearchFilter = {}
   ): Promise<IncidentRecord[]> {
     return this.#withRls(scope, async (client) => {
-      const result = await client.query<IncidentRow>(
-        `
-          select *
-          from incidents
-          where tenant_id = $1
-            and clinic_id = $2
-            and ($3::text is null or status = $3)
-            and ($4::text is null or severity = $4)
-            and ($5::text is null or category = $5)
-          order by occurred_at desc
-        `,
-        [
-          scope.tenantId,
-          scope.clinicId,
-          filter.status ?? null,
-          filter.severity ?? null,
-          filter.category ?? null
-        ]
-      );
+      const values: unknown[] = [scope.tenantId, scope.clinicId, filter.status ?? null, filter.severity ?? null, filter.category ?? null];
+      const where = ["tenant_id = $1", "clinic_id = $2", "($3::text is null or status = $3)", "($4::text is null or severity = $4)", "($5::text is null or category = $5)"];
+      const pageOrder = await this.#operationalPage(client, "incidents", where, values, filter);
+      const result = await client.query<IncidentRow>(`select * from incidents where ${where.join(" and ")} ${pageOrder}`, values);
+
       return result.rows.map(mapIncidentRow);
     });
   }
@@ -10208,6 +10745,7 @@ export class PostgresClinicOperationsRepository
     input: CreateIncidentInput
   ): Promise<IncidentRecord | null> {
     return this.#withRls(scope, async (client) => {
+      await assertActiveClinicAssignee(client,scope,input.ownerUserId);
       if (
         input.patientId &&
         !(await this.#findPatientByIdInTransaction(client, scope, input.patientId))
@@ -10291,17 +10829,12 @@ export class PostgresClinicOperationsRepository
     });
   }
 
-  async listCorrectiveActions(scope: RepositoryScope): Promise<CorrectiveActionRecord[]> {
+  async listCorrectiveActions(scope: RepositoryScope, filter?: WorkflowPageFilter): Promise<CorrectiveActionRecord[]> {
     return this.#withRls(scope, async (client) => {
-      const result = await client.query<CorrectiveActionRow>(
-        `
-          select *
-          from corrective_actions
-          where tenant_id = $1 and clinic_id = $2
-          order by due_at asc
-        `,
-        [scope.tenantId, scope.clinicId]
-      );
+      const values: unknown[] = [scope.tenantId, scope.clinicId];
+      const where = ["tenant_id = $1", "clinic_id = $2"];
+      const pageOrder = filter ? await this.#operationalPage(client, "corrective_actions", where, values, filter) : `order by ${OPERATIONAL_PAGE_KEYS.corrective_actions}, id`;
+      const result = await client.query<CorrectiveActionRow>(`select * from corrective_actions where ${where.join(" and ")} ${pageOrder}`, values);
       return result.rows.map(mapCorrectiveActionRow);
     });
   }
@@ -10311,6 +10844,7 @@ export class PostgresClinicOperationsRepository
     input: CreateCorrectiveActionInput
   ): Promise<CorrectiveActionRecord | null> {
     return this.#withRls(scope, async (client) => {
+      await assertActiveClinicAssignee(client,scope,input.ownerUserId);
       const incident = input.incidentId
         ? await this.#findIncidentByIdInTransaction(client, scope, input.incidentId)
         : null;
@@ -12030,14 +12564,16 @@ export class PostgresClinicOperationsRepository
   async #listPatientConsentsInTransaction(
     client: SqlQueryClient,
     scope: RepositoryScope,
-    patientId: UUID
+    patientId: UUID,
+    lockForUse = false
   ): Promise<ConsentRecord[]> {
     const result = await client.query<ConsentRow>(
       `
         select *
         from consents
         where tenant_id = $1 and clinic_id = $2 and patient_id = $3
-        order by created_at desc
+        order by created_at desc, id asc
+          ${lockForUse ? "for share" : ""}
       `,
       [scope.tenantId, scope.clinicId, patientId]
     );
@@ -12047,13 +12583,15 @@ export class PostgresClinicOperationsRepository
   async #findEncounterByIdInTransaction(
     client: SqlQueryClient,
     scope: RepositoryScope,
-    encounterId: UUID
+    encounterId: UUID,
+    forUpdate = false
   ): Promise<EncounterRecord | null> {
     const result = await client.query<EncounterRow>(
       `
         select *
         from encounters
         where tenant_id = $1 and clinic_id = $2 and id = $3
+          ${forUpdate ? "for update" : ""}
       `,
       [scope.tenantId, scope.clinicId, encounterId]
     );
@@ -12503,6 +13041,7 @@ export class PostgresClinicOperationsRepository
     scope: RepositoryScope,
     invoiceId: UUID
   ): Promise<InvoiceDetail | null> {
+    if (!(await this.#findInvoiceRowInTransaction(client, scope, invoiceId))) return null;
     await this.#recalculateInvoicePaymentStateInTransaction(client, scope, invoiceId);
     const invoice = await this.#findInvoiceRowInTransaction(client, scope, invoiceId);
     if (!invoice) return null;
@@ -12587,62 +13126,7 @@ export class PostgresClinicOperationsRepository
     scope: RepositoryScope,
     invoiceId: UUID
   ): Promise<void> {
-    const invoice = await this.#findInvoiceRowInTransaction(client, scope, invoiceId);
-    if (!invoice) return;
-    const payments = (
-      await client.query<PaymentTransactionRow>(
-        `
-          select *
-          from payment_transactions
-          where tenant_id = $1 and clinic_id = $2 and invoice_id = $3
-        `,
-        [scope.tenantId, scope.clinicId, invoiceId]
-      )
-    ).rows.map(mapPaymentTransactionRow);
-    const requestCount = Number(
-      (
-        await client.query<{ count: string }>(
-          `
-            select count(*) as count
-            from payment_requests
-            where tenant_id = $1 and clinic_id = $2 and invoice_id = $3
-          `,
-          [scope.tenantId, scope.clinicId, invoiceId]
-        )
-      ).rows[0]?.count ?? 0
-    );
-    const paidMinor = payments
-      .filter((payment) => isSettledPaymentTransaction(payment))
-      .reduce((total, payment) => total + payment.amountMinor, 0);
-    const refundedMinor = payments
-      .filter((payment) => payment.status === "refunded")
-      .reduce((total, payment) => total + payment.amountMinor, 0);
-    const hasReconciliationIssue = payments.some(
-      (payment) =>
-        payment.status === "reconciliation_required" ||
-        payment.reconciliationStatus === "requires_review"
-    );
-    const paymentStatus = calculateInvoicePaymentStatus({
-      totalMinor: invoice.totalMinor,
-      paidMinor,
-      refundedMinor,
-      hasPaymentRequest: requestCount > 0,
-      hasReconciliationIssue,
-      invoiceStatus: invoice.status
-    });
-
-    await client.query(
-      `
-        update invoices
-        set
-          paid_minor = $4,
-          refunded_minor = $5,
-          balance_minor = greatest(total_minor - $4 + $5, 0),
-          payment_status = $6
-        where tenant_id = $1 and clinic_id = $2 and id = $3
-      `,
-      [scope.tenantId, scope.clinicId, invoiceId, paidMinor, refundedMinor, paymentStatus]
-    );
+    await refreshInvoiceFinancialState(client, scope, invoiceId);
   }
 
   async #ensureDentalChartInTransaction(
@@ -13320,6 +13804,7 @@ class TransactionBoundSqlClient implements SqlConnectionFactory {
 }
 
 interface IdentityAccessRow {
+  authentication_valid_after: string | Date;
   tenant_authority_generation: string;
   user_authority_generation: string;
   tenant_id: UUID;
@@ -13513,6 +13998,8 @@ interface MigrationBatchRow {
   source_system: string;
   source_file_name: string | null;
   source_checksum: string | null;
+  import_run_id: UUID | null;
+  import_step_digest: string | null;
   state: MigrationBatchRecord["state"];
   uploaded_by_user_id: UUID;
   committed_by_user_id: UUID | null;
@@ -13531,7 +14018,17 @@ interface MigrationBatchRow {
   updated_at: Date | string;
 }
 
+interface ImportRunRow {
+  id: UUID;
+  tenant_id: UUID;
+  clinic_id: UUID;
+  source_system: string;
+  created_by_user_id: UUID;
+  created_at: Date | string;
+}
+
 interface MigrationRowRow {
+  raw_payload?: Record<string, unknown>;
   id: UUID;
   tenant_id: UUID;
   clinic_id: UUID;
@@ -14480,6 +14977,8 @@ interface InvoiceRow {
   updated_by_user_id: UUID | null;
   created_at: Date | string;
   updated_at: Date | string;
+  credited_minor?: string;
+  financial_version?: string;
 }
 
 interface CheckoutRecallGenerationCandidateRow extends InvoiceRow {
@@ -15153,6 +15652,8 @@ function mapMigrationBatchRow(row: MigrationBatchRow): MigrationBatchRecord {
     sourceSystem: row.source_system,
     sourceFileName: row.source_file_name,
     sourceChecksum: row.source_checksum,
+    importRunId: row.import_run_id ?? null,
+    importStepDigest: row.import_step_digest ?? null,
     state: row.state,
     uploadedByUserId: row.uploaded_by_user_id,
     committedByUserId: row.committed_by_user_id,
@@ -15172,11 +15673,23 @@ function mapMigrationBatchRow(row: MigrationBatchRow): MigrationBatchRecord {
   };
 }
 
+function mapImportRunRow(row: ImportRunRow): ImportRunRecord {
+  return {
+    id: row.id,
+    tenantId: row.tenant_id,
+    clinicId: row.clinic_id,
+    sourceSystem: row.source_system,
+    createdByUserId: row.created_by_user_id,
+    createdAt: toIso(row.created_at)
+  };
+}
+
 function mapMigrationRowRow(
   row: MigrationRowRow,
   conflicts: MigrationConflictRecord[]
 ): MigrationRowRecord {
   return {
+    sourceFormat: migrationSourceFormat(row.import_type, row.raw_payload),
     id: row.id,
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
@@ -16388,6 +16901,8 @@ function mapInvoiceRow(row: InvoiceRow): InvoiceRecord {
     totalMinor: Number(row.total_minor),
     paidMinor: Number(row.paid_minor),
     refundedMinor: Number(row.refunded_minor),
+    creditedMinor: Number(row.credited_minor ?? 0),
+    financialVersion: Number(row.financial_version ?? 1),
     balanceMinor: Number(row.balance_minor),
     treatmentPlanId: row.treatment_plan_id,
     issuedAt: toIso(row.issued_at),
@@ -16670,8 +17185,8 @@ function mapLabReconciliationRow(row: LabReconciliationRow): LabReconciliationRe
     tenantId: row.tenant_id,
     clinicId: row.clinic_id,
     vendorId: row.vendor_id,
-    periodStart: toIso(row.period_start).slice(0, 10),
-    periodEnd: toIso(row.period_end).slice(0, 10),
+    periodStart: sqlCalendarDate(row.period_start),
+    periodEnd: sqlCalendarDate(row.period_end),
     status: row.status,
     invoiceReference: row.invoice_reference,
     invoiceAmountMinor: row.invoice_amount_minor === null ? null : Number(row.invoice_amount_minor),
@@ -17368,8 +17883,7 @@ function positiveRowVersion(value: number | string): number {
 }
 
 function isoDateOnly(value: Date | string): string {
-  if (value instanceof Date) return value.toISOString().slice(0, 10);
-  return value.slice(0, 10);
+  return sqlCalendarDate(value);
 }
 
 function validatedTraceparent(value: string | undefined): string | undefined {

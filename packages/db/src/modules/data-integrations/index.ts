@@ -6,6 +6,12 @@ import {
 } from "../core/scoped-repository-port.ts";
 
 export const DATA_INTEGRATIONS_OPERATIONS = [
+"createAppointmentImport","stageAppointmentObservations","sealAppointmentImport","listAppointmentImports","getAppointmentImport","lockAppointmentObservation","decideAppointmentObservation",
+  "createPatientFile", "findPatientFile", "stagePatientFileChunk", "sealPatientFile",
+  "createImportRun",
+  "listImportRuns",
+  "findImportRunById",
+  "stageImportRunBatch",
   "createMigrationBatch",
   "listMigrationBatches",
   "findMigrationBatchById",

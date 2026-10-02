@@ -18,6 +18,7 @@ WORKDIR /workspace
 COPY package.json package-lock.json ./
 COPY apps ./apps
 COPY packages ./packages
+COPY scripts/dependency-patches.mjs ./scripts/dependency-patches.mjs
 RUN npm ci --omit=dev --workspace @clinic-os/api --include-workspace-root=false \
     && mkdir -p /runtime-dependencies \
     && find apps packages -type d -name node_modules -prune -exec sh -c \
@@ -32,7 +33,7 @@ ENV NODE_ENV="production" \
     NODE_OPTIONS="--enable-source-maps" \
     PORT="4100"
 WORKDIR /workspace
-RUN apk add --no-cache --upgrade libcrypto3=3.5.8-r0 libssl3=3.5.8-r0 \
+RUN apk add --no-cache --upgrade libcrypto3=3.5.9-r0 libssl3=3.5.9-r0 \
     && rm -rf /usr/local/lib/node_modules/npm \
     && rm -rf /usr/local/lib/node_modules/corepack /opt/yarn-* \
     && rm -f /usr/local/bin/npm /usr/local/bin/npx /usr/local/bin/corepack /usr/local/bin/pnpm /usr/local/bin/pnpx /usr/local/bin/yarn /usr/local/bin/yarnpkg \

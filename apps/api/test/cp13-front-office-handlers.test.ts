@@ -133,7 +133,9 @@ test("unique patient creation records patient and attribution evidence", async (
     true
   );
   assert.equal(
-    events.outbox.every((event) => event.idempotencyKey === "cp13-create-patient-unique"),
+    events.outbox.every((event) =>
+      String(event.idempotencyKey).includes(":cp13-create-patient-unique:")
+    ),
     true
   );
 });
@@ -216,12 +218,22 @@ test("appointment booking validates scoped configuration, rejects conflicts and 
 
   hasConflict = false;
   const response = await FRONT_OFFICE_FEATURE_HANDLERS.createAppointment!(
-    request("createAppointment", { body: baseBody }),
+    request("createAppointment", {
+      body: baseBody,
+      headers: { "idempotency-key": "synthetic-booking-events" }
+    }),
     context
   );
   assert.equal(response.status, 201);
   assertContractResponse("createAppointment", response);
   assert.equal(createCalls, 1);
+  assert.equal(new Set(events.outbox.map((event) => event.idempotencyKey)).size, 2);
+  assert.equal(
+    events.outbox.every((event) =>
+      String(event.idempotencyKey).includes(":synthetic-booking-events:")
+    ),
+    true
+  );
   assert.equal(
     events.outbox.some((event) => event.eventType === "appointment.confirmation_requested"),
     true
@@ -398,7 +410,7 @@ test("patient timeline exposes attribution as its own public category", async ()
   const context = featureContext({
     patientAdministration: {
       findPatientById: async () => patientRecord(),
-      findPatientTimeline: async () => [
+      listPatientTimeline: async () => ({records: [
         {
           id: "10000000-0000-4000-8000-000000000080",
           tenantId: TENANT_ID,
@@ -412,7 +424,8 @@ test("patient timeline exposes attribution as its own public category", async ()
           summary: null,
           metadata: {}
         }
-      ]
+      ],nextCursor:null}
+      )
     }
   });
   const response = await FRONT_OFFICE_FEATURE_HANDLERS.getPatientTimeline!(
@@ -472,7 +485,7 @@ test("intake rejects inactive templates and successful submission emits audit/ou
     {
       patientAdministration: { findPatientById: async () => patientRecord() },
       clinicalCare: {
-        findIntakeFormTemplateById: async () => ({ id: "template", active }),
+        findIntakeFormTemplateById: async () => ({ id: "template", active, formType: "patient_intake", schema: {fields:["allergies"]} }),
         createIntakeFormSubmission: async () => ({ id: "submission", patientId: PATIENT_ID })
       }
     },
@@ -540,7 +553,7 @@ function request(
         },
         memberships: [],
         clinicAssignments: [],
-        roleAssignments: []
+        roleAssignments: [{tenantId:TENANT_ID,clinicId:CLINIC_ID,userId:ACTOR_ID,roleSlug:"owner_admin"}]
       }
     },
     parsed: {
@@ -698,6 +711,14 @@ function providerScheduleRecord(overrides: Record<string, unknown> = {}) {
 
 function validSchedulingConfiguration() {
   return {
+    listClinicDoctors: async () => [
+      {
+        tenantId: TENANT_ID,
+        clinicId: CLINIC_ID,
+        providerUserId: ACTOR_ID,
+        displayName: "Dr Synthetic"
+      }
+    ],
     listAppointmentTypes: async () => [appointmentTypeRecord()],
     listChairs: async () => [chairRecord()],
     listProviderSchedules: async () => [providerScheduleRecord()],
@@ -733,3 +754,171 @@ function assertContractResponse(operationId: string, response: { status: number;
   const parsed = parseNativeOperationResponse(operationId, response.status, response.body);
   assert.equal(parsed.success, true, JSON.stringify(parsed));
 }
+
+test("rescheduling preserves identity, excludes itself from conflicts and records before/after evidence", async () => {
+  const evidence = evidenceRecorder();
+  const existing = appointmentRecord({ status: "confirmed", startAt: "2026-07-10T08:00:00.000Z" });
+  let filter: unknown;
+  let saved: Record<string, unknown> = {};
+  const context = featureContext(
+    {
+      scheduling: {
+        ...validSchedulingConfiguration(),
+        findAppointmentById: async () => existing,
+        findAppointmentConflicts: async (value: unknown) => {
+          filter = value;
+          return [];
+        },
+        rescheduleAppointment: async (id: string, input: Record<string, unknown>) => {
+          assert.equal(id, APPOINTMENT_ID);
+          saved = input;
+          return { ...existing, ...input, status: "booked" };
+        }
+      }
+    },
+    evidence
+  );
+  const response = await FRONT_OFFICE_FEATURE_HANDLERS.updateAppointment!(
+    request("updateAppointment", {
+      path: { appointmentId: APPOINTMENT_ID },
+      body: {
+        schedule: {
+          providerUserId: ACTOR_ID,
+          appointmentTypeId: APPOINTMENT_TYPE_ID,
+          startAt: "2026-07-10T09:00:00Z",
+          durationMinutes: 45
+        },
+        changeReason: "Patient requested a later time"
+      }
+    }),
+    context
+  );
+  assertContractResponse("updateAppointment", response);
+  assert.equal(
+    (filter as { appointmentIdToExclude: string }).appointmentIdToExclude,
+    APPOINTMENT_ID
+  );
+  assert.equal(saved.endAt, "2026-07-10T09:45:00.000Z");
+  assert.equal(
+    (response.body as { appointment: { id: string; status: string; source: string } }).appointment
+      .id,
+    APPOINTMENT_ID
+  );
+  assert.equal(evidence.audit[0]?.action, "appointment.updated");
+  assert.equal(
+    (evidence.audit[0]?.metadata as { previous: { status: string } }).previous.status,
+    "confirmed"
+  );
+  assert.equal(
+    evidence.outbox.some((event) => event.eventType === "appointment.confirmation_requested"),
+    true
+  );
+});
+
+test("rescheduling denies arrived/ended records, inactive doctors and conflicts before writing", async () => {
+  const base = {
+    path: { appointmentId: APPOINTMENT_ID },
+    body: {
+      schedule: {
+        providerUserId: ACTOR_ID,
+        appointmentTypeId: APPOINTMENT_TYPE_ID,
+        startAt: "2026-07-10T09:00:00Z",
+        durationMinutes: 30
+      },
+      changeReason: "Requested"
+    }
+  };
+  for (const status of ["checked_in", "in_consult", "completed", "cancelled", "no_show"]) {
+    await assert.rejects(
+      FRONT_OFFICE_FEATURE_HANDLERS.updateAppointment!(
+        request("updateAppointment", base),
+        featureContext({
+          scheduling: {
+            findAppointmentById: async () => appointmentRecord({ status })
+          }
+        })
+      ),
+      (error) => apiError(error, 409)
+    );
+  }
+  for (const unavailable of ["doctor", "overlap"]) {
+    await assert.rejects(
+      FRONT_OFFICE_FEATURE_HANDLERS.updateAppointment!(
+        request("updateAppointment", base),
+        featureContext({
+          scheduling: {
+            ...validSchedulingConfiguration(),
+            findAppointmentById: async () => appointmentRecord(),
+            ...(unavailable === "doctor" ? { listClinicDoctors: async () => [] } : {}),
+            findAppointmentConflicts: async () => [{ appointmentId: "other" }],
+            rescheduleAppointment: async () => {
+              assert.fail("must not write");
+            }
+          }
+        })
+      ),
+      (error) => apiError(error, 409)
+    );
+  }
+});
+
+test("no-show requires an elapsed booked visit without recorded arrival", async () => {
+  for (const existing of [
+    appointmentRecord({ status: "booked", endAt: "2026-07-10T21:00:00.000Z" }),
+    appointmentRecord({ status: "requested" }),
+    appointmentRecord({ status: "checked_in" })
+  ]) {
+    await assert.rejects(
+      FRONT_OFFICE_FEATURE_HANDLERS.updateAppointment!(
+        request("updateAppointment", {
+          path: { appointmentId: APPOINTMENT_ID },
+          body: { status: "no_show" }
+        }),
+        featureContext({
+          scheduling: {
+            findAppointmentById: async () => existing,
+            updateAppointmentStatus: async () => assert.fail("must not record false attendance")
+          }
+        })
+      ),
+      (error) => apiError(error, 409)
+    );
+  }
+});
+
+test("a stale queue cannot call or requeue a cancelled appointment", async () => {
+  for (const status of ["waiting", "called"]) {
+    await assert.rejects(
+      FRONT_OFFICE_FEATURE_HANDLERS.updateQueueEntry!(
+        request("updateQueueEntry", { path: { queueEntryId: QUEUE_ID }, body: { status } }),
+        featureContext({
+          scheduling: {
+            listQueueEntries: async () => [queueRecord({ status: "waiting" })],
+            findAppointmentById: async () => appointmentRecord({ status: "cancelled" }),
+            updateQueueEntry: async () => assert.fail("must not call an ended appointment")
+          }
+        })
+      ),
+      (error) => apiError(error, 409)
+    );
+  }
+});
+
+test("history passes only scoped authorized event types to durable paging and audits the read", async () => {
+  const evidence=evidenceRecorder();
+  let captured:Record<string,unknown>={};
+  const context=featureContext({patientAdministration:{findPatientById:async()=>patientRecord(),listPatientTimeline:async (_patient:unknown,input:Record<string,unknown>)=>{captured=input;return {records:[],nextCursor:null};}}},evidence);
+  const req=request('getPatientTimeline',{path:{patientId:PATIENT_ID},query:{limit:20,cursor:PATIENT_ID}});
+  const receptionist={...req,access:{...req.access,context:{...req.access.context,roleAssignments:[{tenantId:TENANT_ID,clinicId:CLINIC_ID,userId:ACTOR_ID,roleSlug:'receptionist'}]}}} as ClinicFeatureOperationRequest;
+  const response=await FRONT_OFFICE_FEATURE_HANDLERS.getPatientTimeline!(receptionist,context);
+  assertContractResponse('getPatientTimeline',response);
+  assert.equal(captured.limit,20);assert.equal(captured.cursor,PATIENT_ID);
+  assert.deepEqual(captured.itemTypes,[]); // Reception has no patient.phi.read; route middleware normally denies first.
+  assert.ok(!(captured.itemTypes as string[]).includes('clinical_note_signed'));
+  assert.equal(evidence.audit.length,1);
+  await assert.rejects(()=>FRONT_OFFICE_FEATURE_HANDLERS.getPatientTimeline!({...receptionist,parsed:{...receptionist.parsed,query:{category:'visits'}}},context),(e:unknown)=>apiError(e,403));
+});
+test("history converts invalid scoped cursors to a client error", async()=>{
+  const context=featureContext({patientAdministration:{findPatientById:async()=>patientRecord(),listPatientTimeline:async()=>{throw new RangeError('Wrong cursor');}}});
+  await assert.rejects(()=>FRONT_OFFICE_FEATURE_HANDLERS.getPatientTimeline!(request('getPatientTimeline',{path:{patientId:PATIENT_ID}}),context),(e:unknown)=>apiError(e,400));
+});

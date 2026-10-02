@@ -1,3 +1,4 @@
+import { staffFetch } from "./staff-session";
 export type WorkflowSource =
   | "google"
   | "instagram"
@@ -978,7 +979,7 @@ async function fetchEndpoint(
   params: Record<string, string>,
   signal?: AbortSignal
 ): Promise<EndpointResponse> {
-  const response = await fetch(buildWorkflowUrl(path, params), {
+  const response = await staffFetch(buildWorkflowUrl(path, params), {
     credentials: "include",
     headers: {
       Accept: "application/json"
@@ -1000,7 +1001,7 @@ async function fetchEndpoint(
 }
 
 async function postEndpoint(path: string, body: Record<string, unknown>, signal?: AbortSignal) {
-  const response = await fetch(buildWorkflowUrl(path), {
+  const response = await staffFetch(buildWorkflowUrl(path), {
     body: JSON.stringify(body),
     credentials: "include",
     headers: {

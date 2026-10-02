@@ -1,3 +1,5 @@
+import { staffFetch } from "./staff-session";
+import { PRACTO_PATIENT_FORMAT } from "./practo-patient-import";
 export type Cp7IntegrationOpsSource = "api" | "cp7_fixture";
 
 export type ProviderHealthStatus = "available" | "degraded" | "not_configured" | "unavailable";
@@ -124,6 +126,7 @@ export interface MigrationCommitState {
 }
 
 export interface MigrationBatch {
+  sourceFormat?: typeof PRACTO_PATIENT_FORMAT;
   conflictsTruncated?: boolean;
   commit: MigrationCommitState;
   conflicts: MigrationConflict[];
@@ -147,6 +150,7 @@ export interface MigrationBatch {
 }
 
 export interface CreateMigrationBatchRequest {
+  importRunId?: string;
   csv: string;
   importType: MigrationImportType;
   sourceFileName?: string | null;
@@ -332,6 +336,19 @@ const MIGRATION_TRIAL_ORDER: readonly MigrationImportType[] = [
 ];
 
 export type MigrationTrialStepState = "complete" | "current" | "upcoming";
+
+export function getInitialImportRunStep(batches: readonly MigrationBatch[]): MigrationImportType {
+  if (isPractoPatientTrial(batches)) return "patients";
+  return MIGRATION_TRIAL_ORDER.find((type) => {
+    const batch = batches.find((item) => item.importType === type);
+    return !batch || batch.counts.committed === 0 || batch.counts.ready > 0 ||
+      batch.conflicts.some((conflict) => conflict.status === "unresolved");
+  }) ?? "appointments";
+}
+
+export function isPractoPatientTrial(batches: readonly MigrationBatch[]): boolean {
+  return batches.some((batch) => batch.importType === "patients" && batch.sourceFormat === PRACTO_PATIENT_FORMAT);
+}
 
 export function getMigrationTrialStepStates(
   batches: readonly MigrationBatch[],
@@ -1023,6 +1040,7 @@ export async function createLiveMigrationBatch(
     "/v1/migration-batches",
     {
       csv: input.csv,
+      ...(input.importRunId ? { importRunId: input.importRunId } : {}),
       importType: input.importType,
       sourceFileName: input.sourceFileName?.trim() || null,
       sourceSystem: input.sourceSystem.trim()
@@ -1204,7 +1222,7 @@ function normalizeCp7LivePayload(input: {
   };
 }
 
-function normalizeClinicDoctors(payload: unknown): EligibleClinicDoctor[] | null {
+export function normalizeClinicDoctors(payload: unknown): EligibleClinicDoctor[] | null {
   if (!isRecord(payload) || !Array.isArray(payload.clinicDoctors)) return null;
 
   const doctors = payload.clinicDoctors.map((value) => {
@@ -1267,7 +1285,7 @@ function readArray(payload: unknown, keys: string[]) {
   return [];
 }
 
-function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
+export function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
   if (isMigrationBatch(value)) return value;
   if (!isRecord(value) || !isRecord(value.batch)) return null;
 
@@ -1292,6 +1310,9 @@ function normalizeLiveMigrationBatch(value: unknown): MigrationBatch | null {
   const uploadedAt = readString(batch, ["createdAt", "uploadedAt"]) ?? new Date().toISOString();
 
   return {
+    ...(readArray(value, ["rows"]).some((row) =>
+      isRecord(row) && row.sourceFormat === PRACTO_PATIENT_FORMAT
+    ) ? { sourceFormat: PRACTO_PATIENT_FORMAT } : {}),
     commit: {
       ...(state === "committed" || state === "partially_committed"
         ? { committedAt: readString(batch, ["committedAt"]) ?? undefined }
@@ -1601,7 +1622,7 @@ async function fetchEndpoint(
   params: Record<string, string>,
   signal?: AbortSignal
 ): Promise<EndpointResponse> {
-  const response = await fetch(buildWorkflowUrl(path, params), {
+  const response = await staffFetch(buildWorkflowUrl(path, params), {
     credentials: "include",
     headers: {
       Accept: "application/json"
@@ -1622,7 +1643,7 @@ async function fetchEndpoint(
 }
 
 async function postEndpoint(path: string, body: unknown, signal?: AbortSignal) {
-  const response = await fetch(buildWorkflowUrl(path), {
+  const response = await staffFetch(buildWorkflowUrl(path), {
     body: JSON.stringify(body),
     credentials: "include",
     headers: {

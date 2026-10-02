@@ -1,3 +1,4 @@
+import { PATIENT_HISTORY_CATEGORIES } from "@clinic-os/domain";
 import {
   API_ERROR_SCHEMA,
   EMPTY_OBJECT_SCHEMA,
@@ -393,6 +394,7 @@ export const ACTIVE_NATIVE_HTTP_OPERATIONS: readonly HttpOperationContract[] = [
     },
     nativeRuntimeEnforcement: "route-parity"
   }),
+  ...workflowDiscoveryOperations(),
   ...healthDependencyOperations(),
   operation({
     operationId: "getCurrentIdentity",
@@ -500,6 +502,8 @@ export const ACTIVE_NATIVE_HTTP_OPERATIONS: readonly HttpOperationContract[] = [
   ...cp3Operations(),
   ...cp4Operations(),
   ...cp5Operations(),
+  ...financialOperations(),
+  ...appointmentReviewOperations(),
   ...cp6Operations(),
   ...cp7Operations(),
   ...cp8Operations(),
@@ -536,6 +540,11 @@ export interface VersionedResourceResponseContract {
 }
 
 export const VERSIONED_RESOURCE_RESPONSE_CONTRACTS: readonly VersionedResourceResponseContract[] = [
+  {family:"treatment_plan",updateOperationId:"acceptTreatmentPlan",sources:[{operationId:"listPatientTreatmentPlans",status:200,responsePath:"treatmentPlans[]",role:"list"},{operationId:"acceptTreatmentPlan",status:200,responsePath:"treatmentPlan",role:"update"}]},
+  {family:"encounter",updateOperationId:"signEncounterClinicalNote",sources:[{operationId:"getEncounter",status:200,responsePath:"encounter",role:"read"},{operationId:"signEncounterClinicalNote",status:200,responsePath:"encounter",role:"update"}]},
+  {family:"encounter",updateOperationId:"amendEncounterClinicalNote",sources:[{operationId:"getEncounter",status:200,responsePath:"encounter",role:"read"},{operationId:"amendEncounterClinicalNote",status:200,responsePath:"encounter",role:"update"}]},
+  {family:"encounter",updateOperationId:"closeEncounter",sources:[{operationId:"getEncounter",status:200,responsePath:"encounter",role:"read"},{operationId:"closeEncounter",status:200,responsePath:"encounter",role:"update"}]},
+
   {
     family: "patient",
     updateOperationId: "updatePatient",
@@ -543,6 +552,7 @@ export const VERSIONED_RESOURCE_RESPONSE_CONTRACTS: readonly VersionedResourceRe
       { operationId: "listPatients", status: 200, responsePath: "patients[]", role: "list" },
       { operationId: "createPatient", status: 201, responsePath: "patient", role: "create" },
       { operationId: "getPatient", status: 200, responsePath: "patient", role: "read" },
+      { operationId: "getPatientDemographics", status: 200, responsePath: "patient", role: "read" },
       { operationId: "updatePatient", status: 200, responsePath: "patient", role: "update" }
     ]
   },
@@ -659,6 +669,7 @@ export const VERSIONED_RESOURCE_RESPONSE_CONTRACTS: readonly VersionedResourceRe
     updateOperationId: "saveEncounterClinicalNoteDraft",
     sources: [
       { operationId: "createEncounter", status: 201, responsePath: "encounter", role: "create" },
+      { operationId: "listPatientEncounters", status: 200, responsePath: "encounters[]", role: "list" },
       { operationId: "getEncounter", status: 200, responsePath: "encounter", role: "read" },
       { operationId: "startEncounter", status: 200, responsePath: "encounter", role: "action" },
       {
@@ -786,7 +797,7 @@ export const VERSIONED_RESOURCE_RESPONSE_CONTRACTS: readonly VersionedResourceRe
     family: "lab_case",
     updateOperationId: "updateLabCase",
     sources: [
-      { operationId: "listLabCases", status: 200, responsePath: "labCases[]", role: "list" },
+      { operationId: "listLabCases", status: 200, responsePath: "labCases[].labCase", role: "list" },
       {
         operationId: "createLabCase",
         status: 201,
@@ -805,6 +816,7 @@ export const VERSIONED_RESOURCE_RESPONSE_CONTRACTS: readonly VersionedResourceRe
     family: "inventory_check_run",
     updateOperationId: "updateInventoryCheckRun",
     sources: [
+      {operationId:"listInventoryCheckRuns",status:200,responsePath:"runs[].run",role:"list"},
       {
         operationId: "createInventoryCheckRun",
         status: 201,
@@ -1175,7 +1187,9 @@ function cp2Operations(): HttpOperationContract[] {
   const patientBody = bodySchema(
     {
       fullName: shortText,
-      phone: schema.string({ minLength: 8, maxLength: 16, pattern: "^\\+[1-9][0-9]{7,14}$" }),
+      phone: schema.nullable(schema.string({ minLength: 8, maxLength: 16, pattern: "^\\+[1-9][0-9]{7,14}$" })),
+      contactUnavailableReason: schema.string({minLength: 5,maxLength: 500}),
+      duplicateReview: bodySchema({patientIds: schema.array(uuid,{minItems:1,maxItems:100}),reason:schema.string({minLength:5,maxLength:500})},["patientIds","reason"]),
       email: schema.nullable(schema.string({ format: "email", maxLength: 320 })),
       dateOfBirth: schema.nullable(date),
       gender: schema.enum(["female", "male", "other", "unknown"]),
@@ -1203,6 +1217,10 @@ function cp2Operations(): HttpOperationContract[] {
     },
     ["patientId", "providerUserId", "appointmentTypeId", "startAt"]
   );
+  const rescheduleBody = bodySchema({
+    providerUserId: uuid, appointmentTypeId: uuid, chairId: optionalUuid,
+    startAt: dateTime, durationMinutes: schema.integer({ minimum: 5, maximum: 720 })
+  }, ["providerUserId", "appointmentTypeId", "startAt", "durationMinutes"]);
   return [
     operation({
       operationId: "listPatients",
@@ -1262,7 +1280,9 @@ function cp2Operations(): HttpOperationContract[] {
       body: bodySchema(
         {
           fullName: shortText,
-          phone: schema.nullable(shortText),
+          phone: schema.nullable(schema.string({minLength:8,maxLength:16,pattern:"^\\+[1-9][0-9]{7,14}$"})),
+          contactUnavailableReason: schema.string({minLength:5,maxLength:500}),
+          duplicateReview: bodySchema({patientIds:schema.array(uuid,{minItems:1,maxItems:100}),reason:schema.string({minLength:5,maxLength:500})},["patientIds","reason"]),
           email: schema.nullable(schema.string({ format: "email", maxLength: 320 })),
           dateOfBirth: schema.nullable(date),
           gender: schema.enum(["female", "male", "other", "unknown"])
@@ -1273,6 +1293,8 @@ function cp2Operations(): HttpOperationContract[] {
       optimisticConcurrency: true,
       success: { 200: singleVersionedEntity("patient") }
     }),
+    operation({operationId:"listPatientDentalSnapshots",checkpoint:"CP4",method:"GET",path:"/v1/patients/{patientId}/dental-snapshots",summary:"Page immutable dental snapshot descriptions",tags:["Dental"],phi:"read",pathProperties:{patientId:uuid},mutation:false,paginated:true,queryProperties:{cursor:uuid},success:{200:responseSchema({snapshots:entities,nextCursor:optionalUuid})}}),
+    operation({operationId:"getPatientDentalSnapshot",checkpoint:"CP4",method:"GET",path:"/v1/patients/{patientId}/dental-snapshots/{snapshotId}",summary:"Read an immutable patient dental snapshot",tags:["Dental"],phi:"read",pathProperties:{patientId:uuid,snapshotId:uuid},mutation:false,success:{200:singleEntity("snapshot")}}),
     operation({
       operationId: "getPatientTimeline",
       checkpoint: "CP2",
@@ -1284,7 +1306,8 @@ function cp2Operations(): HttpOperationContract[] {
       pathProperties: { patientId: uuid },
       mutation: false,
       paginated: true,
-      success: { 200: responseSchema({ timeline: entities, items: entities }) }
+      queryProperties: { cursor: uuid, category: schema.enum(PATIENT_HISTORY_CATEGORIES) },
+      success: { 200: responseSchema({ timeline: entities, items: entities, nextCursor: optionalUuid, allowedCategories: schema.array(schema.enum(PATIENT_HISTORY_CATEGORIES)), generatedAt:dateTime }) }
     }),
     operation({
       operationId: "listLeads",
@@ -1296,8 +1319,8 @@ function cp2Operations(): HttpOperationContract[] {
       phi: "read",
       mutation: false,
       paginated: true,
-      queryProperties: { source: schema.enum(leadSources), status: schema.enum(leadStatuses) },
-      success: { 200: versionedEntityList("leads") }
+      queryProperties: { cursor: uuid, source: schema.enum(leadSources), status: schema.enum(leadStatuses) },
+      success: { 200: responseSchema({ leads: versionedEntities, nextCursor: optionalUuid }) }
     }),
     operation({
       operationId: "createLead",
@@ -1412,11 +1435,22 @@ function cp2Operations(): HttpOperationContract[] {
       checkpoint: "CP2",
       method: "PATCH",
       path: "/v1/appointments/{appointmentId}",
-      summary: "Transition appointment status",
+      summary: "Transition status or reschedule an appointment with a reviewed version",
       tags: ["Appointments"],
       phi: "write",
       pathProperties: { appointmentId: uuid },
-      body: bodySchema({ status: schema.enum(appointmentStatuses) }, ["status"]),
+      body: bodySchema({
+        status: schema.enum(appointmentStatuses),
+        changeReason: schema.string({ minLength: 1, maxLength: 500 }),
+        schedule: rescheduleBody
+      }, [], { oneOf: [
+        { type: "object", required: ["status"], properties: {
+          status: schema.enum(appointmentStatuses), changeReason: schema.string({ minLength: 1, maxLength: 500 })
+        }, additionalProperties: false },
+        { type: "object", required: ["schedule", "changeReason"], properties: {
+          schedule: rescheduleBody, changeReason: schema.string({ minLength: 1, maxLength: 500 })
+        }, additionalProperties: false }
+      ] }),
       optimisticConcurrency: true,
       success: { 200: singleVersionedEntity("appointment") }
     }),
@@ -1717,6 +1751,7 @@ function cp3Operations(): HttpOperationContract[] {
         200: responseSchema({ encounter: versionedEntity, noteVersions: entities })
       }
     }),
+    operation({operationId:"closeEncounter",checkpoint:"CP3",method:"POST",path:"/v1/encounters/{encounterId}/close",summary:"Finish a signed visit and complete its linked appointment and queue atomically",tags:["Clinical","Encounters"],phi:"write",pathProperties:{encounterId:uuid},optimisticConcurrency:true,success:{200:singleVersionedEntity("encounter")}}),
     operation({
       operationId: "startEncounter",
       checkpoint: "CP3",
@@ -1752,6 +1787,7 @@ function cp3Operations(): HttpOperationContract[] {
       tags: ["Clinical", "Signatures"],
       phi: "write",
       pathProperties: { encounterId: uuid },
+      optimisticConcurrency: true,
       success: { 200: responseSchema({ encounter: versionedEntity, note: entity }) }
     }),
     operation({
@@ -1763,6 +1799,7 @@ function cp3Operations(): HttpOperationContract[] {
       tags: ["Clinical", "Signatures"],
       phi: "write",
       pathProperties: { encounterId: uuid },
+      optimisticConcurrency: true,
       body: bodySchema({ content: clinicalNoteContentSchema, amendmentReason: text }, [
         "content",
         "amendmentReason"
@@ -2057,8 +2094,8 @@ function cp5Operations(): HttpOperationContract[] {
       path: "/v1/pricebook/procedures",
       summary: "List server-authoritative pricebook procedures",
       tags: ["Billing", "Pricebook"],
-      mutation: false,
-      success: { 200: entityList("procedures") }
+      mutation: false, paginated:true, queryProperties:{cursor:uuid},
+      success: { 200: responseSchema({procedures:entities,nextCursor:optionalUuid}) }
     }),
     operation({
       operationId: "createPatientTreatmentPlan",
@@ -2109,6 +2146,7 @@ function cp5Operations(): HttpOperationContract[] {
       phi: "write",
       pathProperties: { treatmentPlanId: uuid },
       body: bodySchema({ acceptedByName: nullableText, acceptanceEvidence: WRITABLE_JSON_SCHEMA }),
+      optimisticConcurrency: true,
       success: { 200: singleVersionedEntity("treatmentPlan") }
     }),
     operation({
@@ -2347,7 +2385,7 @@ function cp6Operations(): HttpOperationContract[] {
       phi: "read",
       mutation: false,
       paginated: true,
-      queryProperties: {
+      queryProperties: { cursor: uuid,
         status: schema.enum(taskStatuses),
         dueDate: date,
         dueBefore: dateTime,
@@ -2355,7 +2393,7 @@ function cp6Operations(): HttpOperationContract[] {
         patientId: uuid,
         sourceWorkflow: schema.enum(taskSources)
       },
-      success: { 200: versionedEntityList("tasks") }
+      success: { 200: responseSchema({ tasks: versionedEntities, nextCursor: optionalUuid }) }
     }),
     operation({
       operationId: "createTask",
@@ -2471,7 +2509,7 @@ function cp6Operations(): HttpOperationContract[] {
       phi: "read",
       mutation: false,
       paginated: true,
-      queryProperties: {
+      queryProperties: { cursor: uuid,
         status: schema.enum([
           "due",
           "contact_requested",
@@ -2484,7 +2522,7 @@ function cp6Operations(): HttpOperationContract[] {
         dueBefore: dateTime,
         patientId: uuid
       },
-      success: { 200: entityList("recalls") }
+      success: { 200: responseSchema({ recalls: entities, nextCursor: optionalUuid }) }
     }),
     operation({
       operationId: "recordRecallAction",
@@ -2527,7 +2565,7 @@ function cp6Operations(): HttpOperationContract[] {
       phi: "read",
       mutation: false,
       paginated: true,
-      queryProperties: {
+      queryProperties: { cursor: uuid,
         status: schema.enum([
           "open",
           "under_review",
@@ -2539,7 +2577,7 @@ function cp6Operations(): HttpOperationContract[] {
         severity: schema.enum(["low", "medium", "high", "critical"]),
         category: schema.enum(incidentCategories)
       },
-      success: { 200: entityList("incidents") }
+      success: { 200: responseSchema({ incidents: entities, nextCursor: optionalUuid }) }
     }),
     operation({
       operationId: "createIncident",
@@ -2580,7 +2618,8 @@ function cp6Operations(): HttpOperationContract[] {
       tags: ["Quality", "Corrective Actions"],
       mutation: false,
       paginated: true,
-      success: { 200: versionedEntityList("correctiveActions") }
+      queryProperties: { cursor: uuid },
+      success: { 200: responseSchema({ correctiveActions: versionedEntities, nextCursor: optionalUuid }) }
     }),
     operation({
       operationId: "createCorrectiveAction",
@@ -2687,8 +2726,8 @@ function sopOperations(taskPriorities: readonly string[]): HttpOperationContract
       tags: ["SOP"],
       mutation: false,
       paginated: true,
-      queryProperties: { date, status: schema.enum(runStatuses), dueBefore: dateTime },
-      success: { 200: versionedEntityList("sopRuns") }
+      queryProperties: { cursor: uuid, date, status: schema.enum(runStatuses), dueBefore: dateTime },
+      success: { 200: responseSchema({ sopRuns: versionedEntities, nextCursor: optionalUuid }) }
     }),
     operation({
       operationId: "generateDueSopRuns",
@@ -2767,7 +2806,8 @@ function labOperations(labStatuses: readonly string[]): HttpOperationContract[] 
       tags: ["Laboratory"],
       mutation: false,
       paginated: true,
-      success: { 200: entityList("labVendors") }
+      queryProperties: { cursor: uuid },
+      success: { 200: responseSchema({ labVendors: entities, nextCursor: optionalUuid }) }
     }),
     operation({
       operationId: "createLabVendor",
@@ -2799,8 +2839,8 @@ function labOperations(labStatuses: readonly string[]): HttpOperationContract[] 
       phi: "read",
       mutation: false,
       paginated: true,
-      queryProperties: { status: schema.enum(labStatuses), dueBefore: dateTime, vendorId: uuid },
-      success: { 200: versionedEntityList("labCases") }
+      queryProperties: { cursor: uuid, status: schema.enum(labStatuses), dueBefore: dateTime, vendorId: uuid },
+      success: { 200: responseSchema({ labCases: schema.array(labCaseDetailSchema, {maxItems:100}), nextCursor: optionalUuid }) }
     }),
     operation({
       operationId: "createLabCase",
@@ -2907,7 +2947,8 @@ function inventoryOperations(): HttpOperationContract[] {
       tags: ["Inventory"],
       mutation: false,
       paginated: true,
-      success: { 200: entityList("categories") }
+      queryProperties: { cursor: uuid },
+      success: { 200: responseSchema({ categories: entities, nextCursor: optionalUuid }) }
     }),
     operation({
       operationId: "createInventoryCategory",
@@ -2936,7 +2977,8 @@ function inventoryOperations(): HttpOperationContract[] {
       tags: ["Inventory"],
       mutation: false,
       paginated: true,
-      success: { 200: entityList("items") }
+      queryProperties: { cursor: uuid },
+      success: { 200: responseSchema({ items: entities, nextCursor: optionalUuid }) }
     }),
     operation({
       operationId: "createInventoryItem",
@@ -3000,7 +3042,8 @@ function inventoryOperations(): HttpOperationContract[] {
       tags: ["Inventory"],
       mutation: false,
       paginated: true,
-      success: { 200: entityList("templates") }
+      queryProperties: { cursor: uuid },
+      success: { 200: responseSchema({ templates: entities, nextCursor: optionalUuid }) }
     }),
     operation({
       operationId: "createInventoryCheckTemplate",
@@ -3078,13 +3121,47 @@ function inventoryOperations(): HttpOperationContract[] {
       tags: ["Inventory"],
       mutation: false,
       paginated: true,
-      queryProperties: { itemId: uuid, checkRunId: uuid },
-      success: { 200: entityList("exceptions") }
+      queryProperties: { cursor: uuid, itemId: uuid, checkRunId: uuid },
+      success: { 200: responseSchema({exceptions:entities,nextCursor:optionalUuid}) }
     })
   ];
 }
 
 function cp7Operations(): HttpOperationContract[] {
+  const patientChunkManifest = responseSchema({ ordinal: schema.integer({ minimum: 0, maximum: 49 }),
+    rowCount: schema.integer({ minimum: 1, maximum: 100 }), digest: schema.string({ pattern: "^[0-9a-f]{64}$", minLength: 64, maxLength: 64 }) });
+  const patientFile = responseSchema({ runId: uuid, profile: schema.enum(["practo_ray_patients_v1"]),
+    rowCount: schema.integer({ minimum: 1, maximum: 5000 }), sealed: schema.boolean(), received: nonNegativeInteger,
+    chunks: schema.array(responseSchema({ ordinal: schema.integer({ minimum: 0, maximum: 49 }),
+      rowCount: schema.integer({ minimum: 1, maximum: 100 }), digest: schema.string({ minLength: 64, maxLength: 64 }),
+      batchId: schema.nullable(uuid), state: nullableText, ready: nonNegativeInteger, needsReview: nonNegativeInteger,
+      invalid: nonNegativeInteger, skipped: nonNegativeInteger, committed: nonNegativeInteger, reconciled: nonNegativeInteger,
+      failed: nonNegativeInteger, rolledBack: nonNegativeInteger }), { maxItems: 50 }) });
+  const importRunRecord = responseSchema({
+    id: uuid,
+    tenantId: uuid,
+    clinicId: uuid,
+    sourceSystem: shortText,
+    createdByUserId: uuid,
+    createdAt: dateTime
+  });
+  const importRunReconciliation = responseSchema({
+    received: nonNegativeInteger,
+    valid: nonNegativeInteger,
+    invalid: nonNegativeInteger,
+    needsReview: nonNegativeInteger,
+    ready: nonNegativeInteger,
+    committed: nonNegativeInteger,
+    skipped: nonNegativeInteger,
+    rolledBack: nonNegativeInteger,
+    failed: nonNegativeInteger,
+    reconciled: nonNegativeInteger,
+    missingSourceAssessment: schema.enum(["unknown"])
+  });
+  const importRunStatus = schema.enum([
+    "awaiting_patients", "awaiting_practitioners", "awaiting_appointments",
+    "review_required", "partial", "complete", "rolled_back"
+  ]);
   const migrationBatchStatuses = [
     "uploaded",
     "parsed",
@@ -3097,6 +3174,60 @@ function cp7Operations(): HttpOperationContract[] {
     "rolled_back"
   ] as const;
   return [
+    operation({ operationId: "createPatientImportFile", checkpoint: "CP7", method: "POST",
+      path: "/v1/migration-runs/{runId}/patient-file", summary: "Save an immutable patient-file manifest before bounded upload",
+      tags: ["Migration"], phi: "write", pathProperties: { runId: uuid },
+      body: bodySchema({ profile: schema.enum(["practo_ray_patients_v1"]), rowCount: schema.integer({ minimum: 1, maximum: 5000 }),
+        chunks: schema.array(patientChunkManifest, { minItems: 1, maxItems: 50 }) }, ["profile", "rowCount", "chunks"]),
+      success: { 200: responseSchema({ file: patientFile }) } }),
+    operation({ operationId: "getPatientImportFile", checkpoint: "CP7", method: "GET",
+      path: "/v1/migration-runs/{runId}/patient-file", summary: "Read bounded patient-file receipts and reconciliation",
+      tags: ["Migration"], phi: "read", mutation: false, pathProperties: { runId: uuid },
+      success: { 200: responseSchema({ file: patientFile }) } }),
+    operation({ operationId: "stagePatientImportChunk", checkpoint: "CP7", method: "POST",
+      path: "/v1/migration-runs/{runId}/patient-file/chunks/{ordinal}", summary: "Stage or recover one verified patient-file chunk",
+      tags: ["Migration"], phi: "write", pathProperties: { runId: uuid, ordinal: schema.string({ minLength: 1, maxLength: 2, pattern: "^(?:[0-9]|[1-4][0-9])$" }) },
+      body: bodySchema({ csv: schema.string({ minLength: 1, maxLength: 256000 }) }, ["csv"]),
+      success: { 200: responseSchema({ file: patientFile }) } }),
+    operation({ operationId: "sealPatientImportFile", checkpoint: "CP7", method: "POST",
+      path: "/v1/migration-runs/{runId}/patient-file/seal", summary: "Seal a complete patient file before review and commit",
+      tags: ["Migration"], phi: "write", pathProperties: { runId: uuid }, body: bodySchema({}),
+      success: { 200: responseSchema({ file: patientFile }) } }),
+
+    operation({
+      operationId: "listImportRuns",
+      checkpoint: "CP7",
+      method: "GET",
+      path: "/v1/migration-runs",
+      summary: "List clinic-scoped operator import runs with a bounded cursor",
+      tags: ["Migration"],
+      mutation: false,
+      queryProperties: { limit: schema.integer({ minimum: 1, maximum: 100 }), cursor: uuid },
+      success: { 200: responseSchema({ runs: schema.array(importRunRecord, { maxItems: 100 }), nextCursor: schema.nullable(uuid) }) }
+    }),
+    operation({
+      operationId: "createImportRun",
+      checkpoint: "CP7",
+      method: "POST",
+      path: "/v1/migration-runs",
+      summary: "Create or recover an immutable operator import run",
+      tags: ["Migration"],
+      phi: "write",
+      body: bodySchema({ id: uuid, sourceSystem: shortText }, ["id", "sourceSystem"]),
+      success: { 200: responseSchema({ run: importRunRecord }), 201: responseSchema({ run: importRunRecord }) }
+    }),
+    operation({
+      operationId: "getImportRun",
+      checkpoint: "CP7",
+      method: "GET",
+      path: "/v1/migration-runs/{runId}",
+      summary: "Get exact batches and reconciliation for one operator import run",
+      tags: ["Migration"],
+      phi: "read",
+      pathProperties: { runId: uuid },
+      mutation: false,
+      success: { 200: responseSchema({ run: importRunRecord, batches: schema.array(entity, { maxItems: 3 }), status: importRunStatus, reconciliation: importRunReconciliation, patientFile: schema.nullable(patientFile) }, ["run", "batches", "status", "reconciliation"]) }
+    }),
     operation({
       operationId: "listProviderHealth",
       checkpoint: "CP7",
@@ -3168,6 +3299,7 @@ function cp7Operations(): HttpOperationContract[] {
           sourceSystem: shortText,
           sourceFileName: nullableText,
           sourceChecksum: schema.nullable(schema.sha256({ minLength: 64, maxLength: 64 })),
+          importRunId: uuid,
           csv: schema.string({ minLength: 1, maxLength: 900_000 }),
           rows: schema.array(WRITABLE_JSON_SCHEMA, { minItems: 1, maxItems: 100 })
         },
@@ -3180,6 +3312,13 @@ function cp7Operations(): HttpOperationContract[] {
         }
       ),
       success: {
+        200: responseSchema({
+          batch: entity,
+          rows: entities,
+          conflicts: entities,
+          returnedConflictCount: nonNegativeInteger,
+          conflictsTruncated: schema.boolean()
+        }),
         201: responseSchema({
           batch: entity,
           rows: entities,
@@ -3996,3 +4135,71 @@ export function assertNativeHttpContractRegistry(): void {
 }
 
 assertNativeHttpContractRegistry();
+
+function workflowDiscoveryOperations(): HttpOperationContract[] {
+ return [
+  operation({ operationId: "listPatientEncounters", checkpoint: "CP3", method:"GET", path:"/v1/patients/{patientId}/encounters", summary:"Discover saved encounters", tags:["Daily workflow"], phi:"read", mutation:false,
+   pathProperties: {patientId:uuid},
+   queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},
+   success:{200:responseSchema({encounters:versionedEntities,nextCursor:optionalUuid})} }),
+  operation({ operationId: "listEncounterPrescriptions", checkpoint: "CP3", method:"GET", path:"/v1/encounters/{encounterId}/prescriptions", summary:"Discover saved prescriptions", tags:["Daily workflow"], phi:"read", mutation:false,
+   pathProperties: {encounterId:uuid},
+   queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},
+   success:{200:responseSchema({prescriptions:entities,nextCursor:optionalUuid})} }),
+  operation({ operationId: "listPatientTreatmentPlans", checkpoint: "CP3", method:"GET", path:"/v1/patients/{patientId}/treatment-plans", summary:"Discover saved treatmentPlans", tags:["Daily workflow"], phi:"read", mutation:false,
+   pathProperties: {patientId:uuid},
+   queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},
+   success:{200:responseSchema({treatmentPlans:versionedEntities,nextCursor:optionalUuid})} }),
+  operation({ operationId: "listPatientInvoices", checkpoint: "CP3", method:"GET", path:"/v1/patients/{patientId}/invoices", summary:"Discover saved invoices", tags:["Daily workflow"], phi:"read", mutation:false,
+   pathProperties: {patientId:uuid},
+   queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},
+   success:{200:responseSchema({invoices:entities,nextCursor:optionalUuid})} }),
+  operation({ operationId: "listUninvoicedPatientProcedures", checkpoint: "CP3", method:"GET", path:"/v1/patients/{patientId}/uninvoiced-procedures", summary:"Discover saved procedures", tags:["Daily workflow"], phi:"read", mutation:false,
+   pathProperties: {patientId:uuid},
+   queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},
+   success:{200:responseSchema({procedures:entities,nextCursor:optionalUuid})} }),
+  operation({ operationId: "listSopTemplates", checkpoint: "CP3", method:"GET", path:"/v1/sop-templates", summary:"Discover saved templates", tags:["Daily workflow"], phi:"read", mutation:false,
+
+   queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},
+   success:{200:responseSchema({templates:entities,nextCursor:optionalUuid})} }),
+  operation({ operationId: "listSopSchedules", checkpoint: "CP3", method:"GET", path:"/v1/sop-schedules", summary:"Discover saved schedules", tags:["Daily workflow"], phi:"read", mutation:false,
+
+   queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},
+   success:{200:responseSchema({schedules:entities,nextCursor:optionalUuid})} }),
+  operation({ operationId: "listInventoryCheckRuns", checkpoint: "CP3", method:"GET", path:"/v1/inventory/check-runs", summary:"Discover saved runs", tags:["Daily workflow"], phi:"read", mutation:false,
+
+   queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},
+   success:{200:responseSchema({runs:schema.array(inventoryCheckRunDetailSchema, {maxItems:100}),nextCursor:optionalUuid})} }),
+  operation({operationId:"previewPatientDuplicates",checkpoint:"CP3",method:"POST",path:"/v1/patients/duplicate-review",summary:"Review scoped possible patient matches before registration or demographic edit",tags:["Patients"],phi:"read",body:bodySchema({fullName:shortText,phone:nullableText,excludePatientId:uuid},["fullName","phone"]),success:{200:responseSchema({suggestions:patientDuplicateSuggestionsSchema})}}),
+  operation({operationId:"listClinicAccess",checkpoint:"CP3",method:"GET",path:"/v1/clinic-access",summary:"List registered tenant staff and clinic access",tags:["Clinic setup"],mutation:false,queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},success:{200:responseSchema({staff:entities,nextCursor:optionalUuid})}}),
+  operation({operationId:"saveClinicAccess",checkpoint:"CP3",method:"POST",path:"/v1/clinic-access",summary:"Version-checked access changes for an existing registered staff member",tags:["Clinic setup"],body:bodySchema({userId:uuid,expectedAuthorityVersion:uuid,status:schema.enum(["active","suspended"]),roles:schema.array(schema.enum(["owner_admin","doctor","assistant","receptionist","accountant"]),{minItems:1,maxItems:5})},["userId","expectedAuthorityVersion","status","roles"]),success:{200:singleEntity("staff")}}),
+  operation({operationId:"listClinicSetup",checkpoint:"CP3",method:"GET",path:"/v1/clinic-setup/{kind}",summary:"Read versioned clinic configuration",tags:["Clinic setup"],mutation:false,pathProperties:{kind:schema.enum(["clinic","appointment_type","chair","provider_schedule","pricebook"])},queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},success:{200:responseSchema({records:schema.array(responseSchema({id:uuid,rowVersion:positiveInteger,kind:shortText,configuration:entity})),nextCursor:optionalUuid})}}),
+  operation({operationId:"saveClinicSetup",checkpoint:"CP3",method:"POST",path:"/v1/clinic-setup/{kind}",summary:"Create or compare-and-swap existing clinic configuration",tags:["Clinic setup"],pathProperties:{kind:schema.enum(["clinic","appointment_type","chair","provider_schedule","pricebook"])},body:bodySchema({recordId:uuid,expectedVersion:positiveInteger,configuration:bodySchema({displayName:shortText,legalName:nullableText,timezone:shortText,address:bodySchema({line1:shortText,line2:shortText,city:shortText,state:shortText,postalCode:shortText,country:shortText}),code:shortText,defaultDurationMinutes:schema.integer({minimum:5,maximum:720}),color:nullableText,active:schema.boolean(),providerUserId:uuid,dayOfWeek:schema.integer({minimum:0,maximum:6}),startsAt:shortText,endsAt:shortText,effectiveFrom:date,effectiveUntil:schema.nullable(date),category:shortText,description:nullableText,defaultUnitPriceMinor:nonNegativeInteger,currency:schema.enum(["INR"]),taxRateBasisPoints:schema.integer({minimum:0,maximum:10000}),status:schema.enum(["active","retired"])})},["configuration"]),success:{200:responseSchema({record:responseSchema({id:uuid,rowVersion:positiveInteger,kind:shortText,configuration:entity})})}}),
+  operation({operationId:"listPatientIntakeHistory",checkpoint:"CP3",method:"GET",path:"/v1/patients/{patientId}/intake-history",summary:"Read saved intake responses",tags:["Clinical"],mutation:false,phi:"read",pathProperties:{patientId:uuid},queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},success:{200:responseSchema({submissions:entities,nextCursor:optionalUuid})}}),
+  operation({operationId:"listLabReconciliations",checkpoint:"CP6",method:"GET",path:"/v1/lab-reconciliations",summary:"Read saved lab invoice reconciliations",tags:["Lab"],mutation:false,phi:"read",queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},success:{200:responseSchema({reconciliations:entities,nextCursor:optionalUuid})}}),
+  operation({operationId:"listPatientInstructions",checkpoint:"CP5",method:"GET",path:"/v1/patients/{patientId}/instructions",summary:"Read saved patient instruction requests",tags:["Clinical","Instructions"],mutation:false,phi:"read",pathProperties:{patientId:uuid},queryProperties:{cursor:uuid,limit:schema.integer({minimum:1,maximum:100})},success:{200:responseSchema({instructions:entities,nextCursor:optionalUuid})}}),
+  operation({operationId:"searchBillingPatients",checkpoint:"CP5",method:"GET",path:"/v1/billing/patients",summary:"Search named patients with clinic billing evidence",tags:["Billing"],mutation:false,phi:"read",queryProperties:{query:schema.string({minLength:2,maxLength:200})},success:{200:responseSchema({patients:schema.array(responseSchema({id:uuid,fullName:shortText}),{maxItems:50})})}}),
+  operation({operationId:"listClinicStaff",checkpoint:"CP3",method:"GET",path:"/v1/clinic-staff",summary:"List active clinic staff names",tags:["Daily workflow"],mutation:false,success:{200:responseSchema({staff:schema.array(responseSchema({id:uuid,displayName:shortText}),{maxItems:500})})}}),
+  operation({operationId:"getPatientDemographics",checkpoint:"CP3",method:"GET",path:"/v1/patients/{patientId}/demographics",pathProperties:{patientId:uuid},summary:"Read the demographic fields allowed for front-desk editing",tags:["Patients"],phi:"read",mutation:false,success:{200:singleVersionedEntity("patient")}})
+ ];
+}
+
+function financialOperations():HttpOperationContract[] {return [
+ operation({operationId:"executeFinancialCommand",checkpoint:"CP5",method:"POST",path:"/v1/financial-operations",summary:"Record auditable manual financial evidence",tags:["Billing"],phi:"write",body:bodySchema({kind:schema.enum(["invoice_credit","payment_reversal","payment_refund","advance_received","advance_allocated","advance_returned","allocation_reversed","expense","expense_reversal"]),patientId:uuid,invoiceId:uuid,invoiceItemId:uuid,paymentTransactionId:uuid,targetEntryId:uuid,expectedVersion:positiveInteger,amountMinor:positiveInteger,method:schema.enum(["cash","upi","card","bank_transfer","cheque","other"]),reason:schema.string({minLength:1,maxLength:1000}),reference:schema.string({minLength:1,maxLength:160})},["kind","reason","reference"]),success:{201:singleEntity("entry")}}),
+ operation({operationId:"getFinancialAccount",checkpoint:"CP5",method:"GET",path:"/v1/patients/{patientId}/financial-account",summary:"Read patient financial evidence and balances",tags:["Billing"],phi:"read",pathProperties:{patientId:uuid},mutation:false,queryProperties:{cursor:uuid,advanceCursor:uuid},success:{200:singleEntity("account")}}),
+ operation({operationId:"getFinancialDay",checkpoint:"CP5",method:"GET",path:"/v1/financial-day",summary:"Read clinic-day financial movements and current dues",tags:["Billing"],phi:"read",mutation:false,queryProperties:{date,entryCursor:uuid,dueCursor:uuid},success:{200:singleEntity("day")}})
+];}
+
+function appointmentReviewOperations():HttpOperationContract[]{
+ const bounded=schema.string({minLength:1,maxLength:200});
+ const row=bodySchema({date:schema.string({minLength:19,maxLength:19}),patientNumber:bounded,patientName:bounded,doctorName:bounded,status:schema.enum(['Scheduled','Cancelled'])});
+ const importId={importId:uuid};
+ return [
+ operation({operationId:'createAppointmentImport',checkpoint:'CP7',method:'POST',path:'/v1/appointment-imports',summary:'Start or recover a source observation file',tags:['Migration'],phi:'write',body:bodySchema({sourceSystem:schema.string({minLength:1,maxLength:100}),digest:schema.string({pattern:'^[a-f0-9]{64}$'}),rowCount:schema.integer({minimum:1,maximum:5000})}),success:{201:singleEntity('import')}}),
+ operation({operationId:'listAppointmentImports',checkpoint:'CP7',method:'GET',path:'/v1/appointment-imports',summary:'Discover saved source appointment files',tags:['Migration'],phi:'read',mutation:false,queryProperties:{cursor:uuid},success:{200:responseSchema({imports:entities,nextCursor:schema.nullable(uuid)})}}),
+ operation({operationId:'getAppointmentImport',checkpoint:'CP7',method:'GET',path:'/v1/appointment-imports/{importId}',summary:'Read source evidence and saved decisions',tags:['Migration'],phi:'read',mutation:false,pathProperties:importId,queryProperties:{offset:schema.integer({minimum:0,maximum:5000})},success:{200:responseSchema({import:entity,rows:entities,counts:entities,nextOffset:schema.nullable(nonNegativeInteger)})}}),
+ operation({operationId:'stageAppointmentObservations',checkpoint:'CP7',method:'POST',path:'/v1/appointment-imports/{importId}/rows',summary:'Stage bounded minimized source observations',tags:['Migration'],phi:'write',pathProperties:importId,body:bodySchema({offset:schema.integer({minimum:0,maximum:4999}),rows:schema.array(row,{minItems:1,maxItems:100})}),success:{200:singleEntity('receipt')}}),
+ operation({operationId:'sealAppointmentImport',checkpoint:'CP7',method:'POST',path:'/v1/appointment-imports/{importId}/seal',summary:'Verify source file completeness before review',tags:['Migration'],phi:'write',pathProperties:importId,body:bodySchema({},[]),success:{200:singleEntity('import')}}),
+ operation({operationId:'reviewAppointmentObservation',checkpoint:'CP7',method:'POST',path:'/v1/appointment-imports/{importId}/rows/{rowId}/review',summary:'Record a human review and atomic booking handoff',tags:['Migration'],phi:'write',pathProperties:{...importId,rowId:uuid},body:bodySchema({decision:schema.enum(['history','exclude','link','create']),reason:schema.string({minLength:1,maxLength:1000}),confirmedDetails:schema.boolean(),appointmentId:uuid,patientId:uuid,booking:bodySchema({patientId:uuid,providerUserId:uuid,appointmentTypeId:uuid,chairId:optionalUuid,startAt:dateTime,endAt:dateTime},['patientId','providerUserId','appointmentTypeId','startAt','endAt'])},['decision','reason']),success:{200:singleEntity('observation')}})
+ ];
+}

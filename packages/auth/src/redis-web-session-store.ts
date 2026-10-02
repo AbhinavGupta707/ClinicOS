@@ -812,6 +812,8 @@ for index = 1, #page[2], 2 do
        value.expiresAtMs <= tonumber(ARGV[3]) then table.insert(expired, field) end
   end
 end
+-- COUNT is only a scan hint; cap deletion even for compact hashes.
+while #expired > tonumber(ARGV[2]) do table.remove(expired) end
 if #expired > 0 then redis.call('HDEL', KEYS[1], unpack(expired)) end
 return {page[1], tostring(#expired)}`,
         [cursor, String(count), String(now.getTime())]

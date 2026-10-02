@@ -145,7 +145,12 @@ export async function searchFrontOfficePatients(
   }
   try {
     const response: ListPatientsResponse = await client.listPatients({
-      query: { limit: 25, query: normalizedQuery }
+      query: {
+        limit: 25,
+        ...(/^[+\d][\d ()+-]+$/.test(normalizedQuery)
+          ? { phone: normalizedQuery.replace(/[ ()-]/g, "") }
+          : { query: normalizedQuery })
+      }
     });
     const patients = response.patients.flatMap((patient) => {
       const fullName = typeof patient.fullName === "string" ? patient.fullName.trim() : "";

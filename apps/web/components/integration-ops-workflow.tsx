@@ -24,6 +24,7 @@ import {
   getProviderStatusCount,
   getUnresolvedMigrationConflictCount,
   loadCp7IntegrationOps,
+  isCp7FixtureAllowed,
   PROVIDER_ACTIVATION_LABELS,
   PROVIDER_STATUS_LABELS,
   replayLiveDeadLetterEvent,
@@ -41,6 +42,8 @@ import {
   type ProviderHealthCard
 } from "@/lib/cp7-integration-ops";
 import type { MeProfile } from "@/lib/me";
+import { AppointmentImportWorkspace } from "./appointment-import-workspace";
+import { MigrationRunWorkspace } from "@/components/migration-run-workspace";
 import { MigrationOperationsPanel } from "@/components/migration-operations-panel";
 
 interface IntegrationOpsWorkflowProps {
@@ -63,7 +66,23 @@ export function isCp7WorkflowSurface(surfaceId: string) {
   return CP7_SURFACES.has(surfaceId);
 }
 
-export function IntegrationOpsWorkflow({ activeSurfaceId, profile }: IntegrationOpsWorkflowProps) {
+export function IntegrationOpsWorkflow(props: IntegrationOpsWorkflowProps) {
+  if (props.activeSurfaceId === "migration-review" && !isCp7FixtureAllowed()) {
+    return (
+      <ReviewedMigrationWorkspace
+        key={`${props.profile.tenant.id}:${props.profile.clinic.id}:${props.profile.user.id}`}
+        profile={props.profile}
+      />
+    );
+  }
+  return <LegacyIntegrationOpsWorkflow {...props} />;
+}
+
+function ReviewedMigrationWorkspace({profile}:{profile:MeProfile}) {
+ return <><MigrationRunWorkspace profile={profile}/><AppointmentImportWorkspace profile={profile}/></>;
+}
+
+function LegacyIntegrationOpsWorkflow({ activeSurfaceId, profile }: IntegrationOpsWorkflowProps) {
   const [loadState, setLoadState] = useState<Cp7IntegrationOpsLoadState | { status: "loading" }>({
     status: "loading"
   });

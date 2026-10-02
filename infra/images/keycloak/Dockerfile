@@ -37,7 +37,7 @@ RUN /opt/keycloak/bin/kc.sh build
 
 FROM ${JAVA_RUNTIME_IMAGE} AS dependency-fetch
 
-ARG AWS_RDS_CA_BUNDLE_SHA256=e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3
+ARG AWS_RDS_CA_BUNDLE_SHA256=fe45bbebf92ad3e27a583bbb2ddd1553c521ed4d49af5514dc0a40372ea5395c
 
 USER 0
 RUN apk add --no-cache wget \
@@ -48,7 +48,7 @@ RUN apk add --no-cache wget \
 FROM ${JAVA_RUNTIME_IMAGE}
 
 LABEL org.opencontainers.image.title="ClinicOS Keycloak security rebuild" \
-      org.opencontainers.image.version="26.7.4-clinicos.1" \
+      org.opencontainers.image.version="26.7.4-clinicos.3" \
       org.opencontainers.image.base.name="eclipse-temurin:21-jre-alpine" \
       io.clinicos.keycloak.source-revision="aa9fe3fba0c6cd5770f19a49378c55f4378cf544"
 

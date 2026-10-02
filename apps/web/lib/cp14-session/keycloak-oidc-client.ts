@@ -32,6 +32,8 @@ export interface KeycloakOidcClientConfiguration {
   issuer: string;
   tokenEndpoint: string;
   revocationEndpoint: string;
+  /** Official Keycloak session logout; unlike token revocation, ends the SSO session. */
+  sessionLogoutEndpoint?: string;
   clientId: string;
   clientSecret: string;
   redirectUri: string;
@@ -68,6 +70,7 @@ interface NormalizedConfiguration {
   issuer: string;
   tokenEndpoint: string;
   revocationEndpoint: string;
+  sessionLogoutEndpoint?: string;
   jwksEndpoint: string;
   clientId: string;
   clientSecret: string;
@@ -80,13 +83,17 @@ interface NormalizedConfiguration {
   confirmedReplayErrorDescriptions: readonly string[];
 }
 
+type KeycloakExchangePhase = "token_endpoint" | "token_response" | "access_token" | "id_token" | "identity_binding" | "token_lifetimes";
+
 export class KeycloakOidcClientError extends Error {
   readonly code: "invalid_configuration" | "exchange_rejected" | "revocation_unconfirmed";
+  readonly phase: KeycloakExchangePhase | null;
 
-  constructor(code: KeycloakOidcClientError["code"], message: string) {
+  constructor(code: KeycloakOidcClientError["code"], message: string, phase: KeycloakExchangePhase | null = null) {
     super(message);
     this.name = "KeycloakOidcClientError";
     this.code = code;
+    this.phase = phase;
   }
 }
 
@@ -147,6 +154,7 @@ export class KeycloakOidcBffClient implements Cp14OidcTokenClient {
     if (!/^[A-Za-z0-9._~-]{43,128}$/.test(input.codeVerifier)) {
       throw invalidConfiguration();
     }
+    let phase: KeycloakExchangePhase = "token_endpoint";
     try {
       const response = await this.#postForm(
         this.#configuration.tokenEndpoint,
@@ -160,10 +168,13 @@ export class KeycloakOidcBffClient implements Cp14OidcTokenClient {
         })
       );
       if (response.status !== 200) throw exchangeRejected();
+      phase = "token_response";
       const now = trustedInstant(this.#now());
       const tokenResponse = parseTokenResponse(response);
       if (!tokenResponse.id_token) throw exchangeRejected();
+      phase = "access_token";
       const accessClaims = await this.#verifyAccessToken(tokenResponse.access_token, now);
+      phase = "id_token";
       const idClaims = await this.#jwtVerifier.verify({
         token: tokenResponse.id_token,
         audience: this.#configuration.clientId,
@@ -171,19 +182,21 @@ export class KeycloakOidcBffClient implements Cp14OidcTokenClient {
         maximumLifetimeSeconds: this.#configuration.maximumAccessTokenLifetimeSeconds,
         kind: "id"
       });
+      phase = "identity_binding";
       const subject = requiredIdentifier(accessClaims.sub);
       const idSubject = requiredIdentifier(idClaims.sub);
       const nonce = requiredOpaqueClaim(idClaims.nonce, 16, 256);
       if (subject !== idSubject) throw exchangeRejected();
+      phase = "token_lifetimes";
       return {
         claims: accessClaims,
         idTokenNonce: nonce,
         idTokenSubject: idSubject,
         tokens: tokenSetFromResponse(tokenResponse, accessClaims, now, this.#configuration)
       };
-    } catch (error) {
-      if (error instanceof KeycloakOidcClientError) throw error;
-      throw exchangeRejected();
+    } catch {
+      // Fixed phase names retain actionable diagnostics without claims or provider messages.
+      throw new KeycloakOidcClientError("exchange_rejected", "OIDC code exchange did not produce a verified identity.", phase);
     }
   }
 
@@ -308,10 +321,11 @@ export class KeycloakOidcBffClient implements Cp14OidcTokenClient {
         throw new Error("invalid revocation binding");
       }
       const response = await this.#postForm(
-        this.#configuration.revocationEndpoint,
+        this.#configuration.sessionLogoutEndpoint ?? this.#configuration.revocationEndpoint,
         new URLSearchParams({
-          token: input.refreshToken,
-          token_type_hint: "refresh_token",
+          ...(this.#configuration.sessionLogoutEndpoint
+            ? { refresh_token: input.refreshToken }
+            : { token: input.refreshToken, token_type_hint: "refresh_token" }),
           client_id: this.#configuration.clientId,
           client_secret: this.#configuration.clientSecret
         })
@@ -524,18 +538,24 @@ class KeycloakJwksVerifier {
     }
     const keys = new Map<string, JsonWebKey>();
     for (const candidate of payload.keys) {
+      if (!isRecord(candidate)) throw new Error("JWKS key invalid");
+      // Keycloak publishes signing AND encryption keys, including other algorithms.
+      // Only RS256 signature keys are eligible for our fixed JWT verification policy.
       if (
-        !isRecord(candidate) ||
-        candidate.kty !== "RSA" ||
-        candidate.alg !== "RS256" ||
-        (candidate.use !== undefined && candidate.use !== "sig") ||
+        candidate.kty !== "RSA" || candidate.alg !== "RS256" ||
+        (candidate.use !== undefined && candidate.use !== "sig")
+      ) continue;
+      if (
         typeof candidate.kid !== "string" ||
         !JWT_IDENTIFIER_PATTERN.test(candidate.kid) ||
         typeof candidate.n !== "string" ||
         !/^[A-Za-z0-9_-]{128,2048}$/.test(candidate.n) ||
         typeof candidate.e !== "string" ||
         !/^[A-Za-z0-9_-]{2,16}$/.test(candidate.e) ||
-        keys.has(candidate.kid)
+        keys.has(candidate.kid) ||
+        (candidate.key_ops !== undefined &&
+          (!Array.isArray(candidate.key_ops) || candidate.key_ops.length !== 1 ||
+            candidate.key_ops[0] !== "verify"))
       ) {
         throw new Error("JWKS key invalid");
       }
@@ -549,6 +569,7 @@ class KeycloakJwksVerifier {
         key_ops: ["verify"]
       } as JsonWebKey);
     }
+    if (!keys.size) throw new Error("JWKS signing key unavailable");
     const cacheSeconds = cacheLifetimeSeconds(response.headers["cache-control"]);
     this.#cache = { expiresAtMs: now.getTime() + cacheSeconds * 1000, keys };
   }
@@ -634,6 +655,8 @@ function normalizeConfiguration(input: KeycloakOidcClientConfiguration): Normali
     issuer,
     tokenEndpoint,
     revocationEndpoint,
+    ...(input.sessionLogoutEndpoint ? { sessionLogoutEndpoint: exactEndpoint(input.sessionLogoutEndpoint, issuer,
+      "/protocol/openid-connect/logout", input.productionLike) } : {}),
     jwksEndpoint,
     clientId: input.clientId,
     clientSecret: input.clientSecret,

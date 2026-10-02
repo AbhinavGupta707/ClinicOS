@@ -15,7 +15,7 @@ import {
 } from "lucide-react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { AiReviewWorkflow, isCp8WorkflowSurface } from "@/components/ai-review-workflow";
 import { AssistantWorkflow, isCp2WorkflowSurface } from "@/components/assistant-workflow";
@@ -35,6 +35,8 @@ import {
 import { SurfaceView } from "@/components/surface-view";
 import { Cp13Workspace } from "@/features/cp13/Cp13Workspace";
 import { isCp13WorkspaceSurface } from "@/features/cp13/runtime-helpers";
+import { activateClinicalNoteScope, clearUnsavedClinicalNotes } from "@/lib/unsaved-clinical-notes";
+import { SESSION_INVALIDATED_EVENT, signOut, usesStaffSession } from "@/lib/staff-session";
 import { loadMe, type MeState } from "@/lib/me";
 import {
   canAccessSurface,
@@ -107,18 +109,60 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
     readPatientNavigationHandoff()
   );
 
-  const refreshMe = () => {
-    setMeState({ status: "loading" });
-    void loadMe().then(setMeState);
-  };
+  const activeLoad = useRef<AbortController | null>(null);
+  const sessionClosed = useRef(false);
+  const [signOutError, setSignOutError] = useState<string | null>(null);
+  const [signingOut, setSigningOut] = useState(false);
+  const refreshMe = useCallback(() => {
+    if (sessionClosed.current) return;
+    activeLoad.current?.abort();
+    const controller = new AbortController();
+    activeLoad.current = controller;
+    setMeState((previous) => isAuthenticatedState(previous) ? previous : { status: "loading" });
+    void loadMe(controller.signal).then((state) => {
+      if (!controller.signal.aborted && !sessionClosed.current) {
+        if (state.status === "authenticated") activateClinicalNoteScope(`${state.profile.tenant.id}:${state.profile.clinic.id}:${state.profile.user.id}`);
+        else if (state.status === "unauthenticated") clearUnsavedClinicalNotes();
+        setMeState(state);
+      }
+    }).catch(() => undefined); // Aborted older requests must not restore a previous identity.
+  }, []);
 
   useEffect(() => {
-    const controller = new AbortController();
+    refreshMe();
+    const invalidate = () => {
+      clearUnsavedClinicalNotes();
+      activeLoad.current?.abort();
+      clearPatientNavigationHandoff(); setPatientHandoff(null);
+      setMeState({ status: "unauthenticated", problem: { code: "AUTH_REQUIRED", message: "Sign in to continue." } });
+    };
+    const onFocus = () => { if (usesStaffSession()) refreshMe(); };
+    window.addEventListener(SESSION_INVALIDATED_EVENT, invalidate);
+    window.addEventListener("focus", onFocus);
+    return () => {
+      activeLoad.current?.abort();
+      window.removeEventListener(SESSION_INVALIDATED_EVENT, invalidate);
+      window.removeEventListener("focus", onFocus);
+    };
+  }, [refreshMe]);
 
-    void loadMe(controller.signal).then(setMeState);
-
-    return () => controller.abort();
-  }, []);
+  const endSession = async () => {
+    clearUnsavedClinicalNotes();
+    sessionClosed.current = true;
+    setSigningOut(true); setSignOutError(null);
+    // Remove patient content immediately, including when the provider is unavailable.
+    activeLoad.current?.abort(); clearPatientNavigationHandoff(); setPatientHandoff(null);
+    setMeState({ status: "loading" });
+    try {
+      const result = await signOut();
+      setMeState({ status: "unauthenticated", problem: { code: "AUTH_REQUIRED", message: result === "provider_unconfirmed"
+        ? "Your ClinicOS session is closed. Identity-provider sign-out could not be confirmed. Close this window or sign out directly with your identity provider."
+        : "Your ClinicOS session is closed." } });
+    } catch {
+      setSignOutError("Sign-out could not be fully confirmed. Retry when the identity service is available.");
+      setMeState({ status: "unavailable", problem: { code: "SERVER_ERROR", message: "Sign-out could not be fully confirmed." } });
+    } finally { setSigningOut(false); }
+  };
 
   useEffect(() => {
     setActiveSurfaceId(initialSurfaceId);
@@ -142,7 +186,7 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
       return;
     }
 
-    if (meState.status !== "loading") {
+    if (meState.status === "unauthenticated") {
       clearPatientNavigationHandoff();
       setPatientHandoff(null);
     }
@@ -169,7 +213,7 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
 
   if (meState.status === "unauthenticated" || meState.status === "unavailable") {
     return (
-      <AuthStatusPanel onRetry={refreshMe} problem={meState.problem} status={meState.status} />
+      <AuthStatusPanel onRetry={signOutError ? () => void endSession() : sessionClosed.current ? undefined : refreshMe} problem={meState.problem} status={meState.status} />
     );
   }
 
@@ -202,7 +246,7 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
         aria-label="ClinicOS navigation"
       >
         <div className="nav-brand">
-          <Link className="brand-mark" href="/" onClick={() => setActiveSurfaceId("today")}>
+          <Link className="brand-mark" href="/" onClick={(event) => { if (!event.defaultPrevented && event.button === 0 && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) setActiveSurfaceId("today"); }}>
             <strong>ClinicOS</strong>
           </Link>
           <Button
@@ -231,7 +275,8 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
                     className={active ? "nav-item nav-item--active" : "nav-item"}
                     href={surface.href}
                     key={surface.id}
-                    onClick={() => {
+                    onClick={(event) => {
+                      if (event.defaultPrevented || event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
                       setActiveSurfaceId(surface.id);
                       setNavOpen(false);
                     }}
@@ -291,6 +336,9 @@ export function ClinicShell({ initialSurfaceId }: ClinicShellProps) {
             >
               <span className="sr-only">Refresh</span>
             </Button>
+            {usesStaffSession() ? <Button size="sm" variant="ghost" disabled={signingOut} onClick={() => void endSession()}>
+              Sign out
+            </Button> : null}
             <Link
               className="button-link button-link--primary topbar-action"
               href="/surface/appointments"

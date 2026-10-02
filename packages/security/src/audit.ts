@@ -254,6 +254,10 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     phiInvolved: true,
     requiresPatientId: true
   },
+  "clinic.configuration.changed": {category:"administration",riskLevel:"high",phiInvolved:false,requiresPatientId:false},
+  "migration.observation.recorded": {category:"operations",riskLevel:"high",phiInvolved:true,requiresPatientId:false},
+  "financial.entry.recorded": { category:"billing", riskLevel:"high", phiInvolved:true, requiresPatientId:false },
+  "workflow.records.viewed": { category:"operations", riskLevel:"high", phiInvolved:true, requiresPatientId:false },
   "clinical_prep.viewed": {
     category: "clinical",
     riskLevel: "high",
@@ -531,6 +535,18 @@ export const AUDIT_ACTION_CLASSIFICATIONS = {
     requiresPatientId: false
   },
   "migration.batch.created": {
+    category: "integration",
+    riskLevel: "high",
+    phiInvolved: true,
+    requiresPatientId: false
+  },
+  "migration.file.prepared": {
+    category: "integration", riskLevel: "high", phiInvolved: true, requiresPatientId: false
+  },
+  "migration.file.sealed": {
+    category: "integration", riskLevel: "high", phiInvolved: true, requiresPatientId: false
+  },
+  "migration.run.created": {
     category: "integration",
     riskLevel: "high",
     phiInvolved: true,

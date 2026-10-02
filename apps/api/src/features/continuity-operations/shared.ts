@@ -323,3 +323,8 @@ export function sopEvidencePayload(detail: SopRunDetail): Record<string, unknown
     requiredItemCount: detail.items.filter((item) => item.evidenceRequired).length
   };
 }
+
+export async function pageRead<T>(read: () => Promise<T>): Promise<T> {
+  try { return await read(); }
+  catch(error) { if(error instanceof RangeError) validation(error.message); throw error; }
+}

@@ -61,7 +61,7 @@ if [[ "${server_version}" != "temporal version 1.31.3" || "${sql_tool_version}" 
 fi
 
 docker run --rm "${image_ref}" sh -c \
-  'echo "e5bb2084ccf45087bda1c9bffdea0eb15ee67f0b91646106e466714f9de3c7e3  /etc/ssl/certs/aws-rds-global-bundle.pem" | sha256sum -c -' >/dev/null
+  'echo "fe45bbebf92ad3e27a583bbb2ddd1553c521ed4d49af5514dc0a40372ea5395c  /etc/ssl/certs/aws-rds-global-bundle.pem" | sha256sum -c -' >/dev/null
 
 set +e
 migration_output="$(docker run --rm "${image_ref}" /opt/clinicos/bin/migrate-temporal 2>&1)"

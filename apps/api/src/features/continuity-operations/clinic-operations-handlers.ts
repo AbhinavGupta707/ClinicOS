@@ -55,14 +55,14 @@ import {
   stringValue,
   uuidValue,
   validation,
+  pageRead,
   type ContinuityOperationsHandler
 } from "./shared.ts";
 
 export const listLabVendorsHandler: ContinuityOperationsHandler = async (request, context) => {
-  const vendors = await context.repositories.clinicOperations.listLabVendors();
-  return ok({
-    labVendors: applyLimit(vendors, pageLimit(requestQuery(request))).map(stripScope)
-  });
+  const query = requestQuery(request);
+  const vendors = await pageRead(() => context.repositories.clinicOperations.listLabVendors({cursor: optionalUuidValue(query.cursor), limit: pageLimit(query)}));
+  return ok({ labVendors: vendors.map(stripScope), nextCursor: vendors.length === pageLimit(query) ? vendors.at(-1)?.id ?? null : null });
 };
 
 export const createLabVendorHandler: ContinuityOperationsHandler = async (request, context) => {
@@ -91,12 +91,11 @@ export const listLabCasesHandler: ContinuityOperationsHandler = async (request, 
   const filter: LabCaseSearchFilter = {
     status: optionalStringValue(query.status) as LabCaseStatus | null | undefined,
     dueBefore: optionalStringValue(query.dueBefore),
-    vendorId: optionalUuidValue(query.vendorId)
+    vendorId: optionalUuidValue(query.vendorId),
+    cursor: optionalUuidValue(query.cursor), limit: pageLimit(query)
   };
-  const cases = await context.repositories.clinicOperations.listLabCases(filter);
-  return ok({
-    labCases: applyLimit(cases, pageLimit(query)).map(publicLabCaseDetail)
-  });
+  const cases = await pageRead(() => context.repositories.clinicOperations.listLabCases(filter));
+  return ok({ labCases: cases.map(publicLabCaseDetail), nextCursor: cases.length === pageLimit(query) ? cases.at(-1)?.labCase.id ?? null : null });
 };
 
 export const createLabCaseHandler: ContinuityOperationsHandler = async (request, context) => {
@@ -275,8 +274,9 @@ export const listInventoryCategoriesHandler: ContinuityOperationsHandler = async
   request,
   context
 ) => {
-  const rows = await context.repositories.clinicOperations.listInventoryCategories();
-  return ok({ categories: applyLimit(rows, pageLimit(requestQuery(request))).map(stripScope) });
+  const query = requestQuery(request);
+  const rows = await pageRead(() => context.repositories.clinicOperations.listInventoryCategories({cursor: optionalUuidValue(query.cursor), limit: pageLimit(query)}));
+  return ok({ categories: rows.map(stripScope), nextCursor: rows.length === pageLimit(query) ? rows.at(-1)?.id ?? null : null });
 };
 
 export const createInventoryCategoryHandler: ContinuityOperationsHandler = async (
@@ -302,8 +302,9 @@ export const createInventoryCategoryHandler: ContinuityOperationsHandler = async
 };
 
 export const listInventoryItemsHandler: ContinuityOperationsHandler = async (request, context) => {
-  const rows = await context.repositories.clinicOperations.listInventoryItems();
-  return ok({ items: applyLimit(rows, pageLimit(requestQuery(request))).map(stripScope) });
+  const query = requestQuery(request);
+  const rows = await pageRead(() => context.repositories.clinicOperations.listInventoryItems({cursor: optionalUuidValue(query.cursor), limit: pageLimit(query)}));
+  return ok({ items: rows.map(stripScope), nextCursor: rows.length === pageLimit(query) ? rows.at(-1)?.id ?? null : null });
 };
 
 export const createInventoryItemHandler: ContinuityOperationsHandler = async (request, context) => {
@@ -386,8 +387,9 @@ export const listInventoryCheckTemplatesHandler: ContinuityOperationsHandler = a
   request,
   context
 ) => {
-  const rows = await context.repositories.clinicOperations.listInventoryCheckTemplates();
-  return ok({ templates: applyLimit(rows, pageLimit(requestQuery(request))).map(publicTemplate) });
+  const query = requestQuery(request);
+  const rows = await pageRead(() => context.repositories.clinicOperations.listInventoryCheckTemplates({cursor: optionalUuidValue(query.cursor), limit: pageLimit(query)}));
+  return ok({ templates: rows.map(publicTemplate), nextCursor: rows.length === pageLimit(query) ? rows.at(-1)?.id ?? null : null });
 };
 
 export const createInventoryCheckTemplateHandler: ContinuityOperationsHandler = async (
@@ -549,22 +551,23 @@ export const listInventoryExceptionsHandler: ContinuityOperationsHandler = async
   const query = requestQuery(request);
   const filter: InventoryExceptionFilter = {
     itemId: optionalUuidValue(query.itemId),
-    checkRunId: optionalUuidValue(query.checkRunId)
+    checkRunId: optionalUuidValue(query.checkRunId), cursor: optionalUuidValue(query.cursor), limit: pageLimit(query)
   };
-  const rows = await context.repositories.clinicOperations.listInventoryExceptions(filter);
-  return ok({ exceptions: applyLimit(rows, pageLimit(query)).map(publicInventoryException) });
+  const rows = await pageRead(() => context.repositories.clinicOperations.listInventoryExceptions(filter));
+  return ok({ exceptions: rows.map(publicInventoryException), nextCursor: rows.length === pageLimit(query) ? rows.at(-1)?.checkRunLine?.id ?? rows.at(-1)?.item.id ?? null : null });
 };
 
 export const listIncidentsHandler: ContinuityOperationsHandler = async (request, context) => {
   const query = requestQuery(request);
-  const rows = await context.repositories.clinicOperations.listIncidents({
+  const rows = await pageRead(() => context.repositories.clinicOperations.listIncidents({
     status: optionalStringValue(query.status) as NonNullable<
       Parameters<typeof context.repositories.clinicOperations.listIncidents>[0]
     >["status"],
     severity: optionalStringValue(query.severity) as IncidentSeverity | null | undefined,
-    category: optionalStringValue(query.category) as IncidentCategory | null | undefined
-  });
-  return ok({ incidents: applyLimit(rows, pageLimit(query)).map(stripScope) });
+    category: optionalStringValue(query.category) as IncidentCategory | null | undefined,
+    cursor: optionalUuidValue(query.cursor), limit: pageLimit(query)
+  }));
+  return ok({ incidents: rows.map(stripScope), nextCursor: rows.length === pageLimit(query) ? rows.at(-1)?.id ?? null : null });
 };
 
 export const createIncidentHandler: ContinuityOperationsHandler = async (request, context) => {
@@ -613,13 +616,10 @@ export const listCorrectiveActionsHandler: ContinuityOperationsHandler = async (
   request,
   context
 ) => {
-  const rows = await context.repositories.clinicOperations.listCorrectiveActions();
+  const query = requestQuery(request);
+  const rows = await pageRead(() => context.repositories.clinicOperations.listCorrectiveActions({cursor: optionalUuidValue(query.cursor), limit: pageLimit(query)}));
   const now = context.clock.now();
-  return ok({
-    correctiveActions: applyLimit(rows, pageLimit(requestQuery(request))).map((row) =>
-      publicCorrectiveAction(row, now)
-    )
-  });
+  return ok({ correctiveActions: rows.map((row) => publicCorrectiveAction(row, now)), nextCursor: rows.length === pageLimit(query) ? rows.at(-1)?.id ?? null : null });
 };
 
 export const createCorrectiveActionHandler: ContinuityOperationsHandler = async (

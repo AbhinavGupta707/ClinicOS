@@ -10,6 +10,32 @@ import {
 } from "@clinic-os/security";
 
 const OPERATION_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  executeFinancialCommand: ["billing.write"], getFinancialAccount: ["billing.read"], getFinancialDay: ["billing.read", "analytics.read"],
+  createAppointmentImport: ["migration.manage", "patient.read"],
+  stageAppointmentObservations: ["migration.manage", "patient.read"],
+  sealAppointmentImport: ["migration.manage", "patient.read"],
+  listAppointmentImports: ["migration.manage", "patient.read"],
+  getAppointmentImport: ["migration.manage", "patient.read"],
+  reviewAppointmentObservation: ["migration.manage", "patient.read", "schedule.write"],
+  listPatientEncounters: ["patient.read", "patient.phi.read", "clinical.note.read"],
+  listEncounterPrescriptions: ["patient.read", "patient.phi.read", "prescription.write"],
+  listPatientTreatmentPlans: ["patient.read", "patient.phi.read", "dental.chart.read"],
+  listPatientInvoices: ["billing.read"],
+  listUninvoicedPatientProcedures: ["billing.read"],
+  listSopTemplates: ["sop.manage"],
+  listSopSchedules: ["sop.manage"],
+  listInventoryCheckRuns: ["inventory.manage"],
+  previewPatientDuplicates: ["patient.read", "patient.write"],
+  listClinicAccess: ["user.manage", "role.manage"],
+  saveClinicAccess: ["user.manage", "role.manage"],
+  listClinicSetup: ["clinic.manage"],
+  saveClinicSetup: ["clinic.manage"],
+  listPatientIntakeHistory: ["patient.read", "patient.phi.read", "clinical.note.read"],
+  listLabReconciliations: ["lab.manage"],
+  listPatientInstructions: ["patient.read", "patient_instruction.write"],
+  searchBillingPatients: ["billing.read"],
+  listClinicStaff: ["schedule.read"],
+  getPatientDemographics: ["patient.read", "patient.write"],
   healthLive: [],
   healthReady: [],
   healthStartup: [],
@@ -38,6 +64,8 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Objec
   createPatient: ["patient.write"],
   getPatient: ["patient.read", "patient.phi.read"],
   updatePatient: ["patient.write"],
+  listPatientDentalSnapshots: ["patient.read", "patient.phi.read", "dental.chart.read"],
+  getPatientDentalSnapshot: ["patient.read", "patient.phi.read", "dental.chart.read"],
   getPatientTimeline: ["patient.read", "patient.phi.read"],
   listLeads: ["message.read"],
   createLead: ["message.write"],
@@ -67,6 +95,7 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Objec
   createEncounter: ["clinical.note.write"],
   getEncounter: ["clinical.note.read"],
   startEncounter: ["clinical.note.write"],
+  closeEncounter: ["clinical.note.sign"],
   saveEncounterClinicalNoteDraft: ["clinical.note.write"],
   signEncounterClinicalNote: ["clinical.note.sign"],
   amendEncounterClinicalNote: ["clinical.note.sign"],
@@ -100,7 +129,7 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Objec
   updateTask: ["task.manage"],
   generateDueContinuityTasks: ["task.manage", "recall.manage"],
   createRecallRule: ["recall.manage"],
-  listRecalls: ["recall.manage"],
+  listRecalls: ["recall.manage", "patient.read"],
   recordRecallAction: ["recall.manage"],
   createSopTemplate: ["sop.manage"],
   createSopSchedule: ["sop.manage"],
@@ -132,6 +161,13 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Objec
   listDeadLetterEvents: ["migration.manage"],
   replayDeadLetterEvent: ["migration.manage"],
   listMigrationBatches: ["migration.manage"],
+  listImportRuns: ["migration.manage"],
+  createPatientImportFile: ["migration.manage"],
+  getPatientImportFile: ["migration.manage"],
+  stagePatientImportChunk: ["migration.manage"],
+  sealPatientImportFile: ["migration.manage"],
+  createImportRun: ["migration.manage"],
+  getImportRun: ["migration.manage"],
   createMigrationBatch: ["migration.manage"],
   getMigrationBatch: ["migration.manage"],
   listMigrationBatchRows: ["migration.manage"],
@@ -171,8 +207,12 @@ const EXPENSIVE_OPERATION_IDS = new Set([
 ]);
 
 const OPERATION_REQUIRED_ROLES: Readonly<Record<string, readonly string[]>> = Object.freeze({
+  saveClinicAccess: ["owner_admin"],
+  startEncounter: ["doctor"],
+  createEncounterProcedurePerformed: ["doctor"],
   signEncounterClinicalNote: ["doctor"],
   amendEncounterClinicalNote: ["doctor"],
+  closeEncounter: ["doctor"],
   signPrescription: ["doctor"]
 });
 
@@ -343,11 +383,6 @@ function createPolicy(operation: HttpOperationContract): RouteSecurityPolicy {
 }
 
 function assertApplicationRouteRegistry(): void {
-  if (ACTIVE_NATIVE_HTTP_OPERATIONS.length !== 136) {
-    throw new Error(
-      `ClinicOS application route registry expected exactly 136 operations; received ${ACTIVE_NATIVE_HTTP_OPERATIONS.length}.`
-    );
-  }
   const operationIds = new Set(ACTIVE_NATIVE_HTTP_OPERATIONS.map(({ operationId }) => operationId));
   const permissionIds = new Set(Object.keys(OPERATION_PERMISSIONS));
   const missing = [...operationIds].filter((operationId) => !permissionIds.has(operationId));

@@ -17,6 +17,7 @@ export function createClinicalDentalHandlerMap(
     createEncounter: clinical.createEncounter,
     getEncounter: clinical.getEncounter,
     startEncounter: clinical.startEncounter,
+    closeEncounter: clinical.closeEncounter,
     saveEncounterClinicalNoteDraft: clinical.saveEncounterClinicalNoteDraft,
     signEncounterClinicalNote: clinical.signEncounterClinicalNote,
     amendEncounterClinicalNote: clinical.amendEncounterClinicalNote,

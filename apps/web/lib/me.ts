@@ -1,3 +1,4 @@
+import { staffFetch } from "./staff-session";
 import { createSyntheticMeFixture, isDevFixtureAllowed } from "./dev-fixture";
 import { normalizeRoles } from "./roles";
 import type { ClinicRole } from "./roles";
@@ -35,6 +36,7 @@ export type MeProblemCode =
   | "ME_ENDPOINT_NOT_REGISTERED"
   | "NETWORK_UNAVAILABLE"
   | "SERVER_ERROR"
+  | "IDENTITY_UNAVAILABLE"
   | "UNKNOWN";
 
 export interface MeProblem {
@@ -231,6 +233,10 @@ function getRequestId(response: Response, payload: unknown) {
 
 function problemFromHttp(response: Response, payload: unknown): MeProblem {
   const requestId = getRequestId(response, payload);
+  if (isRecord(payload) && readNestedRecord(payload, ["error"])?.code === "IDENTITY_UNAVAILABLE") {
+    return { code: "IDENTITY_UNAVAILABLE", message: "Staff sign-in is currently unavailable. Ask your administrator to check activation and service health.",
+      requestId, status: response.status };
+  }
 
   if (response.status === 401 || response.status === 403) {
     return {
@@ -276,7 +282,7 @@ export async function loadMe(signal?: AbortSignal): Promise<MeState> {
   }
 
   try {
-    const response = await fetch(buildMeUrl(), {
+    const response = await staffFetch(buildMeUrl(), {
       credentials: "include",
       headers: {
         Accept: "application/json"

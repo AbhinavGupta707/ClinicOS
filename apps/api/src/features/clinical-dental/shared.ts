@@ -1,3 +1,4 @@
+import { featureOutboxIdempotencyKey } from "../contracts.ts";
 import { roleSlugsForScope } from "@clinic-os/auth";
 import {
   buildConsentEnforcementState,
@@ -134,9 +135,10 @@ export async function assertDentalFindingPatient(
 
 export async function consentState(
   context: ClinicFeatureExecutionContext,
-  patientId: UUID
+  patientId: UUID,
+  lockForUse = false
 ): Promise<ConsentEnforcementState> {
-  const consents = await context.repositories.clinicalCare.listPatientConsents(patientId);
+  const consents = await context.repositories.clinicalCare.listPatientConsents(patientId, lockForUse);
   return buildConsentEnforcementState(patientId, consents, context.clock.now().toISOString());
 }
 
@@ -147,7 +149,7 @@ export async function requireClinicalConsent(
   workflow: ClinicalConsentWorkflow,
   options: { readonly mediaType?: MediaType } = {}
 ): Promise<ConsentEnforcementState> {
-  const state = await consentState(context, patientId);
+  const state = await consentState(context, patientId, true);
   const decision = evaluateClinicalConsent(state, workflow, options);
 
   await appendAudit(request, context, "consent.enforcement.checked", {
@@ -182,10 +184,10 @@ export function actorIsDoctor(request: ClinicalDentalRequest<ClinicalDentalOpera
 
 export function assertDoctorSignature(
   request: ClinicalDentalRequest<ClinicalDentalOperationId>,
-  permission: "clinical.note.sign" | "prescription.sign"
+  permission: "clinical.note.sign" | "prescription.sign" | "clinical.note.write"
 ): void {
   if (!actorIsDoctor(request)) {
-    throw new ApiError(403, "PERMISSION_DENIED", "Only doctors can sign clinical records.", {
+    throw new ApiError(403, "PERMISSION_DENIED", "Only doctors can perform this clinical action.", {
       required_permission: permission,
       required_role: "doctor"
     });
@@ -200,7 +202,7 @@ export function assertAssignedEncounterProvider(
     throw new ApiError(
       403,
       "PERMISSION_DENIED",
-      "Only the assigned encounter provider can sign or amend this clinical record.",
+      "Only the assigned encounter provider can perform this clinical action.",
       {
         reason: "assigned_encounter_provider_required",
         delegation_supported: false
@@ -257,7 +259,6 @@ export async function appendMutationEvidence(
     eventPayload: Readonly<Record<string, unknown>>;
   }>
 ): Promise<void> {
-  const requestKey = requestIdempotencyKey(request);
   await appendAudit(request, context, input.auditAction, {
     patientId: input.patientId,
     resourceType: input.aggregateType,
@@ -269,15 +270,7 @@ export async function appendMutationEvidence(
     aggregateType: input.aggregateType,
     aggregateId: input.aggregateId,
     patientId: input.patientId,
-    idempotencyKey: requestKey
-      ? [
-          request.access.context.tenant.id,
-          request.access.clinicId,
-          request.access.context.user.id,
-          request.operationId,
-          requestKey
-        ].join(":")
-      : null,
+    idempotencyKey: featureOutboxIdempotencyKey(request,{eventType:input.eventType,aggregateId:input.aggregateId}),
     correlationId: request.metadata.requestId,
     payload: { ...input.eventPayload },
     occurredAt: context.clock.now().toISOString()

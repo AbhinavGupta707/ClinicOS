@@ -1,3 +1,4 @@
+import { readStaffIdentityConfiguration, RedisWebSessionStore, AuditDeliveryHealth } from "@clinic-os/auth";
 import { type IncomingMessage, type Server } from "node:http";
 import { pathToFileURL } from "node:url";
 import { DescribeKeyCommand, KMSClient } from "@aws-sdk/client-kms";
@@ -96,6 +97,8 @@ import {
   createLabVendor,
   createLead,
   createMigrationBatch,
+  createImportRun,
+  createPatientImportFile, getPatientImportFile, stagePatientImportChunk, sealPatientImportFile,
   completeMediaUpload,
   createSignedMediaAccess,
   createInvoicePaymentRequest,
@@ -121,8 +124,10 @@ import {
   getEncounter,
   getInvoice,
   getMigrationBatch,
+  getImportRun,
   getPilotReadiness,
   listMigrationBatches,
+  listImportRuns,
   getPatientDentalChart,
   getPatient,
   getPatientPrepSummary,
@@ -760,6 +765,12 @@ function createRuntimeComposition(
     );
   }
 
+  const staffIdentity = readStaffIdentityConfiguration(env);
+  const staffAuditStore = staffIdentity ? new RedisWebSessionStore({
+    redisUrl: staffIdentity.redisUrl, keyHmacSecret: staffIdentity.storeKey,
+    keyPrefix: `${staffIdentity.namespace}:sessions`, now: () => systemClock.now()
+  }) : undefined;
+  const staffAuditHealth = staffIdentity ? new AuditDeliveryHealth(staffIdentity) : undefined;
   const configuredBudgetKeySecret = parsed.data.security.abuseBudgetKeySecret;
   const runtimeBudgetKeySecret =
     configuredBudgetKeySecret ??
@@ -805,7 +816,8 @@ function createRuntimeComposition(
       ? (() => {
           tokenRevocationStore = new RedisTokenRevocationStore({
             redisUrl: parsed.data.services.redisUrl,
-            keyHmacSecret: Buffer.from(tokenRevocationKeySecret, "utf8"),
+            keyHmacSecret: staffIdentity?.revocationKey ?? Buffer.from(tokenRevocationKeySecret, "utf8"),
+            ...(staffIdentity ? { keyPrefix: `${staffIdentity.namespace}:revocation` } : {}),
             now: () => systemClock.now()
           });
           return new IdentitySessionEdgeGuard({
@@ -823,10 +835,14 @@ function createRuntimeComposition(
               requiredAudience: DEFAULT_API_AUDIENCE,
               acceptedAuthorizedParties: [parsed.data.auth.keycloakClientId, "clinic-os-mobile"],
               maximumAccessTokenLifetimeSeconds: 300,
-              browserSessionCookieName: "__Host-clinicos_session"
+              browserSessionCookieName: staffIdentity ? "clinicos_session" : "__Host-clinicos_session"
             },
             revocations: tokenRevocationStore,
-            securityAuditOutbox: new PostgresIdentitySecurityAuditOutbox(
+            securityAuditOutbox: staffAuditStore && staffAuditHealth ? {
+              durability: "distributed_durable",
+              ...staffAuditStore.requiredAuditOutbox(),
+              readiness: async () => { await staffAuditStore.readiness(); await staffAuditHealth.readiness(); }
+            } : new PostgresIdentitySecurityAuditOutbox(
               pool as unknown as SqlConnectionFactory,
               { traceContextProvider: () => injectW3cTraceContext().traceparent }
             )
@@ -1004,6 +1020,8 @@ function createRuntimeComposition(
         ...(pool ? [pool.end()] : []),
         ...(redisBudgetStore ? [redisBudgetStore.close()] : []),
         ...(tokenRevocationStore ? [tokenRevocationStore.close()] : []),
+        ...(staffAuditStore ? [staffAuditStore.close()] : []),
+        ...(staffAuditHealth ? [staffAuditHealth.close()] : []),
         ...(observabilityRuntime ? [observabilityRuntime.shutdown()] : [])
       ]).then(() => undefined);
       return closePromise;
@@ -1253,6 +1271,32 @@ async function routeOperationsRequest(input: {
       pathUuid(deadLetterReplayMatch[1], "deadLetterEventId"),
       body
     );
+  }
+
+  if (input.request.method === "GET" && pathname === "/v1/migration-runs") {
+    return listImportRuns(operationsContext, dependencies, {
+      limit: url.searchParams.get("limit"), cursor: url.searchParams.get("cursor")
+    });
+  }
+  if (input.request.method === "POST" && pathname === "/v1/migration-runs") {
+    return createImportRun(operationsContext, dependencies, body);
+  }
+  const patientFileMatch = pathname.match(/^\/v1\/migration-runs\/([^/]+)\/patient-file$/);
+  if (patientFileMatch) {
+    const runId = pathUuid(patientFileMatch[1], "runId");
+    if (input.request.method === "GET") return getPatientImportFile(operationsContext, dependencies, runId);
+    if (input.request.method === "POST") return createPatientImportFile(operationsContext, dependencies, runId, body);
+  }
+  const patientChunkMatch = pathname.match(/^\/v1\/migration-runs\/([^/]+)\/patient-file\/chunks\/([^/]+)$/);
+  if (patientChunkMatch && input.request.method === "POST")
+    return stagePatientImportChunk(operationsContext, dependencies, pathUuid(patientChunkMatch[1], "runId"), Number(patientChunkMatch[2]), body);
+  const patientSealMatch = pathname.match(/^\/v1\/migration-runs\/([^/]+)\/patient-file\/seal$/);
+  if (patientSealMatch && input.request.method === "POST")
+    return sealPatientImportFile(operationsContext, dependencies, pathUuid(patientSealMatch[1], "runId"));
+
+  const importRunMatch = pathname.match(/^\/v1\/migration-runs\/([^/]+)$/);
+  if (input.request.method === "GET" && importRunMatch) {
+    return getImportRun(operationsContext, dependencies, pathUuid(importRunMatch[1], "runId"));
   }
 
   if (input.request.method === "GET" && pathname === "/v1/migration-batches") {
@@ -2089,6 +2133,11 @@ async function resolveAccessContext(input: {
     );
   }
 
+  if (input.identityEdgeGuard && (!Number.isSafeInteger(verifiedKeycloakClaims.auth_time) ||
+      !Number.isFinite(Date.parse(snapshot.authenticationValidAfter)) ||
+      verifiedKeycloakClaims.auth_time! * 1000 <= Date.parse(snapshot.authenticationValidAfter))) {
+    throw new ApiError(401, "UNAUTHENTICATED", "Clinic access changed; sign in again.");
+  }
   const context = buildAccessContext({
     principal,
     tenant: snapshot.tenant,
