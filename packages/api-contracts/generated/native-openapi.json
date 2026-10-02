@@ -43205,6 +43205,730 @@
         ]
       }
     },
+    "/v1/migration-runs/{runId}/assurance": {
+      "get": {
+        "description": "Independently reconcile stored import evidence without patient details. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",
+        "operationId": "getMigrationAssurance",
+        "parameters": [
+          {
+            "in": "path",
+            "name": "runId",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "comparisonRunId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "appointmentImportId",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-request-id",
+            "required": false,
+            "schema": {
+              "maxLength": 128,
+              "minLength": 1,
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-clinic-id",
+            "required": false,
+            "schema": {
+              "format": "uuid",
+              "maxLength": 36,
+              "minLength": 36,
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "additionalProperties": false,
+                  "maxProperties": 1,
+                  "properties": {
+                    "report": {
+                      "additionalProperties": false,
+                      "maxProperties": 20,
+                      "properties": {
+                        "appointments": {
+                          "additionalProperties": false,
+                          "maxProperties": 9,
+                          "properties": {
+                            "created": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "excluded": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "expected": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "history": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "importId": {
+                              "format": "uuid",
+                              "maxLength": 36,
+                              "minLength": 36,
+                              "type": "string"
+                            },
+                            "linked": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "missingLinks": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "pending": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "sealed": {
+                              "type": "boolean"
+                            }
+                          },
+                          "required": [
+                            "importId",
+                            "expected",
+                            "sealed",
+                            "pending",
+                            "history",
+                            "excluded",
+                            "linked",
+                            "created",
+                            "missingLinks"
+                          ],
+                          "type": [
+                            "object",
+                            "null"
+                          ]
+                        },
+                        "clinicApproval": {
+                          "enum": [
+                            "not_assessed"
+                          ]
+                        },
+                        "comparison": {
+                          "additionalProperties": false,
+                          "maxProperties": 6,
+                          "properties": {
+                            "absent": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "added": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "changed": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "eligibility": {
+                              "enum": [
+                                "comparable",
+                                "incomplete",
+                                "different_profile",
+                                "ambiguous_identifiers",
+                                "integrity_mismatch"
+                              ]
+                            },
+                            "runId": {
+                              "format": "uuid",
+                              "maxLength": 36,
+                              "minLength": 36,
+                              "type": "string"
+                            },
+                            "unchanged": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "runId",
+                            "eligibility",
+                            "added",
+                            "changed",
+                            "unchanged",
+                            "absent"
+                          ],
+                          "type": [
+                            "object",
+                            "null"
+                          ]
+                        },
+                        "context": {
+                          "additionalProperties": false,
+                          "maxProperties": 6,
+                          "properties": {
+                            "missingRows": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "needsClarification": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "retainedVersions": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "reviewed": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "unreviewed": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "versionsAdded": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "versionsAdded",
+                            "retainedVersions",
+                            "missingRows",
+                            "reviewed",
+                            "needsClarification",
+                            "unreviewed"
+                          ],
+                          "type": "object"
+                        },
+                        "counterMismatches": {
+                          "maximum": 2147483647,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "coverage": {
+                          "enum": [
+                            "canonical_rows_only",
+                            "practo_demographics",
+                            "practo_demographics_and_context"
+                          ]
+                        },
+                        "expected": {
+                          "maximum": 2147483647,
+                          "minimum": 0,
+                          "type": [
+                            "integer",
+                            "null"
+                          ]
+                        },
+                        "issues": {
+                          "items": {
+                            "enum": [
+                              "incomplete_upload",
+                              "integrity_mismatch",
+                              "review_required",
+                              "ready_rows",
+                              "excluded_rows",
+                              "context_review",
+                              "comparison_unavailable",
+                              "changed_source",
+                              "appointment_upload",
+                              "appointment_review"
+                            ]
+                          },
+                          "maxItems": 10,
+                          "type": "array"
+                        },
+                        "manifestProblems": {
+                          "maximum": 2147483647,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "observedAt": {
+                          "format": "date-time",
+                          "maxLength": 40,
+                          "minLength": 20,
+                          "type": "string"
+                        },
+                        "openConflicts": {
+                          "maximum": 2147483647,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "patients": {
+                          "additionalProperties": false,
+                          "maxProperties": 4,
+                          "properties": {
+                            "committedRows": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "createdPatients": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "distinctPatients": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "missingLinks": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "committedRows",
+                            "distinctPatients",
+                            "createdPatients",
+                            "missingLinks"
+                          ],
+                          "type": "object"
+                        },
+                        "profile": {
+                          "anyOf": [
+                            {
+                              "type": "null"
+                            }
+                          ],
+                          "enum": [
+                            "practo_ray_patients_v1",
+                            "practo_ray_patients_context_v2"
+                          ]
+                        },
+                        "received": {
+                          "maximum": 2147483647,
+                          "minimum": 0,
+                          "type": "integer"
+                        },
+                        "rows": {
+                          "additionalProperties": false,
+                          "maxProperties": 7,
+                          "properties": {
+                            "committed": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "failed": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "invalid": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "needsReview": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "ready": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "rolledBack": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            },
+                            "skipped": {
+                              "maximum": 2147483647,
+                              "minimum": 0,
+                              "type": "integer"
+                            }
+                          },
+                          "required": [
+                            "invalid",
+                            "needsReview",
+                            "ready",
+                            "committed",
+                            "skipped",
+                            "rolledBack",
+                            "failed"
+                          ],
+                          "type": "object"
+                        },
+                        "runId": {
+                          "format": "uuid",
+                          "maxLength": 36,
+                          "minLength": 36,
+                          "type": "string"
+                        },
+                        "sealed": {
+                          "type": [
+                            "boolean",
+                            "null"
+                          ]
+                        },
+                        "sourceFreshness": {
+                          "enum": [
+                            "unknown"
+                          ]
+                        },
+                        "state": {
+                          "enum": [
+                            "incomplete",
+                            "action_required",
+                            "accounted_for"
+                          ]
+                        },
+                        "version": {
+                          "enum": [
+                            1
+                          ]
+                        }
+                      },
+                      "required": [
+                        "version",
+                        "observedAt",
+                        "runId",
+                        "profile",
+                        "expected",
+                        "sealed",
+                        "rows",
+                        "received",
+                        "manifestProblems",
+                        "counterMismatches",
+                        "openConflicts",
+                        "patients",
+                        "context",
+                        "comparison",
+                        "appointments",
+                        "state",
+                        "issues",
+                        "coverage",
+                        "sourceFreshness",
+                        "clinicApproval"
+                      ],
+                      "type": "object"
+                    }
+                  },
+                  "required": [
+                    "report"
+                  ],
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request is malformed or ambiguous.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "Authentication is required or invalid.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The verified identity is not authorized for the scoped operation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The tenant-scoped resource does not exist.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request conflicts with current workflow or idempotency state.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "413": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeds its declared body budget.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed runtime contract validation.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request exceeded an application abuse budget.",
+            "headers": {
+              "Retry-After": {
+                "description": "Bounded delta-seconds before the request should be retried.",
+                "schema": {
+                  "description": "Bounded delta-seconds before the client should retry a rate-limited request.",
+                  "format": "retry-after-seconds",
+                  "maxLength": 5,
+                  "minLength": 1,
+                  "pattern": "^[1-9][0-9]{0,4}$",
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              },
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "The request failed without exposing internal details.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ApiError"
+                }
+              }
+            },
+            "description": "A required dependency or configured capability is unavailable.",
+            "headers": {
+              "x-request-id": {
+                "description": "Stable request correlation identifier.",
+                "schema": {
+                  "maxLength": 128,
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "x-clinicos-required": true
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "summary": "Independently reconcile stored import evidence without patient details",
+        "tags": [
+          "Migration"
+        ],
+        "x-clinicos-cache": "no-store",
+        "x-clinicos-checkpoint": "CP7",
+        "x-clinicos-concurrency": {
+          "mode": "none",
+          "required": false,
+          "semantics": "This operation does not replace mutable resource state."
+        },
+        "x-clinicos-idempotency": {
+          "mode": "none",
+          "replaySemantics": "This operation has no client mutation effect.",
+          "required": false
+        },
+        "x-clinicos-native-enforcement": "body-parser-only",
+        "x-clinicos-pagination": {
+          "cursor": false,
+          "mode": "none"
+        },
+        "x-clinicos-phi": "none",
+        "x-clinicos-required-master-wiring": [
+          "Invoke the runtime contract before the native or NestJS handler."
+        ]
+      }
+    },
     "/v1/migration-runs/{runId}/patient-file": {
       "get": {
         "description": "Read bounded patient-file receipts and reconciliation. The native route is retained as a strangler input until the CP12 API layer consumes this runtime contract.",

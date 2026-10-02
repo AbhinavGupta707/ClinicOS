@@ -3169,6 +3169,27 @@ function cp7Operations(): HttpOperationContract[] {
     "awaiting_patients", "awaiting_practitioners", "awaiting_appointments",
     "review_required", "partial", "complete", "rolled_back"
   ]);
+  const assuranceCounts = (keys: string[]) => responseSchema(Object.fromEntries(keys.map(key => [key, nonNegativeInteger])));
+  const assuranceReport = responseSchema({
+    version: schema.enum([1]), observedAt: dateTime, runId: uuid,
+    profile: schema.nullable(schema.enum(["practo_ray_patients_v1", "practo_ray_patients_context_v2"])),
+    expected: schema.nullable(nonNegativeInteger), sealed: schema.nullable(schema.boolean()),
+    rows: assuranceCounts(["invalid", "needsReview", "ready", "committed", "skipped", "rolledBack", "failed"]),
+    received: nonNegativeInteger, manifestProblems: nonNegativeInteger, counterMismatches: nonNegativeInteger, openConflicts: nonNegativeInteger,
+    patients: assuranceCounts(["committedRows", "distinctPatients", "createdPatients", "missingLinks"]),
+    context: assuranceCounts(["versionsAdded", "retainedVersions", "missingRows", "reviewed", "needsClarification", "unreviewed"]),
+    comparison: schema.nullable(responseSchema({runId: uuid,
+      eligibility: schema.enum(["comparable", "incomplete", "different_profile", "ambiguous_identifiers", "integrity_mismatch"]),
+      added: nonNegativeInteger, changed: nonNegativeInteger, unchanged: nonNegativeInteger, absent: nonNegativeInteger})),
+    appointments: schema.nullable(responseSchema({importId: uuid, expected: nonNegativeInteger, sealed: schema.boolean(),
+      pending: nonNegativeInteger, history: nonNegativeInteger, excluded: nonNegativeInteger,
+      linked: nonNegativeInteger, created: nonNegativeInteger, missingLinks: nonNegativeInteger})),
+    state: schema.enum(["incomplete", "action_required", "accounted_for"]),
+    issues: schema.array(schema.enum(["incomplete_upload", "integrity_mismatch", "review_required", "ready_rows", "excluded_rows",
+      "context_review", "comparison_unavailable", "changed_source", "appointment_upload", "appointment_review"]), {maxItems: 10}),
+    coverage: schema.enum(["canonical_rows_only", "practo_demographics", "practo_demographics_and_context"]),
+    sourceFreshness: schema.enum(["unknown"]), clinicApproval: schema.enum(["not_assessed"])
+  });
   const migrationBatchStatuses = [
     "uploaded",
     "parsed",
@@ -3223,6 +3244,11 @@ function cp7Operations(): HttpOperationContract[] {
       body: bodySchema({ id: uuid, sourceSystem: shortText }, ["id", "sourceSystem"]),
       success: { 200: responseSchema({ run: importRunRecord }), 201: responseSchema({ run: importRunRecord }) }
     }),
+    operation({ operationId: "getMigrationAssurance", checkpoint: "CP7", method: "GET",
+      path: "/v1/migration-runs/{runId}/assurance", summary: "Independently reconcile stored import evidence without patient details",
+      tags: ["Migration"], mutation: false, pathProperties: {runId: uuid},
+      queryProperties: {comparisonRunId: uuid, appointmentImportId: uuid},
+      success: {200: responseSchema({report: assuranceReport})} }),
     operation({
       operationId: "getImportRun",
       checkpoint: "CP7",

@@ -438,6 +438,8 @@ export type ListImportRunsRequest = { readonly query?: { readonly limit?: number
 export type ListImportRunsResponse = { readonly runs: readonly ({ readonly id: string; readonly tenantId: string; readonly clinicId: string; readonly sourceSystem: string; readonly createdByUserId: string; readonly createdAt: string })[]; readonly nextCursor: string | null };
 export type CreateImportRunRequest = { readonly headers: { readonly "idempotency-key": string }; readonly body: { readonly id: string; readonly sourceSystem: string } };
 export type CreateImportRunResponse = { readonly run: { readonly id: string; readonly tenantId: string; readonly clinicId: string; readonly sourceSystem: string; readonly createdByUserId: string; readonly createdAt: string } };
+export type GetMigrationAssuranceRequest = { readonly path: { readonly runId: string }; readonly query?: { readonly comparisonRunId?: string; readonly appointmentImportId?: string } };
+export type GetMigrationAssuranceResponse = { readonly report: { readonly version: 1; readonly observedAt: string; readonly runId: string; readonly profile: "practo_ray_patients_v1" | "practo_ray_patients_context_v2" | null; readonly expected: number | null; readonly sealed: boolean | null; readonly rows: { readonly invalid: number; readonly needsReview: number; readonly ready: number; readonly committed: number; readonly skipped: number; readonly rolledBack: number; readonly failed: number }; readonly received: number; readonly manifestProblems: number; readonly counterMismatches: number; readonly openConflicts: number; readonly patients: { readonly committedRows: number; readonly distinctPatients: number; readonly createdPatients: number; readonly missingLinks: number }; readonly context: { readonly versionsAdded: number; readonly retainedVersions: number; readonly missingRows: number; readonly reviewed: number; readonly needsClarification: number; readonly unreviewed: number }; readonly comparison: { readonly runId: string; readonly eligibility: "comparable" | "incomplete" | "different_profile" | "ambiguous_identifiers" | "integrity_mismatch"; readonly added: number; readonly changed: number; readonly unchanged: number; readonly absent: number } | null; readonly appointments: { readonly importId: string; readonly expected: number; readonly sealed: boolean; readonly pending: number; readonly history: number; readonly excluded: number; readonly linked: number; readonly created: number; readonly missingLinks: number } | null; readonly state: "incomplete" | "action_required" | "accounted_for"; readonly issues: readonly ("incomplete_upload" | "integrity_mismatch" | "review_required" | "ready_rows" | "excluded_rows" | "context_review" | "comparison_unavailable" | "changed_source" | "appointment_upload" | "appointment_review")[]; readonly coverage: "canonical_rows_only" | "practo_demographics" | "practo_demographics_and_context"; readonly sourceFreshness: "unknown"; readonly clinicApproval: "not_assessed" } };
 export type GetImportRunRequest = { readonly path: { readonly runId: string } };
 export type GetImportRunResponse = { readonly run: { readonly id: string; readonly tenantId: string; readonly clinicId: string; readonly sourceSystem: string; readonly createdByUserId: string; readonly createdAt: string }; readonly batches: readonly (PublicJsonObject)[]; readonly status: "awaiting_patients" | "awaiting_practitioners" | "awaiting_appointments" | "review_required" | "partial" | "complete" | "rolled_back"; readonly reconciliation: { readonly received: number; readonly valid: number; readonly invalid: number; readonly needsReview: number; readonly ready: number; readonly committed: number; readonly skipped: number; readonly rolledBack: number; readonly failed: number; readonly reconciled: number; readonly missingSourceAssessment: "unknown" }; readonly patientFile?: { readonly runId: string; readonly profile: "practo_ray_patients_v1" | "practo_ray_patients_context_v2"; readonly rowCount: number; readonly sealed: boolean; readonly received: number; readonly chunks: readonly ({ readonly ordinal: number; readonly rowCount: number; readonly digest: string; readonly batchId: string | null; readonly state: string | null; readonly ready: number; readonly needsReview: number; readonly invalid: number; readonly skipped: number; readonly committed: number; readonly reconciled: number; readonly failed: number; readonly rolledBack: number })[] } | null };
 export type ListProviderHealthRequest = Readonly<Record<string, never>>;
@@ -656,6 +658,7 @@ export interface ClinicOsNativeOperationMap {
   readonly sealPatientImportFile: { readonly request: SealPatientImportFileRequest; readonly response: SealPatientImportFileResponse };
   readonly listImportRuns: { readonly request: ListImportRunsRequest; readonly response: ListImportRunsResponse };
   readonly createImportRun: { readonly request: CreateImportRunRequest; readonly response: CreateImportRunResponse };
+  readonly getMigrationAssurance: { readonly request: GetMigrationAssuranceRequest; readonly response: GetMigrationAssuranceResponse };
   readonly getImportRun: { readonly request: GetImportRunRequest; readonly response: GetImportRunResponse };
   readonly listProviderHealth: { readonly request: ListProviderHealthRequest; readonly response: ListProviderHealthResponse };
   readonly listDeadLetterEvents: { readonly request: ListDeadLetterEventsRequest; readonly response: ListDeadLetterEventsResponse };
@@ -4196,6 +4199,30 @@ export class ClinicOsApiClient {
       contentType: "application/json",
       bodyEncoding: "json",
       successStatuses: [200,201],
+      input: input ?? {}
+    });
+  }
+
+  async getMigrationAssurance(input: GetMigrationAssuranceRequest): Promise<GetMigrationAssuranceResponse> {
+    return this.execute<GetMigrationAssuranceResponse>({
+      method: "GET",
+      pathTemplate: "/v1/migration-runs/{runId}/assurance",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
+      input: input ?? {}
+    });
+  }
+
+  async getMigrationAssuranceWithMetadata(input: GetMigrationAssuranceRequest): Promise<ClinicOsApiResponse<GetMigrationAssuranceResponse>> {
+    return this.executeWithMetadata<GetMigrationAssuranceResponse>({
+      method: "GET",
+      pathTemplate: "/v1/migration-runs/{runId}/assurance",
+      auth: "bearer",
+      contentType: null,
+      bodyEncoding: "json",
+      successStatuses: [200],
       input: input ?? {}
     });
   }

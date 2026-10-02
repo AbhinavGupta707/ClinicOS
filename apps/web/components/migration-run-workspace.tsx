@@ -20,6 +20,7 @@ import {
   type ImportRunDetail
 } from "@/lib/import-runs";
 import type { MeProfile } from "@/lib/me";
+import { MigrationAssurancePanel } from "./migration-assurance-panel";
 import { PatientFileWorkspace } from "./patient-file-workspace";
 import { MigrationOperationsPanel } from "./migration-operations-panel";
 
@@ -334,6 +335,7 @@ export function MigrationRunWorkspace({ profile }: { profile: MeProfile }) {
       ) : null}
       {detail && !unavailable ? (
         <>
+          <MigrationAssurancePanel key={detail.run.id} client={client} runId={detail.run.id} sourceSystem={detail.run.sourceSystem} runs={runs} busy={busy} />
           {!detail.batches.length && !detail.patientFile ? <label>Import workflow
             <select data-testid="migration-workflow" disabled={busy} value={largePatientFile ? "patient-file" : "guided"}
               onChange={(event) => setLargePatientFile(event.target.value === "patient-file")}>

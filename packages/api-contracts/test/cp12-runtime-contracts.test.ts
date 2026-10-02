@@ -100,7 +100,7 @@ function collectVersionedResponsePaths(definition: RuntimeSchema, path = ""): st
 }
 
 test("active native registry covers identity/health and every implemented checkpoint", () => {
-  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 180);
+  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 181);
   const checkpoints = new Set(
     ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.checkpoint)
   );
@@ -126,7 +126,7 @@ test("active native registry covers identity/health and every implemented checkp
   assert.equal(new Set(routeKeys).size, routeKeys.length);
   assert.equal(
     new Set(ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.operationId)).size,
-    180
+    181
   );
 });
 

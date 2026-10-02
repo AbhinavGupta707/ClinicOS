@@ -174,6 +174,7 @@ const OPERATION_PERMISSIONS: Readonly<Record<string, readonly string[]>> = Objec
   sealPatientImportFile: ["migration.manage"],
   createImportRun: ["migration.manage"],
   getImportRun: ["migration.manage"],
+  getMigrationAssurance: ["migration.manage"],
   createMigrationBatch: ["migration.manage"],
   getMigrationBatch: ["migration.manage"],
   listMigrationBatchRows: ["migration.manage"],

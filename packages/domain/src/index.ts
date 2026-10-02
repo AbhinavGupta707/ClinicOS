@@ -35,3 +35,5 @@ export * from "./patient-history.ts";
 
 export * from "./patient-source-context.ts";
 export * from "./patient-documents.ts";
+
+export * from "./migration-assurance.ts";

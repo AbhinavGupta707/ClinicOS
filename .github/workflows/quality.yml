@@ -37,6 +37,9 @@ jobs:
       - name: Offline Practo export profile safety tests (synthetic only)
         run: node --test scripts/practo-export-profile.test.mjs
 
+      - name: Synthetic restore ownership and integrity guards
+        run: node --test scripts/synthetic-database-restore.test.mjs
+
       - name: Typecheck workspaces
         run: npm run typecheck
 
@@ -143,6 +146,13 @@ jobs:
           DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
           REDIS_URL: redis://127.0.0.1:6379
         run: npm run mvp:test:real-stack -- --daily-workflow && node scripts/test-patient-document-repositories.mjs
+
+      - name: Migration assurance receipt, counter and identity integrity
+        env:
+          CLINICOS_MVP_TEST_DATABASE_DISPOSABLE: "true"
+          PILOT_SYNTHETIC_DATA_ONLY: "true"
+          DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
+        run: node scripts/test-migration-assurance-repositories.mjs
 
       - name: Retain real-stack acceptance evidence
         if: always()

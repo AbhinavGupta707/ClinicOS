@@ -1916,6 +1916,8 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return { runs: page, nextCursor: runs.length > index + 1 + bounded ? page.at(-1)?.id ?? null : null };
   }
 
+  async findMigrationAssurance(_scope: RepositoryScope, _runId: UUID, _comparisonRunId: UUID | null, _appointmentImportId: UUID | null): Promise<import("@clinic-os/domain").MigrationAssuranceFacts | null> { throw new Error("Migration assurance requires the synthetic PostgreSQL harness."); }
+
   async findImportRunById(scope: RepositoryScope, runId: UUID, _forStage = false): Promise<ImportRunDetail | null> {
     const run = this.importRuns.find((item) => matchesScope(item, scope) && item.id === runId);
     if (!run) return null;

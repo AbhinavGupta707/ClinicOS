@@ -11,6 +11,10 @@
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
     },
+    "./migration-assurance": {
+      "types": "./dist/migration-assurance.d.ts",
+      "default": "./dist/migration-assurance.js"
+    },
     "./patient-source-context": {
       "types": "./dist/patient-source-context.d.ts",
       "default": "./dist/patient-source-context.js"

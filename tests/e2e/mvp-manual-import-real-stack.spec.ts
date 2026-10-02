@@ -565,6 +565,51 @@ test.describe("MVP manual import real-stack acceptance", () => {
       reconciled += (await committed.json()).commit.summary.reconciledRows;
     }
     expect(reconciled).toBe(5000);
+    const assuranceResponse = await page.request.get(`/v1/migration-runs/${replayId}/assurance?comparisonRunId=${runId}`);
+    expect(assuranceResponse.ok(), await assuranceResponse.text()).toBe(true);
+    const assurance = (await assuranceResponse.json()).report;
+    expect(assurance).toMatchObject({received:5000,state:"accounted_for",counterMismatches:0,manifestProblems:0,
+      patients:{committedRows:5000,distinctPatients:5000,createdPatients:0,missingLinks:0},
+      comparison:{runId,eligibility:"comparable",added:0,changed:0,unchanged:5000,absent:0}});
+    expect(JSON.stringify(assurance)).not.toMatch(/Synthetic Scale|EXCLUDED_|\+917/);
+    await page.reload();
+    await expect(page.getByTestId("migration-run-selector")).toBeEnabled();
+    await page.getByTestId("migration-run-selector").selectOption(replayId);
+    const assurancePanel = page.getByTestId("migration-assurance");
+    await expect(assurancePanel).not.toHaveAttribute("open");
+    await expect(assurancePanel.getByLabel("Compare patient file")).not.toBeVisible();
+    await assurancePanel.locator("summary").click();
+    await expect(assurancePanel.getByLabel("Compare patient file")).toBeEnabled();
+    await assurancePanel.getByLabel("Compare patient file").selectOption(runId);
+    await assurancePanel.getByRole("button",{name:"Refresh assurance report"}).click();
+    await expect(assurancePanel.getByRole("heading",{name:"Selected rows accounted for"})).toBeVisible();
+    await expect(assurancePanel).toContainText("unchanged evidence: 5000");
+    await expect(assurancePanel).toContainText("Clinic approval: not assessed");
+    const downloadPromise = page.waitForEvent("download");
+    await assurancePanel.getByRole("button",{name:"Download aggregate report"}).click();
+    const downloaded = await downloadPromise;
+    expect(downloaded.suggestedFilename()).toBe(`clinicos-migration-assurance-${replayId}.json`);
+    const stream = await downloaded.createReadStream();
+    const reportBytes = [];
+    for await (const chunk of stream!) reportBytes.push(chunk);
+    const exported = JSON.parse(Buffer.concat(reportBytes).toString("utf8"));
+    expect(exported.patients.createdPatients).toBe(0);
+    expect(exported.clinicApproval).toBe("not_assessed");
+    expect(JSON.stringify(exported)).not.toMatch(/Synthetic Scale|EXCLUDED_|\+917/);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+    await page.screenshot({path:testInfo.outputPath("migration-assurance-mobile.png"),fullPage:true});
+    await page.setViewportSize({width:1440,height:1000});
+    await assurancePanel.screenshot({path:testInfo.outputPath("migration-assurance-desktop.png")});
+    // An actual failed request clears old evidence; no synthetic success response.
+    const assuranceRoute = `**/v1/migration-runs/${replayId}/assurance?**`;
+    await page.route(assuranceRoute, route => route.abort("connectionfailed"));
+    await assurancePanel.getByRole("button",{name:"Refresh assurance report"}).click();
+    await expect(assurancePanel.getByRole("alert")).toContainText("could not be confirmed");
+    await expect(assurancePanel.getByRole("button",{name:"Download aggregate report"})).toHaveCount(0);
+    await page.unroute(assuranceRoute);
+    await assurancePanel.getByRole("button",{name:"Refresh assurance report"}).click();
+    await expect(assurancePanel.getByRole("heading",{name:"Selected rows accounted for"})).toBeVisible();
+
     await page.goto("/surface/patients");
     await page.getByLabel("Find patient",{exact:true}).fill(`Synthetic Scale ${token} Patient 4999`);
     await page.getByRole("button", { name: "Search", exact: true }).click();
