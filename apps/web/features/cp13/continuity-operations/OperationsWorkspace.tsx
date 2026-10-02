@@ -1,4 +1,5 @@
 "use client";
+import { PatientDocumentPanel } from "../shared/PatientDocumentPanel";
 
 import type {
   ClinicOsApiClient,
@@ -525,7 +526,14 @@ function ScopedOperationsWorkspace({
           )}
 
           {surfaceId === "lab" && (
-            <Lab client={client} data={data} can={can} write={write} profile={profile} />
+            <Lab
+              locked={busy || refreshing || Boolean(pending)}
+              client={client}
+              data={data}
+              can={can}
+              write={write}
+              profile={profile}
+            />
           )}
 
           {surfaceId === "operations" && (
@@ -1265,7 +1273,14 @@ function Tasks({ client, data, can, write, profile }: Shared & { profile: MeProf
   );
 }
 
-function Lab({ client, data, can, write, profile }: Shared & { profile: MeProfile }) {
+function Lab({
+  client,
+  data,
+  can,
+  write,
+  profile,
+  locked
+}: Shared & { profile: MeProfile; locked: boolean }) {
   const [vendorName, setVendorName] = useState("");
   const [expectedCost, setExpectedCost] = useState("");
   const patientGeneration = useRef(0);
@@ -1353,6 +1368,17 @@ function Lab({ client, data, can, write, profile }: Shared & { profile: MeProfil
               <li key={item.case.id}>
                 <strong>{label(item.case, "title")}</strong> · {label(item.vendor, "displayName")} ·{" "}
                 {word(item.case.status).replaceAll("_", " ")}
+                <PatientDocumentPanel
+                  client={client}
+                  profile={profile}
+                  patientId={word(item.case.patientId)}
+                  sourceId={item.case.id}
+                  kind="lab_slip"
+                  locked={locked}
+                  sourceRevision={JSON.stringify(item)}
+                  execute={(invoke) => write("Lab document", invoke)}
+                  label="Review lab slip document"
+                />
               </li>
             ))
           ) : (

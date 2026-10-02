@@ -1,3 +1,5 @@
+import { renderPatientDocumentV1 } from "@clinic-os/domain";
+import { readFile } from "node:fs/promises";
 import { test, expect, type Page, type Browser } from "@playwright/test";
 import { createHash, randomUUID } from "node:crypto";
 const baseURL = process.env.CLINICOS_WEB_BASE_URL!;
@@ -72,6 +74,70 @@ async function noOverflow(page: Page) {
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth + 1)
   ).toBe(true);
+}
+
+const generatedDocuments: Array<{ kind: string; path: string; document: any }> = [];
+async function exerciseDocument(
+  page: Page,
+  kind: string,
+  label: string,
+  expected: string,
+  info: any
+) {
+  const region = page
+    .getByRole("region", { name: `${kind.replaceAll("_", " ")} documents`, exact: true })
+    .first();
+  await region.getByRole("button", { name: label, exact: true }).click();
+  const preview = region.locator("iframe").contentFrame();
+  await expect(preview.locator("body")).toContainText(expected);
+  await expect(preview.locator("body")).toContainText("PREVIEW ONLY");
+  await region.getByLabel("I reviewed this source", { exact: false }).check();
+  const response = page.waitForResponse(
+    (r) =>
+      r.request().method() === "POST" &&
+      /document-sources\/[^/]+\/[^/]+\/documents$/.test(new URL(r.url()).pathname)
+  );
+  await region.getByRole("button", { name: "Generate reviewed copy", exact: true }).click();
+  const issued = await response;
+  expect(issued.ok(), await issued.text()).toBe(true);
+  const issuedBody = await issued.json();
+  const path = new URL(issued.url()).pathname;
+  await expect(
+    region.getByRole("button", { name: "Download printable HTML", exact: true })
+  ).toBeEnabled();
+  const doc = (await api(page, `${path}/${issuedBody.documentId}`)).document;
+  expect(doc.html).toContain(expected);
+  expect(doc.html).not.toContain("PREVIEW ONLY");
+  const downloading = page.waitForEvent("download");
+  await region.getByRole("button", { name: "Download printable HTML", exact: true }).click();
+  const download = await downloading;
+  const local = info.outputPath(`${kind}.html`);
+  await download.saveAs(local);
+  expect(
+    createHash("sha256")
+      .update(await readFile(local))
+      .digest("hex")
+  ).toBe(doc.htmlDigest);
+  // Observe from the parent realm: document scripts are intentionally sandboxed.
+  await region.locator("iframe").evaluate((frame: HTMLIFrameElement) => {
+    frame.contentWindow!.addEventListener("beforeprint", () => {
+      frame.dataset.printRequested = "yes";
+    });
+  });
+  await region.getByRole("button", { name: "Print / Save as PDF", exact: true }).click();
+  await expect(region.locator("iframe")).toHaveAttribute("data-print-requested", "yes");
+  const printPage = await page.context().newPage();
+  await printPage.setContent(doc.html);
+  await printPage.pdf({
+    path: info.outputPath(`${kind}.pdf`),
+    preferCSSPageSize: true,
+    printBackground: true
+  });
+  await printPage.close();
+  generatedDocuments.push({ kind, path, document: doc });
+  if (kind !== "invoice")
+    await region.getByRole("button", { name: "Close document preview", exact: true }).click();
+  return doc;
 }
 
 test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
@@ -289,6 +355,13 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
       .getByRole("checkbox", { name: "I reviewed every medication in this draft.", exact: true })
       .check();
     await save(page, `/v1/prescriptions/${rx.id}/sign`, "Sign prescription");
+    await exerciseDocument(
+      page,
+      "prescription",
+      "Review prescription document",
+      "SyntheticTestMedication",
+      info
+    );
     await choose(page, "checkout");
     await page.getByRole("button", { name: "Create treatment plan", exact: true }).click();
     await page.getByLabel("Plan title").fill(planName);
@@ -300,6 +373,7 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
       .getByRole("combobox", { name: "Related visit, if any", exact: true })
       .selectOption(encounterId);
     await save(page, `/v1/patients/${patientId}/treatment-plans`, "Save draft plan");
+    await exerciseDocument(page, "estimate", "Review estimate document", planName, info);
     await page.getByRole("button", { name: /Mark presented to patient/ }).click();
     await expect(
       page.getByRole("button", { name: new RegExp(`${planName} · presented`) })
@@ -481,11 +555,13 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
       .fill("Synthetic test instruction only; no clinical advice");
     await page.getByLabel("I checked this text against", { exact: false }).check();
     await save(page, `/v1/patients/${patientId}/instructions`, "Save print instruction request");
-    const instructionPopup = page.waitForEvent("popup");
-    await page.getByRole("button", { name: "Print saved instruction", exact: true }).click();
-    const print = await instructionPopup;
-    await expect(print.locator("body")).toContainText("Synthetic test instruction only");
-    await print.close();
+    await exerciseDocument(
+      page,
+      "instruction",
+      "Review instruction document",
+      "Synthetic test instruction only",
+      info
+    );
     await page.context().close();
   });
   test("reception invoices completed work, receives partial payment and prints a receipt", async ({
@@ -499,11 +575,25 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
     await issue.getByRole("checkbox").first().check();
     const created = await save(page, "/v1/invoices", "Issue invoice for selected completed work");
     const invoiceId = created.invoice.id;
+    await exerciseDocument(page, "invoice", "Review invoice document", patientName, info);
     await page.getByLabel("Amount received (INR)").fill("400.00");
     await page.getByLabel("Clinic payment reference").fill(`synthetic-cash-${tag}`);
     await page.getByLabel("Audit reason").fill("Synthetic received cash evidence");
     await page.getByLabel("Evidence location", { exact: true }).fill("Synthetic cash register");
     await save(page, `/v1/invoices/${invoiceId}/manual-payments`, "Record received payment");
+    const invoiceDocument = page.getByRole("region", { name: "invoice documents", exact: true });
+    await expect(
+      invoiceDocument.getByLabel("Source or display details have changed", { exact: false })
+    ).toBeVisible();
+    await expect(
+      invoiceDocument.getByRole("button", { name: "Download printable HTML", exact: true })
+    ).toBeDisabled();
+    await invoiceDocument
+      .getByLabel("Source or display details have changed", { exact: false })
+      .check();
+    await expect(
+      invoiceDocument.getByRole("button", { name: "Download printable HTML", exact: true })
+    ).toBeEnabled();
     const receipt = page.getByRole("region", { name: "Generate receipt", exact: true });
     await receipt.getByRole("checkbox").first().check();
     await save(
@@ -511,11 +601,7 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
       `/v1/invoices/${invoiceId}/receipts`,
       "Generate receipt for selected payments"
     );
-    const popupPromise = page.waitForEvent("popup");
-    await page.getByRole("button", { name: "Print saved receipt", exact: true }).click();
-    const popup = await popupPromise;
-    await expect(popup.locator("body")).toContainText(patientName);
-    await popup.close();
+    await exerciseDocument(page, "receipt", "Review receipt document", patientName, info);
     const detail = await api(page, `/v1/invoices/${invoiceId}`);
     expect(detail.invoice.paidMinor).toBe(40000);
     expect(detail.invoice.balanceMinor).toBe(60000);
@@ -689,6 +775,7 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
     await labForm.getByLabel("Item type").fill("Synthetic dental item");
     await labForm.getByLabel("Agreed lab cost in INR (optional)").fill("500.00");
     const lab = (await save(page, "/v1/lab-cases", "Create case")).labCase.labCase;
+    await exerciseDocument(page, "lab_slip", "Review lab slip document", patientName, info);
     const labProgress = page
       .locator("form")
       .filter({ has: page.getByRole("heading", { name: "Record lab progress", exact: true }) });
@@ -1411,67 +1498,314 @@ test.describe.serial("Native daily workflows with synthetic PostgreSQL", () => {
     await noOverflow(page);
     await page.context().close();
   });
-  test("context patient import and exact clinician review preserve source text on mobile",async({browser},info)=>{
-    const page=await rolePage(browser,"owner");
-    const name=`SyntheticContext-${tag}`, source=`context_browser_${tag}`;
-    const headers=["Patient Number","Patient Name","Mobile Number","Contact Number","Email Address","Secondary Mobile","Gender","Address","Locality","City","Pincode","National Id","Date of Birth","Age","Anniversary Date","Blood Group","Remarks","Medical History","Referred By","Groups","Patient Notes"];
-    const values=headers.map(()=>"");values[0]=`context-${tag}`;values[1]=name;values[11]="NEVER_SEND_NATIONAL_ID";values[17]="  Historical source, unverified\nनमस्ते  ";values[20]="<script>must remain text</script>";
-    const csv=[headers,values].map(row=>row.map(v=>'"'+v.replaceAll('"','""')+'"').join(",")).join("\n");
+  test("generated documents preserve exact copies, enforce source authority and reject stale previews", async ({
+    browser
+  }, info) => {
+    const page = await rolePage(browser, "owner");
+    expect(generatedDocuments.map((d) => d.kind).sort()).toEqual([
+      "estimate",
+      "instruction",
+      "invoice",
+      "lab_slip",
+      "prescription",
+      "receipt"
+    ]);
+    for (const entry of generatedDocuments) {
+      const reread = (await api(page, `${entry.path}/${entry.document.id}`)).document;
+      expect(reread.htmlDigest).toBe(entry.document.htmlDigest);
+      expect(reread.html).toBe(entry.document.html);
+      const wrong = await page.request.get(
+        `${entry.path.replace(patientId, doctor)}/${entry.document.id}`,
+        { headers: { authorization: "Bearer local-synthetic-owner", "x-clinic-id": clinic } }
+      );
+      expect(wrong.status()).toBe(404);
+    }
+    const rx = generatedDocuments.find((d) => d.kind === "prescription")!;
+    const forbidden = await page.request.get(`${rx.path}/${rx.document.id}`, {
+      headers: { authorization: "Bearer local-synthetic-receptionist", "x-clinic-id": clinic }
+    });
+    expect(forbidden.status()).toBe(403);
+    const invoice = generatedDocuments.find((d) => d.kind === "invoice")!;
+    const headers = {
+      authorization: "Bearer local-synthetic-owner",
+      "x-clinic-id": clinic,
+      "idempotency-key": randomUUID()
+    };
+    const stale = await page.request.post(invoice.path, {
+      headers,
+      data: { expectedSourceDigest: invoice.document.sourceDigest }
+    });
+    expect(stale.status()).toBe(409);
+    const current = await api(page, invoice.path.replace(/\/documents$/, ""));
+    const body = { expectedSourceDigest: current.preview.sourceDigest };
+    const together = await Promise.all([
+      page.request.post(invoice.path, {
+        headers: { ...headers, "idempotency-key": randomUUID() },
+        data: body
+      }),
+      page.request.post(invoice.path, {
+        headers: { ...headers, "idempotency-key": randomUUID() },
+        data: body
+      })
+    ]);
+    for (const response of together) expect(response.ok(), await response.text()).toBe(true);
+    const copies = await Promise.all(together.map((r) => r.json()));
+    expect(copies[0].documentId).toBe(copies[1].documentId);
+    const retry = await page.request.post(invoice.path, { headers, data: body });
+    expect(retry.ok(), await retry.text()).toBe(true);
+    const same = await page.request.post(invoice.path, { headers, data: body });
+    expect(await same.json()).toEqual(await retry.json());
+    const altered = await page.request.post(invoice.path, {
+      headers,
+      data: { expectedSourceDigest: "0".repeat(64) }
+    });
+    expect(altered.status()).toBe(409);
+    const longText =
+      "Synthetic guidance नमस्ते.\nPreserve text <script>literal</script>.\n".repeat(45) +
+      "END-OF-SYNTHETIC-INSTRUCTIONS";
+    const instruction = (
+      await api(page, `/v1/patients/${patientId}/instructions`, "POST", {
+        channel: "print",
+        templateId: "synthetic-pagination",
+        title: "Synthetic long instructions",
+        body: longText
+      })
+    ).instruction;
+    const sourcePath = `/v1/patients/${patientId}/document-sources/instruction/${instruction.id}`;
+    const preview = await api(page, sourcePath);
+    const issued = await api(page, `${sourcePath}/documents`, "POST", {
+      expectedSourceDigest: preview.preview.sourceDigest
+    });
+    const longDoc = (await api(page, `${sourcePath}/documents/${issued.documentId}`)).document;
+    expect(longDoc.html).toContain("END-OF-SYNTHETIC-INSTRUCTIONS");
+    expect(longDoc.html).not.toContain("<script>");
+    const printed = await page.context().newPage();
+    await printed.setContent(longDoc.html);
+    await printed.pdf({
+      path: info.outputPath("long-instructions.pdf"),
+      preferCSSPageSize: true,
+      printBackground: true
+    });
+    // Renderer stress fixture only; the six source documents above use the durable API.
+    await printed.setContent(
+      renderPatientDocumentV1({
+        kind: "estimate",
+        patientId,
+        sourceId: randomUUID(),
+        sourceVersion: "synthetic-stress-only",
+        sourceStatus: "draft",
+        title: "Synthetic long table",
+        clinicName: "Synthetic Clinic",
+        patientName: "Synthetic नमस्ते",
+        facts: [],
+        notices: ["TEST FIXTURE ONLY"],
+        sections: [
+          {
+            title: "Synthetic rows",
+            paragraphs: [],
+            columns: ["Item", "Description", "Amount"],
+            rows: Array.from({ length: 90 }, (_, i) => [
+              String(i + 1),
+              `Synthetic table row ${i + 1} नमस्ते ${i === 89 ? "END-OF-SYNTHETIC-TABLE" : ""}`,
+              "INR 1,000.00"
+            ])
+          }
+        ]
+      })
+    );
+    await expect(printed.locator("tbody tr")).toHaveCount(90);
+    await printed.pdf({
+      path: info.outputPath("long-table.pdf"),
+      preferCSSPageSize: true,
+      printBackground: true
+    });
+    await printed.close();
+    await page.setViewportSize({ width: 390, height: 844 });
+    await choose(page, "checkout");
+    const region = page.getByRole("region", { name: "instruction documents", exact: true }).first();
+    await region.getByRole("button", { name: "Review instruction document" }).click();
+    await expect(region.locator("iframe")).toBeVisible();
+    await noOverflow(page);
+    await region.screenshot({ path: info.outputPath("documents-mobile.png") });
+    await region.getByRole("button", { name: /^Open copy 1 / }).click();
+    const mobileDownload = region.getByRole("button", {
+      name: "Download printable HTML",
+      exact: true
+    });
+    await expect(mobileDownload).toBeEnabled();
+    await mobileDownload.scrollIntoViewIfNeeded();
+    const mobileFile = page.waitForEvent("download");
+    await mobileDownload.click();
+    await (await mobileFile).saveAs(info.outputPath("mobile-saved-copy.html"));
+    await page.screenshot({
+      path: info.outputPath("document-mobile-controls.png"),
+      fullPage: false
+    });
+    await page.context().close();
+  });
+  test("context patient import and exact clinician review preserve source text on mobile", async ({
+    browser
+  }, info) => {
+    const page = await rolePage(browser, "owner");
+    const name = `SyntheticContext-${tag}`,
+      source = `context_browser_${tag}`;
+    const headers = [
+      "Patient Number",
+      "Patient Name",
+      "Mobile Number",
+      "Contact Number",
+      "Email Address",
+      "Secondary Mobile",
+      "Gender",
+      "Address",
+      "Locality",
+      "City",
+      "Pincode",
+      "National Id",
+      "Date of Birth",
+      "Age",
+      "Anniversary Date",
+      "Blood Group",
+      "Remarks",
+      "Medical History",
+      "Referred By",
+      "Groups",
+      "Patient Notes"
+    ];
+    const values = headers.map(() => "");
+    values[0] = `context-${tag}`;
+    values[1] = name;
+    values[11] = "NEVER_SEND_NATIONAL_ID";
+    values[17] = "  Historical source, unverified\nनमस्ते  ";
+    values[20] = "<script>must remain text</script>";
+    const csv = [headers, values]
+      .map((row) => row.map((v) => '"' + v.replaceAll('"', '""') + '"').join(","))
+      .join("\n");
     await page.goto("/surface/migration-review");
     await page.getByTestId("migration-new-source-system").fill(source);
     await page.getByTestId("migration-create-run").click();
     await expect(page.getByTestId("migration-source-system")).toHaveValue(source);
     await page.getByTestId("migration-workflow").selectOption("patient-file");
     await page.getByTestId("patient-file-profile").selectOption("practo_ray_patients_context_v2");
-    await page.getByTestId("patient-file-input").setInputFiles({name:"patients.csv",mimeType:"text/csv",buffer:Buffer.from(csv)});
+    await page
+      .getByTestId("patient-file-input")
+      .setInputFiles({ name: "patients.csv", mimeType: "text/csv", buffer: Buffer.from(csv) });
     await expect(page.getByTestId("patient-file-preview")).toContainText("1 patients");
     await page.getByTestId("patient-file-accept").check();
-    const upload=page.waitForRequest(r=>r.method()==="POST"&&/patient-file\/chunks\/0$/.test(new URL(r.url()).pathname));
+    const upload = page.waitForRequest(
+      (r) => r.method() === "POST" && /patient-file\/chunks\/0$/.test(new URL(r.url()).pathname)
+    );
     await page.getByTestId("patient-file-upload").click();
     expect((await upload).postData()).not.toContain("NEVER_SEND_NATIONAL_ID");
     await expect(page.getByTestId("patient-file-summary")).toContainText("Complete file received");
     // Inject only progress-read failure; all imports/commits still use the real API.
     // Recovery must restore the saved profile's immutable-retention disclosure.
     const progressRoute = "**/v1/migration-runs/*/patient-file";
-    await page.route(progressRoute, route => route.request().method() === "GET"
-      ? route.fulfill({status:403,contentType:"application/json",body:JSON.stringify({message:"Synthetic progress unavailable"})})
-      : route.continue());
-    await page.getByRole("button",{name:"Refresh file progress"}).click();
-    await expect(page.getByTestId("patient-file-notice")).toContainText("Saved progress is unavailable");
+    await page.route(progressRoute, (route) =>
+      route.request().method() === "GET"
+        ? route.fulfill({
+            status: 403,
+            contentType: "application/json",
+            body: JSON.stringify({ message: "Synthetic progress unavailable" })
+          })
+        : route.continue()
+    );
+    await page.getByRole("button", { name: "Refresh file progress" }).click();
+    await expect(page.getByTestId("patient-file-notice")).toContainText(
+      "Saved progress is unavailable"
+    );
     await page.getByTestId("patient-file-profile").selectOption("practo_ray_patients_v1");
     await page.unroute(progressRoute);
-    await page.getByRole("button",{name:"Refresh file progress"}).click();
-    await expect(page.getByTestId("patient-file-profile")).toHaveValue("practo_ray_patients_context_v2");
-    await expect(page.getByText("Committing retains immutable clinical source evidence.",{exact:false})).toBeVisible();
+    await page.getByRole("button", { name: "Refresh file progress" }).click();
+    await expect(page.getByTestId("patient-file-profile")).toHaveValue(
+      "practo_ray_patients_context_v2"
+    );
+    await expect(
+      page.getByText("Committing retains immutable clinical source evidence.", { exact: false })
+    ).toBeVisible();
     await expect(page.getByTestId("patient-file-commit-accept")).not.toBeChecked();
     await page.getByTestId("patient-file-commit-accept").check();
     await page.getByTestId("patient-file-commit").click();
     await expect(page.getByTestId("patient-file-notice")).toContainText("Processing finished");
-    const patient=(await api(page,`/v1/patients?query=${name}`)).patients[0];expect(patient.phone).toBeNull();
-    const denied=await page.request.get(`/v1/patients/${patient.id}/source-contexts`,{headers:{authorization:"Bearer local-synthetic-receptionist","x-clinic-id":clinic}});expect(denied.status()).toBe(403);
-    const clinician=await rolePage(browser,"doctor");await clinician.setViewportSize({width:390,height:844});
-    await choose(clinician,"patient-profile",name);
-    const history=clinician.getByRole("region",{name:"Historical source context",exact:true});
-    await expect(history.getByText("Historical source, unverified",{exact:false})).toBeVisible();
-    await expect(history.getByText("<script>must remain text</script>",{exact:true})).toBeVisible();
-    await history.getByLabel("Review evidence").fill("Reviewed synthetic source; clarify before treatment.");
+    const patient = (await api(page, `/v1/patients?query=${name}`)).patients[0];
+    expect(patient.phone).toBeNull();
+    const denied = await page.request.get(`/v1/patients/${patient.id}/source-contexts`, {
+      headers: { authorization: "Bearer local-synthetic-receptionist", "x-clinic-id": clinic }
+    });
+    expect(denied.status()).toBe(403);
+    const clinician = await rolePage(browser, "doctor");
+    await clinician.setViewportSize({ width: 390, height: 844 });
+    await choose(clinician, "patient-profile", name);
+    const history = clinician.getByRole("region", {
+      name: "Historical source context",
+      exact: true
+    });
+    await expect(
+      history.getByText("Historical source, unverified", { exact: false })
+    ).toBeVisible();
+    await expect(
+      history.getByText("<script>must remain text</script>", { exact: true })
+    ).toBeVisible();
+    await history
+      .getByLabel("Review evidence")
+      .fill("Reviewed synthetic source; clarify before treatment.");
     await history.getByLabel("Review outcome").selectOption("needs_clarification");
-    await history.getByRole("button",{name:"Save review of version 1"}).click();
+    await history.getByRole("button", { name: "Save review of version 1" }).click();
     await expect(history.getByText("Review: needs clarification")).toBeVisible();
-    const saved=(await api(clinician,`/v1/patients/${patient.id}/source-contexts`,"GET",undefined,"doctor")).records[0];
-    expect(saved.fields["Medical History"]).toBe(values[17]);expect(saved.review.decision).toBe("needs_clarification");
+    const saved = (
+      await api(clinician, `/v1/patients/${patient.id}/source-contexts`, "GET", undefined, "doctor")
+    ).records[0];
+    expect(saved.fields["Medical History"]).toBe(values[17]);
+    expect(saved.review.decision).toBe("needs_clarification");
     expect(saved.sourceRecordDate).toBeNull();
-    const reviewUrl=`/v1/patients/${patient.id}/source-contexts/${saved.id}/reviews`;
-    const ownerReview=await page.request.post(reviewUrl,{headers:{authorization:"Bearer local-synthetic-owner","x-clinic-id":clinic,"idempotency-key":randomUUID()},data:{decision:"reviewed",note:"Owner alone is not a clinician"}});expect(ownerReview.status()).toBe(403);
-    const reviewHeaders={authorization:"Bearer local-synthetic-doctor","x-clinic-id":clinic,"idempotency-key":randomUUID()};
-    const reviewBody={decision:"needs_clarification",note:"Synthetic exact retry evidence"};
-    const firstReview=await clinician.request.post(reviewUrl,{headers:reviewHeaders,data:reviewBody});expect(firstReview.ok()).toBe(true);
-    const repeatedReview=await clinician.request.post(reviewUrl,{headers:reviewHeaders,data:reviewBody});expect(repeatedReview.ok()).toBe(true);
+    const reviewUrl = `/v1/patients/${patient.id}/source-contexts/${saved.id}/reviews`;
+    const ownerReview = await page.request.post(reviewUrl, {
+      headers: {
+        authorization: "Bearer local-synthetic-owner",
+        "x-clinic-id": clinic,
+        "idempotency-key": randomUUID()
+      },
+      data: { decision: "reviewed", note: "Owner alone is not a clinician" }
+    });
+    expect(ownerReview.status()).toBe(403);
+    const reviewHeaders = {
+      authorization: "Bearer local-synthetic-doctor",
+      "x-clinic-id": clinic,
+      "idempotency-key": randomUUID()
+    };
+    const reviewBody = { decision: "needs_clarification", note: "Synthetic exact retry evidence" };
+    const firstReview = await clinician.request.post(reviewUrl, {
+      headers: reviewHeaders,
+      data: reviewBody
+    });
+    expect(firstReview.ok()).toBe(true);
+    const repeatedReview = await clinician.request.post(reviewUrl, {
+      headers: reviewHeaders,
+      data: reviewBody
+    });
+    expect(repeatedReview.ok()).toBe(true);
     expect(await repeatedReview.json()).toEqual(await firstReview.json());
-    const differentReview=await clinician.request.post(reviewUrl,{headers:reviewHeaders,data:{...reviewBody,note:"Different content under old key"}});expect(differentReview.status()).toBe(409);
+    const differentReview = await clinician.request.post(reviewUrl, {
+      headers: reviewHeaders,
+      data: { ...reviewBody, note: "Different content under old key" }
+    });
+    expect(differentReview.status()).toBe(409);
 
-    const unknown=await clinician.request.post(`/v1/patients/${patientId}/source-contexts/${saved.id}/reviews`,{headers:{authorization:"Bearer local-synthetic-doctor","x-clinic-id":clinic,"idempotency-key":randomUUID()},data:{decision:"reviewed",note:"Must reject wrong patient"}});expect(unknown.status()).toBe(404);
-    await noOverflow(clinician);await history.screenshot({path:info.outputPath("historical-context-mobile.png")});await clinician.context().close();await page.context().close();
+    const unknown = await clinician.request.post(
+      `/v1/patients/${patientId}/source-contexts/${saved.id}/reviews`,
+      {
+        headers: {
+          authorization: "Bearer local-synthetic-doctor",
+          "x-clinic-id": clinic,
+          "idempotency-key": randomUUID()
+        },
+        data: { decision: "reviewed", note: "Must reject wrong patient" }
+      }
+    );
+    expect(unknown.status()).toBe(404);
+    await noOverflow(clinician);
+    await history.screenshot({ path: info.outputPath("historical-context-mobile.png") });
+    await clinician.context().close();
+    await page.context().close();
   });
-
 });

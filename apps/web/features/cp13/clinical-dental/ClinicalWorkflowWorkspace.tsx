@@ -22,6 +22,7 @@ import {
   unsavedEncounterForPatient
 } from "../../../lib/unsaved-clinical-notes";
 import type { MeProfile } from "../../../lib/me";
+import { PatientDocumentPanel } from "../shared/PatientDocumentPanel";
 import { PatientHistoryWorkspace } from "./PatientHistoryWorkspace";
 import { ClinicalDentalWorkspace } from "./ClinicalDentalWorkspace";
 import { useUnsavedNoteGuard } from "../shared/useUnsavedNoteGuard";
@@ -212,7 +213,14 @@ export function ClinicalWorkflowWorkspace(props: ClinicalWorkflowWorkspaceProps)
             <>
               <DentalPanel {...context} />
               {can(props.profile, "media.read") || can(props.profile, "media.write") ? (
-                <ClinicalDentalWorkspace client={props.client} patientId={context.patientId} locked={action.locked} mutate={action.execute} canRead={can(props.profile,"media.read")} canUpload={can(props.profile,"media.write")} />
+                <ClinicalDentalWorkspace
+                  client={props.client}
+                  patientId={context.patientId}
+                  locked={action.locked}
+                  mutate={action.execute}
+                  canRead={can(props.profile, "media.read")}
+                  canUpload={can(props.profile, "media.write")}
+                />
               ) : null}
             </>
           ) : props.surfaceId === "dental-media" ? (
@@ -1516,29 +1524,6 @@ function PrescriptionEditor(
     }
   }
 
-  function printPrescription(prescription: PublicJsonObject) {
-    if (fieldText(prescription, "status") !== "signed" || !fieldText(prescription, "signedAt"))
-      return;
-    const rows = valueList(prescription.medications).map(record);
-    try {
-      printClinicalDocument("Signed prescription", [
-        `Clinic: ${props.profile.clinic.name}`,
-        `Patient: ${props.patientName}`,
-        `Signing doctor: ${fieldText(prescription, "signedByDisplayName") || "Name unavailable; see the signing staff record below"}`,
-        `Signed by staff record: ${fieldText(prescription, "signedByUserId")}`,
-        `Signed: ${clinicDisplayTime(fieldText(prescription, "signedAt"), timeZone)}`,
-        `Prescription version: ${fieldText(prescription, "versionNumber") || "Signed original"}`,
-        ...rows.map(
-          (row, index) =>
-            `${index + 1}. ${fieldText(row, "name")} ${fieldText(row, "strength")} · ${fieldText(row, "route")} · ${fieldText(row, "frequency")} for ${fieldText(row, "duration")}${fieldText(row, "instructions") ? ` · ${fieldText(row, "instructions")}` : ""}`
-        ),
-        ...(fieldText(prescription, "notes") ? [`Notes: ${fieldText(prescription, "notes")}`] : [])
-      ]);
-    } catch (error) {
-      setMessage(errorMessage(error));
-    }
-  }
-
   return (
     <section aria-label="Prescriptions">
       <h3>Prescriptions</h3>
@@ -1565,9 +1550,14 @@ function PrescriptionEditor(
                   })}
                 </ol>
                 {signed ? (
-                  <button type="button" onClick={() => printPrescription(item)}>
-                    Print signed prescription
-                  </button>
+                  <PatientDocumentPanel
+                    {...props}
+                    kind="prescription"
+                    sourceId={id}
+                    sourceRevision={JSON.stringify(item)}
+                    execute={props.mutate}
+                    label="Review prescription document"
+                  />
                 ) : props.canSign && draftable ? (
                   <>
                     <label>

@@ -1,3 +1,4 @@
+import type {preparePatientDocument, issuePatientDocument, listPatientDocuments, getPatientDocument} from "./patient-documents.ts";
 import type {listPatientSourceContexts,reviewPatientSourceContext} from "./patient-source-context.ts";
 import type { MediaPageInput } from "@clinic-os/domain";
 import type { PatientHistoryPageInput } from "@clinic-os/domain";
@@ -1428,6 +1429,11 @@ export interface WorkflowPage<T> { readonly records: readonly T[]; readonly next
 export interface ClinicStaffSummary { readonly id: UUID; readonly displayName: string; }
 
 export interface ClinicOperationsRepository {
+  preparePatientDocument(scope:RepositoryScope,...args:Parameters<typeof preparePatientDocument> extends [unknown,unknown,...infer A] ? A : never):ReturnType<typeof preparePatientDocument>;
+  issuePatientDocument(scope:RepositoryScope,...args:Parameters<typeof issuePatientDocument> extends [unknown,unknown,...infer A] ? A : never):ReturnType<typeof issuePatientDocument>;
+  listPatientDocuments(scope:RepositoryScope,...args:Parameters<typeof listPatientDocuments> extends [unknown,unknown,...infer A] ? A : never):ReturnType<typeof listPatientDocuments>;
+  getPatientDocument(scope:RepositoryScope,...args:Parameters<typeof getPatientDocument> extends [unknown,unknown,...infer A] ? A : never):ReturnType<typeof getPatientDocument>;
+
   listPatientSourceContexts(scope:RepositoryScope,patientId:UUID,cursor?:string):ReturnType<typeof listPatientSourceContexts>;
   reviewPatientSourceContext(scope:RepositoryScope,patientId:UUID,contextId:UUID,input:Parameters<typeof reviewPatientSourceContext>[4]):ReturnType<typeof reviewPatientSourceContext>;
   createAppointmentImport(scope:RepositoryScope,input:Parameters<typeof createAppointmentImport>[2]):ReturnType<typeof createAppointmentImport>;

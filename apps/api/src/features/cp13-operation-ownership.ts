@@ -2,6 +2,7 @@ export const APPOINTMENT_REVIEW_OPERATION_IDS = Object.freeze(["createAppointmen
 export const DAILY_WORKFLOW_DISCOVERY_OPERATION_IDS = Object.freeze(["listPatientDentalSnapshots", "getPatientDentalSnapshot", "previewPatientDuplicates", "listPatientIntakeHistory", "listLabReconciliations", "listPatientEncounters", "listEncounterPrescriptions", "listPatientTreatmentPlans", "listPatientInvoices", "listUninvoicedPatientProcedures", "listSopTemplates", "listSopSchedules", "listInventoryCheckRuns", "listClinicStaff", "getPatientDemographics", "searchBillingPatients", "listPatientInstructions", "listClinicSetup", "saveClinicSetup", "listClinicAccess", "saveClinicAccess"] as const);
 
 export const CP13_FRONT_OFFICE_OPERATION_IDS = Object.freeze([
+  "preparePatientDocument", "issuePatientDocument", "getPatientDocument",
   "listPatients",
   "createPatient",
   "getPatient",

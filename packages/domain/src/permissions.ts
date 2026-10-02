@@ -9,6 +9,7 @@ export const PERMISSIONS = [
   "audit.read",
   "audit.review",
   "patient.read",
+  "patient.document.read",
   "patient.write",
   "patient.export",
   "patient.phi.read",
@@ -80,6 +81,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "audit.read",
     "audit.review",
     "patient.read",
+    "patient.document.read",
     "patient.write",
     "patient.export",
     "patient.phi.read",
@@ -125,6 +127,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
   ],
   doctor: [
     "patient.read",
+    "patient.document.read",
     "patient.write",
     "patient.phi.read",
     "schedule.read",
@@ -161,6 +164,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
   ],
   assistant: [
     "patient.read",
+    "patient.document.read",
     "patient.write",
     "patient.phi.read",
     "schedule.read",
@@ -193,6 +197,7 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
   ],
   receptionist: [
     "patient.read",
+    "patient.document.read",
     "patient.write",
     "schedule.read",
     "schedule.write",
@@ -210,7 +215,13 @@ export const DEFAULT_ROLE_PERMISSION_GRANTS = {
     "incident.manage",
     "corrective_action.manage"
   ],
-  accountant: ["billing.read", "billing.write", "billing.export", "analytics.read"],
+  accountant: [
+    "patient.document.read",
+    "billing.read",
+    "billing.write",
+    "billing.export",
+    "analytics.read"
+  ],
   auditor: ["audit.read", "audit.review", "analytics.read"],
   platform_admin: ALL_PERMISSIONS
 } satisfies Record<ClinicRoleSlug, readonly PermissionKey[]>;

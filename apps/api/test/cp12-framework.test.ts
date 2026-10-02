@@ -53,10 +53,10 @@ import {
   requiredRolesForOperation
 } from "../src/framework/route-registry.ts";
 
-test("app registry covers exactly 177 operations and separates doctor roles from permissions", () => {
-  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 177);
-  assert.equal(CLINIC_OS_ROUTE_POLICIES.length, 177);
-  assert.equal(new Set(CLINIC_OS_ROUTE_POLICIES.map(({ routeId }) => routeId)).size, 177);
+test("app registry covers exactly 180 operations and separates doctor roles from permissions", () => {
+  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 180);
+  assert.equal(CLINIC_OS_ROUTE_POLICIES.length, 180);
+  assert.equal(new Set(CLINIC_OS_ROUTE_POLICIES.map(({ routeId }) => routeId)).size, 180);
   assert.deepEqual(
     ACTIVE_NATIVE_HTTP_OPERATIONS.filter(
       ({ concurrency, integration }) =>

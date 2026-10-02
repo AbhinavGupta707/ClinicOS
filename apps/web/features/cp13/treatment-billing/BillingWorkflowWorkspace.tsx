@@ -20,7 +20,7 @@ import { PatientSelector } from "../shared/PatientSelector";
 import { WorkflowAction, useWorkflowAction } from "../shared/WorkflowAction";
 import { clinicDisplayTime, etag, fieldText, record, valueList } from "../shared/workflow-values";
 import { clinicDateTimeToInstant } from "../front-office/front-desk";
-import { printClinicalDocument } from "../clinical-dental/clinical-workflow";
+import { PatientDocumentPanel } from "../shared/PatientDocumentPanel";
 import {
   acceptedIncompleteItems,
   blankPlanItem,
@@ -265,7 +265,7 @@ function BillingPatientSearch(props: {
 }
 
 export function BillingWorkflowWorkspace(props: BillingWorkflowWorkspaceProps) {
-  const [financialView,setFinancialView]=useState(false);
+  const [financialView, setFinancialView] = useState(false);
   const financialOnly = can(props.profile, "billing.read") && !can(props.profile, "patient.read");
   const [billingSelection, setBillingSelection] = useState<{ id: string; name: string } | null>(
     null
@@ -301,7 +301,14 @@ export function BillingWorkflowWorkspace(props: BillingWorkflowWorkspaceProps) {
 
   return (
     <div className="billing-workflow-workspace">
-      <nav aria-label="Billing workflows"><button disabled={action.locked} onClick={()=>setFinancialView(false)}>Treatment and checkout</button><button disabled={action.locked} onClick={()=>setFinancialView(true)}>Accounts and reconciliation</button></nav>
+      <nav aria-label="Billing workflows">
+        <button disabled={action.locked} onClick={() => setFinancialView(false)}>
+          Treatment and checkout
+        </button>
+        <button disabled={action.locked} onClick={() => setFinancialView(true)}>
+          Accounts and reconciliation
+        </button>
+      </nav>
       <fieldset disabled={action.locked}>
         {financialOnly ? (
           <BillingPatientSearch
@@ -337,7 +344,15 @@ export function BillingWorkflowWorkspace(props: BillingWorkflowWorkspaceProps) {
       {!props.patientId ? <p>Choose a patient to continue.</p> : null}
       {identity.loading && props.patientId && !financialOnly ? <p>Loading patient…</p> : null}
       {identity.error && !financialOnly ? <p role="alert">{identity.error}</p> : null}
-      {financialView ? <FinancialOperationsPanel key={`${props.patientId}:${revision}`} {...props} locked={action.locked} mutate={action.execute} onSaved={()=>setRevision(v=>v+1)} /> : null}
+      {financialView ? (
+        <FinancialOperationsPanel
+          key={`${props.patientId}:${revision}`}
+          {...props}
+          locked={action.locked}
+          mutate={action.execute}
+          onSaved={() => setRevision((v) => v + 1)}
+        />
+      ) : null}
       {context && !financialView ? (
         <Fragment key={`${context.patientId}:${revision}`}>
           <h1>{patientName}</h1>
@@ -446,6 +461,14 @@ function TreatmentPanel(props: BillingContext) {
       </Panel>
       {selectedPlan ? (
         <Panel title="Selected treatment plan">
+          <PatientDocumentPanel
+            {...props}
+            kind="estimate"
+            sourceId={selectedPlan.id}
+            sourceRevision={JSON.stringify(selectedPlan)}
+            execute={props.mutate}
+            label="Review estimate document"
+          />
           <p>
             {fieldText(selectedPlan, "title")} · {fieldText(selectedPlan, "status")} · server-priced
             total {formatInrMinor(selectedPlan.totalMinor)}
@@ -1380,7 +1403,6 @@ function InvoiceDetail(
     [props.client, props.invoiceId]
   );
   const invoice = detail.data?.invoice;
-  const [message, setMessage] = useState("");
   const timeZone = props.profile.clinic.timezone || "UTC";
   if (invoice && fieldText(invoice, "patientId") !== props.patientId) {
     return <p role="alert">This invoice does not belong to the selected billing patient.</p>;
@@ -1389,49 +1411,6 @@ function InvoiceDetail(
   async function refreshAll() {
     await detail.refresh();
     await props.onChanged();
-  }
-
-  function printInvoice() {
-    if (!invoice || fieldText(invoice, "status") !== "issued") return;
-    try {
-      printClinicalDocument(`Invoice ${fieldText(invoice, "invoiceNumber")}`, [
-        `Clinic: ${props.profile.clinic.name}`,
-        `Patient: ${props.patientName}`,
-        `Issued: ${clinicDisplayTime(fieldText(invoice, "issuedAt"), timeZone)}`,
-        ...valueList(invoice.items).map((itemValue) => {
-          const item = record(itemValue);
-          return `${fieldText(item, "description") || "Recorded procedure"} · ${String(item.quantity ?? 1)} × ${formatInrMinor(item.unitPriceMinor)} = ${formatInrMinor(item.totalMinor)}`;
-        }),
-        `Subtotal: ${formatInrMinor(invoice.subtotalMinor)}`,
-        `Tax: ${formatInrMinor(invoice.taxMinor)}`,
-        `Original total: ${formatInrMinor(invoice.totalMinor)}`,
-        `Credited: ${formatInrMinor(invoice.creditedMinor ?? 0)}`,
-        `Returned: ${formatInrMinor(invoice.refundedMinor ?? 0)}`,
-        `Paid: ${formatInrMinor(invoice.paidMinor)}`,
-        `Balance: ${formatInrMinor(invoice.balanceMinor)}`
-      ]);
-    } catch (error) {
-      setMessage(failure(error));
-    }
-  }
-
-  function printReceipt(receipt: PublicJsonObject) {
-    if (fieldText(receipt, "status") !== "generated") return;
-    try {
-      printClinicalDocument(`Receipt ${fieldText(receipt, "receiptNumber")}`, [
-        `Clinic: ${props.profile.clinic.name}`,
-        `Patient: ${props.patientName}`,
-        `Invoice: ${fieldText(invoice, "invoiceNumber")}`,
-        `Generated: ${clinicDisplayTime(fieldText(receipt, "generatedAt"), timeZone)}`,
-        `Received at receipt creation: ${formatInrMinor(receipt.amountMinor)}`,
-        "Subsequent corrections and returns are recorded separately in the patient financial account.",
-        ...valueList(receipt.paymentAllocations).map(
-          (allocation) => `Payment allocation: ${formatInrMinor(record(allocation).amountMinor)}`
-        )
-      ]);
-    } catch (error) {
-      setMessage(failure(error));
-    }
   }
 
   return (
@@ -1463,9 +1442,14 @@ function InvoiceDetail(
               );
             })}
           </ul>
-          <button type="button" onClick={printInvoice}>
-            Print saved invoice
-          </button>
+          <PatientDocumentPanel
+            {...props}
+            kind="invoice"
+            sourceId={props.invoiceId}
+            sourceRevision={JSON.stringify(invoice)}
+            execute={props.mutate}
+            label="Review invoice document"
+          />
           {can(props.profile, "billing.write") ? (
             <>
               <ManualPaymentForm {...props} invoice={invoice} onChanged={refreshAll} />
@@ -1501,10 +1485,15 @@ function InvoiceDetail(
                 return (
                   <li key={fieldText(receipt, "id") || index}>
                     {fieldText(receipt, "receiptNumber")} · {formatInrMinor(receipt.amountMinor)}
-                    {fieldText(receipt, "status") === "generated" ? (
-                      <button type="button" onClick={() => printReceipt(receipt)}>
-                        Print saved receipt
-                      </button>
+                    {fieldText(receipt, "id") ? (
+                      <PatientDocumentPanel
+                        {...props}
+                        kind="receipt"
+                        sourceId={fieldText(receipt, "id")}
+                        sourceRevision={JSON.stringify([receipt, invoice.financialVersion])}
+                        execute={props.mutate}
+                        label="Review receipt document"
+                      />
                     ) : null}
                   </li>
                 );
@@ -1517,7 +1506,6 @@ function InvoiceDetail(
       ) : !detail.loading ? (
         <p>Invoice detail unavailable. Retry before collecting payment.</p>
       ) : null}
-      {message ? <p role="status">{message}</p> : null}
     </Panel>
   );
 }
@@ -1759,7 +1747,6 @@ function InstructionPanel(props: BillingContext) {
   const [body, setBody] = useState("");
   const [approved, setApproved] = useState(false);
   const [message, setMessage] = useState("");
-  const timeZone = props.profile.clinic.timezone || "UTC";
 
   async function create(event: FormEvent) {
     event.preventDefault();
@@ -1791,21 +1778,6 @@ function InstructionPanel(props: BillingContext) {
     }
   }
 
-  function printInstruction(item: PublicJsonObject) {
-    if (fieldText(item, "channel") !== "print" || !fieldText(item, "body")) return;
-    try {
-      printClinicalDocument(fieldText(item, "title") || "Patient instruction", [
-        `Clinic: ${props.profile.clinic.name}`,
-        `Patient: ${props.patientName}`,
-        `Approved reference: ${fieldText(item, "templateId")}`,
-        `Recorded: ${clinicDisplayTime(fieldText(item, "createdAt"), timeZone)}`,
-        fieldText(item, "body")
-      ]);
-    } catch (error) {
-      setMessage(failure(error));
-    }
-  }
-
   return (
     <Panel
       title="Patient instructions"
@@ -1824,9 +1796,14 @@ function InstructionPanel(props: BillingContext) {
               {fieldText(item, "title") || "Patient instruction"} ·{" "}
               {fieldText(item, "status").replaceAll("_", " ")}
               {fieldText(item, "channel") === "print" && fieldText(item, "body") ? (
-                <button type="button" onClick={() => printInstruction(item)}>
-                  Print saved instruction
-                </button>
+                <PatientDocumentPanel
+                  {...props}
+                  kind="instruction"
+                  sourceId={fieldText(item, "id")}
+                  sourceRevision={JSON.stringify(item)}
+                  execute={props.mutate}
+                  label="Review instruction document"
+                />
               ) : null}
             </li>
           ))}

@@ -1,3 +1,4 @@
+export * from "./patient-documents.ts";
 export * from "./postgres.ts";
 export * from "./repositories.ts";
 export * from "./rls.ts";

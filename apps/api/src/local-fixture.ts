@@ -1,3 +1,4 @@
+import {PatientDocumentUnavailable} from "@clinic-os/db";
 import { PATIENT_CONTEXT_PROFILE, patientSourceFields, type PatientSourceContextRecord, type SourceContextReviewDecision } from "@clinic-os/domain";
 import { PatientSourceContextConflict } from "@clinic-os/db";
 import { validateMediaPage, type MediaPageInput } from "@clinic-os/domain";
@@ -730,6 +731,11 @@ export class InMemoryAuditSink {
 }
 
 export class LocalFixtureClinicOperationsRepository implements ClinicOperationsRepository {
+  async preparePatientDocument(..._args:Parameters<ClinicOperationsRepository["preparePatientDocument"]>):ReturnType<ClinicOperationsRepository["preparePatientDocument"]> { throw new PatientDocumentUnavailable("Generated document storage is unavailable in the in-memory fixture. Use the durable local API."); }
+  async issuePatientDocument(..._args:Parameters<ClinicOperationsRepository["issuePatientDocument"]>):ReturnType<ClinicOperationsRepository["issuePatientDocument"]> { throw new PatientDocumentUnavailable("Generated document storage is unavailable in the in-memory fixture. Use the durable local API."); }
+  async listPatientDocuments(..._args:Parameters<ClinicOperationsRepository["listPatientDocuments"]>):ReturnType<ClinicOperationsRepository["listPatientDocuments"]> { throw new PatientDocumentUnavailable("Generated document storage is unavailable in the in-memory fixture. Use the durable local API."); }
+  async getPatientDocument(..._args:Parameters<ClinicOperationsRepository["getPatientDocument"]>):ReturnType<ClinicOperationsRepository["getPatientDocument"]> { throw new PatientDocumentUnavailable("Generated document storage is unavailable in the in-memory fixture. Use the durable local API."); }
+
   readonly patientSourceContexts: Array<PatientSourceContextRecord & {tenantId:UUID;clinicId:UUID}> = [];
   async listPatientSourceContexts(scope:RepositoryScope,patientId:UUID,cursor?:string) {
     const all=this.patientSourceContexts.filter(row=>matchesScope(row,scope)&&row.patientId===patientId).sort((a,b)=>b.importedAt.localeCompare(a.importedAt)||b.id.localeCompare(a.id));

@@ -19,6 +19,10 @@ permission to use real patient data or a production-release decision.
 3. Implement document generation on a separate branch from that verified base.
    Repeat review, local acceptance and exact-head CI before merge.
 
+CI overlap: document implementation may be prepared from the reviewed, locally
+verified PR #9 head while its remote checks run. PR #9 remains frozen; merge A
+first, reconcile B with that merge tree, and never promote B on failed A evidence.
+
 The parent owns schema, clinical/financial meaning, permissions, generated
 contracts, integration, review and merges. Bounded agents may map or review
 read-only. One shared-checkout source writer. Preserve the unrelated vision
@@ -116,7 +120,15 @@ Progress:
 - [x] PR #8 reviewed and merged; verified baseline branch created.
 - [x] Slice A domain/schema/contracts and source policy.
 - [x] Slice A operator/patient UI and synthetic acceptance.
-- [ ] Slice A independent review, final CI and merge.
-- [ ] Slice B document architecture and renderer decision.
-- [ ] Slice B implementation and synthetic/output acceptance.
-- [ ] Slice B independent review, final CI and merge.
+- [x] Slice A independent review, final CI and merge. PR #9 head
+  `a5fbf156db1ff9b7333493609c6e9dd8944abdae`: all 21 checks passed and no open
+  PR CodeQL alerts. Merge `429609125e7b0e561143e31b15144d06a5f62ad6` has the same tree.
+- [x] Slice B document architecture and renderer decision: see
+  `PATIENT_DOCUMENT_ARCHITECTURE_2026-10-02.md` (printable HTML, native Print/Save
+  as PDF, no server browser or archived PDF-byte claim).
+- [x] Slice B implementation and synthetic/output acceptance. See
+  `docs/qa/PATIENT_DOCUMENT_ACCEPTANCE_2026-10-02.md` and the architecture decision.
+- [x] Slice B independent bounded backend/authority and UI/recovery reviews;
+  findings corrected and exercised by native acceptance.
+- [ ] Slice B exact-head remote CI and merge; the PR status is the final source
+  of truth for promotion to `mac-latest-20260829`.
