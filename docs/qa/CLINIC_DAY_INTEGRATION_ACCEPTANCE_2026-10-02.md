@@ -17,6 +17,7 @@ Integration branch: `codex/integration/clinic-day-workflows`.
 | `17ff9cc077aefbb5eeec3496aeff2cf3f542ae47` | Financial operations and explicit review of Practo appointment evidence. |
 | `ebdc4b1f4275ec4e56feb9eb57e65819099d6d58` | Authorized returning-patient history, exact source reads and saved dental comparison. |
 | Integration cleanup commit containing this report | Acceptance build-input preservation, interruption/concurrency regression tests, plan and combined evidence. |
+| Staff acceptance alignment follow-up | Update the real-OIDC browser fixture to the current patient search, demographics and clinical-profile controls; retain its actual cookie/BFF and database assertions. |
 
 These boundaries were recovered from existing source archives and SHA-256
 manifests: 121 files at the daily workflow boundary, 142 at the financial boundary,
@@ -84,6 +85,49 @@ claim compatibility with a future major driver version. No local network depende
 audit, image scan, Docker/Keycloak/Temporal acceptance, deployed-cloud or real
 patient trial was run. Fresh remote CI results must be evaluated on the published
 head, separately from these local gates.
+
+## Fresh CI findings after publication
+
+Draft [PR #7](https://github.com/AbhinavGupta707/ClinicOS/pull/7) was published above
+#6 at `cc7964bba8d350c3c5b836321ad4bc8ccf9f010f`. CodeQL SAST and its alert check
+passed; querying open alerts for the PR merge ref returned none. Fresh checks
+also exposed real blockers, so this integration is **not merge-ready**.
+
+- Real staff identity passed PKCE, TOTP, cookie-only API access and desktop/mobile
+  checks, then timed out on obsolete patient search selectors. Its separate
+  fixture had not been updated with the daily UI. The follow-up aligns both
+  `test-staff-sign-in.mjs` and `staff-import-acceptance.mjs` with the current named
+  controls and verifies actual saved demographic/preparation content. The
+  lost-response retry now explicitly expects the existing "Saved file recovered"
+  result while retaining its same-batch identity assertion. Permissions,
+  real login, CSRF, import recovery and rollback checks are not weakened. A new
+  CI run must prove the complete flow after this correction.
+- API/web image builds request Alpine OpenSSL `3.5.8-r0`; their repository now
+  offers `3.5.9-r0`. Temporal's separate base reports `3.5.7-r0` while also
+  requesting `3.5.8-r0`. Each base/repository needs its own verified refresh; an
+  API-image version cannot safely be copied into every image without validation.
+- Keycloak's official RDS global CA download no longer matches the pinned digest.
+  The checksum check correctly fails. Any refresh must verify the official trust
+  bundle and its certificate changes before updating the pin; do not disable it.
+- The dependency scan flags `@grpc/grpc-js` 1.14.4 and `node-forge` 1.4.0. The
+  [gRPC maintainer advisory](https://github.com/grpc/grpc-node/security/advisories/GHSA-m9gg-hp2v-232j)
+  identifies 1.14.5 as a patched version. Forge's
+  [upstream issue](https://github.com/digitalbazaar/forge/issues/1149) and
+  [proposed fix](https://github.com/digitalbazaar/forge/pull/1152) were still open
+  when inspected. The lockfile brings Forge through Expo CLI/code-signing tools;
+  this is not grounds to silently suppress a repository security gate.
+- Worker image scans flag Debian OpenSSL and gRPC; the media-scanner image flags
+  Amazon Linux packages and bundled Node dependencies. Their pinned runtime
+  images need a verified refresh and runtime/scan evidence.
+
+These dependency/image inputs are byte-identical to the PR #6 base. That explains
+why older passing checks cannot establish current merge safety; it does not waive
+the failures. No package install, mutable image substitution, security suppression
+or unreviewed crypto/trust patch was performed in this integration pass. A
+coordinated dependency/image maintenance slice must resolve or explicitly assess
+these blockers before merge. Detailed logs are retained as `ci-*.log` and the
+synthetic identity artifact under the evidence root. Current PR checks, rather
+than this dated record, establish the latest remote outcome.
 
 ## PR integration order
 

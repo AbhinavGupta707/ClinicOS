@@ -63,7 +63,7 @@ export async function staffImportAcceptance({
     await expect(page.getByTestId("migration-create-run")).toBeEnabled();
     return page.getByTestId("migration-run-selector").inputValue();
   };
-  const stage = async (type, csv) => {
+  const stage = async (type, csv, expectedMessage = "validated and staged") => {
     await page.getByTestId(`migration-trial-step-${type}`).click();
     await page.getByTestId("migration-input-tab-paste").click();
     await page.getByTestId("migration-csv").fill(csv);
@@ -73,7 +73,7 @@ export async function staffImportAcceptance({
     );
     await page.getByTestId("migration-stage-batch").click();
     assert.ok((await response).ok());
-    await expect(page.getByTestId("cp7-action-message")).toContainText("validated and staged");
+    await expect(page.getByTestId("cp7-action-message")).toContainText(expectedMessage);
   };
   const commit = async () => {
     await expect(page.getByTestId("cp7-commit-migration-batch")).toBeEnabled();
@@ -102,7 +102,7 @@ export async function staffImportAcceptance({
   await page.unroute(stageUrl);
   const saved = await get(`/v1/migration-runs/${firstRunId}`);
   assert.equal(saved.batches.length, 1);
-  await stage("patients", patientCsv);
+  await stage("patients", patientCsv, "Saved file recovered");
   assert.equal(
     (await get(`/v1/migration-runs/${firstRunId}`)).batches[0].batch.id,
     saved.batches[0].batch.id
@@ -146,10 +146,14 @@ export async function staffImportAcceptance({
   await page.goto(webOrigin);
   await expect(page.getByTestId("cp13-front-office-day")).toContainText(patientName);
   await page.goto(`${webOrigin}/surface/patients`);
-  await page.getByLabel("Search by name or phone").fill(patientName);
+  await page.getByLabel("Find patient", { exact: true }).fill(patientName);
   await page.getByRole("button", { name: "Search", exact: true }).click();
-  await page.locator(".cp13-patient-search > ul button").filter({ hasText: patientName }).click();
-  await expect(page.getByTestId("cp13-front-office-patient")).toContainText(patientName);
+  await page
+    .getByRole("region", { name: "Choose patient", exact: true })
+    .getByRole("button")
+    .filter({ hasText: patientName })
+    .click();
+  await expect(page.getByLabel("Full name", { exact: true })).toHaveValue(patientName);
   mark("cookie BFF import: three files, named doctor, Today and patient search");
 
   await page.goto(`${webOrigin}/surface/migration-review`);
@@ -215,7 +219,7 @@ export async function staffImportAcceptance({
     for (const type of ["appointments", "practitioners", "patients"]) {
       const batch = run.batches.find((d) => d.batch.importType === type).batch;
       const result = await post(`/v1/migration-batches/${batch.id}/rollback`);
-      // Opening the profile above creates durable patient-linked access audit.
+      // Reading demographics above creates durable patient-linked access audit.
       // That is a real downstream dependency: rollback must preserve the patient.
       if (run === first && type === "patients") {
         assert.equal(result.blockedLinks.length, 1);
@@ -237,7 +241,7 @@ export async function staffImportAcceptance({
   );
 
   // A separate untouched record proves safe compensation is still available.
-  // Do not open its profile (which would create the audit dependency tested above).
+  // Do not read its demographics/profile (which would create the audit dependency above).
   const untouchedId = await startRun();
   const untouchedName = `UnviewedRecovery ${runId}`;
   await stage(

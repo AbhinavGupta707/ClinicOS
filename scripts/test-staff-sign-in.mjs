@@ -10,7 +10,7 @@ import { createServer } from "node:net";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "pg";
-import { chromium } from "@playwright/test";
+import { chromium, expect } from "@playwright/test";
 import { staffImportAcceptance } from "./staff-import-acceptance.mjs";
 
 assert.equal(process.env.GITHUB_ACTIONS, "true", "Disposable CI only.");
@@ -398,16 +398,20 @@ try {
   mark("real PKCE, TOTP, cookie-only API, desktop and mobile");
   stage = "clinic workflows through the cookie BFF";
   await page.goto(`${webOrigin}/surface/patients`);
-  await page.getByLabel("Search by name or phone").fill("Rhea Synthetic");
+  await page.getByLabel("Find patient", { exact: true }).fill("Rhea Synthetic");
   await page.getByRole("button", { name: "Search", exact: true }).click();
   await page
-    .locator(".cp13-patient-search > ul button")
+    .getByRole("region", { name: "Choose patient", exact: true })
+    .getByRole("button")
     .filter({ hasText: "Rhea Synthetic" })
     .click();
-  await page.getByTestId("cp13-front-office-patient").waitFor();
+  await expect(page.getByLabel("Full name", { exact: true })).toHaveValue("Rhea Synthetic");
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
-  await page.getByRole("button", { name: "Open full profile" }).click();
-  await page.getByTestId("cp13-clinical-runtime").waitFor();
+  await page.getByRole("button", { name: "Open clinical profile", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Rhea Synthetic", exact: true })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Latest saved intake", exact: true })
+  ).toBeVisible();
   await page.goto(`${webOrigin}/surface/migration-review`);
   await page.getByTestId("migration-new-source-system").waitFor();
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth > innerWidth), false);
