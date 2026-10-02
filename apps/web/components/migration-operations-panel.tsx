@@ -28,6 +28,7 @@ import {
   getCanonicalMigrationCsvTemplate,
   getMigrationTrialStepStates,
   getInitialImportRunStep,
+  isPractoPatientTrial,
   MIGRATION_BATCH_STATUS_LABELS,
   MIGRATION_IMPORT_TYPE_LABELS,
   type CreateMigrationBatchRequest,
@@ -40,8 +41,14 @@ import {
   type MigrationRow,
   type ResolveMigrationRowRequest
 } from "@/lib/cp7-integration-ops";
+import {
+  PATIENT_IMPORT_MAX_BYTES,
+  PRACTO_PATIENT_TEMPLATE,
+  preparePractoPatients
+} from "@/lib/practo-patient-import";
 
 interface MigrationOperationsPanelProps {
+  reviewOnly?: boolean;
   run?: { id: string; sourceSystem: string };
   actionBusy: boolean;
   batches: MigrationBatch[];
@@ -71,6 +78,7 @@ const RESOLVABLE_STATES = new Set<MigrationBatchStatus>([
 ]);
 
 export function MigrationOperationsPanel({
+  reviewOnly = false,
   run,
   actionBusy,
   batches,
@@ -91,6 +99,11 @@ export function MigrationOperationsPanel({
     run ? getInitialImportRunStep(batches) : "patients"
   );
   const [inputMode, setInputMode] = useState<ImportInputMode>("file");
+  const savedPractoTrial = isPractoPatientTrial(batches);
+  const [patientFormat, setPatientFormat] = useState<"canonical" | "practo">(() =>
+    savedPractoTrial ? "practo" : "canonical"
+  );
+  const [mappingAccepted, setMappingAccepted] = useState(false);
   const [sourceSystem, setSourceSystem] = useState(run?.sourceSystem ?? "manual_trial");
   const [sourceFileName, setSourceFileName] = useState(
     run ? "patients.csv" : "synthetic-patients.csv"
@@ -120,7 +133,14 @@ export function MigrationOperationsPanel({
   const lastCommittedAt = batches
     .flatMap((batch) => (batch.commit.committedAt ? [batch.commit.committedAt] : []))
     .sort((left, right) => right.localeCompare(left))[0];
-  const template = getCanonicalMigrationCsvTemplate(importType);
+  const isPracto = importType === "patients" && (patientFormat === "practo" || savedPractoTrial);
+  const prepared = useMemo(
+    () => (isPracto && csv ? preparePractoPatients(csv) : null),
+    [isPracto, csv]
+  );
+  const template = isPracto
+    ? PRACTO_PATIENT_TEMPLATE
+    : getCanonicalMigrationCsvTemplate(importType);
   const templateHref = "data:text/csv;charset=utf-8," + encodeURIComponent(template);
   const recordLabel = operatorRecordLabel(importType);
 
@@ -129,6 +149,9 @@ export function MigrationOperationsPanel({
   }, [selectedBatch?.id]);
 
   const handleImportTypeChange = (nextImportType: MigrationImportType) => {
+    if (savedPractoTrial && nextImportType !== "patients") return;
+    setPatientFormat("canonical");
+    setMappingAccepted(false);
     setImportType(nextImportType);
     setSourceFileName((run ? "" : "synthetic-") + nextImportType + ".csv");
     fileReadSequence.current += 1;
@@ -149,23 +172,24 @@ export function MigrationOperationsPanel({
     if (actionBusy) return;
     const sequence = ++fileReadSequence.current;
     setFileError(null);
+    setMappingAccepted(false);
     setCsv("");
     setHasSelectedFile(false);
-    if (file.size > 256_000) {
+    if (file.size > PATIENT_IMPORT_MAX_BYTES) {
       setReadingFile(false);
       setFileError("Choose a CSV smaller than 256 KB, containing at most 100 rows.");
       return;
     }
     setReadingFile(true);
     try {
-      const contents = await file.text();
+      const contents = new TextDecoder("utf-8", { fatal: true }).decode(await file.arrayBuffer());
       if (sequence !== fileReadSequence.current) return;
       setSourceFileName(file.name);
       setCsv(contents);
       setHasSelectedFile(true);
     } catch {
       if (sequence === fileReadSequence.current)
-        setFileError("The file could not be read. Choose it again.");
+        setFileError("The file could not be read as UTF-8 CSV. Choose the original export again.");
     } finally {
       if (sequence === fileReadSequence.current) setReadingFile(false);
     }
@@ -173,6 +197,7 @@ export function MigrationOperationsPanel({
 
   const handleFile = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
+    event.target.value = "";
     if (file) await readFile(file);
   };
 
@@ -185,11 +210,12 @@ export function MigrationOperationsPanel({
   const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (actionBusy || readingFile || !csv.trim()) return;
+    if (isPracto && (!prepared?.ok || !mappingAccepted)) return;
     await onCreate({
       ...(run ? { importRunId: run.id } : {}),
-      csv,
+      csv: isPracto && prepared?.ok ? prepared.csv : csv,
       importType,
-      sourceFileName,
+      sourceFileName: isPracto ? "practo-patients-demographics.csv" : sourceFileName,
       sourceSystem
     });
   };
@@ -205,22 +231,37 @@ export function MigrationOperationsPanel({
         />
       </section>
 
-      <TrialGuide
-        actionBusy={actionBusy}
-        importType={importType}
-        onSelectImportType={handleImportTypeChange}
-        sourceSystem={sourceSystem}
-        states={trialStepStates}
-      />
+      {!reviewOnly ? <>{isPracto ? (
+        <section aria-label="Practo trial scope">
+          <h2>Practo patient demographics trial</h2>
+          <p>
+            Review and commit patients, then find them in Patients. Practitioner and appointment
+            imports from Ray are not supported in this trial. This is not a complete practice
+            migration.
+          </p>
+        </section>
+      ) : (
+        <TrialGuide
+          actionBusy={actionBusy}
+          importType={importType}
+          onSelectImportType={handleImportTypeChange}
+          sourceSystem={sourceSystem}
+          states={trialStepStates}
+        />
+      )}
 
       <section className="import-stage" aria-labelledby="migration-stage-title">
         <div className="import-stage__main">
           <header className="import-stage__header">
             <div>
-              <p className="eyebrow">Step {trialStepNumber(importType)} of 3</p>
+              <p className="eyebrow">
+                {isPracto
+                  ? "Patient demographics only"
+                  : `Step ${trialStepNumber(importType)} of 3`}
+              </p>
               <h2 id="migration-stage-title">Add {recordLabel} data</h2>
               <p>
-                Upload a ClinicOS CSV template. We validate every row before anything can be added.
+                Choose a supported CSV format. We validate every row before anything can be added.
               </p>
             </div>
             <span>Up to 100 rows</span>
@@ -244,6 +285,47 @@ export function MigrationOperationsPanel({
               ) : null}
               {fileError ? <p role="alert">{fileError}</p> : null}
               {readingFile ? <p role="status">Reading file…</p> : null}
+              {importType === "patients" ? (
+                <label className="import-name-field">
+                  <span>Patient file format</span>
+                  <select
+                    data-testid="migration-patient-format"
+                    disabled={actionBusy || savedPractoTrial}
+                    value={patientFormat}
+                    onChange={(event) => {
+                      fileReadSequence.current += 1;
+                      setPatientFormat(event.target.value as "canonical" | "practo");
+                      setMappingAccepted(false);
+                      setReadingFile(false);
+                      setFileError(null);
+                      setCsv("");
+                      setHasSelectedFile(false);
+                      setSourceFileName("patients.csv");
+                    }}
+                  >
+                    <option value="canonical">ClinicOS CSV</option>
+                    <option value="practo">Practo Ray patients.csv — demographics trial</option>
+                  </select>
+                </label>
+              ) : null}
+              {isPracto ? (
+                <div className="inline-alert" data-testid="practo-import-scope">
+                  <div>
+                    <strong>Patient demographics only — up to 100 patients</strong>
+                    <p>
+                      Preparation happens on this device. Only Patient Number, Patient Name, Mobile
+                      Number, Email Address, Date of Birth and Gender are sent for review. Medical
+                      history, notes, national IDs, addresses, other contacts and other columns are
+                      excluded. Original files stay on your device.
+                    </p>
+                    <p>
+                      This does not migrate appointments or your full practice. No phone fallback,
+                      age-derived birthday, or patient-acquisition channel is inferred. Unsupported
+                      date or gender formats block preparation. Keep the original export unchanged.
+                    </p>
+                  </div>
+                </div>
+              ) : null}
               <div className="import-input-tabs" role="tablist" aria-label="How to add CSV data">
                 <button
                   aria-controls="migration-file-panel"
@@ -297,9 +379,15 @@ export function MigrationOperationsPanel({
                       type="file"
                     />
                   </label>
-                  <a className="import-template-link" download={sourceFileName} href={templateHref}>
+                  <a
+                    className="import-template-link"
+                    download={isPracto ? "practo-patient-headers.csv" : sourceFileName}
+                    href={templateHref}
+                  >
                     <Download size={15} strokeWidth={1.75} aria-hidden="true" />
-                    Download {recordLabel} template
+                    {isPracto
+                      ? "Download expected patient headers"
+                      : `Download ${recordLabel} template`}
                   </a>
                 </div>
               ) : (
@@ -308,7 +396,9 @@ export function MigrationOperationsPanel({
                   id="migration-paste-panel"
                   role="tabpanel"
                 >
-                  <span>Paste ClinicOS-formatted CSV</span>
+                  <span>
+                    {isPracto ? "Paste Practo patient CSV" : "Paste ClinicOS-formatted CSV"}
+                  </span>
                   <textarea
                     data-testid="migration-csv"
                     disabled={actionBusy}
@@ -316,6 +406,7 @@ export function MigrationOperationsPanel({
                       fileReadSequence.current += 1;
                       setReadingFile(false);
                       setFileError(null);
+                      setMappingAccepted(false);
                       setCsv(event.target.value);
                     }}
                     required
@@ -329,6 +420,35 @@ export function MigrationOperationsPanel({
                 </label>
               )}
 
+              {prepared ? (
+                prepared.ok ? (
+                  <div data-testid="practo-import-preview">
+                    <p role="status">
+                      {prepared.rowCount} patient {prepared.rowCount === 1 ? "row" : "rows"}{" "}
+                      prepared locally. Validation sends only the mapped fields; committing is a
+                      separate step.
+                    </p>
+                    <p>
+                      {prepared.excludedFieldsWithValues.length
+                        ? `Columns with values excluded from this import: ${prepared.excludedFieldsWithValues.join(", ")}.`
+                        : "The excluded columns contain no values."}
+                    </p>
+                    <label>
+                      <input
+                        type="checkbox"
+                        disabled={actionBusy}
+                        checked={mappingAccepted}
+                        onChange={(event) => setMappingAccepted(event.target.checked)}
+                      />
+                      I understand this imports only the six patient fields above, and I am using
+                      synthetic or explicitly approved clinic data.
+                    </label>
+                  </div>
+                ) : (
+                  <p role="alert">{prepared.message}</p>
+                )
+              ) : null}
+
               <label className="import-name-field">
                 <span>Import name</span>
                 <input
@@ -340,7 +460,11 @@ export function MigrationOperationsPanel({
                   required
                   value={sourceSystem}
                 />
-                <small>Use the same name for patient, practitioner, and appointment steps.</small>
+                <small>
+                  {isPracto
+                    ? "Use the same import name when repeating this source's patient export."
+                    : "Use the same name for patient, practitioner, and appointment steps."}
+                </small>
               </label>
 
               <details className="import-advanced">
@@ -350,7 +474,7 @@ export function MigrationOperationsPanel({
                     <span>Record type</span>
                     <select
                       data-testid="migration-import-type"
-                      disabled={actionBusy}
+                      disabled={actionBusy || savedPractoTrial}
                       onChange={(event) =>
                         handleImportTypeChange(event.target.value as MigrationImportType)
                       }
@@ -378,7 +502,13 @@ export function MigrationOperationsPanel({
               <div className="surface-actions migration-import-form__actions">
                 <Button
                   data-testid="migration-stage-batch"
-                  disabled={actionBusy || readingFile || !sourceSystem.trim() || !csv.trim()}
+                  disabled={
+                    actionBusy ||
+                    readingFile ||
+                    !sourceSystem.trim() ||
+                    !csv.trim() ||
+                    (isPracto && (!prepared?.ok || !mappingAccepted))
+                  }
                   icon={<FileUp size={16} />}
                   type="submit"
                 >
@@ -390,6 +520,7 @@ export function MigrationOperationsPanel({
                     fileReadSequence.current += 1;
                     setReadingFile(false);
                     setFileError(null);
+                    setMappingAccepted(false);
                     setCsv(run ? "" : template);
                     setHasSelectedFile(false);
                   }}
@@ -429,7 +560,7 @@ export function MigrationOperationsPanel({
             it.
           </p>
         </aside>
-      </section>
+      </section></> : null}
 
       {selectedBatch ? (
         <section className="import-review-panel" aria-labelledby="migration-review-title">
@@ -451,6 +582,7 @@ export function MigrationOperationsPanel({
             </Button>
           </header>
           <BatchDetail
+            reviewOnly={reviewOnly}
             actionBusy={actionBusy}
             batch={selectedBatch}
             eligibleDoctors={eligibleDoctors}
@@ -560,6 +692,7 @@ function trialStepNumber(importType: MigrationImportType) {
 }
 
 function BatchDetail({
+  reviewOnly,
   actionBusy,
   batch,
   eligibleDoctors,
@@ -572,6 +705,7 @@ function BatchDetail({
   setTargetRecordIds,
   targetRecordIds
 }: {
+  reviewOnly: boolean;
   actionBusy: boolean;
   batch: MigrationBatch;
   eligibleDoctors: EligibleClinicDoctor[];
@@ -669,13 +803,13 @@ function BatchDetail({
             : (batch.commit.blockedReason ?? "Only rows marked ready will be committed.")}
         </p>
         <div className="surface-actions">
-          <Button
+          {!reviewOnly ? <Button
             data-testid="cp7-commit-migration-batch"
             disabled={actionBusy || batch.commit.state !== "ready"}
             onClick={() => void onCommit(batch)}
           >
             Commit reviewed rows
-          </Button>
+          </Button> : <p>Use the whole-file approval above to commit reviewed patients.</p>}
         </div>
         {rollbackAvailable ? (
           <div className="migration-rollback">

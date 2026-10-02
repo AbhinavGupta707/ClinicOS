@@ -1,3 +1,4 @@
+import { ApiError } from "../../errors.ts";
 import type { ClinicFeatureOperationHandler } from "../contracts.ts";
 import { CP13_CONTINUITY_OPERATIONS_OPERATION_IDS } from "../cp13-operation-ownership.ts";
 import {
@@ -87,7 +88,9 @@ const CONTINUITY_OPERATIONS_HANDLERS = Object.freeze({
 assertExactHandlerCoverage(CONTINUITY_OPERATIONS_HANDLERS);
 
 export function createContinuityOperationsHandlerMap(): ContinuityOperationsHandlerMap {
-  return CONTINUITY_OPERATIONS_HANDLERS;
+  return Object.freeze(Object.fromEntries(Object.entries(CONTINUITY_OPERATIONS_HANDLERS).map(([id,handler])=>[id,async (...args:Parameters<typeof handler>)=>{
+    try {return await handler(...args);} catch(error) {if(error instanceof RangeError) throw new ApiError(400,"VALIDATION_ERROR",error.message);throw error;}
+  }]))) as ContinuityOperationsHandlerMap;
 }
 
 export { CONTINUITY_OPERATIONS_HANDLERS };

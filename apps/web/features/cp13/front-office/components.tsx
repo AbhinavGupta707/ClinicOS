@@ -7,7 +7,7 @@ import {
   Search
 } from "lucide-react";
 import Link from "next/link";
-import { useState, type FormEvent } from "react";
+import { useState, type ReactNode, type FormEvent } from "react";
 
 import type {
   FrontOfficeDayData,
@@ -25,6 +25,11 @@ const shellStyle = {
 
 export function FrontOfficeDayPanel(props: {
   readonly onOpenPatient: (patientId: string) => void;
+  readonly renderActions?: (
+    appointment: FrontOfficeDayData["dashboard"]["clinicDayAppointments"][number]
+  ) => ReactNode;
+  readonly heading?: string;
+  readonly canOpenPatient?: boolean;
   readonly onRefresh?: () => void | Promise<void>;
   readonly state: FrontOfficeLoadState<FrontOfficeDayData>;
   readonly timeZone?: string;
@@ -55,7 +60,7 @@ export function FrontOfficeDayPanel(props: {
       data-testid="cp13-front-office-day"
     >
       <header className="cp13-day__summary">
-        <p>Today</p>
+        <p>{props.heading ?? "Today"}</p>
         <h1>{formatClinicDateHeading(dashboard.date)}</h1>
         <div className="cp13-day__summary-row">
           <div className="cp13-day__freshness" aria-label="Data freshness">
@@ -84,7 +89,7 @@ export function FrontOfficeDayPanel(props: {
         <article className="cp13-day__appointments">
           <header className="cp13-day__section-header">
             <div>
-              <h2>Today&apos;s schedule</h2>
+              <h2>{props.heading ? "Clinic schedule" : "Today’s schedule"}</h2>
               <span>
                 {appointments.length} appointment{appointments.length === 1 ? "" : "s"}
               </span>
@@ -217,16 +222,22 @@ export function FrontOfficeDayPanel(props: {
                             </div>
                           </dl>
                           <div className="cp13-appointment-detail__actions">
-                            <button
-                              className="button-link button-link--primary"
-                              onClick={() => props.onOpenPatient(appointment.patientId)}
-                              type="button"
-                            >
-                              Open patient
-                            </button>
-                            <Link className="button-link" href="/surface/appointments">
-                              View appointment
-                            </Link>
+                            {props.canOpenPatient !== false ? (
+                              <button
+                                className="button-link button-link--primary"
+                                onClick={() => props.onOpenPatient(appointment.patientId)}
+                                type="button"
+                              >
+                                Open patient
+                              </button>
+                            ) : null}
+                            {props.renderActions ? (
+                              props.renderActions(appointment)
+                            ) : (
+                              <Link className="button-link" href="/surface/appointments">
+                                View appointment
+                              </Link>
+                            )}
                             <button onClick={() => setSelectedAppointmentId(null)} type="button">
                               <ChevronUp size={16} strokeWidth={1.75} aria-hidden="true" />
                               Close details
@@ -244,7 +255,7 @@ export function FrontOfficeDayPanel(props: {
 
         <aside className="cp13-practice-pulse" aria-labelledby="clinic-pulse-title">
           <h2 id="clinic-pulse-title">Practice pulse</h2>
-          <FrontOfficePulseSection title="Waiting" records={queue} />
+          <FrontOfficePulseSection title="Queue" records={queue} />
           <FrontOfficePulseSection title="Open tasks" records={dashboard.openTasks} />
           <FrontOfficePulseSection
             title="Unconfirmed"

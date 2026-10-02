@@ -6,6 +6,10 @@ import {
 } from "../core/scoped-repository-port.ts";
 
 export const CLINIC_OPERATIONS_OPERATIONS = [
+  "listLabReconciliations",
+  "listClinicAccess", "saveClinicAccess", "listClinicSetup", "saveClinicSetup",
+  "listInventoryCheckRuns",
+
   "listLabVendors",
   "findLabVendorById",
   "createLabVendor",

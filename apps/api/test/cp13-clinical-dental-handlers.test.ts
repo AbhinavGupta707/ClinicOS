@@ -41,10 +41,10 @@ const PATIENT_ID = CHECKPOINT1_SEED_IDS.patients.rheaSynthetic;
 const SECOND_PATIENT_ID = "10000000-0000-4000-8000-000000002099" as UUID;
 const SECOND_DOCTOR_ID = "10000000-0000-4000-8000-000000001099" as UUID;
 
-test("CP13 clinical/dental factory implements all 22 operations with durable evidence and safe media", async () => {
+test("CP13 clinical/dental factory implements all 23 operations with durable evidence and safe media", async () => {
   const harness = createHarness();
   const handlers = createClinicalDentalHandlerMap(harness.dependencies);
-  assert.equal(Object.keys(handlers).length, 22);
+  assert.equal(Object.keys(handlers).length, 23);
 
   const treatmentConsent = await handlers.createPatientConsent(
     request("createPatientConsent", "assistant", {
@@ -94,7 +94,7 @@ test("CP13 clinical/dental factory implements all 22 operations with durable evi
     harness.context
   );
   await handlers.startEncounter(
-    request("startEncounter", "assistant", {
+    request("startEncounter", "doctor", {
       path: { encounterId },
       idempotencyKey: "cp13-encounter-start"
     }),
@@ -312,7 +312,7 @@ test("CP13 clinical/dental factory implements all 22 operations with durable evi
     harness.outboxEvents.some(
       (event) =>
         event.eventType === "consent.created" &&
-        event.idempotencyKey?.endsWith(":createPatientConsent:cp13-treatment-consent")
+        event.idempotencyKey?.endsWith(`:createPatientConsent:cp13-treatment-consent:consent.created:${event.aggregateId}:0`)
     )
   );
   assert.ok(
@@ -342,7 +342,7 @@ test("CP13 clinical safety denies wrong role, revoked consent, wrong patient, te
   );
   const encounterId = entityId(encounter.body, "encounter");
   await handlers.startEncounter(
-    request("startEncounter", "assistant", {
+    request("startEncounter", "doctor", {
       path: { encounterId },
       idempotencyKey: "cp13-negative-start"
     }),
@@ -387,7 +387,7 @@ test("CP13 clinical safety denies wrong role, revoked consent, wrong patient, te
   );
   await assert.rejects(
     handlers.startEncounter(
-      request("startEncounter", "assistant", {
+      request("startEncounter", "doctor", {
         path: { encounterId },
         idempotencyKey: "cp13-repeat-start-denied"
       }),
@@ -462,7 +462,7 @@ test("CP13 signatures fail closed unless the doctor is the assigned encounter pr
   );
   const encounterId = entityId(encounter.body, "encounter");
   await handlers.startEncounter(
-    request("startEncounter", "assistant", {
+    request("startEncounter", "doctor", {
       path: { encounterId },
       idempotencyKey: "cp13-assigned-provider-start"
     }),
@@ -976,6 +976,7 @@ function createHarness(
   const auditEvents: Array<Record<string, unknown>> = [];
   const outboxEvents: Array<{
     eventType: DomainEventType;
+    aggregateId: UUID;
     idempotencyKey: string | null;
     payload: Record<string, unknown>;
   }> = [];
@@ -986,6 +987,7 @@ function createHarness(
     async appendOutboxEvent(event) {
       outboxEvents.push({
         eventType: event.eventType,
+        aggregateId: event.aggregateId,
         idempotencyKey: event.idempotencyKey ?? null,
         payload: event.payload
       });

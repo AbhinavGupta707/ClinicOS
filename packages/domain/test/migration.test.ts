@@ -328,3 +328,12 @@ test("migration batch state summarizes ready conflict and invalid rows", () => {
     "ready_to_commit"
   );
 });
+
+
+test("blank optional patient CSV fields normalize to database nulls", () => {
+  const [draft] = parsePatientMigrationCsv("external_reference,full_name,phone,email,date_of_birth\nnull-1,Synthetic Nullable,+919876543210,,");
+  const result = validatePatientImportRow(draft);
+  assert.deepEqual(result.validationErrors, []);
+  assert.equal(result.normalizedRecord?.dateOfBirth, null);
+  assert.equal(result.normalizedRecord?.email, null);
+});

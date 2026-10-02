@@ -111,7 +111,7 @@ export const SURFACES: SurfaceRegistration[] = [
     icon: UsersRound,
     id: "patient-profile",
     label: "Patient profile",
-    requiredApis: ["GET /v1/clinical-workflows/cp3?date="],
+    requiredApis: ["GET /v1/patients/{patientId}/prep-summary"],
     roles: ["owner", "doctor", "assistant"]
   },
   {
@@ -147,7 +147,7 @@ export const SURFACES: SurfaceRegistration[] = [
     icon: UserRoundCheck,
     id: "returning-prep",
     label: "Patient prep",
-    requiredApis: ["GET /v1/clinical-workflows/cp3?date="],
+    requiredApis: ["GET /v1/patients/{patientId}/prep-summary"],
     roles: ["owner", "doctor", "assistant"]
   },
   {
@@ -175,7 +175,7 @@ export const SURFACES: SurfaceRegistration[] = [
     id: "dental-media",
     label: "Dental and media",
     requiredApis: [
-      "GET /v1/clinical-workflows/cp4?date=",
+      "GET /v1/patients/{patientId}/dental-chart",
       "POST /v1/patients/{patientId}/dental-findings",
       "PATCH /v1/dental-findings/{findingId}",
       "POST /v1/media/upload-urls",
@@ -378,14 +378,19 @@ export const SURFACES: SurfaceRegistration[] = [
     roles: ["owner"]
   },
   {
-    availability: "registered_unavailable",
+    availability: "active",
     checkpoint: 1,
-    description: "Clinic setup, users, roles, templates, pricebook, and source policy.",
+    description: "Practice details, staff access, working hours, intake templates and prices.",
     href: "/surface/settings",
     icon: Wrench,
     id: "settings",
     label: "Settings",
-    requiredApis: ["GET /v1/users", "GET /external-systems/accounts"],
+    requiredApis: [
+      "GET /v1/clinic-setup/{kind}",
+      "POST /v1/clinic-setup/{kind}",
+      "GET /v1/clinic-access",
+      "POST /v1/clinic-access"
+    ],
     roles: ["owner"]
   },
   {

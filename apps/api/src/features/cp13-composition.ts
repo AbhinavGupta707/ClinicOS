@@ -1,3 +1,4 @@
+import { createWorkflowDiscoveryHandlers } from "./workflow-discovery.ts";
 import type { PaymentProvider } from "@clinic-os/integrations";
 import type { ClinicFeatureHandlerMap } from "./contracts.ts";
 import {
@@ -19,6 +20,7 @@ export function createCp13ClinicFeatureHandlerMap(
   dependencies: Cp13ClinicFeatureCompositionDependencies
 ): ClinicFeatureHandlerMap<Cp13ClinicFeatureOperationId> {
   const maps = [
+    createWorkflowDiscoveryHandlers(),
     createFrontOfficeFeatureHandlerMap(),
     createClinicalDentalHandlerMap(dependencies.clinicalDental),
     createTreatmentBillingHandlerMap({ paymentProvider: dependencies.paymentProvider }),

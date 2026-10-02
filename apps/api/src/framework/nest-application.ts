@@ -219,6 +219,51 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
     Post("v1/fhir/clinical-summary-imports/:reconciliationId/review")
   );
 
+  // New daily-workflow routes use the same guarded native pipeline as the migrated features.
+  class DailyWorkflowController {
+    previewPatientDuplicates(request:ParsedIncomingRequest,response:ServerResponse) {return executeAndSend(pipeline,request,response); }
+    listClinicSetup(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    saveClinicSetup(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listClinicAccess(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    saveClinicAccess(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listClinicStaff(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    getPatientDemographics(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listPatientEncounters(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listPatientIntakeHistory(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listPatientInstructions(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listPatientTreatmentPlans(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listPatientInvoices(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listUninvoicedPatientProcedures(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listEncounterPrescriptions(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    closeEncounter(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    searchBillingPatients(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listSopTemplates(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listSopSchedules(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listInventoryCheckRuns(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+    listLabReconciliations(request: ParsedIncomingRequest, response: ServerResponse) { return executeAndSend(pipeline,request,response); }
+  }
+  Controller()(DailyWorkflowController);
+  decorateRoute(DailyWorkflowController,"previewPatientDuplicates",Post("v1/patients/duplicate-review"));
+  decorateRoute(DailyWorkflowController,"listClinicSetup",Get("v1/clinic-setup/:kind"));
+  decorateRoute(DailyWorkflowController,"saveClinicSetup",Post("v1/clinic-setup/:kind"));
+  decorateRoute(DailyWorkflowController,"listClinicAccess",Get("v1/clinic-access"));
+  decorateRoute(DailyWorkflowController,"saveClinicAccess",Post("v1/clinic-access"));
+  decorateRoute(DailyWorkflowController,"listClinicStaff",Get("v1/clinic-staff"));
+  decorateRoute(DailyWorkflowController,"getPatientDemographics",Get("v1/patients/:patientId/demographics"));
+  decorateRoute(DailyWorkflowController,"listPatientEncounters",Get("v1/patients/:patientId/encounters"));
+  decorateRoute(DailyWorkflowController,"listPatientIntakeHistory",Get("v1/patients/:patientId/intake-history"));
+  decorateRoute(DailyWorkflowController,"listPatientInstructions",Get("v1/patients/:patientId/instructions"));
+  decorateRoute(DailyWorkflowController,"listPatientTreatmentPlans",Get("v1/patients/:patientId/treatment-plans"));
+  decorateRoute(DailyWorkflowController,"listPatientInvoices",Get("v1/patients/:patientId/invoices"));
+  decorateRoute(DailyWorkflowController,"listUninvoicedPatientProcedures",Get("v1/patients/:patientId/uninvoiced-procedures"));
+  decorateRoute(DailyWorkflowController,"listEncounterPrescriptions",Get("v1/encounters/:encounterId/prescriptions"));
+  decorateRoute(DailyWorkflowController,"closeEncounter",Post("v1/encounters/:encounterId/close"));
+  decorateRoute(DailyWorkflowController,"searchBillingPatients",Get("v1/billing/patients"));
+  decorateRoute(DailyWorkflowController,"listSopTemplates",Get("v1/sop-templates"));
+  decorateRoute(DailyWorkflowController,"listSopSchedules",Get("v1/sop-schedules"));
+  decorateRoute(DailyWorkflowController,"listInventoryCheckRuns",Get("v1/inventory/check-runs"));
+  decorateRoute(DailyWorkflowController,"listLabReconciliations",Get("v1/lab-reconciliations"));
+
   class LegacyStranglerController {
     all(request: ParsedIncomingRequest, response: ServerResponse) {
       return executeAndSend(pipeline, request, response);
@@ -232,6 +277,7 @@ function createControllers(pipeline: ClinicOsRequestPipeline): Array<new () => o
     IdentityController,
     ProviderCallbackController,
     InteroperabilityController,
+    DailyWorkflowController,
     LegacyStranglerController
   ];
 }

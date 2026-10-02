@@ -4,7 +4,6 @@ import {
   canAccessSurface,
   getPrimarySurfaceId,
   getSurfaceStateLabel,
-  getUnavailableReason,
   getSurface,
   getVisibleSurfaces,
   hasSurface,
@@ -190,15 +189,14 @@ describe("role-aware navigation", () => {
     expect(resolveSurfaceId("release-readiness")).toBe("pilot-readiness");
   });
 
-  it("keeps CP10 pilot settings registered unavailable with explicit activation wording", () => {
+  it("activates owner-only native clinic configuration", () => {
     const settings = getSurface("settings");
 
-    expect(settings.availability).toBe("registered_unavailable");
-    expect(getSurfaceStateLabel(settings)).toBe("Registered unavailable");
-    expect(getUnavailableReason(settings)).toContain("pilot clinic configuration");
-    expect(getUnavailableReason(settings)).toContain("owning CP10 configuration slice");
+    expect(settings.availability).toBe("active");
+    expect(getSurfaceStateLabel(settings)).toBe("Available");
+    expect(settings.roles).toEqual(["owner"]);
     expect(settings.requiredApis).toEqual(
-      expect.arrayContaining(["GET /v1/users", "GET /external-systems/accounts"])
+      expect.arrayContaining(["GET /v1/clinic-setup/{kind}", "POST /v1/clinic-access"])
     );
   });
 });

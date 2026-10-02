@@ -1,0 +1,3 @@
+Patient Number,Patient Name,Mobile Number,Contact Number,Email Address,Secondary Mobile,Gender,Address,Locality,City,Pincode,National Id,Date of Birth,Age,Anniversary Date,Blood Group,Remarks,Medical History,Referred By,Groups,Patient Notes
+000TRIAL01,Synthetic Trial One,+919000000417,,trial.one@example.test,,Female,,,,,,1992-02-29,,,,,SYNTHETIC EXCLUDED HISTORY,,,SYNTHETIC EXCLUDED NOTE
+000TRIAL02,Synthetic Trial Two,+919000000418,,trial.two@example.test,,Unknown,SYNTHETIC EXCLUDED ADDRESS,,,,SYNTHETIC EXCLUDED ID,,,,,,,,,

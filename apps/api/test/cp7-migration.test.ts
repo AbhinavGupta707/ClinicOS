@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import { buildAccessContext, principalFromVerifiedKeycloakClaims } from "@clinic-os/auth";
 import { CHECKPOINT1_SEED_IDS } from "@clinic-os/db";
@@ -9,6 +9,7 @@ import {
   createClinicOsApiServer,
   createMigrationBatch,
   createImportRun,
+  createPatientImportFile, getPatientImportFile, stagePatientImportChunk, sealPatientImportFile,
   getImportRun,
   listImportRuns,
   InMemoryAuditSink,
@@ -1323,13 +1324,14 @@ test("CP7 migration routes expose create and row listing contract without raw pa
 
     const createResponse = await postJson(baseUrl, "/v1/migration-batches", {
       importType: "patients",
-      rows: [{ externalReference: "route-1", fullName: "Route Import", phone: "+919990002222" }]
+      rows: [{ externalReference: "route-1", fullName: "Route Import", phone: "+919990002222", sourceFormat: "practo_ray_patients_v1" }]
     });
     assert.equal(createResponse.status, 201);
     const createBody = await createResponse.json();
     assert.equal(createBody.batch.state, "ready_to_commit");
     assert.equal("rawPayload" in createBody.rows[0], false);
     assert.equal(createBody.rows[0].rawPayloadRef.retained, true);
+    assert.equal(createBody.rows[0].sourceFormat, "practo_ray_patients_v1");
 
     const rowsResponse = await fetch(
       `${baseUrl}/v1/migration-batches/${createBody.batch.id}/rows?matchStatus=none`,
@@ -1339,6 +1341,7 @@ test("CP7 migration routes expose create and row listing contract without raw pa
     const rowsBody = await rowsResponse.json();
     assert.equal(rowsBody.rows.length, 1);
     assert.equal("rawPayload" in rowsBody.rows[0], false);
+    assert.equal(rowsBody.rows[0].sourceFormat, "practo_ray_patients_v1");
   } finally {
     await new Promise((resolve, reject) => {
       server.close((error) => (error ? reject(error) : resolve(undefined)));
@@ -1429,3 +1432,94 @@ const config = {
     syntheticDataOnly: true
   }
 };
+
+
+test("whole patient file guards completeness, cross-chunk identity, replay and legacy bypass", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const dependencies: OperationsDependencies = { repository, auditSink: new InMemoryAuditSink() };
+  const context = await operationsContext("seed-assistant", "patient-file");
+  const denied = await operationsContext("seed-accountant", "patient-file-denied");
+  const runId = randomUUID();
+  const sourceSystem = `file_${runId}`;
+  await createImportRun(context, dependencies, { id: runId, sourceSystem });
+  const header = "external_reference,full_name,phone,email,date_of_birth,gender,source_type,source_format";
+  const rows = Array.from({ length: 101 }, (_, index) =>
+    `file-${index},Synthetic File Patient ${index},+919${String(index).padStart(9, "0")},,,unknown,imported,practo_ray_patients_v1`);
+  const csvs = [[header, ...rows.slice(0, 100)].join("\n"), [header, rows[100]].join("\n")];
+  const manifest = { profile: "practo_ray_patients_v1", rowCount: 101,
+    chunks: csvs.map((csv, ordinal) => ({ ordinal, rowCount: ordinal === 0 ? 100 : 1,
+      digest: createHash("sha256").update(csv).digest("hex") })) };
+  await assert.rejects(() => createPatientImportFile(denied, dependencies, runId, manifest), /missing_permission/);
+  await createPatientImportFile(context, dependencies, runId, manifest);
+  await assert.rejects(() => createPatientImportFile(context, dependencies, runId, { ...manifest, rowCount: 5001 }), /rowCount/);
+  await assert.rejects(() => createMigrationBatch(context, dependencies, { importRunId: runId, sourceSystem, importType: "patients", csv: csvs[0] }), /patient-file/);
+  const first = await stagePatientImportChunk(context, dependencies, runId, 0, { csv: csvs[0] });
+  const batchId = first.body.file!.chunks[0].batchId!;
+  await assert.rejects(() => sealPatientImportFile(context, dependencies, runId), /complete file/);
+  await assert.rejects(() => commitMigrationBatch(context, dependencies, batchId, {}), /Finish uploading/);
+  await assert.rejects(() => stagePatientImportChunk(context, dependencies, runId, 1, { csv: csvs[1].replace("Patient 100", "Changed") }), /manifest/);
+  const replay = await stagePatientImportChunk(context, dependencies, runId, 0, { csv: csvs[0] });
+  assert.equal(replay.body.file!.chunks[0].batchId, batchId);
+  assert.equal(repository.outboxEvents.filter((event) => event.eventType === "migration.batch.created").length, 1);
+  await stagePatientImportChunk(context, dependencies, runId, 1, { csv: csvs[1] });
+  await sealPatientImportFile(context, dependencies, runId);
+  await sealPatientImportFile(context, dependencies, runId);
+  await createPatientImportFile(context, dependencies, runId, manifest);
+  assert.equal((dependencies.auditSink as InMemoryAuditSink).events.filter((event) => event.action === "migration.file.prepared").length, 1);
+  assert.equal((dependencies.auditSink as InMemoryAuditSink).events.filter((event) => event.action === "migration.file.sealed").length, 1);
+  for (const chunk of (await getPatientImportFile(context, dependencies, runId)).body.file.chunks)
+    await commitMigrationBatch(context, dependencies, chunk.batchId!, {});
+  const final = (await getPatientImportFile(context, dependencies, runId)).body.file;
+  assert.equal(final.received, 101);
+  assert.equal(final.chunks.reduce((sum, chunk) => sum + chunk.committed, 0), 101);
+  assert.equal((await getImportRun(context, dependencies, runId)).body.batches.length, 0);
+  assert.equal((await getImportRun(context, dependencies, runId)).body.patientFile!.rowCount, 101);
+  assert.equal(repository.migrationRows.filter((row) => final.chunks.some((chunk) => chunk.batchId === row.batchId)).length, 101);
+  await commitMigrationBatch(context, dependencies, batchId, {});
+  assert.equal((await getPatientImportFile(context, dependencies, runId)).body.file.chunks[0].committed, 100);
+
+  const duplicateId = randomUUID();
+  await createImportRun(context, dependencies, { id: duplicateId, sourceSystem });
+  const duplicateCsv = [header, rows[0]].join("\n");
+  const duplicateManifest = { ...manifest, chunks: [manifest.chunks[0], { ordinal: 1, rowCount: 1, digest: createHash("sha256").update(duplicateCsv).digest("hex") }] };
+  await createPatientImportFile(context, dependencies, duplicateId, duplicateManifest);
+  await stagePatientImportChunk(context, dependencies, duplicateId, 0, { csv: csvs[0] });
+  await assert.rejects(() => stagePatientImportChunk(context, dependencies, duplicateId, 1, { csv: duplicateCsv }), /distinct source ID/);
+  assert.equal((await getPatientImportFile(context, dependencies, duplicateId)).body.file.received, 100);
+});
+
+
+test("patient-file seal requires review for same-file shared identities without automatic merging", async () => {
+  const repository = new LocalFixtureClinicOperationsRepository();
+  const dependencies: OperationsDependencies = { repository, auditSink: new InMemoryAuditSink() };
+  const context = await operationsContext("seed-assistant", "patient-file-identities");
+  const runId = randomUUID();
+  await createImportRun(context, dependencies, { id: runId, sourceSystem: `identity_${runId}` });
+  const header = "external_reference,full_name,phone,email,date_of_birth,gender,source_type,source_format";
+  const rows = Array.from({ length: 101 }, (_, index) =>
+    `identity-${index},Synthetic Identity ${index},+916${String(index).padStart(9, "0")},,,unknown,imported,practo_ray_patients_v1`);
+  rows[100] = rows[100].replace(`+916${String(100).padStart(9, "0")}`, `+916${String(0).padStart(9, "0")}`);
+  rows[2] = rows[2].replace("Synthetic Identity 2", "राम");
+  rows[1] = rows[1].replace("Synthetic Identity 1", "राम");
+  const csvs = [[header, ...rows.slice(0, 100)].join("\n"), [header, rows[100]].join("\n")];
+  await createPatientImportFile(context, dependencies, runId, { profile: "practo_ray_patients_v1", rowCount: 101,
+    chunks: csvs.map((csv, ordinal) => ({ ordinal, rowCount: ordinal ? 1 : 100, digest: createHash("sha256").update(csv).digest("hex") })) });
+  for (const [ordinal, csv] of csvs.entries()) await stagePatientImportChunk(context, dependencies, runId, ordinal, { csv });
+  const sealed = (await sealPatientImportFile(context, dependencies, runId)).body.file;
+  assert.equal(sealed.chunks.reduce((sum, chunk) => sum + chunk.needsReview, 0), 4);
+  assert.equal(repository.migrationConflicts.length, 4);
+  await sealPatientImportFile(context, dependencies, runId);
+  assert.equal(repository.migrationConflicts.length, 4, "seal retries do not duplicate conflicts");
+  await assert.rejects(() => commitMigrationBatch(context, dependencies, sealed.chunks[0].batchId!, {}), /unresolved duplicate/);
+  const lastRow = repository.migrationRows.find((row) => row.externalRecordId === "identity-100")!;
+  assert.equal(lastRow.rowNumber, 102);
+  assert.match(lastRow.conflicts[0]?.summary ?? repository.migrationConflicts.find((issue) => issue.rowId === lastRow.id)!.summary, /rows 2/);
+  for (const row of repository.migrationRows.filter((row) => row.status === "needs_review")) {
+    const resolved = await repository.resolveMigrationRow({ tenantId: row.tenantId, clinicId: row.clinicId,
+      actorUserId: context.accessContext.user.id }, row.batchId, row.id,
+      { action: "create_new", note: "Synthetic operator confirmed separate people." });
+    assert.equal(resolved?.status, "ready_to_commit");
+  }
+  for (const chunk of sealed.chunks) await commitMigrationBatch(context, dependencies, chunk.batchId!, {});
+  assert.equal((await getPatientImportFile(context, dependencies, runId)).body.file.chunks.reduce((sum, chunk) => sum + chunk.committed, 0), 101);
+});

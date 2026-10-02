@@ -98,6 +98,7 @@ import {
   createLead,
   createMigrationBatch,
   createImportRun,
+  createPatientImportFile, getPatientImportFile, stagePatientImportChunk, sealPatientImportFile,
   completeMediaUpload,
   createSignedMediaAccess,
   createInvoicePaymentRequest,
@@ -1280,6 +1281,19 @@ async function routeOperationsRequest(input: {
   if (input.request.method === "POST" && pathname === "/v1/migration-runs") {
     return createImportRun(operationsContext, dependencies, body);
   }
+  const patientFileMatch = pathname.match(/^\/v1\/migration-runs\/([^/]+)\/patient-file$/);
+  if (patientFileMatch) {
+    const runId = pathUuid(patientFileMatch[1], "runId");
+    if (input.request.method === "GET") return getPatientImportFile(operationsContext, dependencies, runId);
+    if (input.request.method === "POST") return createPatientImportFile(operationsContext, dependencies, runId, body);
+  }
+  const patientChunkMatch = pathname.match(/^\/v1\/migration-runs\/([^/]+)\/patient-file\/chunks\/([^/]+)$/);
+  if (patientChunkMatch && input.request.method === "POST")
+    return stagePatientImportChunk(operationsContext, dependencies, pathUuid(patientChunkMatch[1], "runId"), Number(patientChunkMatch[2]), body);
+  const patientSealMatch = pathname.match(/^\/v1\/migration-runs\/([^/]+)\/patient-file\/seal$/);
+  if (patientSealMatch && input.request.method === "POST")
+    return sealPatientImportFile(operationsContext, dependencies, pathUuid(patientSealMatch[1], "runId"));
+
   const importRunMatch = pathname.match(/^\/v1\/migration-runs\/([^/]+)$/);
   if (input.request.method === "GET" && importRunMatch) {
     return getImportRun(operationsContext, dependencies, pathUuid(importRunMatch[1], "runId"));

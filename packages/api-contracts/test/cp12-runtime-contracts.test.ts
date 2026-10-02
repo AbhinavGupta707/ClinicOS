@@ -100,7 +100,7 @@ function collectVersionedResponsePaths(definition: RuntimeSchema, path = ""): st
 }
 
 test("active native registry covers identity/health and every implemented checkpoint", () => {
-  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 139);
+  assert.equal(ACTIVE_NATIVE_HTTP_OPERATIONS.length, 163);
   const checkpoints = new Set(
     ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.checkpoint)
   );
@@ -126,7 +126,7 @@ test("active native registry covers identity/health and every implemented checkp
   assert.equal(new Set(routeKeys).size, routeKeys.length);
   assert.equal(
     new Set(ACTIVE_NATIVE_HTTP_OPERATIONS.map((operation) => operation.operationId)).size,
-    139
+    163
   );
 });
 
@@ -211,8 +211,8 @@ test("versioned public resources require a UUID and positive safe rowVersion wit
   }
 });
 
-test("all 12 conditional-update families expose versions on canonical records, not projections", () => {
-  assert.equal(VERSIONED_RESOURCE_RESPONSE_CONTRACTS.length, 12);
+test("all conditional-update operations expose versions on canonical records, not projections", () => {
+  assert.equal(VERSIONED_RESOURCE_RESPONSE_CONTRACTS.length, 16);
   const conditionalOperationIds = ACTIVE_NATIVE_HTTP_OPERATIONS.filter(
     (operation) =>
       operation.concurrency.mode === "if-match" &&
@@ -265,7 +265,7 @@ test("all 12 conditional-update families expose versions on canonical records, n
         : []
     )
   ).sort();
-  assert.deepEqual(discoveredSources, mappedSources);
+  assert.deepEqual(discoveredSources, [...new Set(mappedSources)]);
 
   const duplicatePatientProjection = resolveNativeResponseSchemaPath(
     "createPatient",
@@ -814,4 +814,20 @@ test("generation is deterministic and documents deferred workflows without inven
     4
   );
   assert.equal(getNativeHttpOperation("healthLive").auth, "none");
+});
+
+test("appointment PATCH accepts one reviewed change and rejects mixed/incomplete reschedules", () => {
+  const schedule = { providerUserId: patientId, appointmentTypeId: encounterId,
+    startAt: "2026-09-26T09:00:00+05:30", durationMinutes: 30, chairId: null };
+  const request = (body: unknown) => parseNativeOperationRequest("updateAppointment", {
+    path: { appointmentId: patientId }, headers: { ...bearerHeaders, "idempotency-key": "synthetic-reschedule-contract", "if-match": '"rv-1"' }, body
+  });
+  assert.equal(request({ schedule, changeReason: "Requested by patient" }).success, true);
+  assert.equal(request({ status: "cancelled", changeReason: "Unavailable" }).success, true);
+  for (const body of [
+    {}, { schedule }, { status: "cancelled", schedule },
+    { status: "cancelled", schedule, changeReason: "Mixed command" },
+    { schedule: { ...schedule, durationMinutes: 0 }, changeReason: "Invalid duration" },
+    { schedule: { ...schedule, patientId }, changeReason: "Patient identity cannot change" }
+  ]) assert.equal(request(body).success, false, JSON.stringify(body));
 });

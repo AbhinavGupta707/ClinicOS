@@ -26,3 +26,5 @@ export * from "./cp13/treatment-billing/invariants.ts";
 export * from "./cp13/continuity-operations/index.ts";
 export * from "./cp15/meta-whatsapp/index.ts";
 export * from "./cp15/razorpay/index.ts";
+
+export * from "./intake-validation.ts";

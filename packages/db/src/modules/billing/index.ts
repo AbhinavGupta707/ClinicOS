@@ -6,6 +6,10 @@ import {
 } from "../core/scoped-repository-port.ts";
 
 export const BILLING_OPERATIONS = [
+  "searchBillingPatients",
+  "listPatientInvoices",
+  "listUninvoicedPatientProcedures",
+
   "listPricebookProcedures",
   "findPricebookProcedureById",
   "createInvoice",

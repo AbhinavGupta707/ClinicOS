@@ -6,6 +6,8 @@ import {
 } from "../core/scoped-repository-port.ts";
 
 export const DENTAL_TREATMENT_OPERATIONS = [
+  "listPatientTreatmentPlans",
+
   "getDentalChart",
   "createDentalFinding",
   "updateDentalFinding",

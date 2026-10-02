@@ -140,6 +140,8 @@ export const RECALL_ACTION_TYPES = [
 export type RecallActionType = (typeof RECALL_ACTION_TYPES)[number];
 
 export interface RecallRecord {
+  ruleTitle?: string;
+  patientName?: string;
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;

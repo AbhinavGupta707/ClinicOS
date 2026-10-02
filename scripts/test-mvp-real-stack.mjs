@@ -4,11 +4,22 @@ import { spawn } from "node:child_process";
 import { createWriteStream } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
+import { createServer as createHttpServer, request as httpRequest } from "node:http";
 import { join, resolve } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 
 // This runner owns only its API/web processes. Database provisioning is a separate,
 // explicit action: use a disposable, migrated and seeded local Postgres plus Redis.
+assert.ok(
+  process.argv.slice(2).every((arg) => ["--front-desk", "--daily-workflow"].includes(arg)),
+  "Unknown acceptance suite."
+);
+const dailyWorkflow = process.argv.includes("--daily-workflow");
+assert.ok(
+  !(dailyWorkflow && process.argv.includes("--front-desk")),
+  "Choose one acceptance suite."
+);
+const frontDeskOnly = process.argv.includes("--front-desk");
 const root = resolve(import.meta.dirname, "..");
 const webRoot = join(root, "apps/web");
 assert.equal(
@@ -82,11 +93,13 @@ const apiEnv = {
   PILOT_SYNTHETIC_DATA_ONLY: "true",
   CLINIC_OS_API_USE_DEV_AUTH_FIXTURE: "true",
   CLINIC_OS_API_USE_FIXTURE_REPOSITORY: "false",
-  CLINIC_OS_API_DEV_SUBJECT: "seed-owner"
+  CLINIC_OS_API_DEV_SUBJECT: frontDeskOnly ? "seed-receptionist" : "seed-owner"
 };
 const children = new Set();
 const ownsProcessGroups = process.platform !== "win32";
 let app;
+const extraApps = [];
+let roleGateway;
 let complete = false;
 let stopping;
 const stop = () =>
@@ -95,6 +108,8 @@ const stop = () =>
       if (child.exitCode !== null || child.signalCode !== null) continue;
       await terminate(child);
     }
+    if (roleGateway) await new Promise((resolve) => roleGateway.close(resolve));
+    for (const roleApp of extraApps) await roleApp.close();
     await app?.close();
   })());
 for (const signal of ["SIGINT", "SIGTERM"]) {
@@ -127,7 +142,57 @@ try {
   ({ app } = await createRuntimeApiNestApplication(apiEnv));
   await app.listen(0, "127.0.0.1");
   const apiPort = app.getHttpServer().address().port;
-  const apiBase = `http://127.0.0.1:${apiPort}`;
+  let apiBase = `http://127.0.0.1:${apiPort}`;
+  if (dailyWorkflow) {
+    // Test-only routing chooses among fixed synthetic identities. Each upstream
+    // remains the actual Nest API with PostgreSQL authority and permissions.
+    const roles = new Map([["owner", apiPort]]);
+    for (const role of ["doctor", "assistant", "receptionist", "accountant"]) {
+      const runtime = await createRuntimeApiNestApplication({
+        ...apiEnv,
+        CLINIC_OS_API_DEV_SUBJECT: `seed-${role}`
+      });
+      extraApps.push(runtime.app);
+      await runtime.app.listen(0, "127.0.0.1");
+      roles.set(role, runtime.app.getHttpServer().address().port);
+    }
+    roleGateway = createHttpServer((req, res) => {
+      const token = req.headers.authorization;
+      const role =
+        token === undefined
+          ? "owner"
+          : /^Bearer local-synthetic-(owner|doctor|assistant|receptionist|accountant)$/.exec(
+              token
+            )?.[1];
+      const port = roles.get(role);
+      if (!port) {
+        res.writeHead(401);
+        res.end();
+        return;
+      }
+      const upstream = httpRequest(
+        {
+          hostname: "127.0.0.1",
+          port,
+          path: req.url,
+          method: req.method,
+          headers: { ...req.headers, host: `127.0.0.1:${port}` }
+        },
+        (reply) => {
+          res.writeHead(reply.statusCode ?? 502, reply.headers);
+          reply.pipe(res);
+        }
+      );
+      upstream.on("error", () => {
+        if (!res.headersSent) res.writeHead(502);
+        res.end();
+      });
+      req.on("aborted", () => upstream.destroy());
+      req.pipe(upstream);
+    });
+    await new Promise((resolve) => roleGateway.listen(0, "127.0.0.1", resolve));
+    apiBase = `http://127.0.0.1:${roleGateway.address().port}`;
+  }
   const health = await fetch(`${apiBase}/health/ready`, { signal: AbortSignal.timeout(5000) });
   assert.equal(health.status, 200, "Durable API must be ready before browser acceptance.");
   const healthBody = await health.json();
@@ -148,7 +213,9 @@ try {
       {
         // Record only the readiness contract proven above, not arbitrary response data.
         health: expectedHealth,
-        identity: "database-backed synthetic seed-owner",
+        identity: frontDeskOnly
+          ? "database-backed synthetic seed-receptionist"
+          : "database-backed synthetic seed-owner",
         authentication: "local development fixture; not real OIDC evidence"
       },
       null,
@@ -193,8 +260,12 @@ try {
     `module.exports = ${JSON.stringify(
       {
         testDir: join(root, "tests/e2e"),
-        testMatch: "mvp-manual-import-real-stack.spec.ts",
-        timeout: 60000,
+        testMatch: dailyWorkflow
+          ? "daily-workflow-real-stack.spec.ts"
+          : frontDeskOnly
+            ? "front-desk-real-stack.spec.ts"
+            : ["mvp-manual-import-real-stack.spec.ts", "front-desk-real-stack.spec.ts"],
+        timeout: dailyWorkflow ? 180000 : 60000,
         workers: 1,
         retries: 0,
         forbidOnly: true,
@@ -219,7 +290,13 @@ try {
   assert.equal(result.stats.unexpected, 0);
   assert.equal(result.stats.skipped, 0, "Acceptance must never pass through a disabled gate.");
   assert.equal(result.stats.flaky, 0);
-  assert.ok(result.stats.expected >= 4, "Every real-stack scenario must execute.");
+  assert.equal(
+    result.stats.expected,
+    dailyWorkflow ? 5 : frontDeskOnly ? 6 : 12,
+    "Every real-stack scenario must execute."
+  );
+  if (dailyWorkflow) await verifyDailyWorkflowEvidence();
+  else await verifyFrontDeskEvidence();
   complete = true;
 } finally {
   await stop();
@@ -238,6 +315,108 @@ try {
     )
   );
   console.log(`Real-stack evidence: ${artifacts}`);
+}
+
+async function verifyDailyWorkflowEvidence() {
+  const { Client } = await import("pg");
+  const client = new Client({ connectionString: databaseUrl.href, query_timeout: 5000 });
+  try {
+    await client.connect();
+    await client.query("begin read only");
+    await client.query(
+      "select set_config('app.tenant_id',$1,true),set_config('app.clinic_id',$2,true),set_config('app.user_id',$3,true)",
+      [
+        "10000000-0000-4000-8000-000000000001",
+        "10000000-0000-4000-8000-000000000101",
+        "10000000-0000-4000-8000-000000001001"
+      ]
+    );
+    const {
+      rows: [counts]
+    } = await client.query(`
+      with p as(select id from patients where full_name like 'SyntheticDaily-%'),
+      e as(select * from encounters where patient_id in(select id from p))
+      select
+      (select count(*)::int from p) patients,
+      (select count(*)::int from e where status='closed') closed_visits,
+      (select count(*)::int from appointments where id in(select appointment_id from e) and status='completed') completed_appointments,
+      (select count(*)::int from queue_entries where appointment_id in(select appointment_id from e) and status='completed') completed_queue,
+      (select count(*)::int from prescriptions where encounter_id in(select id from e) and status='signed') signed_prescriptions,
+      (select count(*)::int from invoices where patient_id in(select id from p)) invoices,
+      (select coalesce(sum(total_minor),0)::int from invoices where patient_id in(select id from p)) total_minor,
+      (select coalesce(sum(paid_minor),0)::int from invoices where patient_id in(select id from p)) paid_minor,
+      (select coalesce(sum(balance_minor),0)::int from invoices where patient_id in(select id from p)) balance_minor,
+      (select count(*)::int from outbox_events where patient_id in(select id from p) and event_type='appointment.updated' and payload->>'status' in('in_consult','completed')) appointment_events,
+      (select count(*)::int from outbox_events where patient_id in(select id from p) and event_type='queue.entry_updated' and payload->>'status' in('in_consult','completed')) queue_events
+    `);
+    assert.deepEqual(counts, {
+      patients: 1,
+      closed_visits: 1,
+      completed_appointments: 1,
+      completed_queue: 1,
+      signed_prescriptions: 1,
+      invoices: 1,
+      total_minor: 100000,
+      paid_minor: 40000,
+      balance_minor: 60000,
+      appointment_events: 2,
+      queue_events: 2
+    });
+    await client.query("commit");
+    await writeFile(
+      join(artifacts, "daily-database-reconciliation.json"),
+      JSON.stringify(counts, null, 2)
+    );
+  } finally {
+    await client.end();
+  }
+}
+
+async function verifyFrontDeskEvidence() {
+  const { Client } = await import("pg");
+  const client = new Client({ connectionString: databaseUrl.href, query_timeout: 5000 });
+  try {
+    await client.connect();
+    await client.query("begin read only");
+    await client.query(
+      "select set_config('app.tenant_id', $1, true), set_config('app.clinic_id', $2, true), set_config('app.user_id', $3, true)",
+      [
+        "10000000-0000-4000-8000-000000000001",
+        "10000000-0000-4000-8000-000000000101",
+        frontDeskOnly
+          ? "10000000-0000-4000-8000-000000001004"
+          : "10000000-0000-4000-8000-000000001001"
+      ]
+    );
+    // Independent aggregate proof catches accepted commands that lost secondary
+    // events. Read only the synthetic namespace through the ordinary RLS role.
+    const {
+      rows: [counts]
+    } = await client.query(`
+      with desk_patients as (select id from patients where full_name like 'SyntheticDesk%'),
+      desk_appointments as (select id from appointments where patient_id in (select id from desk_patients))
+      select
+        (select count(*)::int from desk_patients) as patients,
+        (select count(*)::int from desk_appointments) as appointments,
+        (select count(*)::int from audit_events where resource_id in (select id::text from desk_appointments)
+          and action = 'appointment.updated' and metadata->>'change' = 'rescheduled') as reschedules,
+        (select count(*)::int from outbox_events where aggregate_id in (select id from desk_appointments)
+          and event_type = 'appointment.confirmation_requested') as confirmation_requests,
+        (select count(*)::int from queue_entries where appointment_id in (select id from desk_appointments)) as queue_entries
+    `);
+    assert.deepEqual(
+      counts,
+      { patients: 5, appointments: 5, reschedules: 2, confirmation_requests: 7, queue_entries: 1 },
+      "Front-desk records, replay outcomes, audits and confirmation facts must reconcile."
+    );
+    await client.query("commit");
+    await writeFile(
+      join(artifacts, "front-desk-reconciliation.json"),
+      JSON.stringify(counts, null, 2)
+    );
+  } finally {
+    await client.end();
+  }
 }
 
 function requiredLocalUrl(name, protocols) {

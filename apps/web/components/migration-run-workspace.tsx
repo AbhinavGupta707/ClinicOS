@@ -9,6 +9,7 @@ import {
   createLiveMigrationBatch,
   resolveLiveMigrationConflict,
   rollbackLiveMigrationBatch,
+  isPractoPatientTrial,
   type EligibleClinicDoctor
 } from "@/lib/cp7-integration-ops";
 import {
@@ -19,6 +20,7 @@ import {
   type ImportRunDetail
 } from "@/lib/import-runs";
 import type { MeProfile } from "@/lib/me";
+import { PatientFileWorkspace } from "./patient-file-workspace";
 import { MigrationOperationsPanel } from "./migration-operations-panel";
 
 type Notice = { text: string; error?: boolean };
@@ -26,6 +28,8 @@ type Notice = { text: string; error?: boolean };
 export function MigrationRunWorkspace({ profile }: { profile: MeProfile }) {
   const client = useMemo(() => createCp13ApiClient(profile.clinic.id), [profile.clinic.id]);
   const storageKey = importRunStorageKey(profile);
+  const [readVersion, setReadVersion] = useState(0);
+  const [largePatientFile, setLargePatientFile] = useState(false);
   const [runs, setRuns] = useState<ListImportRunsResponse["runs"]>([]);
   const [cursor, setCursor] = useState<string | null>(null);
   const [detail, setDetail] = useState<ImportRunDetail | null>(null);
@@ -58,6 +62,7 @@ export function MigrationRunWorkspace({ profile }: { profile: MeProfile }) {
       const next = await loadImportRunWorkspace(client, id);
       if (generation.current !== token) return;
       setDetail(next.detail);
+      setReadVersion((value) => value + 1);
       setDoctors(next.doctors);
       setDoctorsUnavailable(next.doctorsUnavailable);
       setUnavailable(false);
@@ -125,6 +130,7 @@ export function MigrationRunWorkspace({ profile }: { profile: MeProfile }) {
     setDetail(null);
     const token = ++generation.current;
     remember(id);
+    setLargePatientFile(false);
     pendingCreate.current = null;
     try {
       await readRun(id, token);
@@ -185,6 +191,7 @@ export function MigrationRunWorkspace({ profile }: { profile: MeProfile }) {
         : { id: crypto.randomUUID(), sourceSystem: source.trim() };
     pendingCreate.current = request;
     remember(request.id);
+    setLargePatientFile(false);
     setDetail(null);
     await mutate(request.id, async () => {
       const result = await client.createImportRun({
@@ -193,7 +200,7 @@ export function MigrationRunWorkspace({ profile }: { profile: MeProfile }) {
       });
       setRuns((existing) => [result.run, ...existing.filter((run) => run.id !== result.run.id)]);
       pendingCreate.current = null;
-      return "Run saved. Add patients first, then map practitioners and add appointments.";
+      return "Run saved. Choose a supported file format and review its scope before uploading.";
     });
   };
 
@@ -227,8 +234,13 @@ export function MigrationRunWorkspace({ profile }: { profile: MeProfile }) {
         <div>
           <p className="eyebrow">Manual clinic onboarding</p>
           <h1>Import clinic data</h1>
-          <p>Save a run, review each file, then confirm the imported appointments in Today.</p>
-          <p>ClinicOS-formatted CSV only. Practo is not connected. No source-system writeback.</p>
+          <p>
+            Save a run, review supported records, then verify committed data in Patients or Today.
+          </p>
+          <p>
+            ClinicOS CSV and limited Practo patient files. No live connection or source-system
+            writeback.
+          </p>
         </div>
         <span aria-label="Workflow API mode">Live boundary</span>
       </section>
@@ -253,7 +265,7 @@ export function MigrationRunWorkspace({ profile }: { profile: MeProfile }) {
           </label>
           <p>
             Use the same name for repeat exports from the same source. Each run accepts one file per
-            step, up to 100 rows per file. Correct a saved file in a new run.
+            step in the guided workflow (100 rows), or one whole Practo patient file (up to 5,000 patients). Correct a saved file in a new run.
           </p>
           <Button
             data-testid="migration-create-run"
@@ -322,12 +334,25 @@ export function MigrationRunWorkspace({ profile }: { profile: MeProfile }) {
       ) : null}
       {detail && !unavailable ? (
         <>
+          {!detail.batches.length && !detail.patientFile ? <label>Import workflow
+            <select data-testid="migration-workflow" disabled={busy} value={largePatientFile ? "patient-file" : "guided"}
+              onChange={(event) => setLargePatientFile(event.target.value === "patient-file")}>
+              <option value="guided">Guided ClinicOS CSV / small trial</option>
+              <option value="patient-file">Whole Practo patient file (up to 5,000)</option>
+            </select>
+          </label> : null}
+          {detail.patientFile || largePatientFile ? <PatientFileWorkspace key={`${detail.run.id}:${readVersion}`} externalBusy={busy} client={client} runId={detail.run.id}
+            initialFile={detail.patientFile ?? null} onBusy={(value) => { busyRef.current = value; setBusy(value); }} /> : <>
           <section
             className="import-run-summary"
             data-testid="migration-run-summary"
             aria-label="Run reconciliation"
           >
-            <h2>{IMPORT_RUN_STATUS_LABELS[detail.status]}</h2>
+            <h2>
+              {isPractoPatientTrial(detail.batches)
+                ? "Practo patient trial — review counts below"
+                : IMPORT_RUN_STATUS_LABELS[detail.status]}
+            </h2>
             <p>
               {detail.run.sourceSystem} · Run started{" "}
               {new Date(detail.run.createdAt).toLocaleString()}
@@ -378,7 +403,9 @@ export function MigrationRunWorkspace({ profile }: { profile: MeProfile }) {
             onCreate={async (input) => {
               await mutate(detail.run.id, async () => {
                 await createLiveMigrationBatch(input);
-                return "File validated and staged. Review the saved rows before committing.";
+                return detail.batches.some((batch) => batch.importType === input.importType)
+                  ? "Saved file recovered. Review its current status and counts below."
+                  : "File validated and staged. Review the saved rows before committing.";
               });
             }}
             onCommit={async (batch) => {
@@ -402,6 +429,7 @@ export function MigrationRunWorkspace({ profile }: { profile: MeProfile }) {
               });
             }}
           />
+          </>}
         </>
       ) : !busy && !unavailable ? (
         <p>Start a run or choose a saved run to continue. Existing files remain unchanged.</p>

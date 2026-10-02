@@ -6,6 +6,11 @@ import {
 } from "../core/scoped-repository-port.ts";
 
 export const CLINICAL_CARE_OPERATIONS = [
+  "listPatientIntakeHistory",
+ "listPatientInstructions",
+  "listPatientEncounters",
+  "listEncounterPrescriptions",
+
   "listIntakeFormTemplates",
   "findIntakeFormTemplateById",
   "createIntakeFormTemplate",

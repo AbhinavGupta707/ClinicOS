@@ -34,6 +34,9 @@ jobs:
       - name: Workspace check
         run: npm run check
 
+      - name: Offline Practo export profile safety tests (synthetic only)
+        run: node --test scripts/practo-export-profile.test.mjs
+
       - name: Typecheck workspaces
         run: npm run typecheck
 
@@ -116,6 +119,22 @@ jobs:
           DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
           REDIS_URL: redis://127.0.0.1:6379
         run: npm run mvp:test:real-stack
+
+      - name: Patient-file concurrency isolation and independent reconciliation
+        env:
+          CLINICOS_MVP_TEST_DATABASE_DISPOSABLE: "true"
+          PILOT_SYNTHETIC_DATA_ONLY: "true"
+          DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
+        run: node scripts/test-patient-file-repositories.mjs
+
+      - name: Daily workflow UI against real API and PostgreSQL
+        env:
+          CLINICOS_MVP_IMPORT_E2E_ENABLED: "true"
+          CLINICOS_MVP_TEST_DATABASE_DISPOSABLE: "true"
+          PILOT_SYNTHETIC_DATA_ONLY: "true"
+          DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
+          REDIS_URL: redis://127.0.0.1:6379
+        run: npm run mvp:test:real-stack -- --daily-workflow
 
       - name: Retain real-stack acceptance evidence
         if: always()

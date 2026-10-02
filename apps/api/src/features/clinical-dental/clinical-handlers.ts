@@ -1,3 +1,4 @@
+import {ClinicSetupConflict} from "@clinic-os/db";
 import {
   assertEncounterTransition,
   assertPrescriptionMedicationList,
@@ -204,7 +205,7 @@ export function createClinicalHandlers(dependencies: ClinicalDentalHandlerDepend
         medicalHistorySnapshot: input.medicalHistorySnapshot
           ? { ...input.medicalHistorySnapshot }
           : {}
-      });
+      }).catch((error: unknown) => { if(error instanceof RangeError || error instanceof ClinicSetupConflict) throw conflict(error.message); throw error; });
       await appendMutationEvidence(request, context, {
         auditAction: "encounter.created",
         eventType: "encounter.created",
@@ -242,13 +243,29 @@ export function createClinicalHandlers(dependencies: ClinicalDentalHandlerDepend
       return ok({ encounter, noteVersions });
     },
 
+    closeEncounter: async (request: ClinicalDentalRequest<"closeEncounter">, context: ClinicFeatureExecutionContext) => {
+      assertDoctorSignature(request,"clinical.note.sign");
+      const encounterId=parsedPathId(request,"encounterId");
+      const before=await context.repositories.clinicalCare.findEncounterById(encounterId);
+      if(!before) throw notFound("Encounter not found.", {encounter_id:encounterId});
+      assertAssignedEncounterProvider(request,before);
+      if(!["signed","amended"].includes(before.status)) throw conflict("Review and sign the note before finishing this visit.");
+      const encounter=await context.repositories.clinicalCare.transitionEncounter(encounterId,"closed","doctor_finished_visit");
+      if(!encounter) throw conflict("The linked appointment or queue changed. Refresh and reconcile the visit before finishing.");
+      await appendMutationEvidence(request,context,{auditAction:"encounter.completed",eventType:"encounter.completed",aggregateType:"encounter",aggregateId:encounter.id,patientId:encounter.patientId,auditMetadata:{appointmentId:encounter.appointmentId,linkedVisitState:encounter.appointmentId?"completed":"not_linked"},eventPayload:{encounterId:encounter.id,patientId:encounter.patientId,status:encounter.status}});
+      await recordVisitState(request,context,encounter);
+      return ok({encounter});
+    },
+
     startEncounter: async (
       request: ClinicalDentalRequest<"startEncounter">,
       context: ClinicFeatureExecutionContext
     ) => {
+      assertDoctorSignature(request, "clinical.note.write");
       const encounterId = parsedPathId(request, "encounterId");
       const existing = await context.repositories.clinicalCare.findEncounterById(encounterId);
       if (!existing) throw notFound("Encounter not found.", { encounter_id: encounterId });
+      assertAssignedEncounterProvider(request, existing);
       await requireClinicalConsent(request, context, existing.patientId, "encounter_start");
       try {
         assertEncounterTransition(existing.status, "drafting");
@@ -264,7 +281,7 @@ export function createClinicalHandlers(dependencies: ClinicalDentalHandlerDepend
         "drafting",
         "encounter_started"
       );
-      if (!encounter) throw notFound("Encounter not found.", { encounter_id: encounterId });
+      if (!encounter) throw conflict("The appointment and queue must be checked in before starting consultation.", { encounter_id: encounterId });
       await appendMutationEvidence(request, context, {
         auditAction: "encounter.started",
         eventType: "encounter.started",
@@ -278,6 +295,7 @@ export function createClinicalHandlers(dependencies: ClinicalDentalHandlerDepend
           status: encounter.status
         }
       });
+      await recordVisitState(request,context,encounter);
       return ok({ encounter });
     },
 
@@ -296,6 +314,7 @@ export function createClinicalHandlers(dependencies: ClinicalDentalHandlerDepend
           status: encounter.status
         });
       }
+      if (encounter.status === "scheduled" && input.readyForSign) throw conflict("The assigned doctor must start the visit before a note can be ready for signature.");
       if (!hasClinicalNoteContent(input.content)) {
         throw validation("Clinical note draft requires at least one note section.", {
           field: "content"
@@ -478,13 +497,14 @@ export function createClinicalHandlers(dependencies: ClinicalDentalHandlerDepend
         throw notFound("Prescription not found.", { prescription_id: prescriptionId });
       }
       const encounter = await context.repositories.clinicalCare.findEncounterById(
-        existing.encounterId
+        existing.encounterId, true
       );
       if (!encounter) {
         throw conflict("Prescription encounter is unavailable for signature.", {
           prescription_id: prescriptionId
         });
       }
+      if(["scheduled","closed","cancelled"].includes(encounter.status)) throw conflict("This visit is not open for prescription signing.");
       assertAssignedEncounterProvider(request, encounter);
       await requireClinicalConsent(request, context, existing.patientId, "prescription_sign");
       if (existing.status !== "draft") {
@@ -533,4 +553,13 @@ function databaseErrorCode(error: unknown): string | null {
 
 function errorMessage(error: unknown, fallback: string): string {
   return error instanceof Error ? error.message : fallback;
+}
+
+async function recordVisitState(request: ClinicalDentalRequest<"startEncounter"|"closeEncounter">,context:ClinicFeatureExecutionContext,encounter:{id:UUID;patientId:UUID;appointmentId:UUID|null;status:string}) {
+ if(!encounter.appointmentId) return;
+ const appointment=await context.repositories.scheduling.findAppointmentById(encounter.appointmentId);
+ const queue=await context.repositories.scheduling.findQueueEntryByAppointmentId(encounter.appointmentId);
+ if(!appointment||!queue) throw conflict("Linked visit state is unavailable.");
+ await appendMutationEvidence(request,context,{auditAction:"appointment.updated",eventType:"appointment.updated",aggregateType:"appointment",aggregateId:appointment.id,patientId:encounter.patientId,auditMetadata:{encounterId:encounter.id,status:appointment.status},eventPayload:{appointmentId:appointment.id,encounterId:encounter.id,status:appointment.status}});
+ await appendMutationEvidence(request,context,{auditAction:"queue.entry_updated",eventType:"queue.entry_updated",aggregateType:"queue_entry",aggregateId:queue.id,patientId:encounter.patientId,auditMetadata:{encounterId:encounter.id,status:queue.status},eventPayload:{queueEntryId:queue.id,encounterId:encounter.id,status:queue.status}});
 }

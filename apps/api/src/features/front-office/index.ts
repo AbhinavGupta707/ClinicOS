@@ -1,6 +1,8 @@
+import {ClinicSetupConflict} from "@clinic-os/db";
 import type { JsonValue } from "@clinic-os/api-contracts";
 import type {
   CreateAppointmentInput,
+  RescheduleAppointmentInput,
   CreateIntakeFormSubmissionInput,
   CreateIntakeFormTemplateInput,
   CreateLeadInput,
@@ -8,6 +10,8 @@ import type {
 } from "@clinic-os/db";
 import {
   assertLeadTransition,
+  validateIntakeTemplateSchema,
+  validateIntakeResponses,
   buildMorningDashboard,
   buildPatientDuplicateSuggestions,
   type AppointmentRecord,
@@ -32,11 +36,12 @@ import {
   resolveClinicDay
 } from "@clinic-os/domain";
 import { ApiError } from "../../errors.ts";
-import type {
-  ClinicFeatureExecutionContext,
-  ClinicFeatureHandlerMap,
-  ClinicFeatureOperationHandler,
-  ClinicFeatureOperationRequest
+import {
+  featureOutboxIdempotencyKey,
+  type ClinicFeatureExecutionContext,
+  type ClinicFeatureHandlerMap,
+  type ClinicFeatureOperationHandler,
+  type ClinicFeatureOperationRequest
 } from "../contracts.ts";
 import { CP13_FRONT_OFFICE_OPERATION_IDS } from "../cp13-operation-ownership.ts";
 
@@ -101,13 +106,15 @@ async function handleCreatePatient(
   const body = bodyRecord(request);
   const input: CreatePatientInput = {
     fullName: stringValue(body.fullName),
-    phone: stringValue(body.phone),
+    phone: optionalNullableString(body.phone) ?? null,
     email: optionalNullableString(body.email),
     dateOfBirth: optionalNullableString(body.dateOfBirth),
     gender: (optionalString(body.gender) ?? "unknown") as PatientRecord["gender"],
     source: stringValue(body.source) as PatientSource,
     sourceDetail: optionalRecord(body.sourceDetail) ?? {}
   };
+  validatePatientDemographics(body, input.phone, request, context);
+  if (!input.phone) input.sourceDetail = {...input.sourceDetail, contactUnavailableReason: String(body.contactUnavailableReason)};
   const sourceLeadId = optionalNullableString(body.leadId) as UUID | null | undefined;
   const sourceLead = sourceLeadId
     ? await context.repositories.patientAdministration.findLeadById(sourceLeadId)
@@ -125,15 +132,10 @@ async function handleCreatePatient(
   const candidates =
     await context.repositories.patientAdministration.findPatientDuplicateCandidates({
       fullName: input.fullName,
-      phone: input.phone
+      phone: input.phone ?? ""
     });
-  const duplicateSuggestions = buildPatientDuplicateSuggestions(input, candidates);
-  if (duplicateSuggestions.length > 0) {
-    throw conflict(
-      "Potential duplicate patients require explicit resolution before patient creation.",
-      { duplicate_suggestions: duplicateSuggestions }
-    );
-  }
+  const duplicateSuggestions = buildPatientDuplicateSuggestions({...input,phone:input.phone??""}, candidates);
+  reviewPatientDuplicates(body, duplicateSuggestions);
   const patient = await context.repositories.patientAdministration.createPatient(input);
   const attributionSource = toLeadSource(input.source);
   if (attributionSource) {
@@ -163,7 +165,7 @@ async function handleCreatePatient(
     patientId: patient.id,
     resourceType: "patient",
     resourceId: patient.id,
-    metadata: { source: patient.source, duplicateSuggestionCount: duplicateSuggestions.length }
+    metadata: { source: patient.source, duplicateSuggestionCount: duplicateSuggestions.length, duplicateReview: body.duplicateReview ?? null, contactUnavailableReason: body.contactUnavailableReason ?? null }
   });
   await appendOutbox(request, context, {
     eventType: "patient.created",
@@ -203,6 +205,15 @@ async function handleUpdatePatient(
 ) {
   const patientId = pathUuid(request, "patientId");
   const body = bodyRecord(request);
+  const existing = await context.repositories.patientAdministration.findPatientById(patientId);
+  if (!existing) throw notFound("Patient not found.", {patient_id:patientId});
+  const phone = body.phone === undefined ? existing.phone : optionalNullableString(body.phone) ?? null;
+  validatePatientDemographics(body, phone, request, context, body.phone !== undefined);
+  if (body.fullName !== undefined || body.phone !== undefined) {
+    const candidateInput={fullName:optionalString(body.fullName)??existing.fullName,phone:phone??""};
+    const candidates=await context.repositories.patientAdministration.findPatientDuplicateCandidates(candidateInput);
+    reviewPatientDuplicates(body,buildPatientDuplicateSuggestions(candidateInput,candidates.filter(p=>p.id!==patientId)));
+  }
   const patient = await context.repositories.patientAdministration.updatePatient(patientId, {
     fullName: optionalString(body.fullName),
     phone: optionalNullableString(body.phone),
@@ -214,7 +225,8 @@ async function handleUpdatePatient(
   await appendAudit(request, context, "patient.record.updated", {
     patientId,
     resourceType: "patient",
-    resourceId: patientId
+    resourceId: patientId,
+    metadata: {duplicateReview:body.duplicateReview??null,contactUnavailableReason:body.contactUnavailableReason??null}
   });
   await appendOutbox(request, context, {
     eventType: "patient.updated",
@@ -253,9 +265,10 @@ async function handleListLeads(
   const leads = await context.repositories.patientAdministration.listLeads({
     source: optionalString(query.source) as LeadSource | undefined,
     status: optionalString(query.status) as LeadStatus | undefined,
-    limit: optionalNumber(query.limit)
-  });
-  return ok({ leads });
+    cursor: optionalString(query.cursor) as UUID | undefined,
+    limit: optionalNumber(query.limit) ?? 100
+  }).catch(error => {if(error instanceof RangeError) throw new ApiError(400,"VALIDATION_ERROR",error.message); throw error;});
+  return ok({ leads, nextCursor: leads.length === (optionalNumber(query.limit) ?? 100) ? leads.at(-1)?.id ?? null : null });
 }
 
 async function handleCreateLead(
@@ -466,12 +479,20 @@ async function handleUpdateAppointment(
   context: ClinicFeatureExecutionContext
 ) {
   const appointmentId = pathUuid(request, "appointmentId");
-  const status = stringValue(bodyRecord(request).status) as AppointmentStatus;
+  const body = bodyRecord(request);
+  if (body.schedule) return rescheduleAppointment(request, context, appointmentId);
+  const status = stringValue(body.status) as AppointmentStatus;
   if (status === "checked_in") {
     const { appointment } = await checkInAppointmentIdempotently(request, context, appointmentId);
     return ok({ appointment });
   }
-  const appointment = await transitionAppointment(request, context, appointmentId, status);
+  const appointment = await transitionAppointment(
+    request,
+    context,
+    appointmentId,
+    status,
+    optionalString(body.changeReason)
+  );
   return ok({ appointment });
 }
 
@@ -569,6 +590,13 @@ async function handleUpdateQueueEntry(
     throw notFound("Queue entry not found for the active clinic day.", {
       queue_entry_id: queueEntryId
     });
+  if (status === "called" || status === "waiting") {
+    const appointment = await context.repositories.scheduling.findAppointmentById(
+      existing.appointmentId
+    );
+    if (appointment?.status !== "checked_in")
+      throw conflict("Only a checked-in appointment can wait or be called. Refresh the schedule.");
+  }
   if (existing.status === status) return ok({ queueEntry: existing });
   domainInvariant(() => assertFrontOfficeQueueTransition(existing.status, status));
   const queueEntry = await context.repositories.scheduling.updateQueueEntry(queueEntryId, status);
@@ -618,9 +646,8 @@ async function handleCreateIntakeFormTemplate(
     schema: recordValue(body.schema),
     active: optionalBoolean(body.active) ?? true
   };
-  return created({
-    template: await context.repositories.clinicalCare.createIntakeFormTemplate(input)
-  });
+  try { validateIntakeTemplateSchema(input.schema); } catch(error) { throw validation(error instanceof Error ? error.message : "Invalid intake template."); }
+  return created({ template: await context.repositories.clinicalCare.createIntakeFormTemplate(input) });
 }
 
 async function handleSubmitPatientIntakeForm(
@@ -644,6 +671,10 @@ async function handleSubmitPatientIntakeForm(
   );
   if (!template || !template.active)
     throw notFound("Active intake form template not found.", { template_id: input.templateId });
+  try { validateIntakeResponses(template.schema,input.responses); } catch(error) { throw validation(error instanceof Error ? error.message : "Invalid intake response."); }
+  // A client cannot assert medical-history evidence outside the reviewed form response.
+  input.medicalHistorySnapshot = template.formType === "medical_history" ? {...input.responses} :
+    Object.fromEntries(["medicalHistory","allergies","currentMedications"].filter(key=>Object.hasOwn(input.responses,key)).map(key=>[key,input.responses[key]]));
   const submission = await context.repositories.clinicalCare.createIntakeFormSubmission(input);
   await appendAudit(request, context, "form_response.submitted", {
     patientId,
@@ -772,15 +803,89 @@ async function bookAppointment(
     if (lead.patientId !== input.patientId)
       throw conflict("Lead is not matched to the appointment patient.", { lead_id: lead.id });
   }
-  const [appointmentTypes, chairs, providerSchedules] = await Promise.all([
+  await validateBookingWindow(request, context, input);
+  const { allowConflictOverride: _override, ...createInput } = input;
+  const appointment = await context.repositories.scheduling
+    .createAppointment(createInput)
+    .catch(schedulingWriteFailure);
+  await appendAudit(request, context, "appointment.created", {
+    patientId: appointment.patientId,
+    resourceType: "appointment",
+    resourceId: appointment.id,
+    metadata: {
+      source: appointment.source,
+      status: appointment.status,
+      conflictOverride: false
+    }
+  });
+  await appendOutbox(request, context, {
+    eventType: appointment.status === "requested" ? "appointment.requested" : "appointment.created",
+    aggregateType: "appointment",
+    aggregateId: appointment.id,
+    patientId: appointment.patientId,
+    payload: {
+      appointmentId: appointment.id,
+      patientId: appointment.patientId,
+      providerUserId: appointment.providerUserId,
+      appointmentTypeId: appointment.appointmentTypeId,
+      startAt: appointment.startAt,
+      endAt: appointment.endAt,
+      source: appointment.source,
+      status: appointment.status,
+      conflictOverride: false
+    }
+  });
+  await appendOutbox(request, context, {
+    eventType: "appointment.confirmation_requested",
+    aggregateType: "appointment",
+    aggregateId: appointment.id,
+    patientId: appointment.patientId,
+    payload: { appointmentId: appointment.id, taskType: "confirmation" }
+  });
+  return appointment;
+}
+
+function schedulingWriteFailure(error: unknown): never {
+  if(error instanceof ClinicSetupConflict) throw conflict(error.message);
+  // The database exclusion constraint is authoritative when two bookings race
+  // after the friendly preflight. Its SQL/detail text must not reach the browser.
+  if (typeof error === "object" && error !== null && "code" in error && error.code === "23P01") {
+    throw conflict(
+      "This slot was booked by another staff member. Choose a different time or chair."
+    );
+  }
+  throw error;
+}
+
+async function validateBookingWindow(
+  request: ClinicFeatureOperationRequest,
+  context: ClinicFeatureExecutionContext,
+  input: Pick<
+    CreateAppointmentInput,
+    "providerUserId" | "appointmentTypeId" | "chairId" | "startAt" | "endAt"
+  >,
+  appointmentIdToExclude?: UUID
+) {
+  const [appointmentTypes, chairs, providerSchedules, doctors] = await Promise.all([
     context.repositories.scheduling.listAppointmentTypes(),
     context.repositories.scheduling.listChairs(),
-    context.repositories.scheduling.listProviderSchedules(input.providerUserId)
+    context.repositories.scheduling.listProviderSchedules(input.providerUserId),
+    context.repositories.scheduling.listClinicDoctors()
   ]);
   const scope = {
     tenantId: request.access.context.tenant.id,
     clinicId: request.access.clinicId
   };
+  if (
+    !doctors.some(
+      (doctor) =>
+        doctor.providerUserId === input.providerUserId &&
+        doctor.tenantId === scope.tenantId &&
+        doctor.clinicId === scope.clinicId
+    )
+  ) {
+    throw conflict("Choose an active doctor assigned to this clinic.");
+  }
   const appointmentType = appointmentTypes.find(
     (candidate) =>
       candidate.id === input.appointmentTypeId &&
@@ -825,6 +930,7 @@ async function bookAppointment(
     });
   }
   const conflicts = await context.repositories.scheduling.findAppointmentConflicts({
+    appointmentIdToExclude,
     providerUserId: input.providerUserId,
     chairId: input.chairId ?? null,
     startAt: input.startAt,
@@ -833,58 +939,101 @@ async function bookAppointment(
   if (conflicts.length > 0) {
     throw conflict("Appointment conflicts with an existing booking.", { conflicts });
   }
-  const { allowConflictOverride: _override, ...createInput } = input;
-  const appointment = await context.repositories.scheduling.createAppointment(createInput);
-  await appendAudit(request, context, "appointment.created", {
+}
+
+async function rescheduleAppointment(
+  request: ClinicFeatureOperationRequest,
+  context: ClinicFeatureExecutionContext,
+  appointmentId: UUID
+) {
+  const found = await context.repositories.scheduling.findAppointmentById(appointmentId);
+  if (!found) throw notFound("Appointment not found.", { appointment_id: appointmentId });
+  const existing = { ...found };
+  if (!["requested", "booked", "confirmed"].includes(existing.status)) {
+    throw conflict("Only appointments that have not arrived or ended can be rescheduled.");
+  }
+  const body = bodyRecord(request);
+  const schedule = requestRecord(body.schedule);
+  const changeReason = stringValue(body.changeReason).trim();
+  if (!changeReason) throw conflict("Provide a reason for rescheduling.");
+  const input: RescheduleAppointmentInput = {
+    providerUserId: stringValue(schedule.providerUserId) as UUID,
+    appointmentTypeId: stringValue(schedule.appointmentTypeId) as UUID,
+    chairId: (optionalNullableString(schedule.chairId) ?? null) as UUID | null,
+    ...resolveAppointmentWindow({
+      startAt: stringValue(schedule.startAt),
+      durationMinutes: optionalNumber(schedule.durationMinutes)
+    }),
+    changeReason
+  };
+  await validateBookingWindow(request, context, input, appointmentId);
+  const appointment = await context.repositories.scheduling
+    .rescheduleAppointment(appointmentId, input)
+    .catch(schedulingWriteFailure);
+  if (!appointment)
+    throw conflict("The appointment has arrived or changed. Refresh before trying again.");
+  await appendAudit(request, context, "appointment.updated", {
     patientId: appointment.patientId,
     resourceType: "appointment",
     resourceId: appointment.id,
     metadata: {
-      source: appointment.source,
-      status: appointment.status,
-      conflictOverride: false
+      change: "rescheduled",
+      changeReason,
+      previous: {
+        startAt: existing.startAt,
+        endAt: existing.endAt,
+        providerUserId: existing.providerUserId,
+        appointmentTypeId: existing.appointmentTypeId,
+        chairId: existing.chairId,
+        status: existing.status
+      },
+      next: { ...input, status: appointment.status }
     }
   });
-  await appendOutbox(request, context, {
-    eventType: appointment.status === "requested" ? "appointment.requested" : "appointment.created",
-    aggregateType: "appointment",
-    aggregateId: appointment.id,
-    patientId: appointment.patientId,
-    payload: {
-      appointmentId: appointment.id,
+  for (const eventType of ["appointment.updated", "appointment.confirmation_requested"] as const) {
+    await appendOutbox(request, context, {
+      eventType,
+      aggregateType: "appointment",
+      aggregateId: appointment.id,
       patientId: appointment.patientId,
-      providerUserId: appointment.providerUserId,
-      appointmentTypeId: appointment.appointmentTypeId,
-      startAt: appointment.startAt,
-      endAt: appointment.endAt,
-      source: appointment.source,
-      status: appointment.status,
-      conflictOverride: false
-    }
-  });
-  await appendOutbox(request, context, {
-    eventType: "appointment.confirmation_requested",
-    aggregateType: "appointment",
-    aggregateId: appointment.id,
-    patientId: appointment.patientId,
-    payload: { appointmentId: appointment.id, taskType: "confirmation" }
-  });
-  return appointment;
+      payload: {
+        appointmentId: appointment.id,
+        change: "rescheduled",
+        startAt: appointment.startAt,
+        endAt: appointment.endAt,
+        previousStartAt: existing.startAt,
+        taskType: "confirmation"
+      }
+    });
+  }
+  return ok({ appointment });
 }
 
 async function transitionAppointment(
   request: ClinicFeatureOperationRequest,
   context: ClinicFeatureExecutionContext,
   appointmentId: UUID,
-  status: AppointmentStatus
+  status: AppointmentStatus,
+  changeReason?: string
 ): Promise<AppointmentRecord> {
-  const existing = await context.repositories.scheduling.findAppointmentById(appointmentId);
+  const found = await context.repositories.scheduling.findAppointmentById(appointmentId);
+  const existing = found ? {...found} : null;
   if (!existing) throw notFound("Appointment not found.", { appointment_id: appointmentId });
   if (existing.status === status) return existing;
+  if (
+    status === "no_show" &&
+    (!["booked", "confirmed"].includes(existing.status) ||
+      !(Date.parse(existing.endAt) <= context.clock.now().getTime()))
+  ) {
+    throw conflict(
+      "A no-show can only be recorded after a booked visit has ended, if the patient has not checked in."
+    );
+  }
   domainInvariant(() => assertFrontOfficeAppointmentTransition(existing.status, status));
   const appointment = await context.repositories.scheduling.updateAppointmentStatus(
     appointmentId,
-    status
+    status,
+    changeReason
   );
   if (!appointment) throw notFound("Appointment not found.", { appointment_id: appointmentId });
   const action: KnownAuditAction =
@@ -909,7 +1058,12 @@ async function transitionAppointment(
     patientId: appointment.patientId,
     resourceType: "appointment",
     resourceId: appointment.id,
-    metadata: { fromStatus: existing.status, toStatus: status }
+    metadata: {
+      fromStatus: existing.status,
+      toStatus: status,
+      ...(status === "cancelled" ? { queueDisposition: "active_entries_cancelled" } : {}),
+      ...(changeReason ? { changeReason } : {})
+    }
   });
   await appendOutbox(request, context, {
     eventType,
@@ -920,9 +1074,17 @@ async function transitionAppointment(
       appointmentId: appointment.id,
       patientId: appointment.patientId,
       fromStatus: existing.status,
-      toStatus: status
+      toStatus: status,
+      ...(status === "cancelled" ? { queueDisposition: "active_entries_cancelled" } : {})
     }
   });
+  if (status === "cancelled") {
+    const queue = await context.repositories.scheduling.findQueueEntryByAppointmentId(appointmentId);
+    if(queue?.status === "cancelled") {
+      await appendAudit(request,context,"queue.entry_updated",{patientId:appointment.patientId,resourceType:"queue_entry",resourceId:queue.id,metadata:{toStatus:"cancelled",reason:"appointment_cancelled"}});
+      await appendOutbox(request,context,{eventType:"queue.entry_updated",aggregateType:"queue_entry",aggregateId:queue.id,patientId:appointment.patientId,payload:{queueEntryId:queue.id,appointmentId,status:"cancelled",reason:"appointment_cancelled"}});
+    }
+  }
   return appointment;
 }
 
@@ -1127,10 +1289,11 @@ async function appendOutbox(
     payload: Record<string, unknown>;
   }
 ) {
+  // One command emits distinct facts; request-only deduplication would drop
+  // later events, including confirmation and queue requests.
   await context.evidence.appendOutboxEvent({
     ...input,
-    idempotencyKey:
-      optionalString(requestRecord(request.parsed.headers)["idempotency-key"]) ?? null,
+    idempotencyKey: featureOutboxIdempotencyKey(request, input),
     correlationId: request.metadata.requestId,
     occurredAt: nowIso(context)
   });
@@ -1327,6 +1490,7 @@ function domainInvariant(operation: () => void): void {
   try {
     operation();
   } catch (error) {
+    if(error instanceof ClinicSetupConflict) throw conflict(error.message);
     throw conflict(
       error instanceof Error ? error.message : "Front-office state transition is invalid."
     );
@@ -1352,3 +1516,24 @@ function notFound(message: string, details: Record<string, unknown>) {
 function conflict(message: string, details: Record<string, unknown> = {}) {
   return new ApiError(409, "CONFLICT", message, details);
 }
+
+function reviewPatientDuplicates(body: Record<string, unknown>, suggestions: ReturnType<typeof buildPatientDuplicateSuggestions>) {
+  if(!suggestions.length) return;
+  const review=body.duplicateReview && typeof body.duplicateReview==="object" && !Array.isArray(body.duplicateReview) ? body.duplicateReview as Record<string,unknown> : undefined;
+  const ids=review && Array.isArray(review.patientIds) ? review.patientIds : [];
+  const expected=suggestions.map(s=>s.patient.id).sort();
+  if(!review || typeof review.reason!=="string" || review.reason.trim().length<5 || ids.length!==expected.length || [...ids].sort().some((id,index)=>id!==expected[index]))
+    throw conflict("Review these possible matches. Open the existing patient or explicitly confirm a separate person before saving.", {reason:"duplicate_review_required"});
+}
+function validatePatientDemographics(body:Record<string,unknown>, phone:string|null, request:ClinicFeatureOperationRequest, context:ClinicFeatureExecutionContext, requireContactReason=true) {
+  if(phone && !/^\+[1-9][0-9]{7,14}$/.test(phone)) throw validation("Phone must include the country code, for example +91 followed by the number.");
+  if(!phone && requireContactReason && (typeof body.contactUnavailableReason!=="string" || body.contactUnavailableReason.trim().length<5)) throw validation("Record why no contact number is available. Do not invent a number.");
+  if(typeof body.fullName==="string" && !body.fullName.trim()) throw validation("Patient name is required.");
+  if(typeof body.dateOfBirth==="string") {
+    const parts=new Intl.DateTimeFormat("en-CA",{timeZone:request.access.clinic.timezone,year:"numeric",month:"2-digit",day:"2-digit"}).formatToParts(context.clock.now());
+    const get=(key:string)=>parts.find(p=>p.type===key)?.value;
+    if(body.dateOfBirth > `${get("year")}-${get("month")}-${get("day")}`) throw validation("Date of birth cannot be in the future.");
+  }
+}
+
+function validation(message:string) { return new ApiError(400,"VALIDATION_ERROR",message); }

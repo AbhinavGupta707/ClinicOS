@@ -6,6 +6,9 @@ import {
 } from "../core/scoped-repository-port.ts";
 
 export const CONTINUITY_OPERATIONS = [
+  "listSopTemplates",
+  "listSopSchedules",
+
   "listTasks",
   "findTaskById",
   "createTask",

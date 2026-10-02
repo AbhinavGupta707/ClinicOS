@@ -52,6 +52,7 @@ import {
   taskEvidencePayload,
   uuidValue,
   validation,
+  pageRead,
   type ContinuityOperationsHandler
 } from "./shared.ts";
 
@@ -65,10 +66,11 @@ export const listTasksHandler: ContinuityOperationsHandler = async (request, con
     patientId: optionalUuidValue(query.patientId),
     sourceWorkflow: optionalStringValue(query.sourceWorkflow) as
       TaskSourceWorkflow | null | undefined,
+    cursor: optionalUuidValue(query.cursor),
     limit: pageLimit(query)
   };
-  const tasks = await context.repositories.continuity.listTasks(filter);
-  return ok({ tasks: tasks.map(publicTask) });
+  const tasks = await pageRead(() => context.repositories.continuity.listTasks(filter));
+  return ok({ tasks: tasks.map(publicTask), nextCursor: tasks.length === pageLimit(query) ? tasks.at(-1)?.id ?? null : null });
 };
 
 export const createTaskHandler: ContinuityOperationsHandler = async (request, context) => {
@@ -254,15 +256,16 @@ export const createRecallRuleHandler: ContinuityOperationsHandler = async (reque
 
 export const listRecallsHandler: ContinuityOperationsHandler = async (request, context) => {
   const query = requestQuery(request);
-  const recalls = await context.repositories.continuity.listRecalls({
+  const recalls = await pageRead(() => context.repositories.continuity.listRecalls({
     status: optionalStringValue(query.status) as NonNullable<
       Parameters<typeof context.repositories.continuity.listRecalls>[0]
     >["status"],
     dueBefore: optionalStringValue(query.dueBefore),
     patientId: optionalUuidValue(query.patientId),
+    cursor: optionalUuidValue(query.cursor),
     limit: pageLimit(query)
-  });
-  return ok({ recalls: recalls.map(publicRecall) });
+  }));
+  return ok({ recalls: recalls.map(publicRecall), nextCursor: recalls.length === pageLimit(query) ? recalls.at(-1)?.id ?? null : null });
 };
 
 export const recordRecallActionHandler: ContinuityOperationsHandler = async (request, context) => {
@@ -389,10 +392,11 @@ export const listSopRunsHandler: ContinuityOperationsHandler = async (request, c
     date: optionalStringValue(query.date),
     status: optionalStringValue(query.status) as SopRunStatus | null | undefined,
     dueBefore: optionalStringValue(query.dueBefore),
+    cursor: optionalUuidValue(query.cursor),
     limit: pageLimit(query)
   };
-  const runs = await context.repositories.continuity.listSopRuns(filter);
-  return ok({ sopRuns: runs.map(publicSopRun) });
+  const runs = await pageRead(() => context.repositories.continuity.listSopRuns(filter));
+  return ok({ sopRuns: runs.map(publicSopRun), nextCursor: runs.length === pageLimit(query) ? runs.at(-1)?.run.id ?? null : null });
 };
 
 export const generateDueSopRunsHandler: ContinuityOperationsHandler = async (request, context) => {

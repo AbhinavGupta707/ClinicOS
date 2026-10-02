@@ -220,6 +220,8 @@ export interface MigrationConflictRecord {
 }
 
 export interface MigrationRowRecord {
+  /** Allowlisted format label for operator scope; never raw source data. */
+  sourceFormat?: "practo_ray_patients_v1";
   id: UUID;
   tenantId: UUID;
   clinicId: UUID;
@@ -247,6 +249,15 @@ export interface MigrationRowRecord {
   conflicts: MigrationConflictRecord[];
   createdAt: string;
   updatedAt: string;
+}
+
+export function migrationSourceFormat(
+  importType: MigrationImportType,
+  rawPayload: Record<string, unknown> | undefined
+): MigrationRowRecord["sourceFormat"] {
+  return importType === "patients" && rawPayload?.sourceFormat === "practo_ray_patients_v1"
+    ? "practo_ray_patients_v1"
+    : undefined;
 }
 
 export interface MigrationBatchDetail {
@@ -563,8 +574,8 @@ export function validatePatientImportRow(
       fullName: draft.fullName.trim(),
       phone: draft.phone.trim(),
       normalizedPhone,
-      email: draft.email,
-      dateOfBirth: draft.dateOfBirth,
+      email: normalizedNullableText(draft.email),
+      dateOfBirth: normalizedNullableText(draft.dateOfBirth),
       gender: draft.gender,
       source: "imported",
       sourceDetail: {

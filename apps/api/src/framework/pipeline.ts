@@ -675,11 +675,19 @@ const CONCURRENCY_RESOURCE_PARAMETER = Object.freeze({
   updateCorrectiveAction: "correctiveActionId"
 } satisfies Record<OptimisticConcurrencyOperationId, string>);
 
+export const CONCURRENCY_OPERATION_ALIASES: Readonly<Record<string, OptimisticConcurrencyOperationId>> = Object.freeze({
+  signEncounterClinicalNote:"saveEncounterClinicalNoteDraft",
+  amendEncounterClinicalNote:"saveEncounterClinicalNoteDraft",
+  closeEncounter:"saveEncounterClinicalNoteDraft",
+  acceptTreatmentPlan:"updateTreatmentPlan"
+});
+
 function concurrencyMetadata(
   operationId: string,
   pathParameters: Readonly<Record<string, string>>,
   expectedEtag: string
 ) {
+  operationId = CONCURRENCY_OPERATION_ALIASES[operationId] ?? operationId;
   if (!Object.hasOwn(OPTIMISTIC_CONCURRENCY_RESOURCE_TABLES, operationId)) {
     throw new Error(`Concurrency operation is not DB-allowlisted: ${operationId}`);
   }
@@ -731,6 +739,8 @@ export function deriveVersionAdvancesForMutation(
     case "markAppointmentNoShow":
       addPathResource("updateAppointment", "appointmentId");
       break;
+    case "closeEncounter":
+    case "createEncounterPrescription":
     case "startEncounter":
     case "signEncounterClinicalNote":
     case "amendEncounterClinicalNote":

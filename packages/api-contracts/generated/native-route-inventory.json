@@ -25,6 +25,465 @@
       "phi": "none"
     },
     {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listPatientEncounters",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/{patientId}/encounters",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listEncounterPrescriptions",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/encounters/{encounterId}/prescriptions",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listPatientTreatmentPlans",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/{patientId}/treatment-plans",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listPatientInvoices",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/{patientId}/invoices",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listUninvoicedPatientProcedures",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/{patientId}/uninvoiced-procedures",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listSopTemplates",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/sop-templates",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listSopSchedules",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/sop-schedules",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listInventoryCheckRuns",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/inventory/check-runs",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": 1048576,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "header": "idempotency-key",
+        "mode": "header",
+        "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+        "required": true
+      },
+      "method": "POST",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "previewPatientDuplicates",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/duplicate-review",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listClinicAccess",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/clinic-access",
+      "phi": "none"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": 1048576,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "header": "idempotency-key",
+        "mode": "header",
+        "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+        "required": true
+      },
+      "method": "POST",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "saveClinicAccess",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/clinic-access",
+      "phi": "none"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listClinicSetup",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/clinic-setup/{kind}",
+      "phi": "none"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": 1048576,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "header": "idempotency-key",
+        "mode": "header",
+        "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+        "required": true
+      },
+      "method": "POST",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "saveClinicSetup",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/clinic-setup/{kind}",
+      "phi": "none"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listPatientIntakeHistory",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/{patientId}/intake-history",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP6",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listLabReconciliations",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/lab-reconciliations",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP5",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listPatientInstructions",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/{patientId}/instructions",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP5",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "searchBillingPatients",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/billing/patients",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "listClinicStaff",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/clinic-staff",
+      "phi": "none"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "getPatientDemographics",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/patients/{patientId}/demographics",
+      "phi": "read"
+    },
+    {
       "auth": "none",
       "bodyMaximumBytes": null,
       "checkpoint": "CP1",
@@ -980,6 +1439,34 @@
       "bodyMaximumBytes": null,
       "checkpoint": "CP3",
       "concurrency": {
+        "header": "if-match",
+        "mode": "if-match",
+        "required": true,
+        "semantics": "If-Match must contain the current canonical strong ETag \"rv-<rowVersion>\" and the repository must compare/increment rowVersion atomically.",
+        "strongEtagFormat": "\"rv-<rowVersion>\"",
+        "versionProperty": "rowVersion"
+      },
+      "idempotency": {
+        "header": "idempotency-key",
+        "mode": "header",
+        "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+        "required": true
+      },
+      "method": "POST",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "closeEncounter",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/encounters/{encounterId}/close",
+      "phi": "write"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP3",
+      "concurrency": {
         "mode": "none",
         "required": false,
         "semantics": "This operation does not replace mutable resource state."
@@ -1033,9 +1520,12 @@
       "bodyMaximumBytes": null,
       "checkpoint": "CP3",
       "concurrency": {
-        "mode": "none",
-        "required": false,
-        "semantics": "This operation does not replace mutable resource state."
+        "header": "if-match",
+        "mode": "if-match",
+        "required": true,
+        "semantics": "If-Match must contain the current canonical strong ETag \"rv-<rowVersion>\" and the repository must compare/increment rowVersion atomically.",
+        "strongEtagFormat": "\"rv-<rowVersion>\"",
+        "versionProperty": "rowVersion"
       },
       "idempotency": {
         "header": "idempotency-key",
@@ -1058,9 +1548,12 @@
       "bodyMaximumBytes": 1048576,
       "checkpoint": "CP3",
       "concurrency": {
-        "mode": "none",
-        "required": false,
-        "semantics": "This operation does not replace mutable resource state."
+        "header": "if-match",
+        "mode": "if-match",
+        "required": true,
+        "semantics": "If-Match must contain the current canonical strong ETag \"rv-<rowVersion>\" and the repository must compare/increment rowVersion atomically.",
+        "strongEtagFormat": "\"rv-<rowVersion>\"",
+        "versionProperty": "rowVersion"
       },
       "idempotency": {
         "header": "idempotency-key",
@@ -1424,7 +1917,9 @@
       "operationId": "listPricebookProcedures",
       "pagination": {
         "cursor": false,
-        "mode": "none"
+        "defaultLimit": 50,
+        "maximumLimit": 100,
+        "mode": "bounded"
       },
       "path": "/v1/pricebook/procedures",
       "phi": "none"
@@ -1487,9 +1982,12 @@
       "bodyMaximumBytes": 1048576,
       "checkpoint": "CP5",
       "concurrency": {
-        "mode": "none",
-        "required": false,
-        "semantics": "This operation does not replace mutable resource state."
+        "header": "if-match",
+        "mode": "if-match",
+        "required": true,
+        "semantics": "If-Match must contain the current canonical strong ETag \"rv-<rowVersion>\" and the repository must compare/increment rowVersion atomically.",
+        "strongEtagFormat": "\"rv-<rowVersion>\"",
+        "versionProperty": "rowVersion"
       },
       "idempotency": {
         "header": "idempotency-key",
@@ -2558,6 +3056,105 @@
     },
     {
       "auth": "bearer",
+      "bodyMaximumBytes": 1048576,
+      "checkpoint": "CP7",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "header": "idempotency-key",
+        "mode": "header",
+        "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+        "required": true
+      },
+      "method": "POST",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "createPatientImportFile",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/migration-runs/{runId}/patient-file",
+      "phi": "write"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": null,
+      "checkpoint": "CP7",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "mode": "none",
+        "replaySemantics": "This operation has no client mutation effect.",
+        "required": false
+      },
+      "method": "GET",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "getPatientImportFile",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/migration-runs/{runId}/patient-file",
+      "phi": "read"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": 1048576,
+      "checkpoint": "CP7",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "header": "idempotency-key",
+        "mode": "header",
+        "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+        "required": true
+      },
+      "method": "POST",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "stagePatientImportChunk",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/migration-runs/{runId}/patient-file/chunks/{ordinal}",
+      "phi": "write"
+    },
+    {
+      "auth": "bearer",
+      "bodyMaximumBytes": 1048576,
+      "checkpoint": "CP7",
+      "concurrency": {
+        "mode": "none",
+        "required": false,
+        "semantics": "This operation does not replace mutable resource state."
+      },
+      "idempotency": {
+        "header": "idempotency-key",
+        "mode": "header",
+        "replaySemantics": "The same actor, clinic, operation, key, and canonical request digest must replay the original result.",
+        "required": true
+      },
+      "method": "POST",
+      "nativeRuntimeEnforcement": "body-parser-only",
+      "operationId": "sealPatientImportFile",
+      "pagination": {
+        "cursor": false,
+        "mode": "none"
+      },
+      "path": "/v1/migration-runs/{runId}/patient-file/seal",
+      "phi": "write"
+    },
+    {
+      "auth": "bearer",
       "bodyMaximumBytes": null,
       "checkpoint": "CP7",
       "concurrency": {
@@ -3516,7 +4113,7 @@
       "phi": "write"
     }
   ],
-  "activeOperationCount": 139,
+  "activeOperationCount": 163,
   "deferred": [
     {
       "activationGate": "Register a complete messaging request workflow with provider state, audit, outbox and parity tests, or keep it absent.",
@@ -3602,6 +4199,78 @@
   "generatedFrom": "packages/api-contracts/src/native-http-contracts.ts",
   "versionedResourceResponseContracts": [
     {
+      "family": "treatment_plan",
+      "sources": [
+        {
+          "operationId": "listPatientTreatmentPlans",
+          "responsePath": "treatmentPlans[]",
+          "role": "list",
+          "status": 200
+        },
+        {
+          "operationId": "acceptTreatmentPlan",
+          "responsePath": "treatmentPlan",
+          "role": "update",
+          "status": 200
+        }
+      ],
+      "updateOperationId": "acceptTreatmentPlan"
+    },
+    {
+      "family": "encounter",
+      "sources": [
+        {
+          "operationId": "getEncounter",
+          "responsePath": "encounter",
+          "role": "read",
+          "status": 200
+        },
+        {
+          "operationId": "signEncounterClinicalNote",
+          "responsePath": "encounter",
+          "role": "update",
+          "status": 200
+        }
+      ],
+      "updateOperationId": "signEncounterClinicalNote"
+    },
+    {
+      "family": "encounter",
+      "sources": [
+        {
+          "operationId": "getEncounter",
+          "responsePath": "encounter",
+          "role": "read",
+          "status": 200
+        },
+        {
+          "operationId": "amendEncounterClinicalNote",
+          "responsePath": "encounter",
+          "role": "update",
+          "status": 200
+        }
+      ],
+      "updateOperationId": "amendEncounterClinicalNote"
+    },
+    {
+      "family": "encounter",
+      "sources": [
+        {
+          "operationId": "getEncounter",
+          "responsePath": "encounter",
+          "role": "read",
+          "status": 200
+        },
+        {
+          "operationId": "closeEncounter",
+          "responsePath": "encounter",
+          "role": "update",
+          "status": 200
+        }
+      ],
+      "updateOperationId": "closeEncounter"
+    },
+    {
       "family": "patient",
       "sources": [
         {
@@ -3618,6 +4287,12 @@
         },
         {
           "operationId": "getPatient",
+          "responsePath": "patient",
+          "role": "read",
+          "status": 200
+        },
+        {
+          "operationId": "getPatientDemographics",
           "responsePath": "patient",
           "role": "read",
           "status": 200
@@ -3777,6 +4452,12 @@
           "responsePath": "encounter",
           "role": "create",
           "status": 201
+        },
+        {
+          "operationId": "listPatientEncounters",
+          "responsePath": "encounters[]",
+          "role": "list",
+          "status": 200
         },
         {
           "operationId": "getEncounter",
@@ -3942,7 +4623,7 @@
       "sources": [
         {
           "operationId": "listLabCases",
-          "responsePath": "labCases[]",
+          "responsePath": "labCases[].labCase",
           "role": "list",
           "status": 200
         },
@@ -3964,6 +4645,12 @@
     {
       "family": "inventory_check_run",
       "sources": [
+        {
+          "operationId": "listInventoryCheckRuns",
+          "responsePath": "runs[].run",
+          "role": "list",
+          "status": 200
+        },
         {
           "operationId": "createInventoryCheckRun",
           "responsePath": "checkRun.run",

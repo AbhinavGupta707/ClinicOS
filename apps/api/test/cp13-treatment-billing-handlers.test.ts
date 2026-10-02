@@ -629,7 +629,11 @@ function executionContext(
     repositories: {
       dentalTreatment: ports.dentalTreatment ?? {},
       billing: ports.billing ?? {},
-      clinicalCare: ports.clinicalCare ?? {},
+      clinicalCare: {
+        findEncounterById: async () => ({id:ENCOUNTER_ID, patientId:PATIENT_ID, providerUserId:USER_ID, status:"drafting"}),
+        listPatientConsents: async () => [{id:"10000000-0000-4000-8000-000000000050", patientId:PATIENT_ID, purpose:"treatment_registration", status:"active", createdAt:FIXED_NOW}],
+        ...ports.clinicalCare
+      },
       durableIntegrity: ports.durableIntegrity
     },
     evidence,
@@ -1049,3 +1053,19 @@ function availableProvider(): PaymentProvider {
     }
   };
 }
+
+test("performed treatment requires an assigned doctor, open visit and current consent before any write", async () => {
+  const handlers=createTreatmentBillingHandlerMap({paymentProvider:availableProvider()});
+  let writes=0;
+  const req=operationRequest("createEncounterProcedurePerformed","doctor",{path:{encounterId:ENCOUNTER_ID},headers:idempotencyHeaders("guarded-procedure"),body:{treatmentPlanId:PLAN_ID,treatmentPlanEstimateItemId:ITEM_ID}});
+  for(const candidate of [
+    {providerUserId:USER_ID,status:"scheduled",consents:true,statusCode:409},
+    {providerUserId:USER_ID,status:"closed",consents:true,statusCode:409},
+    {providerUserId:USER_ID,status:"drafting",consents:false,statusCode:409},
+    {providerUserId:"10000000-0000-4000-8000-000000001099",status:"drafting",consents:true,statusCode:403}
+  ]){
+    const context=executionContext({clinicalCare:{findEncounterById:async()=>({id:ENCOUNTER_ID,patientId:PATIENT_ID,providerUserId:candidate.providerUserId,status:candidate.status}),listPatientConsents:async()=>candidate.consents?[{patientId:PATIENT_ID,purpose:"treatment_registration",status:"active",createdAt:FIXED_NOW}]:[]},dentalTreatment:{createProcedurePerformed:async()=>{writes++;return null;}}});
+    await assert.rejects(handlers.createEncounterProcedurePerformed(req,context),error=>error instanceof ApiError&&error.status===candidate.statusCode);
+  }
+  assert.equal(writes,0);
+});

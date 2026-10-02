@@ -1,5 +1,9 @@
+import {validateClinicSetup, ClinicSetupConflict,type ClinicSetupKind,type ClinicSetupInput,type ClinicSetupRecord,type ClinicAccessPerson,type ClinicAccessInput} from "@clinic-os/db";
+import type { WorkflowPage, WorkflowPageFilter, ClinicStaffSummary } from "@clinic-os/db";
+import { patientFileIdentityConflicts, assertPatientFileManifest, patientFileChunkSummary, type PatientFileManifest, type PatientFileDetail } from "@clinic-os/db";
 import { createHash, randomUUID } from "node:crypto";
 import type { KeycloakAccessTokenClaims } from "@clinic-os/auth";
+import { migrationSourceFormat } from "@clinic-os/domain";
 import {
   CHECKPOINT1_SEED_IDS,
   CHECKPOINT1_SEED_USERS,
@@ -16,6 +20,7 @@ import {
   type ProviderEligibilityResult,
   type AiRetentionDeletionResult,
   type CreateAppointmentInput,
+  type RescheduleAppointmentInput,
   type CreateAuditReviewInput,
   type CreateBreakGlassAccessInput,
   type CreateDeletionRequestInput,
@@ -900,6 +905,8 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly outboxEvents: OutboxEventInput[] = [];
   readonly migrationBatches: MigrationBatchRecord[] = [];
   readonly importRuns: ImportRunRecord[] = [];
+  readonly patientFiles = new Map<UUID, { manifest: PatientFileManifest; sealed: boolean; batches: Map<number, UUID> }>();
+
   readonly migrationRows: MigrationRowRecord[] = [];
   readonly migrationConflicts: MigrationConflictRecord[] = [];
   readonly migrationCommits: MigrationCommitRecord[] = [];
@@ -1053,6 +1060,86 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   readonly retentionActions: RetentionActionRecord[] = [];
   readonly breakGlassAccesses: BreakGlassAccessRecord[] = [];
 
+  async listPatientEncounters(scope: RepositoryScope, patientId: UUID, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<EncounterRecord>> {
+    return fixtureWorkflowPage(this.encounters.filter(record => matchesScope(record,scope) && record.patientId === patientId),filter);
+  }
+  async listEncounterPrescriptions(scope: RepositoryScope, encounterId: UUID, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<PrescriptionRecord>> {
+    return fixtureWorkflowPage(this.prescriptions.filter(record => matchesScope(record,scope) && record.encounterId === encounterId),filter);
+  }
+  async listUninvoicedPatientProcedures(scope: RepositoryScope, patientId: UUID, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<ProcedurePerformedRecord>> {
+    return fixtureWorkflowPage(this.proceduresPerformed.filter(record => matchesScope(record,scope) && record.patientId === patientId && record.status === "completed" && record.invoiceId === null),filter);
+  }
+  async listSopSchedules(scope: RepositoryScope, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<SopScheduleRecord>> {
+    return fixtureWorkflowPage(this.sopSchedules.filter(record => matchesScope(record,scope)),filter);
+  }
+  async listPatientTreatmentPlans(scope: RepositoryScope, patientId: UUID, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<TreatmentPlanDetail>> {
+    const page=fixtureWorkflowPage(this.treatmentPlans.filter(record => matchesScope(record,scope) && record.patientId === patientId),filter);
+    return {records:page.records.map(record=>(this.treatmentPlanDetail(scope,record.id))),nextCursor:page.nextCursor};
+  }
+  async listPatientInvoices(scope: RepositoryScope, patientId: UUID, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<InvoiceDetail>> {
+    const page=fixtureWorkflowPage(this.invoices.filter(record => matchesScope(record,scope) && record.patientId === patientId),filter);
+    return {records:page.records.map(record=>(this.invoiceDetail(scope,record.id))),nextCursor:page.nextCursor};
+  }
+  async listInventoryCheckRuns(scope: RepositoryScope, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<InventoryCheckRunDetail>> {
+    const page=fixtureWorkflowPage(this.inventoryCheckRuns.filter(record => matchesScope(record,scope)),filter);
+    return {records:page.records.map(record=>(this.inventoryCheckRunDetail(scope,record.id)!)),nextCursor:page.nextCursor};
+  }
+  async listSopTemplates(scope: RepositoryScope, filter: WorkflowPageFilter = {}): Promise<WorkflowPage<SopTemplateDetail>> {
+    const page=fixtureWorkflowPage(this.sopTemplates.filter(record => matchesScope(record,scope)),filter);
+    return {records:page.records.map(record=>({template:record,items:this.sopTemplateItems.filter(item=>matchesScope(item,scope)&&item.templateId===record.id)})),nextCursor:page.nextCursor};
+  }
+  async findQueueEntryByAppointmentId(scope: RepositoryScope, appointmentId: UUID): Promise<QueueEntryRecord|null> {return this.queueEntries.find(q=>matchesScope(q,scope)&&q.appointmentId===appointmentId)??null;}
+  readonly fixtureAccessPeople:ClinicAccessPerson[]=CHECKPOINT1_SEED_USERS.filter(u=>u.roleSlug!=="platform_admin").map(u=>({id:CHECKPOINT1_SEED_IDS.users[u.key],displayName:u.displayName,authorityVersion:uuid(),clinicStatus:"active",clinicRoles:[u.roleSlug],tenantRoles:[]}));
+  async listClinicAccess(scope:RepositoryScope,filter:WorkflowPageFilter={}) {
+    if(scope.tenantId!==CHECKPOINT1_SEED_IDS.tenantId||scope.clinicId!==CHECKPOINT1_SEED_IDS.clinicId) return {records:[],nextCursor:null};
+    return fixtureWorkflowPage(this.fixtureAccessPeople.map(p=>({...p,createdAt:"2020-01-01T00:00:00Z"})),filter);
+  }
+  async saveClinicAccess(scope:RepositoryScope,input:ClinicAccessInput) {
+    if(input.userId===scope.actorUserId) throw new RangeError("Another authorized owner must change your clinic access.");
+    const p=(await this.listClinicAccess(scope)).records.find(p=>p.id===input.userId);
+    if(!p||p.authorityVersion!==input.expectedAuthorityVersion) throw new ClinicSetupConflict("Staff access changed. Refresh before saving.");
+    const saved=this.fixtureAccessPeople.find(x=>x.id===p.id)!;
+    Object.assign(saved,{clinicStatus:input.status,clinicRoles:[...input.roles],authorityVersion:uuid()});return saved;
+  }
+  readonly fixtureSetupVersions = new Map<string,number>();
+  readonly fixtureClinicConfiguration = {displayName:"Synthetic Clinic",legalName:null,timezone:"Asia/Kolkata",address:{}};
+  fixtureSetupRows(kind:ClinicSetupKind):Array<Record<string,unknown>> {
+    const lists={appointment_type:this.appointmentTypes,chair:this.chairs,provider_schedule:this.providerSchedules,pricebook:this.pricebookProcedures};
+    return kind==="clinic"?[]:lists[kind] as unknown as Array<Record<string,unknown>>;
+  }
+  async listClinicSetup(scope:RepositoryScope,kind:ClinicSetupKind,filter:WorkflowPageFilter={}) {
+    const rows=kind==="clinic"?[{id:scope.clinicId,tenantId:scope.tenantId,clinicId:scope.clinicId,...this.fixtureClinicConfiguration}]:this.fixtureSetupRows(kind).filter(r=>r.tenantId===scope.tenantId&&r.clinicId===scope.clinicId);
+    if(filter.cursor&&!rows.some(r=>r.id===filter.cursor)) throw new RangeError("The page cursor does not belong to this clinic section.");
+    const limit=filter.limit??50;
+    const selected=rows.filter(r=>!filter.cursor||String(r.id)>filter.cursor).sort((a,b)=>String(a.id).localeCompare(String(b.id)));
+    return {records:selected.slice(0,limit).map(r=>{const {id,tenantId:_t,clinicId:_c,createdAt:_a,updatedAt:_u,...configuration}=r;return {id:id as UUID,kind,rowVersion:this.fixtureSetupVersions.get(String(id))??1,configuration};}),nextCursor:selected.length>limit?selected[limit-1]!.id as UUID:null};
+  }
+  async saveClinicSetup(scope:RepositoryScope,kind:ClinicSetupKind,input:ClinicSetupInput):Promise<ClinicSetupRecord> {
+    const configuration=validateClinicSetup(kind,input), id=input.recordId??uuid();
+    const existing=kind==="clinic"?{id:scope.clinicId}:this.fixtureSetupRows(kind).find(r=>r.tenantId===scope.tenantId&&r.clinicId===scope.clinicId&&r.id===id);
+    if(input.recordId&&(!existing||(this.fixtureSetupVersions.get(id)??1)!==input.expectedVersion)) throw new ClinicSetupConflict("This setup record changed or is no longer available. Refresh before saving.");
+    if(kind==="clinic") Object.assign(this.fixtureClinicConfiguration,configuration);
+    else if(existing) Object.assign(existing,configuration);
+    else this.fixtureSetupRows(kind).push({id,tenantId:scope.tenantId,clinicId:scope.clinicId,...configuration,createdAt:this.#nowIso(),updatedAt:this.#nowIso()});
+    const rowVersion=input.recordId?(input.expectedVersion!+1):1;this.fixtureSetupVersions.set(id,rowVersion);
+    return {id,rowVersion,kind,configuration};
+  }
+  async listPatientIntakeHistory(scope:RepositoryScope,patientId:UUID,filter:WorkflowPageFilter={}) {
+    return fixtureWorkflowPage(this.intakeFormSubmissions.filter(p=>matchesScope(p,scope)&&p.patientId===patientId).map(p=>({...p,createdAt:p.submittedAt})),filter);
+  }
+  async listLabReconciliations(scope:RepositoryScope,filter:WorkflowPageFilter={}) {
+    const page=fixtureWorkflowPage(this.labReconciliations.filter(p=>matchesScope(p,scope)),filter);
+    return {records:page.records.map(reconciliation=>({reconciliation,entries:this.labReconciliationEntries.filter(e=>matchesScope(e,scope)&&e.reconciliationId===reconciliation.id)})),nextCursor:page.nextCursor};
+  }
+  async listPatientInstructions(scope:RepositoryScope,patientId:UUID,filter:WorkflowPageFilter={}) {return fixtureWorkflowPage(this.patientInstructions.filter(p=>matchesScope(p,scope)&&p.patientId===patientId),filter);}
+  async searchBillingPatients(scope:RepositoryScope, query:string) {
+    if(query.trim().length<2) throw new RangeError("Enter at least two characters to search billing patients.");
+    return this.patients.filter(p=>matchesScope(p,scope)&&p.fullName.toLowerCase().includes(query.trim().toLowerCase())&&(this.invoices.some(i=>matchesScope(i,scope)&&i.patientId===p.id)||this.proceduresPerformed.some(r=>matchesScope(r,scope)&&r.patientId===p.id&&r.status==="completed"))).slice(0,50).map(p=>({id:p.id,fullName:p.fullName}));
+  }
+  async listClinicStaff(scope: RepositoryScope): Promise<ClinicStaffSummary[]> {
+    if(scope.tenantId!==CHECKPOINT1_SEED_IDS.tenantId || scope.clinicId!==CHECKPOINT1_SEED_IDS.clinicId) return [];
+    return CHECKPOINT1_SEED_USERS.filter(user=>user.roleSlug!=="platform_admin").map(user=>({id:CHECKPOINT1_SEED_IDS.users[user.key],displayName:user.displayName}));
+  }
   async listPatients(
     scope: RepositoryScope,
     filter: PatientSearchFilter = {}
@@ -1660,6 +1747,82 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
   }
 
+  async createPatientFile(scope: RepositoryScope, runId: UUID, manifest: PatientFileManifest): Promise<{ file: PatientFileDetail; created: boolean }> {
+    assertPatientFileManifest(manifest);
+    const run = this.importRuns.find((item) => matchesScope(item, scope) && item.id === runId);
+    if (!run) throw new ImportRunRepositoryError("not_found", "Import run not found.");
+    if (this.migrationBatches.some((batch) => matchesScope(batch, scope) && batch.importRunId === runId))
+      throw new ImportRunRepositoryError("step_conflict", "This run already contains a different import format. Start a new run.");
+    const existing = this.patientFiles.get(runId);
+    if (existing && JSON.stringify(existing.manifest) !== JSON.stringify(manifest))
+      throw new ImportRunRepositoryError("step_conflict", "This run contains a different file. Reselect the same file or start a new run.");
+    if (!existing) this.patientFiles.set(runId, { manifest: structuredClone(manifest), sealed: false, batches: new Map() });
+    return { file: (await this.findPatientFile(scope, runId))!, created: !existing };
+  }
+
+  async findPatientFile(scope: RepositoryScope, runId: UUID): Promise<PatientFileDetail | null> {
+    if (!this.importRuns.some((run) => matchesScope(run, scope) && run.id === runId)) return null;
+    const file = this.patientFiles.get(runId);
+    if (!file) return null;
+    const chunks = file.manifest.chunks.map((chunk) => {
+      const batch = this.migrationBatches.find((item) => matchesScope(item, scope) && item.id === file.batches.get(chunk.ordinal));
+      return { ...patientFileChunkSummary(chunk, batch), reconciled: Number(this.migrationCommits.filter((commit) => matchesScope(commit, scope) && commit.batchId === batch?.id && commit.action === "commit").at(-1)?.summary.reconciledRows ?? 0), skipped: batch ? this.migrationRows.filter((row) =>
+        matchesScope(row, scope) && row.batchId === batch.id && row.status === "skipped").length : 0 };
+    });
+    return { runId, profile: file.manifest.profile, rowCount: file.manifest.rowCount, sealed: file.sealed,
+      received: chunks.reduce((sum, chunk) => sum + (chunk.batchId ? chunk.rowCount : 0), 0), chunks };
+  }
+
+  async stagePatientFileChunk(scope: RepositoryScope, runId: UUID, ordinal: number, digest: string,
+    input: CreateMigrationBatchInput): Promise<{ detail: MigrationBatchDetail; created: boolean }> {
+    const detail = await this.findPatientFile(scope, runId);
+    const file = this.patientFiles.get(runId);
+    if (!detail || !file) throw new ImportRunRepositoryError("not_found", "Patient file not found.");
+    const expected = detail.chunks[ordinal];
+    if (!expected || expected.digest !== digest || expected.rowCount !== input.rows.length || input.importType !== "patients")
+      throw new ImportRunRepositoryError("step_conflict", "Chunk does not match the saved file manifest.");
+    if (this.importRuns.find((run) => run.id === runId)?.sourceSystem !== input.sourceSystem)
+      throw new ImportRunRepositoryError("source_mismatch", "Import source does not match this run.");
+    if (expected.batchId) return { detail: (await this.findMigrationBatchById(scope, expected.batchId))!, created: false };
+    if (file.sealed) throw new ImportRunRepositoryError("step_conflict", "This file is sealed.");
+    const ids = input.rows.map((row) => row.externalRecordId);
+    if (ids.some((id) => !id) || new Set(ids).size !== ids.length || this.migrationRows.some((row) =>
+      matchesScope(row, scope) && [...file.batches.values()].includes(row.batchId) && ids.includes(row.externalRecordId)))
+      throw new ImportRunRepositoryError("step_conflict", "Every patient in a file needs a distinct source ID.");
+    const batch = await this.#createMigrationBatchUnchecked(scope, input);
+    file.batches.set(ordinal, batch.batch.id);
+    return { detail: batch, created: true };
+  }
+
+  async sealPatientFile(scope: RepositoryScope, runId: UUID): Promise<{ file: PatientFileDetail; sealedNow: boolean }> {
+    const file = await this.findPatientFile(scope, runId);
+    if (!file) throw new ImportRunRepositoryError("not_found", "Patient file not found.");
+    if (file.received !== file.rowCount || file.chunks.some((chunk) => !chunk.batchId))
+      throw new ImportRunRepositoryError("prerequisite", "The complete file has not been received.");
+    if (!file.sealed) {
+      const batchIds = new Set(file.chunks.map((chunk) => chunk.batchId));
+      const candidates = this.migrationRows.filter((row) => matchesScope(row, scope) && batchIds.has(row.batchId))
+        .flatMap((row) => row.normalizedRecord?.recordType === "patient" ? [{
+          id: row.id, batchId: row.batchId, rowNumber: row.rowNumber,
+          fullName: row.normalizedRecord.fullName, phone: row.normalizedRecord.phone
+        }] : []);
+      for (const issue of patientFileIdentityConflicts(candidates)) {
+        const row = this.migrationRows.find((candidate) => candidate.id === issue.id)!;
+        row.status = "needs_review";
+        row.matchStatus = "duplicate_candidate";
+        const now = this.#nowIso();
+        this.migrationConflicts.push({ id: uuid(), tenantId: scope.tenantId, clinicId: scope.clinicId,
+          batchId: issue.batchId, rowId: issue.id, conflictType: "duplicate_patient", severity: "blocking",
+          targetRecordType: "patient", targetRecordId: null, fieldName: null, summary: issue.summary,
+          evidence: issue.evidence, status: "open", resolutionAction: null, resolvedByUserId: null,
+          resolvedAt: null, createdAt: now, updatedAt: now });
+      }
+      for (const batch of this.migrationBatches.filter((batch) => batchIds.has(batch.id))) this.#refreshMigrationBatchCounts(batch);
+    }
+    this.patientFiles.get(runId)!.sealed = true;
+    return { file: (await this.findPatientFile(scope, runId))!, sealedNow: !file.sealed };
+  }
+
   async createImportRun(scope: RepositoryScope, input: { id: UUID; sourceSystem: string }): Promise<{ run: ImportRunRecord; created: boolean }> {
     const existing = this.importRuns.find((run) => run.id === input.id);
     if (existing) {
@@ -1703,6 +1866,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   async stageImportRunBatch(scope: RepositoryScope, input: StageImportRunBatchInput): Promise<StageImportRunBatchResult> {
     const run = this.importRuns.find((item) => matchesScope(item, scope) && item.id === input.importRunId);
     if (!run) throw new ImportRunRepositoryError("not_found", "Import run not found.");
+    if (this.patientFiles.has(run.id)) throw new ImportRunRepositoryError("step_conflict", "Use the patient-file upload contract for this run.");
     if (run.sourceSystem !== input.sourceSystem) {
       throw new ImportRunRepositoryError("source_mismatch", "Import source does not match this run.");
     }
@@ -1777,6 +1941,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     for (const rowInput of input.rows) {
       const row: MigrationRowRecord = {
+        sourceFormat: migrationSourceFormat(rowInput.importType, rowInput.rawPayload),
         id: uuid(),
         tenantId: scope.tenantId,
         clinicId: scope.clinicId,
@@ -1901,6 +2066,9 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     rowId: UUID,
     input: ResolveMigrationRowInput
   ): Promise<MigrationRowRecord | null> {
+    for (const file of this.patientFiles.values()) {
+      if ([...file.batches.values()].includes(batchId) && !file.sealed) return null;
+    }
     const batch =
       this.migrationBatches.find((candidate) => matchesScope(candidate, scope) && candidate.id === batchId) ??
       null;
@@ -2024,6 +2192,12 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     batchId: UUID,
     input: CommitMigrationBatchInput = {}
   ): Promise<MigrationCommitResult | null> {
+    for (const [runId, state] of this.patientFiles) {
+      if (![...state.batches.values()].includes(batchId)) continue;
+      const file = await this.findPatientFile(scope, runId);
+      if (!file?.sealed || file.received !== file.rowCount || file.chunks.some((chunk) => chunk.needsReview > 0))
+        throw new ImportRunRepositoryError("prerequisite", "Finish uploading and resolve all patient-file review conflicts before committing.");
+    }
     const batch =
       this.migrationBatches.find((candidate) => matchesScope(candidate, scope) && candidate.id === batchId) ??
       null;
@@ -2406,14 +2580,14 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async listLeads(scope: RepositoryScope, filter: LeadSearchFilter = {}): Promise<LeadRecord[]> {
-    return this.leads
+    const rows = this.leads
       .filter((lead) => matchesScope(lead, scope))
       .filter((lead) => {
         if (filter.source && lead.source !== filter.source) return false;
         if (filter.status && lead.status !== filter.status) return false;
         return true;
-      })
-      .slice(0, filter.limit ?? 50);
+      });
+    return fixtureOperationalPage(rows, filter, row => row.id);
   }
 
   async findLeadById(scope: RepositoryScope, leadId: UUID): Promise<LeadRecord | null> {
@@ -2605,6 +2779,20 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return appointment;
   }
 
+  async rescheduleAppointment(
+    scope: RepositoryScope,
+    appointmentId: UUID,
+    input: RescheduleAppointmentInput
+  ): Promise<AppointmentRecord | null> {
+    const appointment = await this.findAppointmentById(scope, appointmentId);
+    if (!appointment || !["requested", "booked", "confirmed"].includes(appointment.status)
+      || this.queueEntries.some((entry) => matchesScope(entry, scope) && entry.appointmentId === appointmentId)) return null;
+    advanceFixtureRowVersion(appointment);
+    const { changeReason: _reason, ...schedule } = input;
+    Object.assign(appointment, schedule, { status: "booked", updatedAt: this.#nowIso() });
+    return appointment;
+  }
+
   async updateAppointmentStatus(
     scope: RepositoryScope,
     appointmentId: UUID,
@@ -2615,6 +2803,16 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     advanceFixtureRowVersion(appointment);
     appointment.status = status;
     appointment.updatedAt = this.#nowIso();
+
+    if (status === "cancelled") {
+      for (const entry of this.queueEntries) {
+        if (matchesScope(entry, scope) && entry.appointmentId === appointmentId &&
+          ["waiting", "called", "in_consult"].includes(entry.status)) {
+          advanceFixtureRowVersion(entry);
+          entry.status = "cancelled";
+        }
+      }
+    }
 
     const timelineType =
       status === "confirmed"
@@ -2703,7 +2901,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async listTasks(scope: RepositoryScope, filter: TaskSearchFilter = {}): Promise<TaskRecord[]> {
-    return this.tasks
+    const rows = this.tasks
       .filter((task) => matchesScope(task, scope))
       .filter((task) => {
         if (filter.status && task.status !== filter.status) return false;
@@ -2715,8 +2913,8 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         if (filter.dueBefore && (!task.dueAt || task.dueAt > filter.dueBefore)) return false;
         return true;
       })
-      .sort((left, right) => taskSortKey(left).localeCompare(taskSortKey(right)))
-      .slice(0, filter.limit ?? 100);
+      .sort((left, right) => taskSortKey(left).localeCompare(taskSortKey(right)));
+    return fixtureOperationalPage(rows, filter, row => row.id);
   }
 
   async findTaskById(scope: RepositoryScope, taskId: UUID): Promise<TaskRecord | null> {
@@ -2821,7 +3019,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async listRecalls(scope: RepositoryScope, filter: RecallSearchFilter = {}): Promise<RecallRecord[]> {
-    return this.recalls
+    const rows = this.recalls
       .filter((recall) => matchesScope(recall, scope))
       .filter((recall) => {
         if (filter.status && recall.status !== filter.status) return false;
@@ -2829,8 +3027,8 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         if (filter.dueBefore && recall.dueAt > filter.dueBefore) return false;
         return true;
       })
-      .sort((left, right) => left.dueAt.localeCompare(right.dueAt))
-      .slice(0, filter.limit ?? 100);
+      .sort((left, right) => left.dueAt.localeCompare(right.dueAt));
+    return fixtureOperationalPage(rows, filter, row => row.id);
   }
 
   async recordRecallAction(
@@ -3285,7 +3483,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async listSopRuns(scope: RepositoryScope, filter: SopRunSearchFilter = {}): Promise<SopRunDetail[]> {
-    return this.sopRuns
+    const rows = this.sopRuns
       .filter((run) => matchesScope(run, scope))
       .filter((run) => {
         if (filter.status && run.status !== filter.status) return false;
@@ -3294,9 +3492,9 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         return true;
       })
       .sort((left, right) => left.dueAt.localeCompare(right.dueAt))
-      .slice(0, filter.limit ?? 100)
       .map((run) => this.sopRunDetail(scope, run.id))
       .filter((detail): detail is SopRunDetail => detail !== null);
+    return fixtureOperationalPage(rows, filter, row => row.run.id);
   }
 
   async updateSopRun(
@@ -3407,10 +3605,11 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     };
   }
 
-  async listLabVendors(scope: RepositoryScope): Promise<LabVendorRecord[]> {
-    return this.labVendors
+  async listLabVendors(scope: RepositoryScope, filter: WorkflowPageFilter = {}): Promise<LabVendorRecord[]> {
+    const rows = this.labVendors
       .filter((vendor) => matchesScope(vendor, scope) && vendor.status === "active")
       .sort((left, right) => left.displayName.localeCompare(right.displayName));
+    return fixtureOperationalPage(rows, filter, row => row.id);
   }
 
   async findLabVendorById(scope: RepositoryScope, vendorId: UUID): Promise<LabVendorRecord | null> {
@@ -3439,7 +3638,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async listLabCases(scope: RepositoryScope, filter: LabCaseSearchFilter = {}): Promise<LabCaseDetail[]> {
-    return this.labCases
+    const rows = this.labCases
       .filter((labCase) => matchesScope(labCase, scope))
       .filter((labCase) => {
         if (filter.status && labCase.status !== filter.status) return false;
@@ -3451,6 +3650,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       .sort((left, right) => left.dueAt.localeCompare(right.dueAt))
       .map((labCase) => this.labCaseDetail(scope, labCase.id))
       .filter((detail): detail is LabCaseDetail => detail !== null);
+    return fixtureOperationalPage(rows, filter, row => row.labCase.id);
   }
 
   async findLabCaseById(scope: RepositoryScope, labCaseId: UUID): Promise<LabCaseDetail | null> {
@@ -3658,10 +3858,11 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return { reconciliation, entries };
   }
 
-  async listInventoryCategories(scope: RepositoryScope): Promise<InventoryCategoryRecord[]> {
-    return this.inventoryCategories
+  async listInventoryCategories(scope: RepositoryScope, filter: WorkflowPageFilter = {}): Promise<InventoryCategoryRecord[]> {
+    const rows = this.inventoryCategories
       .filter((category) => matchesScope(category, scope))
       .sort((left, right) => left.displayName.localeCompare(right.displayName));
+    return fixtureOperationalPage(rows, filter, row => row.id);
   }
 
   async createInventoryCategory(
@@ -3684,10 +3885,11 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return category;
   }
 
-  async listInventoryItems(scope: RepositoryScope): Promise<InventoryItemRecord[]> {
-    return this.inventoryItems
+  async listInventoryItems(scope: RepositoryScope, filter: WorkflowPageFilter = {}): Promise<InventoryItemRecord[]> {
+    const rows = this.inventoryItems
       .filter((item) => matchesScope(item, scope))
       .sort((left, right) => left.displayName.localeCompare(right.displayName));
+    return fixtureOperationalPage(rows, filter, row => row.id);
   }
 
   async findInventoryItemById(scope: RepositoryScope, itemId: UUID): Promise<InventoryItemRecord | null> {
@@ -3777,10 +3979,10 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return entry;
   }
 
-  async listInventoryCheckTemplates(scope: RepositoryScope): Promise<
+  async listInventoryCheckTemplates(scope: RepositoryScope, filter: WorkflowPageFilter = {}): Promise<
     Array<InventoryCheckTemplateRecord & { lines: InventoryCheckTemplateLineRecord[] }>
   > {
-    return this.inventoryCheckTemplates
+    const rows = this.inventoryCheckTemplates
       .filter((template) => matchesScope(template, scope) && template.active)
       .sort((left, right) => left.displayName.localeCompare(right.displayName))
       .map((template) => ({
@@ -3789,6 +3991,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
           .filter((line) => matchesScope(line, scope) && line.templateId === template.id)
           .sort((left, right) => left.sequence - right.sequence)
       }));
+    return fixtureOperationalPage(rows, filter, row => row.id);
   }
 
   async createInventoryCheckTemplate(
@@ -4008,11 +4211,11 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         }
       });
     }
-    return exceptions;
+    return fixtureOperationalPage(exceptions,filter,row=>row.checkRunLine?.id ?? row.item.id);
   }
 
   async listIncidents(scope: RepositoryScope, filter: IncidentSearchFilter = {}): Promise<IncidentRecord[]> {
-    return this.incidents
+    const rows = this.incidents
       .filter((incident) => matchesScope(incident, scope))
       .filter((incident) => {
         if (filter.status && incident.status !== filter.status) return false;
@@ -4021,6 +4224,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
         return true;
       })
       .sort((left, right) => right.occurredAt.localeCompare(left.occurredAt));
+    return fixtureOperationalPage(rows, filter, row => row.id);
   }
 
   async createIncident(scope: RepositoryScope, input: CreateIncidentInput): Promise<IncidentRecord | null> {
@@ -4065,10 +4269,11 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     return incident;
   }
 
-  async listCorrectiveActions(scope: RepositoryScope): Promise<CorrectiveActionRecord[]> {
-    return this.correctiveActions
+  async listCorrectiveActions(scope: RepositoryScope, filter: WorkflowPageFilter = {}): Promise<CorrectiveActionRecord[]> {
+    const rows = this.correctiveActions
       .filter((action) => matchesScope(action, scope))
       .sort((left, right) => left.dueAt.localeCompare(right.dueAt));
+    return fixtureOperationalPage(rows, filter, row => row.id);
   }
 
   async createCorrectiveAction(
@@ -4449,14 +4654,15 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     );
   }
 
-  async listPricebookProcedures(scope: RepositoryScope): Promise<PricebookProcedureRecord[]> {
-    return this.pricebookProcedures
+  async listPricebookProcedures(scope: RepositoryScope, filter: WorkflowPageFilter = {}): Promise<PricebookProcedureRecord[]> {
+    const rows = this.pricebookProcedures
       .filter((procedure) => matchesScope(procedure, scope) && procedure.status === "active")
       .sort(
         (left, right) =>
           left.category.localeCompare(right.category) ||
           left.displayName.localeCompare(right.displayName)
       );
+    return fixtureOperationalPage(rows,filter,row=>row.id);
   }
 
   async findPricebookProcedureById(
@@ -4621,6 +4827,11 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
   }
 
   async createEncounter(scope: RepositoryScope, input: CreateEncounterInput): Promise<EncounterRecord> {
+    if (input.appointmentId) {
+      const a=this.appointments.find(a=>matchesScope(a,scope)&&a.id===input.appointmentId);
+      if(!a||a.patientId!==input.patientId||a.providerUserId!==input.providerUserId||!["requested","booked","confirmed","checked_in"].includes(a.status)) throw new RangeError("Appointment is no longer eligible for this patient and doctor.");
+      if(this.encounters.some(e=>matchesScope(e,scope)&&e.appointmentId===input.appointmentId)) throw new RangeError("A consultation already exists for this appointment. Open the saved visit.");
+    }
     const now = this.#nowIso();
     const encounter: EncounterRecord = {
       id: uuid(),
@@ -4664,6 +4875,14 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     if (!encounter) return null;
 
     assertEncounterTransition(encounter.status, status);
+    if(encounter.appointmentId && ["drafting","closed"].includes(status)) {
+      const a=this.appointments.find(a=>matchesScope(a,scope)&&a.id===encounter.appointmentId);
+      const q=this.queueEntries.find(q=>matchesScope(q,scope)&&q.appointmentId===encounter.appointmentId);
+      if(!a||!q||a.patientId!==encounter.patientId||a.providerUserId!==encounter.providerUserId||q.patientId!==encounter.patientId||q.providerUserId!==encounter.providerUserId) return null;
+      if(status==="drafting"&&(a.status!=="checked_in"||!["waiting","called"].includes(q.status))) return null;
+      if(status==="closed"&&(a.status!=="in_consult"||q.status!=="in_consult")) return null;
+      a.status=status==="drafting"?"in_consult":"completed";q.status=a.status;if(status==="closed") q.completedAt=this.#nowIso();advanceFixtureRowVersion(a);advanceFixtureRowVersion(q);
+    }
     const previous = encounter.status;
     advanceFixtureRowVersion(encounter);
     encounter.status = status;
@@ -4708,7 +4927,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
     if (existingDraft) {
       existingDraft.content = content;
       advanceFixtureRowVersion(encounter);
-      encounter.status = input.readyForSign ? "ready_for_sign" : "drafting";
+      encounter.status = encounter.status === "scheduled" ? "scheduled" : input.readyForSign ? "ready_for_sign" : "drafting";
       encounter.updatedAt = this.#nowIso();
       return existingDraft;
     }
@@ -4742,7 +4961,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
       )
     );
     advanceFixtureRowVersion(encounter);
-    encounter.status = input.readyForSign ? "ready_for_sign" : "drafting";
+    encounter.status = encounter.status === "scheduled" ? "scheduled" : input.readyForSign ? "ready_for_sign" : "drafting";
     encounter.updatedAt = note.createdAt;
     return note;
   }
@@ -4821,7 +5040,7 @@ export class LocalFixtureClinicOperationsRepository implements ClinicOperationsR
 
     this.clinicalNoteVersions.push(note);
     advanceFixtureRowVersion(encounter);
-    encounter.status = "amended";
+    if(encounter.status!=="closed") encounter.status = "amended";
     encounter.updatedAt = now;
     this.timelineItems.push(
       this.#timeline(
@@ -7397,4 +7616,20 @@ function advanceFixtureRowVersion(record: { rowVersion: number }): void {
     throw new Error("Fixture rowVersion cannot advance beyond the safe integer limit.");
   }
   record.rowVersion += 1;
+}
+
+function fixtureWorkflowPage<T extends {id: UUID;createdAt:string}>(records:readonly T[],filter:WorkflowPageFilter):WorkflowPage<T>{
+ const limit=filter.limit??25;
+ if(!Number.isInteger(limit)||limit<1||limit>100) throw new RangeError("Page size must be between 1 and 100.");
+ const sorted=[...records].sort((a,b)=>b.createdAt.localeCompare(a.createdAt)||b.id.localeCompare(a.id));
+ const index=filter.cursor ? sorted.findIndex(row=>row.id===filter.cursor): -1;
+ if(filter.cursor&&index<0) throw new RangeError("The page cursor is no longer available in this selection. Refresh the list.");
+ const page=sorted.slice(index+1,index+1+limit);
+ return {records:page,nextCursor:sorted.length>index+1+limit?page.at(-1)!.id:null};
+}
+
+function fixtureOperationalPage<T>(rows: T[], filter: WorkflowPageFilter, id: (row:T)=>string):T[] {
+  const start = filter.cursor ? rows.findIndex(row => id(row) === filter.cursor) + 1 : 0;
+  if(filter.cursor && start === 0) throw new RangeError("The page cursor is outside this selection. Refresh the list.");
+  return rows.slice(start,start+(filter.limit??100));
 }

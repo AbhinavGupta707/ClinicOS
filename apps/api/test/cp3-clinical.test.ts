@@ -353,12 +353,14 @@ test("CP3 local fixture API supports intake consent encounter note and prescript
     assert.equal(encounterResponse.status, 201);
     const encounterBody = await encounterResponse.json();
 
-    const startResponse = await postJson(
+    const assistantStartResponse = await postJson(
       baseUrl,
       `/v1/encounters/${encounterBody.encounter.id}/start`,
       {},
       assistantHeaders({ "idempotency-key": "cp3-encounter-start" })
     );
+    assert.equal(assistantStartResponse.status,403);
+    const startResponse=await postJson(baseUrl,`/v1/encounters/${encounterBody.encounter.id}/start`,{},doctorHeaders({"idempotency-key":"cp3-doctor-start","if-match":"\"rv-1\""}));
     assert.equal(startResponse.status, 200);
     assert.equal((await startResponse.json()).encounter.status, "drafting");
 
@@ -413,7 +415,7 @@ test("CP3 local fixture API supports intake consent encounter note and prescript
       baseUrl,
       `/v1/encounters/${encounterBody.encounter.id}/sign-note`,
       {},
-      doctorHeaders({ "idempotency-key": "cp3-note-sign" })
+      doctorHeaders({ "idempotency-key": "cp3-note-sign", "if-match": '"rv-3"' })
     );
     assert.equal(doctorSignResponse.status, 200);
     const doctorSignBody = await doctorSignResponse.json();
@@ -440,7 +442,7 @@ test("CP3 local fixture API supports intake consent encounter note and prescript
           followUpInstructions: "Return if swelling develops"
         }
       },
-      doctorHeaders({ "idempotency-key": "cp3-note-amend" })
+      doctorHeaders({ "idempotency-key": "cp3-note-amend", "if-match": '"rv-4"' })
     );
     assert.equal(amendResponse.status, 200);
     const amendBody = await amendResponse.json();

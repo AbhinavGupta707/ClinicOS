@@ -2898,6 +2898,8 @@ button.cp6-card:hover {
     max-width: min(332px, 88vw);
     position: fixed;
     transform: translateX(-105%);
+    visibility: hidden;
+    pointer-events: none;
     transition: transform 160ms ease;
     width: 100%;
     z-index: 20;
@@ -2905,6 +2907,8 @@ button.cp6-card:hover {
 
   .clinic-nav--open {
     transform: translateX(0);
+    visibility: visible;
+    pointer-events: auto;
   }
 
   .cp13-runtime__header {
@@ -5176,3 +5180,102 @@ button.cp6-card:hover {
 .import-run-summary dt { font-size: .85rem; }
 .import-run-summary dd { margin: .3rem 0 0; font-size: 1.4rem; font-weight: 600; }
 @media (max-width: 640px) { .import-run-controls { grid-template-columns: minmax(0, 1fr); } .import-run-summary dl { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+
+/* Staff scheduling controls share the clinic shell's responsive layout. */
+.front-desk { min-width: 0; }
+.front-desk__toolbar, .front-desk__actions, .front-desk__queue-row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 12px;
+}
+.front-desk__toolbar { padding: 12px 0; }
+.front-desk__hint { font-size: .875rem; color: #66685f; }
+.front-desk__card {
+  border: 1px solid #d9dcd1; border-radius: 16px; background: #fffefb;
+  padding: clamp(16px, 3vw, 28px); margin: 20px 0; min-width: 0;
+  overflow-wrap: anywhere;
+}
+.front-desk__fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); gap: 16px; }
+.front-desk fieldset { min-width: 0; border: 0; padding: 0; margin: 16px 0; }
+.front-desk legend { margin-bottom: 16px; font-weight: 600; }
+.front-desk label { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.front-desk input:not([type="checkbox"]), .front-desk select {
+  width: 100%; min-width: 0; max-width: 100%; min-height: 44px;
+  border: 1px solid #abad9e; border-radius: 8px; padding: 10px; color: #263a32; background: white;
+}
+.front-desk button { min-height: 44px; white-space: normal; }
+.front-desk button:disabled { opacity: .55; cursor: not-allowed; }
+.front-desk .front-desk__check { flex-direction: row; align-items: center; margin: 16px 0; }
+.front-desk__check input { width: 20px; height: 20px; flex-shrink: 0; }
+.front-desk__notice { background: #edf4e7; border-radius: 8px; padding: 14px; }
+.front-desk__identity { display: flex; align-items: center; flex-wrap: wrap; gap: 12px; }
+.front-desk__queue-row { justify-content: space-between; border-top: 1px solid #e3e4dc; padding: 14px 0; }
+.front-desk [role="alert"] { color: #832d2d; }
+.front-desk .cp13-patient-search { max-width: 650px; }
+@media (max-width: 600px) {
+  .front-desk__toolbar > label { width: 100%; }
+  .front-desk__card .cp13-patient-search form { flex-wrap: wrap; }
+}
+
+.front-desk__toolbar > button:not(.button-link),
+.front-desk__card > button:not(.button-link),
+.front-desk__actions > button:not(.button-link),
+.front-desk__queue-row > button:not(.button-link),
+.front-desk__identity > button:not(.button-link) {
+  font: inherit; color: #134a3f; background: #f4f8f6; border: 1px solid #bbcbc5;
+  border-radius: 8px; padding: 10px 16px; cursor: pointer;
+}
+.front-desk__actions { margin-top: 16px; }
+
+/* Native daily workflows share readable, responsive form and review surfaces. */
+.daily-workspace, .clinical-workflow-workspace, .billing-workflow-workspace, .operations-forms {
+  display: grid;
+  gap: 1.25rem;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.workspace-card, .work-panel {
+  background: var(--surface, #fff);
+  border: 1px solid var(--border, #d9e2dd);
+  border-radius: 1rem;
+  padding: clamp(.875rem, 2vw, 1.5rem);
+  min-width: 0;
+}
+.workspace-card > header, .work-panel > header, .workflow-links {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: .75rem;
+  justify-content: space-between;
+}
+:is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) form {
+  display: grid; gap: 1rem; min-width: 0;
+}
+:is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) fieldset {
+  min-width: 0; border: 1px solid #d9e2dd; border-radius: .65rem; padding: 1rem;
+}
+:is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) label {
+  display: flex; flex-direction: column; gap: .4rem; margin-block: .5rem;
+}
+:is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) :is(input:not([type=checkbox]),select,textarea) {
+  width: 100%; min-width: 0; max-width: 100%; padding: .65rem .75rem;
+  border: 1px solid #aebfb6; border-radius: .45rem; background: #fff; color: #182e26; font: inherit;
+}
+:is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) textarea { min-height: 6rem; resize: vertical; }
+:is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) label:has(input[type=checkbox]) { flex-direction: row; align-items: flex-start; }
+:is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) button, .week-calendar button {
+  min-height: 2.75rem; max-width: 100%; white-space: normal; border: 1px solid #9db3a6;
+  border-radius: .5rem; padding: .55rem .8rem; background: #f4f8f5; color: #143c2d; cursor: pointer;
+}
+:is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) button[type=submit] { background: #184f3b; color: #fff; }
+:is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) button:disabled { opacity: .55; cursor: not-allowed; }
+:is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) :focus-visible { outline: 3px solid #b08427; outline-offset: 3px; }
+.workflow-fields { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,15rem),1fr)); gap: .75rem 1.25rem; }
+.week-calendar { display: grid; grid-template-columns: repeat(auto-fit,minmax(min(100%,14rem),1fr)); gap: .75rem; margin-block: 1rem; }
+.week-calendar > section { border: 1px solid #d9e2dd; padding: .75rem; border-radius: .5rem; min-width: 0; }
+.week-calendar ul { padding: 0; list-style: none; }
+.week-calendar li { display: grid; gap: .2rem; padding: .75rem 0; border-top: 1px solid #e4eae6; }
+:is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) table { width: 100%; border-collapse: collapse; }
+:is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) :is(th,td) { padding: .5rem; text-align: left; overflow-wrap: anywhere; }
+@media (max-width: 600px) {
+  :is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) :is(ul,ol) { padding-left: 1.15rem; }
+  :is(.daily-workspace,.clinical-workflow-workspace,.billing-workflow-workspace,.operations-forms,.work-panel) fieldset { padding: .65rem; }
+}

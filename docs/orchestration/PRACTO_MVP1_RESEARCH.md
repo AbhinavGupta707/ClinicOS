@@ -1,14 +1,89 @@
 # Practo MVP1 Integration Research
 
-Status: products confirmed by owner; access contract and samples pending
+Status: account and export route verified; owner received a ZIP of patient and
+appointment CSVs and supplied headers/date/status representations on 2026-09-26.
+Appointment IDs, planned duration, raw CSV format and repeat-export semantics
+remain unresolved. API entitlement remains unverified.
 
 Date: 2026-08-30
 
-Official documentation rechecked: 2026-09-22
+Official documentation rechecked: 2026-09-26
 
-Pilot: Healthy Roots Family Dental Studio, Girgaon
+Pilot: Healthy Roots- A Family Dental Studio, Sector 50, Gurgaon, Haryana
+(account observed and owner reconfirmed 2026-09-26; supersedes earlier Girgaon references)
 
 Source confirmed by owner: Practo Ray and Practo Profile
+
+## 26 September export receipt and field semantics
+
+Following the initial read-only inspection below, the owner authorized a Patients
+and Appointments export to the registered clinic owner's mailbox. Ray reported
+PENDING, then COMPLETED; the owner received a ZIP with `patients.csv` (21 columns)
+and `appointments.csv` (8 columns). Headers and non-identifying date/status
+representations were supplied in chat; the agent has not opened the real files.
+
+The [dated mapping decision and offline profile instructions](PRACTO_EXPORT_MAPPING_2026-09-26.md)
+are the current detailed source contract. Date is reported as
+`YYYY-MM-DD HH:mm:ss`, with surrounding apostrophes; observed status labels are
+Scheduled and Cancelled. No appointment ID, scheduled end/duration, or visit type
+is present. Check-in/out are attendance workflow timestamps, not substitutes for
+scheduled duration. Public documentation does not verify the raw CSV encoding or
+these timestamp fields' serialization. Recurring reconciliation remains gated on
+durable identity, reschedule/cancellation semantics and a second snapshot.
+
+A local aggregate-only profile utility and synthetic safety tests are now
+available. It never imports records or reports migration readiness. Export
+generation authorization does not authorize the agent to inspect real files or
+load patient records into ClinicOS. These facts supersede the earlier pending
+container/header/export-execution questions while retaining their dated history.
+
+## 26 September authenticated account review
+
+During the initial inspection, the owner authorized read-only access through the
+existing logged-in Chrome session and confirmed the Gurgaon dental account as
+the pilot. At that stage no export was submitted, data downloaded, individual
+patient record opened, setting saved, message sent, integration activated or
+subscription changed. The subsequent authorized export is recorded above.
+
+Account facts observed:
+
+- Current Ray plan: **Ray-Prime-Essentials**. This is a plan name, not an exact
+  application build/version.
+- Practice timezone: **Asia/Kolkata**.
+- One active doctor/owner and one separate active Frontdesk account.
+- Automatic patient number generation is on. Exported IDs and their stability
+  still require workbook evidence.
+- The calendar uses 30-minute display slots and has a location-like appointment
+  category. Neither establishes clinical visit type, chair or appointment duration.
+- Storage reports 269.2 MB of stored files; that is not total database size.
+
+The actual route is **Settings → Import Export Data → Request Import / Export →
+Export**. The dialog says it exports Ray data **to Excel** and sends it to the
+registered practice owner's email. It lists Patients, Appointments, Treatments,
+Procedure Catalog, Prescriptions, Clinical Notes, Files, Billing, Treatment Plans
+and Expenses. All structured categories are selected by default, while Files is
+not. Requesting only Patients and Appointments would require narrowing that
+selection. The inspected form did not expose a headers-only option or a
+patient/appointment date filter. No request was submitted.
+
+The Integrations page exposes Practo's own product integrations, including Drive
+record sharing; no general clinic-data API or scheduled export control was found
+on the inspected screen. Do not infer unavailable private capabilities from that
+absence, or treat record sharing as a ClinicOS connector.
+
+This initial inspection superseded older unverified account/edition/export-UI
+statements below. At that point the format, columns, identifiers, statuses and
+repeated-export semantics were unverified; the later owner-supplied evidence is
+recorded above. Historical export rows displaying 0.00 B and
+today's date for old requests must not be used as record-count or completeness
+evidence. No patient names, rows, contact details, credentials or calendar-feed
+tokens have been added to these notes.
+
+Observed account URLs: [Practice Details](https://ray.practo.com/settings/clinicdetails),
+[Practice Staff](https://ray.practo.com/settings/managestaff),
+[Export settings](https://ray.practo.com/settings/importexport),
+[Integrations](https://ray.practo.com/integrations), and
+[Subscriptions](https://store.practo.com/home).
 
 ## 22 September clarification and documentation recheck
 
@@ -42,7 +117,7 @@ Practo adapter and sync status explicitly unavailable.
 
 ## Decision in one sentence
 
-Use a clinic-run Practo Ray export of Contacts and Appointments for the first
+Use a clinic-run Practo Ray export of Patients and Appointments for the first
 read-only import; do not build against the Practo partner API, private browser
 traffic, or assumed Ray endpoints without a separate written Practo agreement and
 verified technical documentation.
@@ -79,11 +154,11 @@ Official sources:
 
 | Question | Current truth | Required evidence |
 | --- | --- | --- |
-| Does the clinic use Practo Ray? | Yes; owner confirms Ray plus Practo Profile | Record the visible Ray edition/version |
-| Can Ray export contacts and appointments? | Yes, officially documented | Confirm the option exists for this account and plan |
-| What file format and columns are produced? | Unknown | Deidentified export or header-only file |
+| Does the clinic use Practo Ray? | Yes; authenticated account inspection confirms Ray-Prime-Essentials | Exact application build/version is still unknown |
+| Can Ray export patients and appointments? | Both are offered in this account's official export request UI | Actual request/delivery not performed; requires separate authorization |
+| What file format and columns are produced? | The dialog declares Excel; exact workbook format and columns are unknown | Deidentified export or header-only workbook |
 | Does the export contain stable patient and appointment IDs? | Unknown | Sample columns and two repeated exports |
-| Can active practitioners be exported? | Not publicly documented | Staff export, appointment doctor field, or clinic-prepared mapping |
+| Can active practitioners be exported? | Not established; one active doctor/owner is visible in Practice Staff | Exported doctor field/ID, historical doctors and clinic-approved mapping |
 | Is there a clinic-data API or webhook? | No public official evidence found | Written Practo confirmation, agreement, and documentation |
 | Can exports be scheduled? | No public official evidence found | Written Practo or account-level confirmation |
 | Can calendar subscriptions replace exports? | No; insufficient evidence for identity and reconciliation | Use only as an optional later freshness aid after inspecting the feed |
@@ -96,10 +171,11 @@ and the clinic provide authoritative evidence.
 
 ### MVP1: import once
 
-1. The clinic records the visible Practo Ray edition/version; the owner has
-   already confirmed that Ray and Practo Profile are in use.
-2. An authorized clinic administrator exports `Contact` and `Appointments` from
-   Ray to a clinic-controlled email address.
+1. Use the verified Ray-Prime-Essentials account for the owner-confirmed Gurgaon
+   pilot. This plan name does not establish the workbook schema or exact build.
+2. With separate export authorization, the clinic administrator requests only
+   `Patients` and `Appointments`; the current form delivers to the registered
+   practice owner's email address.
 3. The clinic creates a deidentified representative copy that preserves column
    names, data types, relationships, status values, and edge cases.
 4. The clinic supplies a small active-practitioner mapping if the exports do not
@@ -138,35 +214,37 @@ with consistent synthetic values. If the clinic cannot do this safely, first sen
 only the column headers and data-type descriptions; ClinicOS can generate a
 synthetic fixture template for the clinic to validate.
 
-## Questions the clinic must answer
+## Questions still open after the export receipt
 
-1. When staff manage the daily calendar, does the product visibly say `Practo
-   Ray`, and what version or edition is shown?
-2. Does `Settings > Import/Export data` exist, and can the clinic select Contact
-   and Appointments?
-3. What format arrives by email: CSV, XLS, XLSX, ZIP, or another format?
-4. Can the appointment export be filtered by date range?
-5. Which values represent booked, confirmed, arrived, engaged, completed,
-   cancelled, rescheduled, and no-show?
-6. Are patient, practitioner, and appointment IDs present and stable across two
-   exports?
-7. What does omission from a later export mean: deleted, cancelled, outside the
+1. What are the actual CSV encoding, delimiter, escaping, birthdate format,
+   check-in/out representation and aggregate data-quality counts? Container and
+   header names are now owner-confirmed; see the dated mapping decision.
+2. Can the appointment export be restricted by date range through an official
+   route? No such field was visible in the inspected default form.
+3. The owner sees Scheduled and Cancelled only. How does this export represent
+   reschedules, no-shows and completed attendance, if at all? Do not infer outcomes.
+4. Is Patient Number stable and unique across exports? Can a supported export
+   supply stable appointment/practitioner IDs and planned duration/end?
+5. What does omission from a later export mean: deleted, cancelled, outside the
    date range, or unknown?
-8. Is the clinic willing to run the export manually for the pilot, and at what
+6. Is the clinic willing to run the export manually for the pilot, and at what
    cadence?
 
 ## Practo support request template
 
 Subject: Authorized read-only integration options for our Practo Ray clinic data
 
-> We operate Healthy Roots Family Dental Studio in Girgaon and use Practo for our
-> clinic operations. We are evaluating an owner-authorized, read-only integration
-> with our internal ClinicOS pilot. Please confirm whether our account is Practo
-> Ray and its edition/version, and whether Practo offers a documented clinic-data
+> We operate Healthy Roots- A Family Dental Studio in Sector 50, Gurgaon and use
+> Ray-Prime-Essentials. We are evaluating an owner-authorized, read-only integration
+> with our internal ClinicOS pilot. Please confirm whether Practo offers a documented clinic-data
 > API, webhook, or scheduled export for our own patients, practitioners, and
 > appointments. If not, please confirm the supported Contact and Appointment
-> export formats, available fields, stable identifiers, date filters, cancellation
-> and reschedule semantics, and whether practitioner/staff data can be exported.
+> export fields, stable identifiers, date filters, cancellation and reschedule
+> semantics, and whether practitioner/staff data can be exported. Our received
+> appointments.csv has Date, Patient Number, Patient Name, Notes, DoctorName,
+> Status, Checked In At and Checked Out At. How can we obtain stable appointment
+> IDs and planned end times/durations through an official route? Please also
+> confirm the Date timezone and check-in/check-out timestamp encoding and triggers.
 > We will not scrape or reverse engineer Practo and will begin with deidentified
 > data only.
 
