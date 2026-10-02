@@ -258,12 +258,15 @@ function extensionFromFilename(filename: string): string | null {
 }
 
 function sanitizeObjectKeySegment(value: string): string {
-  return (
-    value
-      .trim()
-      .toLowerCase()
-      .replace(/[^a-z0-9_-]+/g, "-")
-      .replace(/^-+|-+$/g, "")
-      .slice(0, 80) || "unknown"
-  );
+  const normalized = value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9_-]+/g, "-");
+  // An unanchored trailing-hyphen regex retries every position in an internal
+  // hyphen run. Explicit bounds preserve the format with linear input work.
+  let start = 0;
+  let end = normalized.length;
+  while (start < end && normalized[start] === "-") start += 1;
+  while (end > start && normalized[end - 1] === "-") end -= 1;
+  return normalized.slice(start, Math.min(end, start + 80)) || "unknown";
 }
