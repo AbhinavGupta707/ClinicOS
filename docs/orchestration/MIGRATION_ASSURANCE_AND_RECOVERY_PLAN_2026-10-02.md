@@ -80,6 +80,6 @@ staff/physical-printer checks remain later gates. Do not infer them from this re
 - [x] Operator UI and real-browser acceptance complete.
 - [x] Real isolated database restore and integrity verification complete.
 - [x] Final review, local checks and scoped handoff recorded in
-  `../qa/MIGRATION_ASSURANCE_RECOVERY_2026-10-02.md`. Fresh online advisory
-  verification awaits specific network-payload authorization. GitHub checks,
+  `../qa/MIGRATION_ASSURANCE_RECOVERY_2026-10-02.md`. The fresh advisory gate
+  passed after authorization; raw/backported findings are recorded there. GitHub checks,
   merge, independent backup and clinic acceptance are not claimed.

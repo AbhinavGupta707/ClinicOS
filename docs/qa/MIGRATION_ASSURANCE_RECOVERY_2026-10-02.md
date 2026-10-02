@@ -95,10 +95,13 @@ printer validation is claimed. Native tests use a synthetic identity hook, not
 real Keycloak sign-in. Existing staff-identity/restart acceptance remains a
 separate CI job and was not rerun locally in this slice.
 
-The online npm vulnerability check was rejected by automatic approval review
-because it sends dependency metadata to npm. Specific authorization was requested;
-no request was sent. Existing local node-forge backport verification passed. No
-dependency versions changed; a fresh advisory result is not claimed.
+The first online npm check was blocked pending specific authorization for sending
+dependency metadata. After the owner's instruction to proceed with PR/CI review,
+the disclosed advisory check ran and passed the repository gate: 0 critical,
+4 high and 13 moderate raw advisories. All high findings trace to the existing
+node-forge advisory GHSA-86w9-cpqp-85rv, with the exact upstream PR #1152 backport
+verified locally. There are no unmitigated high/critical gate blockers; this is
+not a claim of zero raw high advisories. No dependency versions changed.
 
 ## Restore method and limits
 
