@@ -266,8 +266,8 @@ export function buildRestoreDrillEvidence({
     destructiveOperationsExecuted: false,
     rpoMinutes: parseInteger(env.BACKUP_RESTORE_RPO_MINUTES, 60),
     rtoMinutes: parseInteger(env.BACKUP_RESTORE_RTO_MINUTES, 240),
-    primaryRegion: env.AWS_REGION || "ap-south-1",
-    drRegion: env.AWS_DR_REGION || "ap-south-2",
+    primaryRegion: restoreRegion(env.AWS_REGION, "ap-south-1"),
+    drRegion: restoreRegion(env.AWS_DR_REGION, "ap-south-2"),
     dataSources: fileHashes,
     directorySources: [
       directoryEvidence("templates", paths.templates, cwd, templateFiles),
@@ -574,6 +574,15 @@ function unquote(value) {
     return value.slice(1, -1);
   }
   return value;
+}
+
+// This drill implements the documented India primary/DR pair only. Return fixed
+// labels so arbitrary environment strings cannot enter console or JSON evidence.
+function restoreRegion(value, fallback) {
+  if (!value) return fallback;
+  if (value === "ap-south-1") return "ap-south-1";
+  if (value === "ap-south-2") return "ap-south-2";
+  throw new Error("Restore drill region is outside the supported deployment pair.");
 }
 
 function summarizeEvidence(evidence) {

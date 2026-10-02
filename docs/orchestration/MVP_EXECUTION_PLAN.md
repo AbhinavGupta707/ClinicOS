@@ -417,3 +417,21 @@ See `PATIENT_COMMUNICATIONS_NEXT_SLICE_2026-10-02.md` and
 shape, tests and activation limits. No real patient data or live provider was
 used. This does not activate WhatsApp or certify the separate older care-instruction
 sender; that path needs its own safety pass before live enablement.
+
+## 2026-10-02 — Provider dispatch and security repair
+
+The owner approved the care-instruction sender safety pass and outstanding
+security-finding review after PR #12. This slice repairs the actual API/outbox
+link, immutable recipient intent, scoped activity access, current authority and
+consent, bounded retries, uncertain outcomes and callback ordering. The shared
+check also protects appointment dispatch when a clinic/tenant or staff permission
+changes. Existing scanner and smoke-tool contracts are preserved while fixing
+regex, filesystem, destination and evidence-output hazards.
+
+See `PROVIDER_SECURITY_HARDENING_PLAN_2026-10-02.md` and
+`../qa/PROVIDER_SECURITY_HARDENING_2026-10-02.md` for exact tests, alert disposition
+and reviewed-head merge evidence. Historical requests acquire no new send approval.
+This does not activate Meta, add new provider features or replace private export,
+clinic sign-in, staff rehearsal and representative migration acceptance. Care
+sending additionally needs its configured clinical template wrapper verified in a
+controlled recipient trial before activation.

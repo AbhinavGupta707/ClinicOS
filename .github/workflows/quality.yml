@@ -40,6 +40,9 @@ jobs:
       - name: Synthetic restore ownership and integrity guards
         run: node --test scripts/synthetic-database-restore.test.mjs
 
+      - name: Security guard regressions (offline, synthetic only)
+        run: node --test scripts/provider-security-guards.test.mjs scripts/cp9-restore-drill.test.mjs
+
       - name: Typecheck workspaces
         run: npm run typecheck
 
@@ -130,7 +133,7 @@ jobs:
           PILOT_SYNTHETIC_DATA_ONLY: "true"
           DATABASE_URL: postgresql://clinic_os_runtime:clinic_os_runtime@127.0.0.1:5432/clinic_os
           REDIS_URL: redis://127.0.0.1:6379
-        run: node scripts/test-communications-repositories.mjs && npm run mvp:test:real-stack -- --communications
+        run: node scripts/test-instruction-dispatch-repositories.mjs && node scripts/test-communications-repositories.mjs && npm run mvp:test:real-stack -- --communications
 
       - name: Patient-file concurrency isolation and independent reconciliation
         env:

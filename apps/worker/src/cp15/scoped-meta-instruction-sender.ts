@@ -1,660 +1,497 @@
-import { createHmac, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomUUID } from "node:crypto";
 import type { Pool } from "pg";
 import {
+  buildSetLocalRlsStatements,
   createPostgresClinicModuleUnitOfWork,
-  type ClinicModuleTransactionContext
+  lockClinicConfiguration,
+  lockMetaWhatsAppDispatch,
+  hasCurrentCommunicationAuthority,
+  type ClinicModuleTransactionContext,
+  type RepositoryScope
 } from "@clinic-os/db";
 import { systemClock, type UUID } from "@clinic-os/domain";
 import {
   MetaWhatsAppClient,
-  MetaWhatsAppError,
   type MetaTemplateSendResult,
   type ProviderSecretResolver
 } from "@clinic-os/integrations";
 import type {
-  Cp13PatientInstructionSendActivityRequest,
-  Cp13PatientInstructionSendActivityResult
+  Cp13PatientInstructionSendActivityRequest as Request,
+  Cp13PatientInstructionSendActivityResult as Result
 } from "@clinic-os/workflow";
 
-interface ActivityScope {
-  readonly tenantId: UUID;
-  readonly clinicId: UUID;
-  readonly actorUserId: UUID;
+type Row = Record<string, unknown>;
+type Context = ClinicModuleTransactionContext;
+const sql = (c: Context) => {
+  if (!c.sqlClient) throw new Error("Instruction dispatch requires scoped SQL.");
+  return c.sqlClient;
+};
+const args = (r: Request) => [r.tenantId, r.clinicId, r.instructionId];
+const digest = (v: unknown) => createHash("sha256").update(JSON.stringify(v)).digest("hex");
+const instant = (v: unknown) => (v instanceof Date ? v.getTime() : Date.parse(String(v)));
+const scope = (r: Request): RepositoryScope => ({
+  tenantId: r.tenantId as UUID,
+  clinicId: r.clinicId as UUID,
+  actorUserId: r.actorUserId as UUID
+});
+class Blocked extends Error {
+  readonly code: string;
+  constructor(code: string) {
+    super(code);
+    this.code = code;
+  }
 }
-
-interface DispatchClaim {
-  readonly outcome: "claimed";
-  readonly outboundMessageId: UUID;
-  readonly leaseOwner: string;
-  readonly accessTokenRef: string;
-  readonly activationState: "sandbox_verified" | "production_verified";
-  readonly apiVersion: string;
-  readonly phoneNumberId: string;
-  readonly recipientPhoneE164: string;
-  readonly templateName: string;
-  readonly templateLanguage: string;
-  readonly bodyParameter: string;
-}
-
-type ClaimResult =
-  | DispatchClaim
-  | {
-      readonly outcome: "already_accepted";
-      readonly providerMessageId: string;
-      readonly evidenceId: string;
-    }
-  | { readonly outcome: "permanent_failure"; readonly code: string; readonly evidenceId: string };
-
-export interface MetaInstructionSenderPort {
-  send(
-    request: Cp13PatientInstructionSendActivityRequest
-  ): Promise<Cp13PatientInstructionSendActivityResult>;
-}
-
 export class MetaInstructionRetryableError extends Error {
   constructor() {
-    super("Meta instruction dispatch can be retried because transport proved no dispatch.");
+    super("Instruction dispatch is pending or transport proved no dispatch.");
     this.name = "MetaInstructionRetryableError";
   }
 }
+export interface MetaInstructionSenderPort {
+  send(request: Request): Promise<Result>;
+}
+interface Source {
+  accountId: string;
+  activation: "sandbox_verified" | "production_verified";
+  apiVersion: string;
+  phoneNumberId: string;
+  tokenRef: string;
+  recipient: string;
+  templateName: string;
+  language: string;
+  body: string;
+  consentId: string;
+  consentVersion: number;
+  templateVersion: number;
+  registrationId: string;
+}
+interface Claim {
+  outboundId: string;
+  lease: string;
+  source: Source;
+  sourceDigest: string;
+}
+interface Outcome {
+  outcome: "accepted_by_provider" | "not_dispatched" | "dispatch_ambiguous" | "rejected";
+  providerId?: string;
+  code?: string;
+}
 
 export function createScopedMetaInstructionSender(input: {
-  readonly pool: Pool;
-  readonly secrets: ProviderSecretResolver;
-  readonly endpointHmacSecret: Uint8Array;
-  readonly now?: () => Date;
-  readonly clientFactory?: (
-    options: ConstructorParameters<typeof MetaWhatsAppClient>[0]
+  pool: Pool;
+  secrets: ProviderSecretResolver;
+  endpointHmacSecret: Uint8Array;
+  now?: () => Date;
+  clientFactory?: (
+    o: ConstructorParameters<typeof MetaWhatsAppClient>[0]
   ) => Pick<MetaWhatsAppClient, "sendApprovedTemplate">;
 }): MetaInstructionSenderPort {
-  if (input.endpointHmacSecret.byteLength < 32) {
+  if (input.endpointHmacSecret.byteLength < 32)
     throw new Error("Meta instruction endpoint HMAC secret must contain at least 32 bytes.");
-  }
   const now = input.now ?? (() => systemClock.now());
-  const unitOfWork = createPostgresClinicModuleUnitOfWork<ActivityScope>({
+  const uow = createPostgresClinicModuleUnitOfWork<RepositoryScope>({
     client: input.pool,
-    resolveScope: (scope) => scope
+    resolveScope: (s) => s
   });
-  const run = <T>(
-    request: Cp13PatientInstructionSendActivityRequest,
-    callback: (context: ClinicModuleTransactionContext) => Promise<T>
-  ) => unitOfWork.run(scopeFrom(request), callback);
-
-  return {
-    async send(request) {
-      let claim: ClaimResult;
-      try {
-        claim = await run(request, (context) =>
-          claimDispatch(context, request, input.endpointHmacSecret, now())
-        );
-      } catch (error) {
-        if (error instanceof MetaWhatsAppError && !error.retryable) {
-          const evidenceId = await run(request, (context) =>
-            recordPreDispatchFailure(context, request, error.code, now())
-          );
-          return {
-            outcome: "permanent_failure",
-            failureCode:
-              error.code === "policy_blocked"
-                ? "INSTRUCTION_POLICY_BLOCKED"
-                : "INSTRUCTION_PROVIDER_NOT_CONFIGURED",
-            requestEvidenceId: evidenceId
-          };
-        }
-        throw error;
-      }
-      if (claim.outcome === "already_accepted") {
-        return {
-          outcome: "requested",
-          providerSubmissionId: claim.providerMessageId,
-          requestEvidenceId: claim.evidenceId
-        };
-      }
-      if (claim.outcome === "permanent_failure") {
-        return {
-          outcome: "permanent_failure",
-          failureCode: claim.code,
-          requestEvidenceId: claim.evidenceId
-        };
-      }
-
-      let result: MetaTemplateSendResult;
-      try {
-        const accessToken = await input.secrets.resolveSecret(claim.accessTokenRef);
-        const clientOptions = {
-          activationState: claim.activationState,
-          graphApiVersion: claim.apiVersion,
-          phoneNumberId: claim.phoneNumberId,
-          accessToken
-        } as const;
-        const client =
-          input.clientFactory?.(clientOptions) ?? new MetaWhatsAppClient(clientOptions);
-        result = await client.sendApprovedTemplate({
-          messageRequestId: request.instructionId,
-          idempotencyKey: request.idempotencyKey,
-          correlationId: request.correlationId,
-          recipientPhoneE164: claim.recipientPhoneE164,
-          template: {
-            name: claim.templateName,
-            languageCode: claim.templateLanguage,
-            components: [
-              {
-                type: "body",
-                parameters: [{ type: "text", text: claim.bodyParameter }]
-              }
-            ]
-          },
-          policy: {
-            consent: "granted",
-            purpose: "care_instruction",
-            mode: "approved_template",
-            templateState: "approved",
-            now: now().toISOString()
-          }
-        });
-      } catch (error) {
-        const policyBlocked = error instanceof MetaWhatsAppError && error.code === "policy_blocked";
-        const finalized = await run(request, (context) =>
-          finalizeDispatch(
-            context,
-            request,
-            claim,
-            {
-              outcome: policyBlocked ? "rejected_by_provider" : "not_dispatched",
-              safeFailureCode: policyBlocked ? "policy_blocked" : "provider_unavailable"
-            },
-            now()
-          )
-        );
-        if (policyBlocked) {
-          return {
-            outcome: "permanent_failure",
-            failureCode: "INSTRUCTION_POLICY_BLOCKED",
-            requestEvidenceId: finalized.evidenceId
-          };
-        }
-        throw new MetaInstructionRetryableError();
-      }
-
-      const finalized = await run(request, (context) =>
-        finalizeDispatch(context, request, claim, providerOutcome(result), now())
+  const run = <T>(r: Request, fn: (c: Context) => Promise<T>) =>
+    uow.run(scope(r), async (c) => {
+      for (const q of buildSetLocalRlsStatements({
+        tenantId: r.tenantId as UUID,
+        clinicId: r.clinicId as UUID,
+        userId: r.actorUserId as UUID
+      }))
+        await sql(c).query(q.sql, q.values);
+      await lockMetaWhatsAppDispatch(sql(c), scope(r));
+      await lockClinicConfiguration(sql(c), scope(r));
+      return fn(c);
+    });
+  async function audit(c: Context, r: Request, code: string): Promise<string> {
+    const id = randomUUID();
+    await c.evidence.appendAuditEvent({
+      id,
+      action:
+        code === "accepted_by_provider"
+          ? "workflow.cp13.instruction_send_requested"
+          : code === "dispatch_claimed"
+            ? "instruction.send_requested"
+            : "instruction.send_failed",
+      category: "integration",
+      riskLevel: "high",
+      phiInvolved: true,
+      resourceType: "patient_instruction",
+      resourceId: r.instructionId as UUID,
+      patientId: r.patientId as UUID,
+      metadata: { providerKey: "meta_whatsapp_cloud", safeFailureCode: code },
+      ipAddress: null,
+      userAgent: "clinic-os-worker",
+      correlationId: r.correlationId,
+      occurredAt: now().toISOString()
+    });
+    return id;
+  }
+  async function reject(c: Context, r: Request, code: string, old?: Row): Promise<Result> {
+    const evidenceId = await audit(c, r, code);
+    // Once a retry is refused, restoring the source/authority must not revive it.
+    if (old)
+      await sql(c).query(
+        `update meta_whatsapp_outbound_messages set dispatch_outcome='rejected',state='failed',
+       automatic_retry_allowed=false,failure_category=$4,failed_at=$5,audit_event_id=$6
+       where tenant_id=$1 and clinic_id=$2 and id=$3 and dispatch_outcome='not_dispatched'`,
+        [r.tenantId, r.clinicId, old.id, code, now().toISOString(), evidenceId]
       );
-      if (result.outcome === "accepted_by_provider") {
-        return {
-          outcome: "requested",
-          providerSubmissionId: result.providerMessageId,
-          requestEvidenceId: finalized.evidenceId
-        };
-      }
-      if (result.outcome === "not_dispatched") throw new MetaInstructionRetryableError();
-      return {
-        outcome: "permanent_failure",
-        failureCode:
-          result.outcome === "dispatch_ambiguous"
-            ? "INSTRUCTION_DISPATCH_AMBIGUOUS"
-            : "INSTRUCTION_PROVIDER_REJECTED",
-        requestEvidenceId: finalized.evidenceId
-      };
-    }
-  };
-}
-
-async function recordPreDispatchFailure(
-  context: ClinicModuleTransactionContext,
-  request: Cp13PatientInstructionSendActivityRequest,
-  safeFailureCode: string,
-  now: Date
-): Promise<string> {
-  const evidenceId = randomUUID();
-  await context.evidence.appendAuditEvent({
-    id: evidenceId,
-    action: "instruction.send_failed",
-    category: "integration",
-    riskLevel: "high",
-    phiInvolved: true,
-    resourceType: "patient_instruction",
-    resourceId: request.instructionId,
-    patientId: request.patientId as UUID,
-    metadata: {
-      providerKey: "meta_whatsapp_cloud",
-      dispatchOutcome: "not_dispatched",
-      reconciliationRequired: false,
-      automaticRetryAllowed: false,
-      safeFailureCode
-    },
-    ipAddress: null,
-    userAgent: "clinic-os-worker",
-    correlationId: request.correlationId,
-    occurredAt: now.toISOString()
-  });
-  return evidenceId;
-}
-
-async function claimDispatch(
-  context: ClinicModuleTransactionContext,
-  request: Cp13PatientInstructionSendActivityRequest,
-  endpointHmacSecret: Uint8Array,
-  now: Date
-): Promise<ClaimResult> {
-  const sql = requiredSql(context);
-  const leaseOwner = `meta:${request.eventId}`;
-  const existing = await sql.query<{
-    id: UUID;
-    dispatch_outcome: string;
-    dispatch_attempt_count: number;
-    dispatch_lease_expires_at: string | null;
-    provider_message_id: string | null;
-    audit_event_id: string;
-  }>(
-    `select id, dispatch_outcome, dispatch_attempt_count,
-            dispatch_lease_expires_at::text, provider_message_id, audit_event_id
-     from meta_whatsapp_outbound_messages
-     where tenant_id = $1 and clinic_id = $2 and message_request_id = $3
-     for update`,
-    [request.tenantId, request.clinicId, request.instructionId]
-  );
-  const previous = existing.rows[0];
-  if (previous) {
-    if (previous.dispatch_outcome === "accepted_by_provider" && previous.provider_message_id) {
-      return {
-        outcome: "already_accepted",
-        providerMessageId: previous.provider_message_id,
-        evidenceId: previous.audit_event_id
-      };
-    }
-    if (previous.dispatch_outcome === "pending") {
-      const expiresAt = previous.dispatch_lease_expires_at
-        ? Date.parse(previous.dispatch_lease_expires_at)
-        : Number.NaN;
-      if (Number.isFinite(expiresAt) && expiresAt > now.getTime()) {
-        throw new MetaInstructionRetryableError();
-      }
-      const evidenceId = await markAmbiguousAfterLeaseLoss(context, request, previous.id, now);
-      return {
-        outcome: "permanent_failure",
-        code: "INSTRUCTION_DISPATCH_AMBIGUOUS",
-        evidenceId
-      };
-    }
-    if (previous.dispatch_outcome === "not_dispatched" && previous.dispatch_attempt_count < 3) {
-      await sql.query(
-        `update meta_whatsapp_outbound_messages
-         set dispatch_outcome = 'pending', automatic_retry_allowed = false,
-             dispatch_attempt_count = dispatch_attempt_count + 1,
-             dispatch_lease_owner = $4, dispatch_lease_expires_at = $5,
-             failure_category = null
-         where tenant_id = $1 and clinic_id = $2 and id = $3`,
-        [
-          request.tenantId,
-          request.clinicId,
-          previous.id,
-          leaseOwner,
-          new Date(now.getTime() + 120_000).toISOString()
-        ]
-      );
-      return loadDispatchInput(context, request, previous.id, leaseOwner);
-    }
     return {
       outcome: "permanent_failure",
-      code:
-        previous.dispatch_outcome === "dispatch_ambiguous"
-          ? "INSTRUCTION_DISPATCH_AMBIGUOUS"
-          : "INSTRUCTION_PROVIDER_UNAVAILABLE",
-      evidenceId: previous.audit_event_id
+      failureCode: code,
+      requestEvidenceId: evidenceId
     };
   }
-
-  const source = await loadInstructionSource(context, request);
-  const outboundMessageId = randomUUID() as UUID;
-  const auditEventId = randomUUID();
-  await context.evidence.appendAuditEvent({
-    id: auditEventId,
-    action: "instruction.send_requested",
-    category: "integration",
-    riskLevel: "medium",
-    phiInvolved: true,
-    resourceType: "patient_instruction",
-    resourceId: request.instructionId,
-    patientId: request.patientId as UUID,
-    metadata: {
-      providerKey: "meta_whatsapp_cloud",
-      activationState: source.activationState,
-      templateName: source.templateName,
-      templateLanguage: source.templateLanguage,
-      dispatchOutcome: "pending"
-    },
-    ipAddress: null,
-    userAgent: "clinic-os-worker",
-    correlationId: request.correlationId,
-    occurredAt: now.toISOString()
-  });
-  await sql.query(
-    `insert into meta_whatsapp_outbound_messages (
-       id, tenant_id, clinic_id, external_account_id, message_request_id,
-       patient_id, recipient_endpoint_hmac, purpose, template_name, template_language,
-       consent_evidence_id, consent_template_version, state, dispatch_outcome,
-       dispatch_attempt_count, dispatch_lease_owner, dispatch_lease_expires_at,
-       audit_event_id, outbox_event_id
-     ) values (
-       $1, $2, $3, $4, $5, $6, $7, 'care_instruction', $8, $9,
-       $10, $11, 'send_requested', 'pending', 1, $12, $13, $14, $15
-     )`,
-    [
-      outboundMessageId,
-      request.tenantId,
-      request.clinicId,
-      source.externalAccountId,
-      request.instructionId,
-      request.patientId,
-      hmacEndpoint(endpointHmacSecret, source.recipientPhoneE164),
-      source.templateName,
-      source.templateLanguage,
-      source.consentEvidenceId,
-      source.consentTemplateVersion,
-      leaseOwner,
-      new Date(now.getTime() + 120_000).toISOString(),
-      auditEventId,
-      source.outboxEventId
-    ]
-  );
-  return {
-    outcome: "claimed",
-    outboundMessageId,
-    leaseOwner,
-    accessTokenRef: source.accessTokenRef,
-    activationState: source.activationState,
-    apiVersion: source.apiVersion,
-    phoneNumberId: source.phoneNumberId,
-    recipientPhoneE164: source.recipientPhoneE164,
-    templateName: source.templateName,
-    templateLanguage: source.templateLanguage,
-    bodyParameter: source.bodyParameter
-  };
-}
-
-async function loadDispatchInput(
-  context: ClinicModuleTransactionContext,
-  request: Cp13PatientInstructionSendActivityRequest,
-  outboundMessageId: UUID,
-  leaseOwner: string
-): Promise<DispatchClaim> {
-  const source = await loadInstructionSource(context, request);
-  return {
-    outcome: "claimed",
-    outboundMessageId,
-    leaseOwner,
-    accessTokenRef: source.accessTokenRef,
-    activationState: source.activationState,
-    apiVersion: source.apiVersion,
-    phoneNumberId: source.phoneNumberId,
-    recipientPhoneE164: source.recipientPhoneE164,
-    templateName: source.templateName,
-    templateLanguage: source.templateLanguage,
-    bodyParameter: source.bodyParameter
-  };
-}
-
-async function loadInstructionSource(
-  context: ClinicModuleTransactionContext,
-  request: Cp13PatientInstructionSendActivityRequest
-) {
-  const sql = requiredSql(context);
-  const registrations = await sql.query<{
-    external_account_id: UUID;
-    activation_state: "sandbox_verified" | "production_verified";
-    provider_endpoint_id: string;
-    api_version: string;
-    api_credential_ref: string;
-  }>(
-    `select external_account_id, activation_state, provider_endpoint_id,
-            api_version, api_credential_ref
-     from provider_callback_registrations
-     where tenant_id = $1 and clinic_id = $2
-       and provider_key = 'meta_whatsapp_cloud'
-       and activation_state in ('sandbox_verified', 'production_verified')
-     order by id limit 2`,
-    [request.tenantId, request.clinicId]
-  );
-  if (registrations.rows.length !== 1) throw permanentConfigurationFailure();
-  const registration = registrations.rows[0]!;
-  const rows = await sql.query<{
-    patient_id: UUID;
-    template_id: string;
-    body: string;
-    outbox_event_id: UUID;
-    phone: string;
-    consent_evidence_id: UUID;
-    consent_template_version: number;
-    template_name: string;
-    language_code: string;
-  }>(
-    `select instruction.patient_id, instruction.template_id, instruction.body,
-            instruction.outbox_event_id, patient.phone,
-            consent.id as consent_evidence_id,
-            consent.template_version as consent_template_version,
-            template.template_name, template.language_code
-     from patient_instruction_requests instruction
-     join patients patient
-       on patient.tenant_id = instruction.tenant_id
-      and patient.clinic_id = instruction.clinic_id
-      and patient.id = instruction.patient_id
-     join consents consent
-       on consent.tenant_id = instruction.tenant_id
-      and consent.clinic_id = instruction.clinic_id
-      and consent.patient_id = instruction.patient_id
-      and consent.purpose = 'whatsapp_communication'
-      and consent.status = 'active'
-     join meta_whatsapp_template_snapshots template
-       on template.tenant_id = instruction.tenant_id
-      and template.clinic_id = instruction.clinic_id
-      and template.external_account_id = $4
-      and template.template_name = instruction.template_id
-      and template.lifecycle_state = 'approved'
-     where instruction.tenant_id = $1 and instruction.clinic_id = $2
-       and instruction.id = $3 and instruction.patient_id = $5
-       and instruction.channel = 'whatsapp' and instruction.status = 'send_requested'
-       and instruction.outbox_event_id is not null
-     order by template.language_code limit 2`,
-    [
-      request.tenantId,
-      request.clinicId,
-      request.instructionId,
-      registration.external_account_id,
-      request.patientId
-    ]
-  );
-  if (rows.rows.length !== 1) throw permanentConfigurationFailure();
-  const row = rows.rows[0]!;
-  if (!/^\+[1-9]\d{7,14}$/u.test(row.phone) || row.body.length < 1 || row.body.length > 4096) {
-    throw permanentConfigurationFailure();
-  }
-  return {
-    externalAccountId: registration.external_account_id,
-    activationState: registration.activation_state,
-    phoneNumberId: registration.provider_endpoint_id,
-    apiVersion: registration.api_version,
-    accessTokenRef: registration.api_credential_ref,
-    recipientPhoneE164: row.phone,
-    consentEvidenceId: row.consent_evidence_id,
-    consentTemplateVersion: row.consent_template_version,
-    templateName: row.template_name,
-    templateLanguage: row.language_code,
-    bodyParameter: row.body,
-    outboxEventId: row.outbox_event_id
-  } as const;
-}
-
-async function finalizeDispatch(
-  context: ClinicModuleTransactionContext,
-  request: Cp13PatientInstructionSendActivityRequest,
-  claim: DispatchClaim,
-  result: {
-    readonly outcome:
-      "accepted_by_provider" | "not_dispatched" | "dispatch_ambiguous" | "rejected_by_provider";
-    readonly providerMessageId?: string;
-    readonly safeFailureCode?: string;
-  },
-  now: Date
-): Promise<{ evidenceId: string }> {
-  const sql = requiredSql(context);
-  const evidenceId = randomUUID();
-  const outcome = result.outcome === "rejected_by_provider" ? "rejected" : result.outcome;
-  const state =
-    result.outcome === "accepted_by_provider"
-      ? "accepted_by_provider"
-      : result.outcome === "rejected_by_provider"
-        ? "failed"
-        : "send_requested";
-  const updated = await sql.query<{ id: UUID }>(
-    `update meta_whatsapp_outbound_messages
-     set state = $6,
-         dispatch_outcome = $7,
-         provider_message_id = $8,
-         automatic_retry_allowed = $9,
-         reconciliation_required = $10,
-         accepted_by_provider_at = case when $7 = 'accepted_by_provider' then $11::timestamptz else null end,
-         failed_at = case when $7 = 'rejected' then $11::timestamptz else null end,
-         failure_category = $12,
-         dispatch_lease_owner = null,
-         dispatch_lease_expires_at = null
-     where tenant_id = $1 and clinic_id = $2 and id = $3
-       and dispatch_outcome = 'pending' and dispatch_lease_owner = $4
-       and message_request_id = $5
-     returning id`,
-    [
-      request.tenantId,
-      request.clinicId,
-      claim.outboundMessageId,
-      claim.leaseOwner,
-      request.instructionId,
-      state,
-      outcome,
-      result.providerMessageId ?? null,
-      result.outcome === "not_dispatched",
-      result.outcome === "dispatch_ambiguous",
-      now.toISOString(),
-      result.safeFailureCode ?? null
-    ]
-  );
-  if (updated.rows.length !== 1) throw new MetaInstructionRetryableError();
-  if (result.outcome === "dispatch_ambiguous") {
-    await sql.query(
-      `insert into meta_whatsapp_reconciliation_jobs (
-         tenant_id, clinic_id, external_account_id, outbound_message_id,
-         reason, status, attempt_count, next_attempt_at
-       )
-       select tenant_id, clinic_id, external_account_id, id,
-              'dispatch_ambiguous', 'pending', 0, $4
-       from meta_whatsapp_outbound_messages
-       where tenant_id = $1 and clinic_id = $2 and id = $3
-       on conflict (tenant_id, clinic_id, outbound_message_id)
-         where status in ('pending', 'leased', 'provider_unavailable')
-       do nothing`,
-      [request.tenantId, request.clinicId, claim.outboundMessageId, now.toISOString()]
+  async function finalize(
+    c: Context,
+    r: Request,
+    claim: Claim,
+    outcome: Outcome
+  ): Promise<Result | "retry"> {
+    const row = (
+      await sql(c).query<Row>(
+        `select * from meta_whatsapp_outbound_messages where tenant_id=$1 and clinic_id=$2 and id=$3 and message_request_id=$4 for update`,
+        [r.tenantId, r.clinicId, claim.outboundId, r.instructionId]
+      )
+    ).rows[0];
+    if (!row) throw new Error("Instruction dispatch evidence disappeared.");
+    // A late worker must report durable truth, never its stale transport result.
+    if (row.dispatch_outcome !== "pending" || row.dispatch_lease_owner !== claim.lease)
+      return resultFrom(row);
+    const id = await audit(c, r, outcome.code ?? outcome.outcome),
+      at = now().toISOString();
+    await sql(c).query(
+      `update meta_whatsapp_outbound_messages set dispatch_outcome=$4,
+      state=case when $4='accepted_by_provider' then 'accepted_by_provider' when $4='rejected' then 'failed' else 'send_requested' end,
+      provider_message_id=$5,accepted_by_provider_at=case when $4='accepted_by_provider' then $6::timestamptz else null end,
+      failed_at=case when $4='rejected' then $6::timestamptz else null end,failure_category=$7,
+      automatic_retry_allowed=($4='not_dispatched' and dispatch_attempt_count<3),reconciliation_required=($4='dispatch_ambiguous'),
+      dispatch_lease_owner=null,dispatch_lease_expires_at=null,audit_event_id=$8
+      where tenant_id=$1 and clinic_id=$2 and id=$3`,
+      [
+        r.tenantId,
+        r.clinicId,
+        claim.outboundId,
+        outcome.outcome,
+        outcome.providerId ?? null,
+        at,
+        outcome.code ?? null,
+        id
+      ]
     );
+    if (outcome.outcome === "dispatch_ambiguous")
+      await sql(c).query(
+        `insert into meta_whatsapp_reconciliation_jobs(tenant_id,clinic_id,external_account_id,outbound_message_id,reason,status,attempt_count,next_attempt_at)
+      select tenant_id,clinic_id,external_account_id,id,'dispatch_ambiguous','pending',0,$4 from meta_whatsapp_outbound_messages where tenant_id=$1 and clinic_id=$2 and id=$3
+      on conflict (tenant_id,clinic_id,outbound_message_id) where outbound_message_id is not null and status in ('pending','leased','provider_unavailable') do nothing`,
+        [r.tenantId, r.clinicId, claim.outboundId, at]
+      );
+    if (outcome.outcome === "not_dispatched" && Number(row.dispatch_attempt_count) < 3)
+      return "retry";
+    return resultFrom({
+      ...row,
+      dispatch_outcome: outcome.outcome,
+      provider_message_id: outcome.providerId,
+      audit_event_id: id,
+      failure_category: outcome.code
+    });
   }
-  await context.evidence.appendAuditEvent({
-    id: evidenceId,
-    action:
-      result.outcome === "accepted_by_provider"
-        ? "workflow.cp13.instruction_send_requested"
-        : "instruction.send_failed",
-    category: "integration",
-    riskLevel: result.outcome === "accepted_by_provider" ? "medium" : "high",
-    phiInvolved: true,
-    resourceType: "patient_instruction",
-    resourceId: request.instructionId,
-    patientId: request.patientId as UUID,
-    metadata: {
-      providerKey: "meta_whatsapp_cloud",
-      dispatchOutcome: result.outcome,
-      reconciliationRequired: result.outcome === "dispatch_ambiguous",
-      automaticRetryAllowed: result.outcome === "not_dispatched",
-      safeFailureCode: result.safeFailureCode ?? null
-    },
-    ipAddress: null,
-    userAgent: "clinic-os-worker",
-    correlationId: request.correlationId,
-    occurredAt: now.toISOString()
-  });
-  return { evidenceId };
-}
-
-async function markAmbiguousAfterLeaseLoss(
-  context: ClinicModuleTransactionContext,
-  request: Cp13PatientInstructionSendActivityRequest,
-  outboundMessageId: UUID,
-  now: Date
-): Promise<string> {
-  const claim: DispatchClaim = {
-    outcome: "claimed",
-    outboundMessageId,
-    leaseOwner: `expired:${request.eventId}`,
-    accessTokenRef: "unused",
-    activationState: "sandbox_verified",
-    apiVersion: "v1.0",
-    phoneNumberId: "000000",
-    recipientPhoneE164: "+10000000",
-    templateName: "unused",
-    templateLanguage: "en",
-    bodyParameter: "unused"
-  };
-  const sql = requiredSql(context);
-  await sql.query(
-    `update meta_whatsapp_outbound_messages
-     set dispatch_lease_owner = $4
-     where tenant_id = $1 and clinic_id = $2 and id = $3 and dispatch_outcome = 'pending'`,
-    [request.tenantId, request.clinicId, outboundMessageId, claim.leaseOwner]
-  );
-  return (
-    await finalizeDispatch(
-      context,
-      request,
-      claim,
-      {
-        outcome: "dispatch_ambiguous",
-        safeFailureCode: "dispatch_lease_expired"
-      },
-      now
+  async function claimDispatch(c: Context, r: Request): Promise<Claim | Result> {
+    const instruction = await boundInstruction(c, r);
+    const old = (
+      await sql(c).query<Row>(
+        `select * from meta_whatsapp_outbound_messages where tenant_id=$1 and clinic_id=$2 and message_request_id=$3 for update`,
+        args(r)
+      )
+    ).rows[0];
+    if (
+      old &&
+      (old.purpose !== "care_instruction" ||
+        old.patient_id !== r.patientId ||
+        old.outbox_event_id !== r.eventId)
     )
-  ).evidenceId;
-}
-
-function providerOutcome(result: MetaTemplateSendResult) {
-  if (result.outcome === "accepted_by_provider") {
-    return { outcome: result.outcome, providerMessageId: result.providerMessageId } as const;
+      throw new Blocked("INSTRUCTION_SOURCE_MISMATCH");
+    if (old && old.dispatch_outcome !== "not_dispatched") {
+      if (old.dispatch_outcome !== "pending") return resultFrom(old);
+      if (instant(old.dispatch_lease_expires_at) > now().getTime())
+        throw new MetaInstructionRetryableError();
+      const expired = {
+        outboundId: String(old.id),
+        lease: String(old.dispatch_lease_owner)
+      } as Claim;
+      const result = await finalize(c, r, expired, {
+        outcome: "dispatch_ambiguous",
+        code: "dispatch_lease_expired"
+      });
+      if (result === "retry") throw new Error("An uncertain dispatch cannot retry.");
+      return result;
+    }
+    if (old && (!old.automatic_retry_allowed || Number(old.dispatch_attempt_count) >= 3))
+      return resultFrom(old);
+    let source: Source;
+    try {
+      source = await currentSource(c, r, instruction, now());
+    } catch (e) {
+      if (e instanceof Blocked) return reject(c, r, e.code, old);
+      throw e;
+    }
+    if (old && old.instruction_source_digest !== digest(source))
+      return reject(c, r, "INSTRUCTION_REVIEW_REQUIRED", old);
+    const id = old ? String(old.id) : randomUUID(),
+      lease = randomUUID(),
+      expires = new Date(now().getTime() + 120_000).toISOString();
+    if (old)
+      await sql(c).query(
+        `update meta_whatsapp_outbound_messages set dispatch_outcome='pending',automatic_retry_allowed=false,dispatch_attempt_count=dispatch_attempt_count+1,dispatch_lease_owner=$4,dispatch_lease_expires_at=$5,failure_category=null where tenant_id=$1 and clinic_id=$2 and id=$3`,
+        [r.tenantId, r.clinicId, id, lease, expires]
+      );
+    else {
+      const evidenceId = await audit(c, r, "dispatch_claimed");
+      await sql(c).query(
+        `insert into meta_whatsapp_outbound_messages(id,tenant_id,clinic_id,external_account_id,message_request_id,patient_id,recipient_endpoint_hmac,purpose,template_name,template_language,consent_evidence_id,consent_template_version,state,dispatch_outcome,dispatch_attempt_count,dispatch_lease_owner,dispatch_lease_expires_at,audit_event_id,outbox_event_id,instruction_source_digest)
+        values($1,$2,$3,$4,$5,$6,$7,'care_instruction',$8,$9,$10,$11,'send_requested','pending',1,$12,$13,$14,$15,$16)`,
+        [
+          id,
+          r.tenantId,
+          r.clinicId,
+          source.accountId,
+          r.instructionId,
+          r.patientId,
+          createHmac("sha256", input.endpointHmacSecret)
+            .update(source.recipient.slice(1))
+            .digest("hex"),
+          source.templateName,
+          source.language,
+          source.consentId,
+          source.consentVersion,
+          lease,
+          expires,
+          evidenceId,
+          r.eventId,
+          digest(source)
+        ]
+      );
+    }
+    return { outboundId: id, lease, source, sourceDigest: digest(source) };
   }
-  if (result.outcome === "rejected_by_provider") {
-    return {
-      outcome: result.outcome,
-      safeFailureCode: `provider_http_${result.providerHttpStatus}`
-    } as const;
-  }
-  return { outcome: result.outcome, safeFailureCode: result.outcome } as const;
-}
-
-function requiredSql(context: ClinicModuleTransactionContext) {
-  if (!context.sqlClient) throw new Error("Meta instruction sender requires transaction SQL.");
-  return context.sqlClient;
-}
-
-function hmacEndpoint(secret: Uint8Array, value: string): string {
-  return createHmac("sha256", secret).update(value, "utf8").digest("hex");
-}
-
-function scopeFrom(request: Cp13PatientInstructionSendActivityRequest): ActivityScope {
   return {
-    tenantId: request.tenantId as UUID,
-    clinicId: request.clinicId as UUID,
-    actorUserId: request.actorUserId as UUID
+    async send(r) {
+      let claim: Claim | Result;
+      try {
+        claim = await run(r, (c) => claimDispatch(c, r));
+      } catch (e) {
+        if (e instanceof Blocked) return run(r, (c) => reject(c, r, e.code));
+        throw e;
+      }
+      if ("outcome" in claim) return claim;
+      let client: Pick<MetaWhatsAppClient, "sendApprovedTemplate">;
+      try {
+        const s = claim.source;
+        const options = {
+          activationState: s.activation,
+          graphApiVersion: s.apiVersion,
+          phoneNumberId: s.phoneNumberId,
+          accessToken: await input.secrets.resolveSecret(s.tokenRef)
+        };
+        client = input.clientFactory?.(options) ?? new MetaWhatsAppClient(options);
+      } catch {
+        // No transport has been constructed/invoked successfully in this phase.
+        const result = await run(r, (c) =>
+          finalize(c, r, claim, {
+            outcome: "not_dispatched",
+            code: "provider_unavailable_before_send"
+          })
+        );
+        if (result === "retry") throw new MetaInstructionRetryableError();
+        return result;
+      }
+      const result = await run(r, async (c) => {
+        const instruction = await boundInstruction(c, r);
+        const row = (
+          await sql(c).query<Row>(
+            `select * from meta_whatsapp_outbound_messages where tenant_id=$1 and clinic_id=$2 and id=$3 for update`,
+            [r.tenantId, r.clinicId, claim.outboundId]
+          )
+        ).rows[0];
+        if (!row) throw new Error("Instruction dispatch evidence disappeared.");
+        if (row.dispatch_outcome !== "pending" || row.dispatch_lease_owner !== claim.lease)
+          return resultFrom(row);
+        if (instant(row.dispatch_lease_expires_at) <= now().getTime())
+          return finalize(c, r, claim, {
+            outcome: "dispatch_ambiguous",
+            code: "dispatch_lease_expired"
+          });
+        let source: Source;
+        try {
+          source = await currentSource(c, r, instruction, now());
+          if (digest(source) !== claim.sourceDigest)
+            throw new Blocked("INSTRUCTION_REVIEW_REQUIRED");
+        } catch (e) {
+          if (!(e instanceof Blocked)) throw e;
+          return finalize(c, r, claim, { outcome: "rejected", code: e.code });
+        }
+        let sent: MetaTemplateSendResult;
+        try {
+          sent = await client.sendApprovedTemplate({
+            messageRequestId: r.instructionId,
+            idempotencyKey: r.idempotencyKey,
+            correlationId: r.correlationId,
+            recipientPhoneE164: source.recipient,
+            template: {
+              name: source.templateName,
+              languageCode: source.language,
+              components: [{ type: "body", parameters: [{ type: "text", text: source.body }] }]
+            },
+            policy: {
+              consent: "granted",
+              purpose: "care_instruction",
+              mode: "approved_template",
+              templateState: "approved",
+              now: now().toISOString()
+            }
+          });
+        } catch {
+          return finalize(c, r, claim, {
+            outcome: "dispatch_ambiguous",
+            code: "provider_outcome_unknown"
+          });
+        }
+        return finalize(c, r, claim, {
+          outcome: sent.outcome === "rejected_by_provider" ? "rejected" : sent.outcome,
+          ...(sent.outcome === "accepted_by_provider"
+            ? { providerId: sent.providerMessageId }
+            : { code: sent.outcome })
+        });
+      });
+      if (result === "retry") throw new MetaInstructionRetryableError();
+      return result;
+    }
   };
 }
 
-function permanentConfigurationFailure(): MetaWhatsAppError {
-  return new MetaWhatsAppError({
-    code: "not_configured",
-    message: "Meta instruction source is not uniquely configured.",
-    httpStatus: 503,
-    retryable: false
-  });
+function resultFrom(row: Row): Result {
+  if (
+    row.dispatch_outcome === "accepted_by_provider" &&
+    typeof row.provider_message_id === "string"
+  )
+    return {
+      outcome: "requested",
+      providerSubmissionId: row.provider_message_id,
+      requestEvidenceId: String(row.audit_event_id)
+    };
+  let failureCode = "INSTRUCTION_PROVIDER_UNAVAILABLE";
+  if (row.dispatch_outcome === "dispatch_ambiguous" || row.dispatch_outcome === "pending")
+    failureCode = "INSTRUCTION_DISPATCH_AMBIGUOUS";
+  else if (row.failure_category === "rejected_by_provider")
+    failureCode = "INSTRUCTION_PROVIDER_REJECTED";
+  else if (
+    [
+      "INSTRUCTION_REVIEW_REQUIRED",
+      "INSTRUCTION_AUTHORITY_REVOKED",
+      "INSTRUCTION_POLICY_BLOCKED",
+      "INSTRUCTION_PROVIDER_NOT_CONFIGURED"
+    ].includes(String(row.failure_category))
+  )
+    failureCode = String(row.failure_category);
+  return {
+    outcome: "permanent_failure",
+    failureCode,
+    requestEvidenceId: String(row.audit_event_id)
+  };
+}
+
+async function boundInstruction(c: Context, r: Request): Promise<Row> {
+  const row = (
+    await sql(c).query<Row>(
+      `select i.*,e.occurred_at as requested_at from patient_instruction_requests i join outbox_events e on e.tenant_id=i.tenant_id and e.clinic_id=i.clinic_id and e.id=i.outbox_event_id
+    where i.tenant_id=$1 and i.clinic_id=$2 and i.id=$3 and i.patient_id=$4 and i.created_by_user_id=$5
+      and i.channel='whatsapp' and i.status='send_requested' and e.id=$6 and e.actor_type='user' and e.actor_id=i.created_by_user_id::text
+      and e.event_type='instruction.send_requested' and e.aggregate_type='patient_instruction' and e.aggregate_id=i.id and e.patient_id=i.patient_id
+      and e.idempotency_key=$7 and e.correlation_id=$8 and date_trunc('milliseconds',e.occurred_at)=$9::timestamptz for update of i`,
+      [
+        ...args(r),
+        r.patientId,
+        r.actorUserId,
+        r.eventId,
+        r.idempotencyKey,
+        r.correlationId,
+        r.requestedAt
+      ]
+    )
+  ).rows[0];
+  if (!row) throw new Blocked("INSTRUCTION_SOURCE_MISMATCH");
+  return row;
+}
+
+async function currentSource(c: Context, r: Request, i: Row, now: Date): Promise<Source> {
+  if (
+    !i.dispatch_recipient_phone ||
+    instant(i.requested_at) > now.getTime() ||
+    now.getTime() - instant(i.requested_at) > 15 * 60_000
+  )
+    throw new Blocked("INSTRUCTION_REVIEW_REQUIRED");
+  if (
+    !(await hasCurrentCommunicationAuthority(sql(c), scope(r), [
+      "patient.read",
+      "patient_instruction.write"
+    ]))
+  )
+    throw new Blocked("INSTRUCTION_AUTHORITY_REVOKED");
+  const registrations = (
+    await sql(c).query<Row>(
+      `select * from provider_callback_registrations where tenant_id=$1 and clinic_id=$2 and provider_key='meta_whatsapp_cloud' and activation_state in ('sandbox_verified','production_verified') order by id limit 2 for share`,
+      [r.tenantId, r.clinicId]
+    )
+  ).rows;
+  if (registrations.length !== 1) throw new Blocked("INSTRUCTION_PROVIDER_NOT_CONFIGURED");
+  const reg = registrations[0]!;
+  await sql(c).query("select pg_advisory_xact_lock(hashtextextended($1,0))", [
+    `communication-contact:${r.tenantId}:${r.clinicId}:${reg.external_account_id}:${i.dispatch_recipient_phone}`
+  ]);
+  const source = (
+    await sql(c).query<Row>(
+      `select p.phone,c.id as consent_id,c.template_version,t.template_name,t.language_code,t.row_version
+    from patients p join consents c on c.tenant_id=p.tenant_id and c.clinic_id=p.clinic_id and c.patient_id=p.id and c.purpose='whatsapp_communication' and c.status='active'
+    join meta_whatsapp_template_snapshots t on t.tenant_id=p.tenant_id and t.clinic_id=p.clinic_id and t.external_account_id=$4 and t.template_name=$5 and t.lifecycle_state='approved'
+    where p.tenant_id=$1 and p.clinic_id=$2 and p.id=$3 order by t.language_code limit 2 for share of p,c,t`,
+      [r.tenantId, r.clinicId, r.patientId, reg.external_account_id, i.template_id]
+    )
+  ).rows;
+  if (source.length !== 1) throw new Blocked("INSTRUCTION_POLICY_BLOCKED");
+  const s = source[0]!,
+    phone = String(s.phone),
+    body = String(i.body);
+  if (
+    phone !== i.dispatch_recipient_phone ||
+    !/^\+[1-9][0-9]{7,14}$/u.test(phone) ||
+    !body ||
+    body.length > 4096 ||
+    body.includes("\0")
+  )
+    throw new Blocked("INSTRUCTION_REVIEW_REQUIRED");
+  const stop = await sql(c).query(
+    `select c.id from meta_whatsapp_consent_commands c join meta_whatsapp_event_receipts e on e.tenant_id=c.tenant_id and e.clinic_id=c.clinic_id and e.id=c.event_receipt_id
+    join normalized_integration_events n on n.tenant_id=e.tenant_id and n.clinic_id=e.clinic_id and n.id=e.normalized_event_id
+    where c.tenant_id=$1 and c.clinic_id=$2 and e.external_account_id=$3 and c.command='opt_out' and n.normalized_payload->>'senderWaId'=$4 limit 1`,
+    [r.tenantId, r.clinicId, reg.external_account_id, phone.slice(1)]
+  );
+  if (stop.rows.length) throw new Blocked("INSTRUCTION_POLICY_BLOCKED");
+  return {
+    accountId: String(reg.external_account_id),
+    activation: reg.activation_state as Source["activation"],
+    apiVersion: String(reg.api_version),
+    phoneNumberId: String(reg.provider_endpoint_id),
+    tokenRef: String(reg.api_credential_ref),
+    recipient: phone,
+    templateName: String(s.template_name),
+    language: String(s.language_code),
+    body,
+    consentId: String(s.consent_id),
+    consentVersion: Number(s.template_version),
+    templateVersion: Number(s.row_version),
+    registrationId: String(reg.id)
+  };
 }

@@ -125,7 +125,11 @@ function bucket(value: string): string {
 }
 
 function prefix(value: string): string {
-  const normalized = value.replace(/^\/+|\/+$/gu, "");
+  // Scan each character at most once, including long malformed configuration.
+  let start = 0, end = value.length;
+  while (start < end && value[start] === "/") start++;
+  while (end > start && value[end - 1] === "/") end--;
+  const normalized = value.slice(start, end);
   if (!normalized || normalized.length > 512 || /\.\.|[\0\r\n]/u.test(normalized)) {
     throw storeError();
   }

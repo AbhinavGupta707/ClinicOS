@@ -5604,7 +5604,7 @@ export class PostgresClinicOperationsRepository
 
   async appendOutboxEvent(scope: RepositoryScope, event: OutboxEventInput): Promise<void> {
     await this.#withRls(scope, async (client) => {
-      await client.query(
+      const inserted = await client.query<{ id: UUID }>(
         `
           insert into outbox_events (
             tenant_id,
@@ -5623,6 +5623,7 @@ export class PostgresClinicOperationsRepository
           )
           values ($1, $2, $3, '1.0', 'user', $4, $5, $6, $7, $8, $9, $10::jsonb, $11)
           on conflict (tenant_id, idempotency_key) where idempotency_key is not null do nothing
+          returning id
         `,
         [
           scope.tenantId,
@@ -5638,6 +5639,34 @@ export class PostgresClinicOperationsRepository
           event.occurredAt
         ]
       );
+      if (event.eventType === "instruction.send_requested") {
+        // Attach the actual durable action in the same transaction as its source.
+        // A conflicting idempotency key must never link a different patient's work.
+        const linked = await client.query<{ id: UUID }>(
+          `update patient_instruction_requests i set outbox_event_id=e.id
+           from outbox_events e
+           where i.tenant_id=$1 and i.clinic_id=$2 and i.id=$3
+             and i.patient_id=$4 and i.created_by_user_id=$5 and i.channel='whatsapp'
+             and e.tenant_id=i.tenant_id and e.clinic_id=i.clinic_id
+             and e.event_type='instruction.send_requested' and e.aggregate_type='patient_instruction'
+             and e.aggregate_id=i.id and e.patient_id=i.patient_id
+             and e.actor_type='user' and e.actor_id=i.created_by_user_id::text
+             and (e.id=$6::uuid or ($6::uuid is null and e.idempotency_key=$7))
+             and (i.outbox_event_id is null or i.outbox_event_id=e.id)
+           returning i.id`,
+          [
+            scope.tenantId,
+            scope.clinicId,
+            event.aggregateId,
+            event.patientId ?? null,
+            scope.actorUserId,
+            inserted.rows[0]?.id ?? null,
+            event.idempotencyKey ?? null
+          ]
+        );
+        if (linked.rows.length !== 1)
+          throw new Error("Instruction action could not be linked atomically.");
+      }
     });
   }
 

@@ -1,5 +1,6 @@
 import { execFileSync } from "node:child_process";
 import { readFileSync } from "node:fs";
+import { containsSlackWebhook } from "./secret-patterns.mjs";
 
 const releaseScopeFiles = execFileSync(
   "git",
@@ -35,7 +36,7 @@ const patterns = [
   },
   {
     name: "Slack webhook URL",
-    regex: /https:\/\/hooks\.slack\.com\/services\/[A-Za-z0-9/]+/
+    test: containsSlackWebhook
   },
   {
     name: "OpenAI API key",
@@ -60,7 +61,8 @@ for (const file of releaseScopeFiles) {
   }
 
   for (const pattern of patterns) {
-    if (pattern.regex.test(contents)) findings.push(`${file}: possible ${pattern.name}`);
+    if (pattern.test ? pattern.test(contents) : pattern.regex.test(contents))
+      findings.push(`${file}: possible ${pattern.name}`);
   }
 }
 

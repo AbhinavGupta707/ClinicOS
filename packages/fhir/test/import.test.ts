@@ -247,3 +247,31 @@ function artifactFixture() {
     source: sourceFixture()
   });
 }
+
+test("FHIR provenance consent policy uses exact array membership, never a URL substring", () => {
+  const policy = "https://fhir.clinicos.in/Policy/purpose-specific-interoperability-consent-v1";
+  for (const value of [
+    policy,
+    ["https://attacker.invalid/" + policy],
+    [policy + "/extra"],
+    [policy + "?redirect=other"],
+    [
+      "https://fhir.clinicos.in.attacker.invalid/Policy/purpose-specific-interoperability-consent-v1"
+    ]
+  ]) {
+    const bundle = structuredClone(artifactFixture().bundle);
+    const provenance = bundle.entry.find(
+      (entry) => entry.resource.resourceType === "Provenance"
+    ).resource;
+    provenance.policy = value;
+    assert.throws(
+      () => parseClinicalSummaryDocument(JSON.stringify(bundle)),
+      (error) => error instanceof ClinicOsFhirError && error.httpStatus === 422
+    );
+  }
+  const bundle = structuredClone(artifactFixture().bundle);
+  bundle.entry.find((entry) => entry.resource.resourceType === "Provenance").resource.policy = [
+    policy
+  ];
+  assert.doesNotThrow(() => parseClinicalSummaryDocument(JSON.stringify(bundle)));
+});

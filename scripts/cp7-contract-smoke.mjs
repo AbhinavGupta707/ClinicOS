@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import assert from "node:assert/strict";
+import { fetchFixture } from "./fixture-http.mjs";
 import { pathToFileURL } from "node:url";
 import { loadCp7Scenario, validateCp7Scenario } from "./validate-cp7-fixtures.mjs";
 
@@ -140,8 +141,7 @@ function assertSerializedExcludes(value, needles, label) {
 }
 
 async function executeRequest(baseUrl, scenario, request, options) {
-  const url = new URL(request.path, baseUrl);
-  const response = await fetch(url, {
+  const response = await fetchFixture(baseUrl, request.path, {
     body: request.body === undefined ? undefined : JSON.stringify(request.body),
     headers: headersForRequest(scenario, request, options),
     method: request.method

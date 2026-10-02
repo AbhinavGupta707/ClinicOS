@@ -57,7 +57,7 @@ test("CP9 ABDM log summary redacts credential values", async () => {
 
   assert.equal(serialized.includes("secret-value"), false);
   assert.equal(serialized.includes("sandbox-client"), false);
-  assert.equal(serialized.includes("https://sandbox.abdm.example.test"), false);
+  assert.doesNotMatch(serialized, /sandbox\.abdm\.example\.test/u);
   assert.equal(summary.configurationStatus, "sandbox_configured_unapproved");
   assert.deepEqual(summary.missingCredentialKeys, readiness.missingCredentialKeys);
 });

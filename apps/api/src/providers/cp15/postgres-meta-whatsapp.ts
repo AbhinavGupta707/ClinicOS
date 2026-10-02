@@ -1,6 +1,6 @@
 import { createHash, createHmac, randomUUID } from "node:crypto";
 import type { SqlQueryClient } from "@clinic-os/db";
-import { buildSetLocalRlsStatements } from "@clinic-os/db";
+import { buildSetLocalRlsStatements, lockMetaWhatsAppDispatch } from "@clinic-os/db";
 import { decideMetaStatusTransition, type UUID } from "@clinic-os/domain";
 import type {
   MetaNormalizedEvent,
@@ -54,6 +54,9 @@ export class PostgresMetaWebhookPersistence implements MetaWebhookPersistence {
       if (!sqlClient)
         throw new Error("Meta webhook persistence requires a transaction-bound SQL client.");
       await setScope(sqlClient, input.tenantId as UUID, input.clinicId as UUID);
+      await lockMetaWhatsAppDispatch(sqlClient, {
+        tenantId: input.tenantId as UUID, clinicId: input.clinicId as UUID
+      });
       const existing = await sqlClient.query<RawEventRow>(
         `select id, raw_body_sha256, signature_sha256, normalized_event_sha256,
                 verified_secret_version, verified_with_previous_secret, raw_body_length

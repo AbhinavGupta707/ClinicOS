@@ -1,4 +1,5 @@
-import { mkdir, lstat, readFile, writeFile, chmod, rm } from "node:fs/promises";
+import { mkdir, open, writeFile, rename, rm } from "node:fs/promises";
+import { constants } from "node:fs";
 import { join } from "node:path";
 
 // Next rewrites next-env.d.ts even when distDir and tsconfig are isolated.
@@ -34,9 +35,17 @@ async function preserveAcceptanceBuildInputs(webRoot) {
       const path = join(webRoot, name);
       let original;
       try {
-        const stat = await lstat(path);
-        if (!stat.isFile()) throw new Error(`Acceptance input must be a regular file: ${name}`);
-        original = { content: await readFile(path), mode: stat.mode & 0o777 };
+        const handle = await open(
+          path,
+          constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK
+        );
+        try {
+          const stat = await handle.stat();
+          if (!stat.isFile()) throw new Error(`Acceptance input must be a regular file: ${name}`);
+          original = { content: await handle.readFile(), mode: stat.mode & 0o777 };
+        } finally {
+          await handle.close();
+        }
         await writeFile(join(lock, name), original.content, { mode: 0o600 });
       } catch (error) {
         if (error.code !== "ENOENT") throw error;
@@ -67,10 +76,18 @@ async function preserveAcceptanceBuildInputs(webRoot) {
   return async () => {
     if (restored) return;
     // Keep the backup/lock if restoration fails, so recovery remains possible.
-    for (const { path, original } of originals) {
+    for (const { name, path, original } of originals) {
       if (original) {
-        await writeFile(path, original.content);
-        await chmod(path, original.mode);
+        // Replace the directory entry; never follow a symlink substituted by a build.
+        const replacement = join(lock, `restore-${name}`);
+        const handle = await open(replacement, "wx", 0o600);
+        try {
+          await handle.writeFile(original.content);
+          await handle.chmod(original.mode);
+        } finally {
+          await handle.close();
+        }
+        await rename(replacement, path);
       } else {
         await rm(path, { force: true });
       }
